@@ -2,10 +2,6 @@
 
 Rekon payload coordinator software for the Pi 4B central hub. Design notes live in the private [facts](https://github.com/symmatree/fables) repo (`fables/Drones/rekon10/central-hub.md`, `fables/Drones/coordinator/virtualization-study.md`).
 
-## Standalone product
-
-This repository is **not** a fork of OpenMower or OpenMowerOS. It uses the same *class* of edge tooling (Docker Compose, Dockge, `/opt/stacks/`, thin CLI) for operator familiarity. External influences are listed in [references.md](references.md) only.
-
 ## Host vs container
 
 | Responsibility | Where | Why |
