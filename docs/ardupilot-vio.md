@@ -1,0 +1,42 @@
+# ArduPilot OAK-D VIO
+
+Coordinator-side VIO feeding the TBS Lucid H7. Upstream build reference: [Luxonis OAK-D -- Copter](https://ardupilot.org/copter/docs/common-vio-oak-d.html). Process wiring and socket IPC: [vio-integration.md](vio-integration.md). Containers and bench profile: [architecture.md](architecture.md).
+
+## Wiring (flight)
+
+- OAK-D: Pi USB 3.0 (`vio-tracker` container).
+- FC MAVLink: Pi UART to a FC serial port with MAVLink2 (`SERIALn_PROTOCOL=2`, `SERIALn_BAUD=1500000`). Confirm device alias on bench (`/dev/serial0`, `/dev/ttyAMA0`, etc.) on `coordinator-mavlink`.
+
+## What the coordinator sends
+
+The **coordinator MAVLink router** (`coordinator-mavlink`) publishes visual-odometry MAVLink to the FC. During bring-up, chobitsfan `mavlink_udp` is a reference for message types and axis handling; shipping code replaces it.
+
+The Pi supplies estimates; fusion is FC-side via `EK3_SRC*` when `VISO_TYPE` is enabled. Exact message set follows the router implementation (chobitsfan uses e.g. `ATT_POS_MOCAP` and `VISION_SPEED_ESTIMATE`).
+
+## Rekon context (not a param recipe)
+
+Rekon uses **F9P + compass when RTK is good** and **VIO for bounded under-canopy legs** between ice-hole GPS resets ([rekon-design.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/rekon-design.md), [canopy-ops.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/canopy-ops.md)). The ArduPilot wiki OAK-D page describes a **VIO-primary** bench setup useful to prove the Pi pipeline -- not the same problem as dual-mode GPS+VIO operations.
+
+Current FC export (`config/rekon10-methodi.param` in facts) is **pre-VIO**: `VISO_TYPE=0`, `EK3_SRC1` on GPS/compass/baro. Turning VIO on and choosing lane strategy is FC tuning work on the bench with you, not something this repo should pretend is settled.
+
+Topics to work through when an FC is attached:
+
+- When GPS and VIO are both active, which `EK3_SRC*` lane owns horizontal position and yaw?
+- Whether wiki-style ExternalNav-primary is only an isolated proof profile.
+- `VISO_DELAY_MS`, vertical axis trust, and flight modes under degraded estimates.
+
+Record outcomes in a new param export in facts when there is something real to commit.
+
+## Bench checks
+
+**Vision only (no FC, `bench` profile):**
+
+- `vio-tracker` and `vio-estimator` running; OAK-D enumerated on USB.
+- Processes stay up; IMU/features on ipc sockets; pose on `/tmp/chobits_server` (tap or temporary router).
+
+**With FC (`flight` profile):**
+
+- `coordinator-mavlink` on configured UART.
+- Mission Planner or logs show expected traffic before trusting fusion.
+
+Images, `oak_d.yaml`, and compose profiles ship in a follow-up PR.

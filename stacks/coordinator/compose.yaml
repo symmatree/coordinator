@@ -1,0 +1,58 @@
+# Coordinator stack. Installed on Pi at /opt/stacks/coordinator/.
+# Manage with: coord pull | start | stop | status | logs [service]
+#
+# Profiles:
+#   bench (default): vio-tracker + vio-estimator -- no FC
+#   flight:          adds coordinator-mavlink
+#
+# Images ship in a follow-up PR; tags from .env.
+
+services:
+  vio-tracker:
+    image: ghcr.io/symmatree/coordinator-vio-tracker:${VIO_TRACKER_VERSION}
+    container_name: coordinator_vio_tracker
+    profiles: [bench, flight]
+    privileged: true
+    restart: unless-stopped
+    depends_on:
+      - vio-estimator
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - ${COORDINATOR_IPC_DIR}:/tmp
+      - ${COORDINATOR_CONFIG_DIR}:/config:ro
+    env_file:
+      - .env
+
+  vio-estimator:
+    image: ghcr.io/symmatree/coordinator-vio-estimator:${VIO_ESTIMATOR_VERSION}
+    container_name: coordinator_vio_estimator
+    profiles: [bench, flight]
+    restart: unless-stopped
+    volumes:
+      - ${COORDINATOR_IPC_DIR}:/tmp
+      - ${COORDINATOR_CONFIG_DIR}:/config:ro
+    env_file:
+      - .env
+
+  coordinator-mavlink:
+    image: ghcr.io/symmatree/coordinator-mavlink:${MAVLINK_VERSION}
+    container_name: coordinator_mavlink
+    profiles: [flight]
+    privileged: true
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - vio-estimator
+    devices:
+      - ${MAVLINK_DEVICE}:${MAVLINK_DEVICE}
+    volumes:
+      - ${COORDINATOR_IPC_DIR}:/tmp
+    env_file:
+      - .env
+    environment:
+      - MAVLINK_DEVICE
+      - MAVLINK_BAUD
+
+x-dockge:
+  urls: []
