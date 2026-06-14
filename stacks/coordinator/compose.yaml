@@ -2,8 +2,9 @@
 # Manage with: coord pull | start | stop | status | logs [service]
 #
 # Profiles:
-#   bench (default): vio-tracker + vio-estimator -- no FC
-#   flight:          adds coordinator-mavlink
+#   tracker (default): vio-tracker only -- OAK-D feature extraction bench
+#   bench:             vio-tracker + vio-estimator (estimator image TBD)
+#   flight:            bench + coordinator-mavlink
 #
 # Images ship in a follow-up PR; tags from .env.
 
@@ -11,11 +12,9 @@ services:
   vio-tracker:
     image: ghcr.io/symmatree/coordinator-vio-tracker:${VIO_TRACKER_VERSION}
     container_name: coordinator_vio_tracker
-    profiles: [bench, flight]
+    profiles: [tracker, bench, flight]
     privileged: true
     restart: unless-stopped
-    depends_on:
-      - vio-estimator
     devices:
       - /dev/bus/usb:/dev/bus/usb
     volumes:

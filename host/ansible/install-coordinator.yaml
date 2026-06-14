@@ -1,0 +1,108 @@
+---
+# Install Docker, coordinator stack paths, coord CLI, and tracker profile defaults.
+# Run from a coordinator checkout on the Pi (or against inventory group coordinator_hosts).
+#
+#   ansible-playbook host/ansible/install-coordinator.yaml
+#
+# Optional: sync stack + CLI from this repo instead of assuming files already at /opt/stacks/coordinator
+#   ansible-playbook host/ansible/install-coordinator.yaml -e coordinator_sync_repo=true
+
+- name: Coordinator host bootstrap (Pi 4B)
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    coordinator_repo_root: "{{ playbook_dir }}/../.."
+    coordinator_stack_dir: /opt/stacks/coordinator
+    coordinator_config_dir: /var/lib/coordinator/config
+    coordinator_ipc_dir: /var/lib/coordinator/ipc
+    coordinator_sync_repo: false
+    docker_users:
+      - "{{ ansible_user_id }}"
+  tasks:
+    - name: Install packages for Docker apt repo
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Add Docker GPG key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+      when: ansible_os_family == "Debian"
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ ansible_architecture | replace('aarch64', 'arm64') | replace('x86_64', 'amd64') }}
+          signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/{{ ansible_distribution | lower }}
+          {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install Docker Engine and Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-buildx-plugin
+          - docker-ce
+          - docker-ce-cli
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+
+    - name: Add operator user to docker group
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: docker
+        append: true
+      loop: "{{ docker_users }}"
+
+    - name: Enable and start Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create coordinator state directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ coordinator_stack_dir }}"
+        - "{{ coordinator_config_dir }}"
+        - "{{ coordinator_ipc_dir }}"
+
+    - name: Sync stack files from checkout
+      ansible.builtin.copy:
+        src: "{{ coordinator_repo_root }}/stacks/coordinator/"
+        dest: "{{ coordinator_stack_dir }}/"
+        mode: preserve
+      when: coordinator_sync_repo
+
+    - name: Install coord CLI
+      ansible.builtin.copy:
+        src: "{{ coordinator_repo_root }}/bin/coord"
+        dest: /usr/local/bin/coord
+        mode: "0755"
+      when: coordinator_sync_repo
+
+    - name: Remind operator to log in to GHCR for private images
+      ansible.builtin.debug:
+        msg: >-
+          If ghcr.io/symmatree/coordinator-vio-tracker is private, run
+          docker login ghcr.io before coord pull.
+      when: coordinator_sync_repo

@@ -7,11 +7,11 @@ COORD_ENV_PATH="${COORD_ENV_PATH:-$(dirname "${COORD_COMPOSE_FILE}")/.env}"
 DEFAULT_SERVICE="${COORD_DEFAULT_SERVICE:-vio-tracker}"
 
 compose() {
-  docker compose -f "${COORD_COMPOSE_FILE}" "$@"
+	docker compose -f "${COORD_COMPOSE_FILE}" "$@"
 }
 
 usage() {
-  cat <<'EOF'
+	cat <<'EOF'
 Usage: coord <command> [args]
 
 Commands:
@@ -32,66 +32,66 @@ EOF
 }
 
 require_compose_file() {
-  if [[ ! -f "${COORD_COMPOSE_FILE}" ]]; then
-    echo "coord: compose file not found: ${COORD_COMPOSE_FILE}" >&2
-    echo "coord: set COORD_COMPOSE_FILE or install stacks/coordinator to /opt/stacks/coordinator" >&2
-    exit 1
-  fi
+	if [[ ! -f ${COORD_COMPOSE_FILE} ]]; then
+		echo "coord: compose file not found: ${COORD_COMPOSE_FILE}" >&2
+		echo "coord: set COORD_COMPOSE_FILE or install stacks/coordinator to /opt/stacks/coordinator" >&2
+		exit 1
+	fi
 }
 
 cmd="${1:-}"
 shift || true
 
 case "${cmd}" in
-  pull)
-    require_compose_file
-    compose down
-    compose pull
-    compose up -d
-    ;;
-  start)
-    require_compose_file
-    compose up -d
-    ;;
-  stop)
-    require_compose_file
-    compose down
-    ;;
-  restart)
-    require_compose_file
-    compose restart "$@"
-    ;;
-  status)
-    require_compose_file
-    compose ps
-    ;;
-  logs)
-    require_compose_file
-    if [[ $# -gt 0 ]]; then
-      compose logs -f "$@"
-    else
-      compose logs -f
-    fi
-    ;;
-  shell)
-    require_compose_file
-    service="${1:-${DEFAULT_SERVICE}}"
-    compose exec -it "${service}" bash
-    ;;
-  exec)
-    require_compose_file
-    if [[ $# -lt 2 ]]; then
-      echo "coord: exec requires <service> <command...>" >&2
-      exit 1
-    fi
-    compose exec -it "$@"
-    ;;
-  -h|--help|help|"")
-    usage
-    ;;
-  *)
-    echo "coord: unknown command: ${cmd}" >&2
-    usage >&2
-    exit 1
-    ;;
+pull)
+	require_compose_file
+	compose down
+	compose pull
+	compose up -d
+	;;
+start)
+	require_compose_file
+	compose up -d
+	;;
+stop)
+	require_compose_file
+	compose down
+	;;
+restart)
+	require_compose_file
+	compose restart "$@"
+	;;
+status)
+	require_compose_file
+	compose ps
+	;;
+logs)
+	require_compose_file
+	if [[ $# -gt 0 ]]; then
+		compose logs -f "$@"
+	else
+		compose logs -f
+	fi
+	;;
+shell)
+	require_compose_file
+	service="${1:-${DEFAULT_SERVICE}}"
+	compose exec -it "${service}" bash
+	;;
+exec)
+	require_compose_file
+	if [[ $# -lt 2 ]]; then
+		echo "coord: exec requires <service> <command...>" >&2
+		exit 1
+	fi
+	compose exec -it "$@"
+	;;
+-h | --help | help | "")
+	usage
+	;;
+*)
+	echo "coord: unknown command: ${cmd}" >&2
+	usage >&2
+	exit 1
+	;;
 esac

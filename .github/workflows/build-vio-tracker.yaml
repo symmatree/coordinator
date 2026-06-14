@@ -1,0 +1,71 @@
+name: build-vio-tracker
+on:
+  push:
+    branches: [main]
+    paths:
+      - containers/vio-tracker/**
+      - .github/workflows/build-vio-tracker.yaml
+  workflow_dispatch: {}
+
+jobs:
+  build-vio-tracker:
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ghcr.io/symmatree/coordinator-vio-tracker
+      IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
+      REGISTRY_USER: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read upstream pins
+        id: pins
+        run: |
+          set -a
+          # shellcheck disable=SC1091
+          source containers/vio-tracker/upstream.lock
+          set +a
+          {
+            echo "depthai_core_tag=${DEPTHAI_CORE_TAG}"
+            echo "depthai_core_sha=${DEPTHAI_CORE_SHA}"
+            echo "oak_d_vins_cpp_branch=${OAK_D_VINS_CPP_BRANCH}"
+            echo "oak_d_vins_cpp_sha=${OAK_D_VINS_CPP_SHA}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata
+        id: docker-metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=branch
+            type=ref,event=tag
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: containers/vio-tracker
+          file: containers/vio-tracker/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.docker-metadata.outputs.tags }}
+          labels: ${{ steps.docker-metadata.outputs.labels }}
+          build-args: |
+            DEPTHAI_CORE_TAG=${{ steps.pins.outputs.depthai_core_tag }}
+            DEPTHAI_CORE_SHA=${{ steps.pins.outputs.depthai_core_sha }}
+            OAK_D_VINS_CPP_BRANCH=${{ steps.pins.outputs.oak_d_vins_cpp_branch }}
+            OAK_D_VINS_CPP_SHA=${{ steps.pins.outputs.oak_d_vins_cpp_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -54,7 +54,7 @@ USB OAK-D
 | Isolated logs | `coord logs vio-tracker` vs untangling one supervisord stream |
 | Isolated rebuilds | Tracker image changes on depthai / pipeline / recording; estimator stays on a pinned chobitsfan SHA; router rebuilds during FC integration |
 | Isolated restarts | MAVLink router crash does not kill the camera pipeline |
-| Bench without FC | Start tracker + estimator only; no serial device |
+| Bench without FC | `tracker` profile: OAK-D only; `bench`: tracker + estimator; no serial |
 
 `network_mode: host` is still useful on mavlink (and optionally elsewhere) for Pi Zero `br0` traffic. **Host network does not share `/tmp`** between containers; the ipc bind mount is what wires sockets across services.
 
@@ -72,10 +72,11 @@ Operational notes:
 
 | Profile | Services | Use |
 |---------|----------|-----|
-| `bench` (default) | `vio-tracker`, `vio-estimator` | Desk: Pi + OAK-D, no FC |
+| `tracker` (default) | `vio-tracker` | First iteration: OAK-D feature extraction ([bench-tracker.md](bench-tracker.md)) |
+| `bench` | `vio-tracker`, `vio-estimator` | Desk: full vision chain, no FC |
 | `flight` | above + `coordinator-mavlink` | FC serial mounted |
 
-Startup order: `vio-estimator` before `vio-tracker` floods IMU (soft `depends_on` + restart policy). `coordinator-mavlink` after estimator is publishing pose (flight profile).
+Startup order when `bench` or `flight` is active: start `vio-estimator` before `vio-tracker` (estimator must bind ipc sockets first). `coordinator-mavlink` after estimator publishes pose (flight profile).
 
 ## Rekon goals beyond wiki VIO
 
@@ -92,15 +93,18 @@ Pi Zero relay and obstacle MAVLink can ship after vision bench if complexity war
 
 ## Bench without FC
 
-1. `coord start` with bench profile (tracker + estimator only).
-2. Confirm OAK-D on USB (`vio-tracker` logs).
-3. Confirm tracker and estimator stay up; pose visible on `/tmp/chobits_server` or router logs once a tap exists.
+**Tracker only (current):** see [bench-tracker.md](bench-tracker.md).
+
+**Full vision (later):**
+
+1. `COMPOSE_PROFILES=bench` and start tracker + estimator.
+2. Confirm pose on `/tmp/chobits_server`.
 
 Do not mount FC serial or start `coordinator-mavlink` until an FC is wired.
 
-## Stack services (compose skeleton)
+## Stack services
 
-`stacks/coordinator/compose.yaml` defines the three services above as placeholders until images ship. Image names and Dockerfiles land in a follow-up PR.
+`stacks/coordinator/compose.yaml` defines three services. **`vio-tracker`** image and Dockerfile ship in `containers/vio-tracker/`; estimator and mavlink images are follow-ups.
 
 ROS in a container remains optional later; the host never installs ROS for the flight path.
 
