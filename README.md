@@ -39,4 +39,6 @@ See [docs/architecture.md](docs/architecture.md) and [docs/ardupilot-vio.md](doc
 ## Status
 
 - **This PR:** repo skeleton -- compose stack, `coord` CLI, architecture docs.
-- **Next:** `containers/vio` image (ArduPilot OAK-D binaries), then host Ansible + Dockge bootstrap.
+- **Next:** `containers/vio` image; compose profiles for bench (vision only) vs flight (+ MAVLink bridge); host Ansible + Dockge bootstrap.
+
+Bench use: Pi + OAK-D only, no FC -- see [docs/architecture.md](docs/architecture.md#bench-without-fc).
