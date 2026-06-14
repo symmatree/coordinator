@@ -1,0 +1,23 @@
+# Coordinator stack. Installed on Pi at /opt/stacks/coordinator/.
+# Manage with: coord pull | start | stop | status | logs
+
+services:
+  vio:
+    image: ghcr.io/symmatree/coordinator-vio:${VIO_VERSION}
+    container_name: coordinator_vio
+    privileged: true
+    restart: unless-stopped
+    network_mode: host
+    devices:
+      - ${MAVLINK_DEVICE}:${MAVLINK_DEVICE}
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - ${COORDINATOR_CONFIG_DIR}:/config:ro
+    env_file:
+      - .env
+    environment:
+      - MAVLINK_DEVICE
+      - MAVLINK_BAUD
+
+x-dockge:
+  urls: []
