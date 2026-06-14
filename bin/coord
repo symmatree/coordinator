@@ -4,7 +4,7 @@ set -euo pipefail
 
 COORD_COMPOSE_FILE="${COORD_COMPOSE_FILE:-/opt/stacks/coordinator/compose.yaml}"
 COORD_ENV_PATH="${COORD_ENV_PATH:-$(dirname "${COORD_COMPOSE_FILE}")/.env}"
-DEFAULT_SERVICE="${COORD_DEFAULT_SERVICE:-vio}"
+DEFAULT_SERVICE="${COORD_DEFAULT_SERVICE:-vio-tracker}"
 
 compose() {
   docker compose -f "${COORD_COMPOSE_FILE}" "$@"
@@ -21,13 +21,13 @@ Commands:
   restart           docker compose restart [service]
   status            docker compose ps
   logs [service]    Follow logs (default: all services)
-  shell [service]   Interactive shell in service (default: vio)
+  shell [service]   Interactive shell in service (default: vio-tracker)
   exec <service> <cmd...>  Run command in service container
 
 Environment:
   COORD_COMPOSE_FILE   Default: /opt/stacks/coordinator/compose.yaml
   COORD_ENV_PATH       Default: directory of compose file + /.env
-  COORD_DEFAULT_SERVICE Default service for shell: vio
+  COORD_DEFAULT_SERVICE Default service for shell: vio-tracker
 EOF
 }
 

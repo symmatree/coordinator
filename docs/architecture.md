@@ -6,10 +6,11 @@ Rekon payload coordinator software for the Pi 4B central hub. Design notes live 
 
 | Responsibility | Where | Why |
 |----------------|-------|-----|
-| OAK-D VIO pipeline | container(s) | Fragile C++/OpenCV/depthai deps; immutable image |
-| MAVLink bridge to FC | container (likely separate from vision) | Optional on bench; serial device only when needed |
+| OAK-D pipeline (`feature_tracker`) | container | Fragile C++/depthai deps; USB device; rebuilds often |
+| VINS estimator (`vins_fusion`) | container | Heavy native build; pin upstream; rebuild rarely |
+| MAVLink router (coordinator-owned) | container | FC UART, Pi Zero relay, obstacle, pose ingress |
 | Grafana Alloy (later) | container | Isolated observability |
-| Pi Zero pod control API (later) | container | App logic |
+| Pi Zero pod control API (later) | container or host | App logic; may share network with router |
 | chrony + PPS discipline | **host** | GPIO `/dev/pps0`, `SYS_TIME` |
 | USB gadget `br0` + DHCP | **host** | Dynamic `usb*` interfaces; not a Docker bridge problem |
 | WiFi AP / station / off | **host** (or D-Bus-mounted utility container later) | NetworkManager integration |
@@ -21,79 +22,88 @@ Rekon payload coordinator software for the Pi 4B central hub. Design notes live 
 |------|----------|
 | `/opt/stacks/coordinator/` | `compose.yaml`, `.env` |
 | `/var/lib/coordinator/config/` | VIO config (`oak_d.yaml`, etc.) mounted read-only |
-| `/var/lib/coordinator/state/` | Runtime state (reserved) |
+| `/var/lib/coordinator/ipc/` | Shared Unix socket dir bind-mounted as `/tmp` in vision + mavlink containers |
+| `/var/lib/coordinator/state/` | Runtime state (reserved; image logs, etc.) |
 | `/opt/dockge/` | Dockge UI (upstream; shared across stacks) |
 
-## VIO processes (no ROS)
+## Container layout (current plan)
 
-The ArduPilot OAK-D stack is three native binaries ([upstream doc](https://ardupilot.org/copter/docs/common-vio-oak-d.html)):
+Three services, one process each. Processes talk over **Unix domain datagram sockets** on a **shared bind mount** (not Docker bridge networking, not UDP). Socket paths and binary roles: [vio-integration.md](vio-integration.md).
 
-| Process | Role | Needs OAK-D USB | Needs FC serial |
-|---------|------|-----------------|-----------------|
-| `feature_tracker` | OAK-D features -> VINS input | yes | no |
-| `vins_fusion` | Visual-inertial pose estimate | no (reads tracker output) | no |
-| `mavlink_udp` | Pose -> MAVLink to FC | no | yes (today's chobitsfan bridge) |
+```
+USB OAK-D
+  -> vio-tracker (feature_tracker)
+       --/tmp/chobits_imu, /tmp/chobits_features-->
+  -> vio-estimator (vins_fusion)
+       --/tmp/chobits_server-->
+  -> coordinator-mavlink (coordinator router; chobitsfan mavlink_udp is bring-up reference only)
+       --UART--> FC
+       (later: Pi Zero traffic, obstacle MAVLink, etc.)
+```
 
-`feature_tracker` and `vins_fusion` talk to each other over localhost (UDP/ports in `oak_d.yaml` -- exact wiring confirmed when the image lands). `mavlink_udp` sits on the end of that chain.
+| Service | Binary (hypothesis) | Devices / mounts |
+|---------|---------------------|------------------|
+| `vio-tracker` | `feature_tracker` | USB; `${COORDINATOR_IPC_DIR}:/tmp`; config ro |
+| `vio-estimator` | `vins_fusion` | `${COORDINATOR_IPC_DIR}:/tmp`; config ro |
+| `coordinator-mavlink` | coordinator MAVLink router | `${COORDINATOR_IPC_DIR}:/tmp`; FC serial; host network for Pi Zeros |
 
-FC / EKF notes: [ardupilot-vio.md](ardupilot-vio.md) (exploratory; not a tuned param set).
+### Why three containers
+
+| Benefit | Notes |
+|---------|-------|
+| Isolated logs | `coord logs vio-tracker` vs untangling one supervisord stream |
+| Isolated rebuilds | Tracker image changes on depthai / pipeline / recording; estimator stays on a pinned chobitsfan SHA; router rebuilds during FC integration |
+| Isolated restarts | MAVLink router crash does not kill the camera pipeline |
+| Bench without FC | Start tracker + estimator only; no serial device |
+
+`network_mode: host` is still useful on mavlink (and optionally elsewhere) for Pi Zero `br0` traffic. **Host network does not share `/tmp`** between containers; the ipc bind mount is what wires sockets across services.
+
+### IPC volume
+
+Set `COORDINATOR_IPC_DIR=/var/lib/coordinator/ipc` on the host. Each participating service mounts it at `/tmp` so hardcoded chobitsfan paths (`/tmp/chobits_imu`, etc.) work without source patches.
+
+Operational notes:
+
+- Create the directory before `coord start`; entrypoints should unlink stale `chobits_*` socket files after crashes.
+- Run participating containers as the same UID, or make the ipc dir group-writable with a shared group.
+- Replacing container `/tmp` is acceptable for these minimal single-purpose images.
+
+### Compose profiles
+
+| Profile | Services | Use |
+|---------|----------|-----|
+| `bench` (default) | `vio-tracker`, `vio-estimator` | Desk: Pi + OAK-D, no FC |
+| `flight` | above + `coordinator-mavlink` | FC serial mounted |
+
+Startup order: `vio-estimator` before `vio-tracker` floods IMU (soft `depends_on` + restart policy). `coordinator-mavlink` after estimator is publishing pose (flight profile).
+
+## Rekon goals beyond wiki VIO
+
+The ArduPilot OAK-D wiki stack proves pose to FC. Coordinator also targets goals from Rekon design docs. Which binary owns each item is spelled out in [vio-integration.md](vio-integration.md).
+
+| Goal | In stock chobitsfan? |
+|------|----------------------|
+| Bounded canopy VIO pose | Partially (estimator + bridge pattern) |
+| OAK-D image capture to disk (review / fly-through) | No -- likely `feature_tracker` / pipeline extension |
+| Obstacle distance from depth | No -- disparity already computed in tracker |
+| Pi Zero command / telemetry via USB bridge | No -- coordinator MAVLink router |
+
+Pi Zero relay and obstacle MAVLink can ship after vision bench if complexity warrants deferral; the router process is still the long-term home for FC-facing integration.
 
 ## Bench without FC
 
-You should be able to validate the coordinator on a desk with only Pi + OAK-D:
+1. `coord start` with bench profile (tracker + estimator only).
+2. Confirm OAK-D on USB (`vio-tracker` logs).
+3. Confirm tracker and estimator stay up; pose visible on `/tmp/chobits_server` or router logs once a tap exists.
 
-- Run **vision only** (`feature_tracker` + `vins_fusion`): confirms USB, depthai, tracking, and pose output in logs or a recorded stream.
-- **Do not** start `mavlink_udp` (or do not mount a serial device) until an FC is wired.
-- Optional: point `mavlink_udp` at a UDP MAVLink listener on the host (QGroundControl, `mavlink-router`, etc.) instead of UART -- only if the chobitsfan binary supports that path; otherwise vision-only bench is the default.
+Do not mount FC serial or start `coordinator-mavlink` until an FC is wired.
 
-Compose should express this with **profiles** or separate services so `coord start` on a bench machine does not require `/dev/serial0` to exist. Flight profile adds the MAVLink bridge.
+## Stack services (compose skeleton)
 
-## Container layout: options (not decided)
+`stacks/coordinator/compose.yaml` defines the three services above as placeholders until images ship. Image names and Dockerfiles land in a follow-up PR.
 
-The skeleton compose file has a single `vio` service as a placeholder. When the image exists, pick among:
+ROS in a container remains optional later; the host never installs ROS for the flight path.
 
-### A. One container, all three processes
+## FC / EKF
 
-One image; entrypoint starts tracker, then estimator, then mavlink (supervisord or a small wrapper).
-
-| Pros | Cons |
-|------|------|
-| Simplest compose and ops (`coord pull`, one log stream) | Bench without FC needs entrypoint mode flags anyway |
-| Matches upstream "open three terminals" as one unit | Restart / crash of one process often takes down the group |
-| Blueos-oakd-vins precedent | Serial device mount required even for vision-only unless entrypoint skips mavlink |
-
-### B. Two containers: vision + mavlink (leaning here)
-
-| Service | Processes | Devices |
-|---------|-----------|---------|
-| `vio-vision` | `feature_tracker`, `vins_fusion` | USB only |
-| `vio-mavlink` | `mavlink_udp` | USB not required; serial (or UDP-out if supported) |
-
-Both use `network_mode: host` so localhost UDP between vision and mavlink works without extra Docker networking.
-
-| Pros | Cons |
-|------|------|
-| Bench profile starts only `vio-vision` -- no FC, no serial | Startup order: vision before mavlink (`depends_on` + healthcheck or retry) |
-| FC serial mount isolated to the small bridge container | Two services to monitor (still one image, two commands, is fine) |
-| Restart MAVLink bridge without killing the camera pipeline | Slightly more compose YAML |
-
-### C. Three containers (one process each)
-
-Maximum isolation. Probably not worth it on a Pi 4B unless we hit a concrete restart or dep issue -- the processes are already lightweight compared to VINS compute.
-
-### D. One container, compose profiles control entrypoint
-
-Single service; `COORD_PROFILE=bench|flight` selects `vision-only` vs `full` inside the entrypoint. Same image as A, but compose does not need two services -- only env var and no serial mount in bench profile.
-
-| Pros | Cons |
-|------|------|
-| One service in compose | Still one failure domain; profile logic lives in entrypoint |
-| Clean bench (no serial in bench env) | Less obvious in `docker ps` what is running |
-
-**Recommendation for next image PR:** target **B** or **D** so bench-without-FC is a first-class compose profile, not an afterthought. **B** is more explicit in Dockge/`coord status`; **D** is fewer moving parts if entrypoint modes stay simple.
-
-## Stack services (current)
-
-`compose.yaml` still has a single `vio` placeholder until the image PR splits or profiles land.
-
-ROS in a container remains optional later; the host never installs ROS.
+Exploratory notes only: [ardupilot-vio.md](ardupilot-vio.md). Not a settled param recipe or fusion policy.

@@ -10,11 +10,13 @@ Background reading and deployment patterns that influenced coordinator design. *
 
 ## ArduPilot VIO
 
-- [Luxonis OAK-D (ArduPilot)](https://ardupilot.org/copter/docs/common-vio-oak-d.html) -- official wiring, build, FC params
-- [chobitsfan VINS-Fusion `apm_wiki`](https://github.com/chobitsfan/VINS-Fusion/tree/apm_wiki)
-- [chobitsfan oak_d_vins_cpp `apm_wiki`](https://github.com/chobitsfan/oak_d_vins_cpp/tree/apm_wiki)
-- [chobitsfan mavlink-udp-proxy `apm_wiki`](https://github.com/chobitsfan/mavlink-udp-proxy/tree/apm_wiki)
-- [Blueos-oakd-vins](https://github.com/Williangalvani/Blueos-oakd-vins) -- containerized build of the same binary stack (no ROS)
+- [Luxonis OAK-D (ArduPilot)](https://ardupilot.org/copter/docs/common-vio-oak-d.html) -- upstream wiring and build reference
+- [chobitsfan VINS-Fusion `apm_wiki`](https://github.com/chobitsfan/VINS-Fusion/tree/apm_wiki) -- `vio-estimator` hypothesis
+- [chobitsfan oak_d_vins_cpp `apm_wiki`](https://github.com/chobitsfan/oak_d_vins_cpp/tree/apm_wiki) -- `vio-tracker` hypothesis
+- [chobitsfan mavlink-udp-proxy `apm_wiki`](https://github.com/chobitsfan/mavlink-udp-proxy/tree/apm_wiki) -- reference only; coordinator ships its own router
+- [Blueos-oakd-vins](https://github.com/Williangalvani/Blueos-oakd-vins) -- containerized build pattern (different runtime egress)
+
+Coordinator IPC and binary plan: [vio-integration.md](vio-integration.md).
 
 ## Operator-pattern influence (generic tooling)
 
