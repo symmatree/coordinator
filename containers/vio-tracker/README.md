@@ -32,7 +32,7 @@ docker buildx build --platform linux/arm64 --load \
 
 ## CI / GHCR
 
-`.github/workflows/build-vio-tracker.yaml` builds `linux/arm64` on push to `main` and pushes to `ghcr.io/symmatree/coordinator-vio-tracker`. The workflow uses `setup-qemu-action` on the Actions runner.
+`.github/workflows/build-vio-tracker.yaml` builds natively on `ubuntu-24.04-arm` and pushes to `ghcr.io/symmatree/coordinator-vio-tracker` on push to `main`.
 
 ## Compose
 
