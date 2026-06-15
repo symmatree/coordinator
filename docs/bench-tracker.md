@@ -5,7 +5,7 @@ First coordinator iteration: prove `feature_tracker` runs in `vio-tracker` with 
 ## Prerequisites
 
 - Raspberry Pi 4B with USB 3 port for the OAK-D
-- Docker Engine + Compose plugin ([host/ansible/install-coordinator.yaml](../host/ansible/install-coordinator.yaml))
+- Host bootstrap complete ([host-setup.md](host-setup.md) -- `./host/one_time.sh`)
 - Stack at `/opt/stacks/coordinator/` and `coord` on `PATH`
 - `/var/lib/coordinator/ipc` created (playbook does this)
 
@@ -36,7 +36,7 @@ coord logs -f vio-tracker
 | No USB device | Cable/port; `lsusb` shows Luxonis; container has `/dev/bus/usb` and `privileged: true` |
 | depthai / XLink error | Power (OAK-D wants USB3 current); try another port/cable |
 | `0 features` | Lens cap, pointed at blank wall, or extreme motion blur |
-| Image pull denied | `docker login ghcr.io` if the package is private |
+| Image pull fails | Network; tag in `.env` (`VIO_TRACKER_VERSION=main`); `docker pull ghcr.io/symmatree/coordinator-vio-tracker:main` to isolate registry issues |
 
 ## IPC sockets (optional check)
 

@@ -11,6 +11,7 @@ On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and 
 | `containers/vio-tracker/` | OAK-D `feature_tracker` image (arm64) |
 | `bin/coord` | Operator CLI over `docker compose` |
 | `host/ansible/` | Pi bootstrap (Docker, stack paths, `coord`) |
+| `host/one_time.sh` | One-time apt + Ansible entrypoint on the Pi |
 | `docs/` | Architecture, bench runbooks, references |
 
 ## Vision stack
@@ -38,10 +39,9 @@ Per-service logs: `coord logs vio-tracker`, etc.
 
 ## Quick start (Pi + OAK-D)
 
-1. Bootstrap host: [host/README.md](host/README.md) (`ansible-playbook` with `coordinator_sync_repo=true`).
-2. Set `VIO_TRACKER_VERSION` in `/opt/stacks/coordinator/.env` (e.g. `main` after CI publishes).
-3. `coord pull` then `coord start` (default `tracker` profile).
-4. `coord logs -f vio-tracker` -- expect USB speed, `imu ok`, `N features`.
+1. One-time host setup: [docs/host-setup.md](docs/host-setup.md) (`./host/one_time.sh` after clone).
+2. Attach OAK-D, then `coord pull`, `coord start` (default `tracker` profile).
+3. `coord logs -f vio-tracker` -- expect USB speed, `imu ok`, `N features`.
 
 Runbook: [docs/bench-tracker.md](docs/bench-tracker.md).
 

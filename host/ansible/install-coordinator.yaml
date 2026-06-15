@@ -4,7 +4,10 @@
 #
 #   ansible-playbook host/ansible/install-coordinator.yaml
 #
-# Optional: sync stack + CLI from this repo instead of assuming files already at /opt/stacks/coordinator
+# Typical first boot (sync stack + CLI from checkout):
+#   ./host/one_time.sh
+#
+# Manual equivalent:
 #   ansible-playbook host/ansible/install-coordinator.yaml -e coordinator_sync_repo=true
 
 - name: Coordinator host bootstrap (Pi 4B)
@@ -20,6 +23,13 @@
     docker_users:
       - "{{ ansible_user_id }}"
   tasks:
+    - name: Assert arm64 host for coordinator container images
+      ansible.builtin.assert:
+        that:
+          - ansible_architecture == "aarch64"
+        fail_msg: >-
+          Coordinator images are linux/arm64. Install 64-bit Raspberry Pi OS on Pi 4B.
+
     - name: Install packages for Docker apt repo
       ansible.builtin.apt:
         name:
@@ -69,6 +79,7 @@
         groups: docker
         append: true
       loop: "{{ docker_users }}"
+      register: docker_group_membership
 
     - name: Enable and start Docker
       ansible.builtin.service:
@@ -100,9 +111,20 @@
         mode: "0755"
       when: coordinator_sync_repo
 
-    - name: Remind operator to log in to GHCR for private images
+    - name: Reboot to apply docker group membership
+      ansible.builtin.reboot:
+        msg: Coordinator bootstrap -- apply docker group membership
+        reboot_timeout: 600
+      when: docker_group_membership.changed
+
+    - name: Bootstrap complete
       ansible.builtin.debug:
         msg: >-
-          If ghcr.io/symmatree/coordinator-vio-tracker is private, run
-          docker login ghcr.io before coord pull.
-      when: coordinator_sync_repo
+          Host bootstrap finished.
+          {% if docker_group_membership.changed %}
+          Reboot applied docker group membership.
+          {% else %}
+          Docker group unchanged (re-login only if docker permission denied).
+          {% endif %}
+          Next with OAK-D on USB3: coord pull, coord start, coord logs -f vio-tracker.
+          See docs/bench-tracker.md.
