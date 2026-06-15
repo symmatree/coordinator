@@ -4,7 +4,10 @@
 #
 #   ansible-playbook host/ansible/install-coordinator.yaml
 #
-# Optional: sync stack + CLI from this repo instead of assuming files already at /opt/stacks/coordinator
+# Typical first boot (sync stack + CLI from checkout):
+#   ./host/one_time.sh
+#
+# Manual equivalent:
 #   ansible-playbook host/ansible/install-coordinator.yaml -e coordinator_sync_repo=true
 
 - name: Coordinator host bootstrap (Pi 4B)
@@ -20,6 +23,13 @@
     docker_users:
       - "{{ ansible_user_id }}"
   tasks:
+    - name: Assert arm64 host for coordinator container images
+      ansible.builtin.assert:
+        that:
+          - ansible_architecture == "aarch64"
+        fail_msg: >-
+          Coordinator images are linux/arm64. Install 64-bit Raspberry Pi OS on Pi 4B.
+
     - name: Install packages for Docker apt repo
       ansible.builtin.apt:
         name:
@@ -100,9 +110,33 @@
         mode: "0755"
       when: coordinator_sync_repo
 
-    - name: Remind operator to log in to GHCR for private images
+    - name: Check if kernel, firmware, or modules need a reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Reboot to apply pending kernel, firmware, or module updates
+      ansible.builtin.reboot:
+        msg: Coordinator bootstrap -- apply pending kernel/firmware updates
+        reboot_timeout: 600
+      when: reboot_required.stat.exists
+      register: host_reboot
+
+    - name: Re-check reboot required after possible reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_final
+
+    - name: Bootstrap complete
       ansible.builtin.debug:
         msg: >-
-          If ghcr.io/symmatree/coordinator-vio-tracker is private, run
-          docker login ghcr.io before coord pull.
-      when: coordinator_sync_repo
+          Host bootstrap finished.
+          {% if reboot_required_final.stat.exists %}
+          Reboot still required (/var/run/reboot-required). Run ./host/one_time.sh again.
+          {% elif host_reboot is defined and host_reboot.changed %}
+          Reboot applied pending kernel/firmware updates. Run ./host/one_time.sh again if SSH dropped.
+          {% else %}
+          No pending kernel/firmware reboot. Use newgrp docker or re-login once if docker permission denied.
+          {% endif %}
+          Next with OAK-D on USB3: coord pull, coord start, coord logs -f vio-tracker.
+          See docs/bench-tracker.md.
