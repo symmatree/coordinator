@@ -1,0 +1,8 @@
+# Pinned upstream sources for coordinator-vio-tracker image builds.
+# Regenerate SHAs after intentional upstream bumps.
+
+DEPTHAI_CORE_TAG=v2.25.0
+DEPTHAI_CORE_SHA=d150f133e0f4843372a3cbfd3ae7bc779ba059a5
+
+OAK_D_VINS_CPP_BRANCH=apm_wiki
+OAK_D_VINS_CPP_SHA=378f40fc92216b679bbdccacbd00e989f5a95b11
