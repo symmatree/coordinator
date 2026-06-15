@@ -35,6 +35,8 @@ What **did** change in 2.0 (and may match what you heard):
 
 For headless bench without Imager step 4: use **Ethernet**, or attach a **display/keyboard once** for the first-boot wizard, or sign in to **Raspberry Pi Connect** during imaging (Imager 2.0).
 
+**Lab WiFi while flashing:** Have the bench/lab WiFi network available when you run Imager step 4 and enter SSID + credentials there. That gives the Pi onboard WiFi on first boot for SSH, `git clone`, and `coord pull` during setup and testing. In flight the coordinator will not rely on upstream WiFi (Pi Zero USB gadget network only); disabling WiFi in flight is a later ops concern, not an Imager step.
+
 | Setting | Recommendation | Why |
 |---------|----------------|-----|
 | OS | Raspberry Pi OS (64-bit), official list entry | Container images are `linux/arm64` |
@@ -43,25 +45,26 @@ For headless bench without Imager step 4: use **Ethernet**, or attach a **displa
 | Hostname | e.g. `coordinator` (step 4) | Matches `HOSTNAME` in stack `.env` (cosmetic) |
 | User / password | Your operator account (step 4) | SSH and Docker group membership |
 | SSH | Enable in step 4, or use first-boot wizard / Pi Connect | Headless bring-up |
-| WiFi | Step 4 if not using Ethernet | Optional |
+| WiFi | **Lab SSID in step 4** (and/or Ethernet on the bench) | Built-in Pi 4B WiFi; no dongle. Useful for prep; not the in-flight network |
 | Storage | Quality SD or USB boot later | Per [virtualization-study](https://github.com/symmatree/fables/blob/main/fables/Drones/coordinator/virtualization-study.md): avoid heavy control-plane IOPS on SD; Docker Compose idle I/O is low |
 
-### Not needed yet (forward-looking from virtualization-study)
+### Not needed at image install (later host playbooks)
 
-These are **out of scope** for the tracker-only bootstrap; document so Imager is not over-customized now:
+These are **out of scope** for the tracker-only bootstrap and **do not** belong in Imager step 4 or the first `./host/one_time.sh` run:
 
-| Future subsystem | Host change (later playbook) | Imager default OK now? |
-|------------------|------------------------------|-------------------------|
+| Future subsystem | Host change (later playbook) | Imager / first bootstrap OK now? |
+|------------------|------------------------------|----------------------------------|
 | chrony + PPS (DS3234 SQW to GPIO) | `dtoverlay=pps-gpio,gpiopin=18` in `/boot/firmware/config.txt`, chrony on **host** | Yes |
 | Pi Zero USB gadget `br0` | Host bridge + DHCP (NetworkManager or systemd-networkd); `dwc2`/`g_ether` on **Zeros**, not coordinator | Yes |
 | FC MAVLink UART | `enable_uart=1`, serial console off primary UART | Yes (no FC in `tracker` profile) |
 | WiFi AP/station utility | NetworkManager / D-Bus (host or utility container) | Yes |
+| SparkFun Top pHAT 2.4" TFT | Compile `sfe-topphat-overlay.dts` to `.dtbo`, install under `/boot/firmware/overlays/`, add `dtoverlay=rpi-display,...` to `/boot/firmware/config.txt` ([SparkFun guide](https://learn.sparkfun.com/tutorials/sparkfun-top-phat-hookup-guide/24-tft-display-linux-54-update)) | Yes -- add when the pHAT is on the board, not at SD flash time |
 
 The study recommends **stock Pi OS + Docker Compose** with chrony and `br0` on the host kernel -- consistent with Imager defaults plus Ansible, not a custom image.
 
 ## 1. Flash and first boot
 
-1. Flash the SD card: Imager 2.0+, official Pi OS (64-bit). Use wizard step 4 if you want SSH/WiFi pre-configured, or use Ethernet / first-boot wizard / Pi Connect instead.
+1. Flash the SD card: Imager 2.0+, official Pi OS (64-bit). At step 4, set **lab WiFi** (and SSH) if you will not use Ethernet on the bench; have that network in range while imaging.
 2. Boot the Pi 4B, connect power and network (Ethernet, Imager WiFi, or wizard-configured WiFi).
 3. SSH in: `ssh <user>@<hostname>.local` (or the Pi IP from your router).
 
