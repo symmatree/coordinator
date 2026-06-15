@@ -5,15 +5,19 @@ on:
     paths:
       - containers/vio-tracker/**
       - .github/workflows/build-vio-tracker.yaml
+  pull_request:
+    paths:
+      - containers/vio-tracker/**
+      - .github/workflows/build-vio-tracker.yaml
   workflow_dispatch: {}
 
 jobs:
   build-vio-tracker:
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       id-token: write
       packages: write
-    runs-on: ubuntu-latest
     env:
       IMAGE_NAME: ghcr.io/symmatree/coordinator-vio-tracker
       IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
@@ -36,9 +40,6 @@ jobs:
             echo "oak_d_vins_cpp_sha=${OAK_D_VINS_CPP_SHA}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -59,7 +60,7 @@ jobs:
           context: containers/vio-tracker
           file: containers/vio-tracker/Dockerfile
           platforms: linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.docker-metadata.outputs.tags }}
           labels: ${{ steps.docker-metadata.outputs.labels }}
           build-args: |
