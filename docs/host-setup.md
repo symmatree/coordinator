@@ -13,7 +13,9 @@ Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansi
 | GitHub clone | Repo is **public**; HTTPS clone needs no `gh auth login` |
 | Standalone `docker pull` | **Optional diagnostic only** -- `coord pull` already pulls the image; skip unless debugging registry/network |
 | Install path | Clone repo on Pi, run `host/one_time.sh` with `coordinator_sync_repo=true` (wired in the script) |
-| Reboot | Ansible reboots **only when** the operator user is newly added to the `docker` group (first bootstrap) |
+| Reboot | Ansible reboots when `/var/run/reboot-required` is set (kernel, firmware, or modules after `dist-upgrade`) -- **not** for docker group membership |
+| Repeat until stable | Run `./host/one_time.sh` again after each reboot until it exits without triggering one |
+| Deployer alternative | Run Ansible from a laptop against the Pi inventory instead of installing Ansible on the Pi -- lighter if local bootstrap becomes painful (not needed yet) |
 
 ## Imager settings (tracker bench)
 
@@ -80,13 +82,15 @@ What it does:
 
 1. `apt update`, `dist-upgrade`, install `ansible` and minimal deps (same shape as [dotfiles `one_time.sh`](https://github.com/symmatree/dotfiles-symm/blob/main/ubuntu-zsh/one_time.sh)).
 2. Ansible: Docker CE + Compose plugin, `/opt/stacks/coordinator`, `/var/lib/coordinator/{config,ipc}`, sync stack + `coord` CLI from this checkout.
-3. If your user was **newly** added to the `docker` group, Ansible **reboots once** and waits; otherwise continue without reboot.
+3. If `dist-upgrade` left `/var/run/reboot-required` set (new kernel, firmware, or modules), Ansible **reboots and waits** for the host to return.
+
+**Repeat until stable:** run `./host/one_time.sh` again after any reboot until the script prints `one_time: complete (no pending kernel/firmware reboot).` Fresh images often need one cycle; idempotent re-runs should not reboot again.
 
 If bootstrap fails on architecture, the playbook requires **aarch64** (64-bit Pi OS).
 
 ## 4. After bootstrap (no OAK-D required yet)
 
-If Ansible did **not** reboot, either log out and back in or run `newgrp docker` once if `docker ps` reports permission denied.
+If `docker ps` reports permission denied, run `newgrp docker` once or log out and back in (docker group membership does not trigger a reboot).
 
 Optional registry check (not required when GHCR is public):
 
@@ -120,7 +124,8 @@ Full checklist and failure modes: [bench-tracker.md](bench-tracker.md).
 | Symptom | Check |
 |---------|--------|
 | `exec format error` / wrong arch | 32-bit Pi OS; re-flash **64-bit** image |
-| `permission denied` on `docker ps` | Re-login, `newgrp docker`, or re-run bootstrap (reboot should have applied group) |
+| `permission denied` on `docker ps` | `newgrp docker` or re-login (not a reboot) |
+| Script exits 1, reboot-required still set | Run `./host/one_time.sh` again after the host is back |
 | Ansible `apt` / Docker repo errors | Pi has network; `ansible_distribution_release` matches your Pi OS codename |
 | Playbook OK but no `/opt/stacks/coordinator/compose.yaml` | Re-run with `-e coordinator_sync_repo=true` (default in `one_time.sh`) |
 

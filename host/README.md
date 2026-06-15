@@ -12,7 +12,7 @@ After clone on the Pi:
 ./host/one_time.sh
 ```
 
-That installs Ansible, runs [ansible/install-coordinator.yaml](ansible/install-coordinator.yaml) with `coordinator_sync_repo=true`, and reboots once if your user was newly added to the `docker` group.
+That installs Ansible, runs [ansible/install-coordinator.yaml](ansible/install-coordinator.yaml) with `coordinator_sync_repo=true`, and reboots when kernel/firmware updates require it. Repeat until the script completes without rebooting.
 
 Then bench the tracker: [docs/bench-tracker.md](../docs/bench-tracker.md).
 
