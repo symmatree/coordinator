@@ -56,8 +56,6 @@ USB OAK-D
 | Isolated restarts | MAVLink router crash does not kill the camera pipeline |
 | Bench without FC | `tracker` profile: OAK-D only; `bench`: tracker + estimator; no serial |
 
-`network_mode: host` is still useful on mavlink (and optionally elsewhere) for Pi Zero `br0` traffic. **Host network does not share `/tmp`** between containers; the ipc bind mount is what wires sockets across services.
-
 ### IPC volume
 
 Set `COORDINATOR_IPC_DIR=/var/lib/coordinator/ipc` on the host. Each participating service mounts it at `/tmp` so hardcoded chobitsfan paths (`/tmp/chobits_imu`, etc.) work without source patches.

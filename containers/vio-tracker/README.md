@@ -8,41 +8,32 @@ Pinned refs: `upstream.lock`.
 
 - `/opt/coordinator/bin/feature_tracker` -- mono/stereo feature tracking, IMU, disparity; publishes Unix dgram sockets under `/tmp/chobits_*`
 - depthai runtime libraries under `/opt/depthai/lib`
+- `dumb-init` as PID 1; entrypoint clears stale `chobits_*` socket files then execs `feature_tracker`
 
-## Build
+## Dockerfile
 
-On a Pi 4B (native arm64, fastest):
+Multi-stage build: compile depthai-core and `feature_tracker` in a builder image; runtime image is `debian:bookworm-slim` with OpenCV and depthai libs copied in. Target platform is **linux/arm64** (Pi 4B hub).
+
+## Local build
+
+From the repo root, same architecture as the Docker daemon (arm64 image on an arm64 builder; cross-build on amd64 needs host arm64 emulation -- without it, `RUN` steps fail with `exec /bin/sh: exec format error`):
 
 ```bash
 docker build -t ghcr.io/symmatree/coordinator-vio-tracker:local containers/vio-tracker
 ```
 
-From a cross-build host:
+**amd64 host cross-build** (WSL/Ubuntu): `qemu-user-static` and `binfmt-support` on the host (dotfiles `install-tools.ansible.yaml`), a `docker-container` buildx builder, then:
 
 ```bash
-docker buildx build --platform linux/arm64 \
+docker buildx build --platform linux/arm64 --load \
   -t ghcr.io/symmatree/coordinator-vio-tracker:local \
   containers/vio-tracker
 ```
 
-CI publishes to `ghcr.io/symmatree/coordinator-vio-tracker` on push to `main` and on manual dispatch.
+## CI / GHCR
 
-## Run (smoke)
+`.github/workflows/build-vio-tracker.yaml` builds `linux/arm64` on push to `main` and pushes to `ghcr.io/symmatree/coordinator-vio-tracker`. The workflow uses `setup-qemu-action` on the Actions runner.
 
-```bash
-docker run --rm -it --privileged \
-  -v /dev/bus/usb:/dev/bus/usb \
-  -v /var/lib/coordinator/ipc:/tmp \
-  ghcr.io/symmatree/coordinator-vio-tracker:local
-```
+## Compose
 
-Healthy output includes USB speed, device name (`OAK-D` or `OAK-D-Pro`), `imu ok`, and periodic `N features` lines.
-
-## Stack
-
-Use the `tracker` compose profile (see [docs/bench-tracker.md](../../docs/bench-tracker.md)):
-
-```bash
-coord start
-coord logs -f vio-tracker
-```
+Service name: `vio-tracker` in `stacks/coordinator/compose.yaml` (`tracker` profile). Stack layout and bench steps: [docs/bench-tracker.md](../../docs/bench-tracker.md).

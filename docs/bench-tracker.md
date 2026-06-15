@@ -29,17 +29,6 @@ coord status
 coord logs -f vio-tracker
 ```
 
-## Healthy signs
-
-In `vio-tracker` logs you should see:
-
-1. `Usb speed: ...` (expect SUPER for USB3 port)
-2. `Device name: OAK-D` (or `OAK-D-PRO`) and product name
-3. `imu ok`
-4. Periodic `N features` lines (N > 0 with the camera pointed at texture)
-
-The process exits cleanly on `SIGINT` / `docker stop`.
-
 ## If it fails
 
 | Symptom | Things to check |
@@ -58,17 +47,13 @@ With `${COORDINATOR_IPC_DIR}` mounted at `/tmp`, the tracker creates:
 
 Later, with `vio-estimator` running, the same mount wires tracker to VINS.
 
-## Local image build (no GHCR)
-
-On the Pi:
+## Local image build
 
 ```bash
-git clone https://github.com/symmatree/coordinator.git
-cd coordinator
 docker build -t ghcr.io/symmatree/coordinator-vio-tracker:local containers/vio-tracker
 ```
 
-Set `VIO_TRACKER_VERSION=local` in `.env` only if you tag locally; compose uses the image name from `compose.yaml`.
+See [containers/vio-tracker/README.md](../containers/vio-tracker/README.md) for cross-build on amd64. Tag `local` in `.env` only if you built that tag locally.
 
 ## Next iteration
 
