@@ -19,16 +19,31 @@ Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansi
 
 ## Imager settings (tracker bench)
 
-Use Raspberry Pi Imager defaults unless noted. Nothing here is required for issue #5 beyond **64-bit** OS; later host work (chrony, USB `br0`) adds boot config in follow-up playbooks.
+Use **Raspberry Pi Imager 2.0+** and pick **official Raspberry Pi OS (64-bit)** from the online OS list (not a bare local `.img` file). Nothing beyond 64-bit is required for issue #5; later host work (chrony, USB `br0`) adds boot config in follow-up playbooks.
+
+### Pre-flash configuration (what Imager still supports)
+
+Imager **did not** drop OS customization for official Pi OS images. In [Imager 2.0](https://www.raspberrypi.com/news/a-new-raspberry-pi-imager/) it moved from a hidden "advanced options" dialog into wizard **step 4 -- Configure your system** (hostname, locale, user, WiFi, SSH keys, Raspberry Pi Connect, etc.). That is still pre-imaging configuration baked into the written image.
+
+What **did** change in 2.0 (and may match what you heard):
+
+| Case | Pre-flash customize in Imager? |
+|------|--------------------------------|
+| Official **Raspberry Pi OS** from Imager's online list, Imager **2.0+** | Yes -- wizard step 4 |
+| **Trixie** + Imager **1.9.x** | No -- old Imager cannot apply Trixie's `cloudinit-rpi` format; use Imager 2.0 or skip and use the [first-boot wizard](https://www.raspberrypi.com/documentation/computers/getting-started.html#configuration-on-first-boot) on a display |
+| **Local/custom `.img`** (not from the official list) | No by default -- needs a [custom repository JSON](https://www.raspberrypi.com/news/how-to-add-your-own-images-to-imager/) with the right `init_format` |
+
+For headless bench without Imager step 4: use **Ethernet**, or attach a **display/keyboard once** for the first-boot wizard, or sign in to **Raspberry Pi Connect** during imaging (Imager 2.0).
 
 | Setting | Recommendation | Why |
 |---------|----------------|-----|
-| OS | Raspberry Pi OS (64-bit) | Container images are `linux/arm64` |
-| Variant | Desktop or Lite | Lite is fine headless if Imager **Enable SSH** (and WiFi if needed) are set |
-| Hostname | e.g. `coordinator` | Matches `HOSTNAME` in stack `.env` (cosmetic) |
-| User / password | Your operator account | Used for SSH and Docker group membership |
-| SSH | Enable (Imager advanced options) | Headless bring-up |
-| WiFi | Configure in Imager if not using Ethernet | Optional |
+| OS | Raspberry Pi OS (64-bit), official list entry | Container images are `linux/arm64` |
+| Imager | 2.0 or newer | Matches current Pi OS customization mechanism |
+| Variant | Desktop or Lite | Either works; Lite is fine headless if step 4 sets SSH/WiFi or you use Ethernet |
+| Hostname | e.g. `coordinator` (step 4) | Matches `HOSTNAME` in stack `.env` (cosmetic) |
+| User / password | Your operator account (step 4) | SSH and Docker group membership |
+| SSH | Enable in step 4, or use first-boot wizard / Pi Connect | Headless bring-up |
+| WiFi | Step 4 if not using Ethernet | Optional |
 | Storage | Quality SD or USB boot later | Per [virtualization-study](https://github.com/symmatree/fables/blob/main/fables/Drones/coordinator/virtualization-study.md): avoid heavy control-plane IOPS on SD; Docker Compose idle I/O is low |
 
 ### Not needed yet (forward-looking from virtualization-study)
@@ -46,8 +61,8 @@ The study recommends **stock Pi OS + Docker Compose** with chrony and `br0` on t
 
 ## 1. Flash and first boot
 
-1. Flash the SD card with Raspberry Pi Imager (settings above).
-2. Boot the Pi 4B, connect power and network (Ethernet or Imager WiFi).
+1. Flash the SD card: Imager 2.0+, official Pi OS (64-bit). Use wizard step 4 if you want SSH/WiFi pre-configured, or use Ethernet / first-boot wizard / Pi Connect instead.
+2. Boot the Pi 4B, connect power and network (Ethernet, Imager WiFi, or wizard-configured WiFi).
 3. SSH in: `ssh <user>@<hostname>.local` (or the Pi IP from your router).
 
 Optional sanity check:
