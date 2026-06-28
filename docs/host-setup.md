@@ -64,7 +64,8 @@ The study recommends **stock Pi OS + Docker Compose** with chrony and `br0` on t
 
 ## 1. Flash and first boot
 
-1. Flash the SD card: Imager 2.0+, official Pi OS (64-bit). At step 4, set **lab WiFi** (and SSH) if you will not use Ethernet on the bench; have that network in range while imaging.
+1. Flash the SD card: Imager 2.0+, official Pi OS (64-bit).
+2. At step 4: username "pi", password from 1password "rpi/pi" item. Hostname "coordinator". Provide house wifi. Enable SSH, provide public key for OnePKey ssh identity.
 2. Boot the Pi 4B, connect power and network (Ethernet, Imager WiFi, or wizard-configured WiFi).
 3. SSH in: `ssh <user>@<hostname>.local` (or the Pi IP from your router).
 
