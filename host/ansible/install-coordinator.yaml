@@ -96,6 +96,13 @@
         - "{{ coordinator_config_dir }}"
         - "{{ coordinator_ipc_dir }}"
 
+    - name: Install Luxonis udev rules for OAK-D (MyriadX USB re-enumeration)
+      ansible.builtin.copy:
+        dest: /etc/udev/rules.d/80-movidius.rules
+        content: 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"'
+        mode: "0644"
+      notify: Reload udev rules
+
     - name: Sync stack files from checkout
       ansible.builtin.copy:
         src: "{{ coordinator_repo_root }}/stacks/coordinator/"
@@ -140,3 +147,11 @@
           {% endif %}
           Next with OAK-D on USB3: coord pull, coord start, coord logs -f vio-tracker.
           See docs/bench-tracker.md.
+
+  handlers:
+    - name: Reload udev rules
+      ansible.builtin.command: udevadm control --reload-rules
+      notify: Trigger udev
+
+    - name: Trigger udev
+      ansible.builtin.command: udevadm trigger
