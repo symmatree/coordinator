@@ -21,7 +21,7 @@
     coordinator_ipc_dir: /var/lib/coordinator/ipc
     coordinator_sync_repo: false
     docker_users:
-      - "{{ ansible_user_id }}"
+      - "{{ lookup('env', 'USER') }}"
   tasks:
     - name: Assert arm64 host for coordinator container images
       ansible.builtin.assert:
