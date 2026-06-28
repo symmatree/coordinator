@@ -15,9 +15,14 @@ services:
     profiles: [tracker, bench, flight]
     privileged: true
     restart: unless-stopped
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
     volumes:
+      # Bind-mount /dev/bus/usb (NOT `devices:`). When depthai uploads firmware
+      # the MyriadX resets and re-enumerates to a new USB address/node. A static
+      # `devices:` mapping snapshots nodes at container start, so the booted
+      # device is invisible -> X_LINK_DEVICE_NOT_FOUND. A bind mount of the
+      # directory propagates the new node live. (privileged: true opens the
+      # device cgroup so the new node is usable.)
+      - /dev/bus/usb:/dev/bus/usb
       - ${COORDINATOR_IPC_DIR}:/tmp
       - ${COORDINATOR_CONFIG_DIR}:/config:ro
     env_file:
