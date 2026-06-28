@@ -101,14 +101,14 @@
         src: "{{ coordinator_repo_root }}/stacks/coordinator/"
         dest: "{{ coordinator_stack_dir }}/"
         mode: preserve
-      when: coordinator_sync_repo
+      when: coordinator_sync_repo | bool
 
     - name: Install coord CLI
       ansible.builtin.copy:
         src: "{{ coordinator_repo_root }}/bin/coord"
         dest: /usr/local/bin/coord
         mode: "0755"
-      when: coordinator_sync_repo
+      when: coordinator_sync_repo | bool
 
     - name: Check if kernel, firmware, or modules need a reboot
       ansible.builtin.stat:
