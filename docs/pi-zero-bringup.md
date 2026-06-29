@@ -70,11 +70,12 @@ No camera, no gadget net, no PPS yet. This proves Docker runs on the Zero -- the
 
 ### Phase 2 -- Capture container (stills to local SD, no coordination) -- [#23](https://github.com/symmatree/coordinator/issues/23)
 
-A `pod-camera` container pulls IMX708 stills at 1--2 Hz and writes JPEG + timestamp metadata to the Zero's **own SD card** (never over USB -- fables: USB 2.0 would bottleneck; the bus is for commands only).
+A `pod-camera` container pulls IMX708 stills at 1--2 Hz and writes JPEG + timestamp metadata to the Zero's **own SD card** (never over USB -- fables: USB 2.0 would bottleneck; the bus is for commands only). **Image + CI built** ([`containers/pod-camera/`](../containers/pod-camera/README.md)); pending hardware bring-up.
 
-- Capture stack (picamera2 vs rpicam-apps) decided when building this container. **The deciding factor is frame-sync exposure, not device passthrough** (passthrough is identical for both): the CM3 has no XVS hardware trigger, so the array relies on libcamera's **software camera-sync** -- one Zero is the **pacesetter/server**, the rest are clients aligning frame timing, with sync messages on the USB net (fables `arm-pods.md`; "<10 us" per libcamera). Whichever front-end most cleanly exposes that sync mode + the server/client role + per-frame timestamp metadata wins. (Understanding to confirm in #23: `rpicam-apps --sync server|client`; picamera2 `SyncMode` controls.)
-- Timestamps from `CLOCK_MONOTONIC` per fables, written as sidecar metadata for later PPK-style interpolation against ArduPilot pose logs.
-- On-disk layout under `/var/lib/pod/captures/` (host bind mount), naming TBD in the issue.
+- **Front-end: picamera2** (over rpicam-apps), chosen for frame-sync exposure and easy extension to the Phase 4 control API -- device passthrough is identical for both. Base image is `debian:bookworm-slim` + the Raspberry Pi apt archive so libcamera + picamera2 are matched and Pi-pipeline-aware (stock Debian libcamera enumerates "no cameras").
+- **Frame sync (the oddball bit):** the CM3 has no XVS hardware trigger, so the array relies on libcamera's **software camera-sync** -- one Zero is the **pacesetter/server**, the rest clients aligning frame timing, sync messages on the USB net (fables `arm-pods.md`; "<10 us" per libcamera). `capture.py` carries a guarded `POD_SYNC_MODE` hook, **default off**; the exact control surface (`SyncMode` server/client) is verified and wired in Phase 3 (#24). Standalone capture works regardless.
+- Each frame writes a JSON sidecar with `SensorTimestamp` (CLOCK_BOOTTIME at exposure) + wall/monotonic time -- the anchor for later PPK-style interpolation against ArduPilot pose logs.
+- On-disk layout: `/var/lib/pod/captures/<node>/<session>/<stem>.{jpg,json}`.
 - Success: `coord start` on the pod, frames accumulate on disk at the target rate, container stays up.
 
 Still standalone -- no network to anyone.

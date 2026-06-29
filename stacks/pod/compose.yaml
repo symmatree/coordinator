@@ -2,13 +2,9 @@
 # Manage with the shared CLI: coord pull | start | stop | status | logs [service]
 #
 # Profiles:
-#   (default, empty): nothing starts -- Phase 1 host bootstrap only
-#   capture:          pod-camera -- Phase 2 stills to local SD
+#   (default, empty): nothing starts -- host bootstrap only
+#   capture:          pod-camera -- stills to local SD (Phase 2)
 #   online:           capture + control API + alloy -- Phase 4 (services TBD)
-#
-# The pod-camera image and its camera device passthrough are Phase 2
-# (docs/pi-zero-bringup.md); the service below is a profile-gated placeholder so
-# `coord status` works and Dockge registers the stack after Phase 1.
 
 services:
   pod-camera:
@@ -16,12 +12,16 @@ services:
     container_name: pod_camera
     profiles: [capture, online]
     restart: unless-stopped
-    # Phase 2: libcamera/IMX708 device passthrough goes here. Candidates are
-    # `privileged: true` or explicit devices (/dev/video*, /dev/media*,
-    # /dev/dma_heap, vchiq) + /run/udev. Decided when the image is built.
+    # libcamera/IMX708 passthrough. privileged populates the container /dev with
+    # host devices and lifts the device cgroup (same pattern as vio-tracker);
+    # /run/udev lets libcamera enumerate the camera. If enumeration ever fails,
+    # fall back to explicit devices (/dev/video*, /dev/media*, /dev/dma_heap,
+    # vchiq). Verified end-to-end on hardware in #23.
+    privileged: true
     volumes:
       - ${POD_CAPTURES_DIR}:/captures
       - ${POD_CONFIG_DIR}:/config:ro
+      - /run/udev:/run/udev:ro
     env_file:
       - .env
 

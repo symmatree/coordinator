@@ -54,16 +54,26 @@ The camera overlays, `dwc2`/`g_ether`, and `pps-gpio` are **not** applied here -
 newgrp docker          # or re-login, if docker ps says permission denied
 docker ps
 ls /opt/stacks/pod/
-coord status           # auto-detects the sole stack (pod); empty until Phase 2
+coord status           # auto-detects the sole stack (pod); empty until `coord start`
 ```
 
 `coord` is the same CLI as on the Coordinator. With only the pod stack installed under `/opt/stacks/`, it defaults to that stack -- no flag needed.
+
+## Next: capture (Phase 2)
+
+With the camera attached, you can go straight to stills -- `stacks/pod/.env` ships `COMPOSE_PROFILES=capture`:
+
+```bash
+coord pull && coord start
+coord logs -f pod-camera
+```
+
+Image details, config env, and failure modes: [containers/pod-camera/README.md](../containers/pod-camera/README.md).
 
 ## Out of scope (later phases / issues)
 
 | Item | Phase | Pod role change |
 |------|-------|-----------------|
-| Capture container | 2 | `pod-camera` image + `stacks/pod` service |
 | USB gadget net (`dwc2`/`g_ether`) | 3 | `/boot/firmware/config.txt` overlay + module |
 | chrony client + PPS (`pps-gpio`) | 3 | overlay + chrony role (client mode) |
 | Control API + status + Alloy | 4 | pod control service + Alloy container |
