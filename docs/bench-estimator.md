@@ -12,6 +12,8 @@ Second coordinator iteration: prove `vins_fusion` in `vio-estimator` consumes th
 
 `oak_d.yaml` ships **seed** values, not a measured calibration -- the plan is to refine the camera/IMU constants from a bundle adjustment over a real flight rather than hand-picking checkerboard corners. So `estimate_extrinsic: 1` and `estimate_td: 1` are on: `vins_fusion` optimizes the cam<->IMU transform and time offset online from the initial guess. If bench initialization is poor, set `estimate_extrinsic: 2` (full self-calibration, no prior) and excite all axes (rotate + translate the rig). The file lives at `/var/lib/coordinator/config/oak_d.yaml`; re-provisioning does **not** overwrite a refined copy (`force: false`).
 
+How that refinement gets captured, validated against the GPS trajectory, blessed, and kept honest over time is the [calibration capture chain](calibration.md) -- the seed here is the starting point that the flight-log pipeline replaces with a measured, serial-keyed calibration.
+
 ## Run the bench profile
 
 ```bash
