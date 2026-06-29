@@ -1,13 +1,53 @@
 #!/usr/bin/env bash
-# Coordinator stack operator CLI.
+# Rekon stack operator CLI -- one script for both coordinator and pod devices.
 set -euo pipefail
 
-COORD_COMPOSE_FILE="${COORD_COMPOSE_FILE:-/opt/stacks/coordinator/compose.yaml}"
+# Stack-aware compose-file resolution:
+#   1. COORD_COMPOSE_FILE (explicit)
+#   2. COORD_STACK -> /opt/stacks/$COORD_STACK/compose.yaml
+#   3. the sole stack under /opt/stacks/* (the common case: a pod has only the
+#      pod stack installed, the coordinator only the coordinator stack)
+COORD_STACKS_ROOT="${COORD_STACKS_ROOT:-/opt/stacks}"
+
+resolve_compose_file() {
+	if [[ -n ${COORD_COMPOSE_FILE:-} ]]; then
+		echo "${COORD_COMPOSE_FILE}"
+		return
+	fi
+	if [[ -n ${COORD_STACK:-} ]]; then
+		echo "${COORD_STACKS_ROOT}/${COORD_STACK}/compose.yaml"
+		return
+	fi
+	local found=()
+	local f
+	for f in "${COORD_STACKS_ROOT}"/*/compose.yaml; do
+		[[ -f ${f} ]] && found+=("${f}")
+	done
+	if [[ ${#found[@]} -eq 1 ]]; then
+		echo "${found[0]}"
+	elif [[ ${#found[@]} -eq 0 ]]; then
+		echo "${COORD_STACKS_ROOT}/coordinator/compose.yaml"
+	else
+		echo "coord: multiple stacks under ${COORD_STACKS_ROOT}; set COORD_STACK or COORD_COMPOSE_FILE" >&2
+		printf '  %s\n' "${found[@]}" >&2
+		exit 1
+	fi
+}
+
+COORD_COMPOSE_FILE="$(resolve_compose_file)"
 COORD_ENV_PATH="${COORD_ENV_PATH:-$(dirname "${COORD_COMPOSE_FILE}")/.env}"
-DEFAULT_SERVICE="${COORD_DEFAULT_SERVICE:-vio-tracker}"
 
 compose() {
 	docker compose -f "${COORD_COMPOSE_FILE}" "$@"
+}
+
+# Default shell target: explicit override, else the stack's first service.
+default_service() {
+	if [[ -n ${COORD_DEFAULT_SERVICE:-} ]]; then
+		echo "${COORD_DEFAULT_SERVICE}"
+	else
+		compose config --services 2>/dev/null | head -n1
+	fi
 }
 
 usage() {
@@ -21,13 +61,15 @@ Commands:
   restart           docker compose restart [service]
   status            docker compose ps
   logs [service]    Follow logs (default: all services)
-  shell [service]   Interactive shell in service (default: vio-tracker)
+  shell [service]   Interactive shell in service (default: stack's first service)
   exec <service> <cmd...>  Run command in service container
 
 Environment:
-  COORD_COMPOSE_FILE   Default: /opt/stacks/coordinator/compose.yaml
+  COORD_COMPOSE_FILE   Explicit compose file (overrides stack detection)
+  COORD_STACK          Stack name under /opt/stacks (e.g. coordinator, pod)
+  COORD_STACKS_ROOT    Default: /opt/stacks
   COORD_ENV_PATH       Default: directory of compose file + /.env
-  COORD_DEFAULT_SERVICE Default service for shell: vio-tracker
+  COORD_DEFAULT_SERVICE Default service for shell (else first service)
 EOF
 }
 
@@ -75,7 +117,11 @@ logs)
 	;;
 shell)
 	require_compose_file
-	service="${1:-${DEFAULT_SERVICE}}"
+	service="${1:-$(default_service)}"
+	if [[ -z ${service} ]]; then
+		echo "coord: no service given and none found in ${COORD_COMPOSE_FILE}" >&2
+		exit 1
+	fi
 	compose exec -it "${service}" bash
 	;;
 exec)

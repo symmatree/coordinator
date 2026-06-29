@@ -1,0 +1,16 @@
+---
+# Pod (Pi Zero 2 W) specifics. Phase 1: just the pod stack and state dirs so the
+# Zero is container-ready. The USB gadget network (dwc2/g_ether), PPS overlay,
+# and chrony client are Phase 3 (see docs/pi-zero-bringup.md); the camera stack
+# service is Phase 2. Those add tasks here and a config.txt edit; nothing in
+# Phase 1 touches /boot/firmware/config.txt.
+
+- name: Install pod stack and state dirs
+  ansible.builtin.include_role:
+    name: coord-stack
+  vars:
+    coord_stack_name: pod
+    coord_state_root: /var/lib/pod
+    coord_state_subdirs:
+      - config
+      - captures

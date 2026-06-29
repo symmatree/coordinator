@@ -1,36 +1,40 @@
 # Host provisioning
 
-Ansible and a one-time shell entrypoint for the Rekon coordinator Pi (Docker, stack paths, `coord` CLI).
+Ansible and a one-time shell entrypoint for Rekon devices (Docker, stack paths, `coord` CLI). One shared playbook serves both the **coordinator** (Pi 4B) and the **pod** (Pi Zero 2 W); `device_role` selects the device.
 
 ## First-time Pi setup
 
-Full narrative (Imager, clone, reboot behavior): [docs/host-setup.md](../docs/host-setup.md).
+Full narratives: coordinator [docs/host-setup.md](../docs/host-setup.md), pod [docs/pi-zero-host-setup.md](../docs/pi-zero-host-setup.md).
 
-After clone on the Pi:
+After clone on the device:
 
 ```bash
-./host/one_time.sh
+./host/one_time.sh              # coordinator (Pi 4B), default
+./host/one_time.sh pod          # pod (Pi Zero 2 W)
 ```
 
-That installs Ansible, runs [ansible/install-coordinator.yaml](ansible/install-coordinator.yaml) with `coordinator_sync_repo=true`, and reboots when kernel/firmware updates require it. Repeat until the script completes without rebooting.
+That installs Ansible, runs [ansible/site.yaml](ansible/site.yaml) with `sync_repo=true` and the chosen `device_role`, and reboots when kernel/firmware updates require it. Repeat until the script completes without rebooting.
 
-Then bench the tracker: [docs/bench-tracker.md](../docs/bench-tracker.md).
+Then bench: coordinator tracker [docs/bench-tracker.md](../docs/bench-tracker.md); pod phases [docs/pi-zero-bringup.md](../docs/pi-zero-bringup.md).
 
-## install-coordinator.yaml
+## site.yaml and roles
 
-Prepares a Pi 4B to pull and run the coordinator stack:
+`site.yaml` layers a device role on top of the shared `docker-host` role:
 
-- Docker Engine + Compose plugin (Docker apt repo)
-- `/opt/stacks/coordinator`, `/var/lib/coordinator/config`, `/var/lib/coordinator/ipc`
-- Optional sync of `stacks/coordinator/` and `bin/coord` from this checkout (`coordinator_sync_repo=true`)
+| Role | Scope |
+|------|-------|
+| `docker-host` | **Shared** -- Docker Engine + Compose plugin, docker group, service, kernel/firmware reboot loop |
+| `coord-stack` | **Shared** -- `/opt/stacks/<name>`, state dirs, sync stack + `coord` from checkout |
+| `coordinator` | OAK-D udev rules; coordinator stack (`/var/lib/coordinator/{config,ipc}`) |
+| `pod` | pod stack (`/var/lib/pod/{config,captures}`); Phase 3 adds `dwc2`/`g_ether` + PPS overlays |
 
 Manual run (without `one_time.sh`):
 
 ```bash
-ansible-playbook host/ansible/install-coordinator.yaml \
-  -e coordinator_sync_repo=true
+ansible-playbook host/ansible/site.yaml -e device_role=coordinator -e sync_repo=true
+ansible-playbook host/ansible/site.yaml -e device_role=pod -e sync_repo=true
 ```
 
 GHCR images are public; `docker login ghcr.io` is not required for `coord pull`.
 
-Not in this playbook yet: Dockge, chrony/PPS, USB gadget `br0` (see [docs/architecture.md](../docs/architecture.md)).
+Not in these roles yet: Dockge, chrony/PPS, USB gadget `br0` (see [docs/architecture.md](../docs/architecture.md) and [docs/pi-zero-bringup.md](../docs/pi-zero-bringup.md)).

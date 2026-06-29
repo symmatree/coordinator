@@ -1,0 +1,32 @@
+---
+# Shared stack installer used by both device roles. Creates the stack dir under
+# /opt/stacks/<name> (Dockge convention), the device state dirs, and -- when
+# sync_repo is true -- syncs the stack files and the shared coord CLI from the
+# checkout. Caller sets coord_stack_name, coord_state_root, coord_state_subdirs.
+
+- name: Create stack dir for {{ coord_stack_name }}
+  ansible.builtin.file:
+    path: "/opt/stacks/{{ coord_stack_name }}"
+    state: directory
+    mode: "0755"
+
+- name: Create {{ coord_stack_name }} state directories
+  ansible.builtin.file:
+    path: "{{ coord_state_root }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ coord_state_subdirs }}"
+
+- name: Sync {{ coord_stack_name }} stack files from checkout
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/stacks/{{ coord_stack_name }}/"
+    dest: "/opt/stacks/{{ coord_stack_name }}/"
+    mode: preserve
+  when: sync_repo | bool
+
+- name: Install coord CLI
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/bin/coord"
+    dest: /usr/local/bin/coord
+    mode: "0755"
+  when: sync_repo | bool
