@@ -44,11 +44,11 @@ FROM debian:bookworm-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# libceres2 pulls its own runtime deps (glog, suitesparse, lapack, tbb...).
+# libceres3 pulls its own runtime deps (glog, suitesparse, lapack, tbb...).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     dumb-init \
-    libceres2 \
+    libceres3 \
     libgomp1 \
     libopencv-calib3d406 \
     libopencv-core406 \
