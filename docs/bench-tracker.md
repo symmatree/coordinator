@@ -16,7 +16,7 @@ Default `.env` uses `COMPOSE_PROFILES=tracker` -- only `vio-tracker` starts.
 | Profile | Services |
 |---------|----------|
 | `tracker` | `vio-tracker` |
-| `bench` | `vio-tracker` + `vio-estimator` (estimator image not shipped yet) |
+| `bench` | `vio-tracker` + `vio-estimator` (see [bench-estimator.md](bench-estimator.md)) |
 | `flight` | bench + `coordinator-mavlink` |
 
 ## Pull and start

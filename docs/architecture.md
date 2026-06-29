@@ -71,10 +71,10 @@ Operational notes:
 | Profile | Services | Use |
 |---------|----------|-----|
 | `tracker` (default) | `vio-tracker` | First iteration: OAK-D feature extraction ([bench-tracker.md](bench-tracker.md)) |
-| `bench` | `vio-tracker`, `vio-estimator` | Desk: full vision chain, no FC |
+| `bench` | `vio-tracker`, `vio-estimator` | Desk: full vision chain, no FC ([bench-estimator.md](bench-estimator.md)) |
 | `flight` | above + `coordinator-mavlink` | FC serial mounted |
 
-Startup order when `bench` or `flight` is active: start `vio-estimator` before `vio-tracker` (estimator must bind ipc sockets first). `coordinator-mavlink` after estimator publishes pose (flight profile).
+Startup order is not enforced between tracker and estimator: the tracker tolerates an absent listener (drops packets) and the estimator picks up the continuous stream whenever it binds. (A tracker->estimator `depends_on` is not usable -- the estimator is absent in the `tracker` profile, so it would error "depends on undefined service".) `coordinator-mavlink` consumes pose once the estimator publishes (flight profile).
 
 ## Rekon goals beyond wiki VIO
 
@@ -102,7 +102,7 @@ Do not mount FC serial or start `coordinator-mavlink` until an FC is wired.
 
 ## Stack services
 
-`stacks/coordinator/compose.yaml` defines three services. **`vio-tracker`** image and Dockerfile ship in `containers/vio-tracker/`; estimator and mavlink images are follow-ups.
+`stacks/coordinator/compose.yaml` defines three services. **`vio-tracker`** and **`vio-estimator`** images and Dockerfiles ship in `containers/`; the `coordinator-mavlink` image is the remaining follow-up.
 
 ROS in a container remains optional later; the host never installs ROS for the flight path.
 

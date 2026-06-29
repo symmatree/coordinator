@@ -18,3 +18,13 @@
     coord_state_subdirs:
       - config
       - ipc
+
+# Seed the vins_fusion calibration. force: false so a flight-refined oak_d.yaml
+# on the Pi survives re-provisioning (it is a starting calibration -- see the
+# file header and docs/bench-estimator.md).
+- name: Seed OAK-D VINS calibration (does not overwrite local refinement)
+  ansible.builtin.copy:
+    src: oak_d.yaml
+    dest: /var/lib/coordinator/config/oak_d.yaml
+    mode: "0644"
+    force: false

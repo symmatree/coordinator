@@ -1,0 +1,5 @@
+# Pinned upstream sources for coordinator-vio-estimator image builds.
+# Regenerate the SHA after an intentional upstream bump.
+
+VINS_FUSION_BRANCH=apm_wiki
+VINS_FUSION_SHA=c525184c06c15edd5f35c17ff17db456eb62ecd7
