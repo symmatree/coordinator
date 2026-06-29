@@ -40,7 +40,9 @@ repos:
       - id: check-yaml
         args:
           - --allow-multiple-documents
-        exclude: "(.*\\.helm\\.yaml)$"
+        # oak_d.yaml is OpenCV FileStorage (%YAML:1.0 + !!opencv-matrix tags),
+        # not standard YAML -- PyYAML cannot parse it.
+        exclude: "(.*\\.helm\\.yaml)$|(.*/oak_d\\.yaml)$"
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.24.2

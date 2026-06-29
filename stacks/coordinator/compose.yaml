@@ -3,10 +3,13 @@
 #
 # Profiles:
 #   tracker (default): vio-tracker only -- OAK-D feature extraction bench
-#   bench:             vio-tracker + vio-estimator (estimator image TBD)
+#   bench:             vio-tracker + vio-estimator -- full vision chain, no FC
 #   flight:            bench + coordinator-mavlink
 #
-# Images ship in a follow-up PR; tags from .env.
+# Tags from .env. No tracker->estimator depends_on: that service is absent in the
+# tracker profile (would error "depends on undefined service"), and ordering is
+# not required anyway -- the tracker tolerates an absent listener (drops packets)
+# and the estimator picks up the continuous stream whenever it binds.
 
 services:
   vio-tracker:
