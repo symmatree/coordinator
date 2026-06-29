@@ -1,0 +1,29 @@
+# Pod stack (Pi Zero 2 W). Installed on the Zero at /opt/stacks/pod/.
+# Manage with the shared CLI: coord pull | start | stop | status | logs [service]
+#
+# Profiles:
+#   (default, empty): nothing starts -- Phase 1 host bootstrap only
+#   capture:          pod-camera -- Phase 2 stills to local SD
+#   online:           capture + control API + alloy -- Phase 4 (services TBD)
+#
+# The pod-camera image and its camera device passthrough are Phase 2
+# (docs/pi-zero-bringup.md); the service below is a profile-gated placeholder so
+# `coord status` works and Dockge registers the stack after Phase 1.
+
+services:
+  pod-camera:
+    image: ghcr.io/symmatree/coordinator-pod-camera:${POD_CAMERA_VERSION}
+    container_name: pod_camera
+    profiles: [capture, online]
+    restart: unless-stopped
+    # Phase 2: libcamera/IMX708 device passthrough goes here. Candidates are
+    # `privileged: true` or explicit devices (/dev/video*, /dev/media*,
+    # /dev/dma_heap, vchiq) + /run/udev. Decided when the image is built.
+    volumes:
+      - ${POD_CAPTURES_DIR}:/captures
+      - ${POD_CONFIG_DIR}:/config:ro
+    env_file:
+      - .env
+
+x-dockge:
+  urls: []

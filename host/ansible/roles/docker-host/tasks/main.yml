@@ -1,0 +1,79 @@
+---
+# Shared across coordinator (Pi 4B) and pod (Pi Zero 2 W): Docker engine,
+# group membership, service, and the kernel/firmware reboot loop. No
+# device-specific paths or hardware here -- that lives in the device roles.
+
+- name: Assert arm64 host for container images
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture == "aarch64"
+    fail_msg: >-
+      Coordinator/pod images are linux/arm64. Install 64-bit Raspberry Pi OS.
+
+- name: Install packages for Docker apt repo
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+  when: ansible_os_family == "Debian"
+
+- name: Add Docker apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ ansible_architecture | replace('aarch64', 'arm64') | replace('x86_64', 'amd64') }}
+      signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ ansible_distribution | lower }}
+      {{ ansible_distribution_release }} stable
+    filename: docker
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Install Docker Engine and Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-buildx-plugin
+      - docker-ce
+      - docker-ce-cli
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Ensure docker group exists
+  ansible.builtin.group:
+    name: docker
+    state: present
+
+- name: Add operator user to docker group
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"
+
+- name: Enable and start Docker
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Check if kernel, firmware, or modules need a reboot
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: reboot_required
+
+- name: Reboot to apply pending kernel, firmware, or module updates
+  ansible.builtin.reboot:
+    msg: Rekon host bootstrap -- apply pending kernel/firmware updates
+    reboot_timeout: 600
+  when: reboot_required.stat.exists
+  register: host_reboot

@@ -1,0 +1,20 @@
+---
+# Coordinator (Pi 4B) specifics: OAK-D udev rules, then the coordinator stack.
+# Behavior matches the former install-coordinator.yaml.
+
+- name: Install Luxonis udev rules for OAK-D (MyriadX USB re-enumeration)
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/80-movidius.rules
+    content: 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"'
+    mode: "0644"
+  notify: Reload udev rules
+
+- name: Install coordinator stack and state dirs
+  ansible.builtin.include_role:
+    name: coord-stack
+  vars:
+    coord_stack_name: coordinator
+    coord_state_root: /var/lib/coordinator
+    coord_state_subdirs:
+      - config
+      - ipc

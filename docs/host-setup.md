@@ -2,7 +2,7 @@
 
 One-time path from a fresh SD card to a host that can run `coord pull` / `coord start` for the `tracker` profile. OAK-D bench steps live in [bench-tracker.md](bench-tracker.md).
 
-Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansible, runs [host/ansible/install-coordinator.yaml](../host/ansible/install-coordinator.yaml)). Manual narrative below ends at that script; bench bring-up is separate.
+Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansible, runs [host/ansible/site.yaml](../host/ansible/site.yaml) with `device_role=coordinator`). Manual narrative below ends at that script; bench bring-up is separate. The pod (Pi Zero) equivalent is [pi-zero-host-setup.md](pi-zero-host-setup.md).
 
 ## Resolved choices (issue #5)
 
@@ -12,7 +12,7 @@ Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansi
 | GHCR | `ghcr.io/symmatree/coordinator-vio-tracker` is **public**; no `docker login ghcr.io` for pull |
 | GitHub clone | Repo is **public**; HTTPS clone needs no `gh auth login` |
 | Standalone `docker pull` | **Optional diagnostic only** -- `coord pull` already pulls the image; skip unless debugging registry/network |
-| Install path | Clone repo on Pi, run `host/one_time.sh` with `coordinator_sync_repo=true` (wired in the script) |
+| Install path | Clone repo on Pi, run `host/one_time.sh` (wired with `device_role=coordinator` + `sync_repo=true`) |
 | Reboot | Ansible reboots when `/var/run/reboot-required` is set (kernel, firmware, or modules after `dist-upgrade`) -- **not** for docker group membership |
 | Repeat until stable | Run `./host/one_time.sh` again after each reboot until it exits without triggering one |
 | Deployer alternative | Run Ansible from a laptop against the Pi inventory instead of installing Ansible on the Pi -- lighter if local bootstrap becomes painful (not needed yet) |
@@ -103,7 +103,7 @@ What it does:
 2. Ansible: Docker CE + Compose plugin, `/opt/stacks/coordinator`, `/var/lib/coordinator/{config,ipc}`, sync stack + `coord` CLI from this checkout.
 3. If `dist-upgrade` left `/var/run/reboot-required` set (new kernel, firmware, or modules), Ansible **reboots and waits** for the host to return.
 
-**Repeat until stable:** run `./host/one_time.sh` again after any reboot until the script prints `one_time: complete (no pending kernel/firmware reboot).` Fresh images often need one cycle; idempotent re-runs should not reboot again.
+**Repeat until stable:** run `./host/one_time.sh` again after any reboot until the script prints `one_time: complete (coordinator, no pending kernel/firmware reboot).` Fresh images often need one cycle; idempotent re-runs should not reboot again.
 
 If bootstrap fails on architecture, the playbook requires **aarch64** (64-bit Pi OS).
 
@@ -146,7 +146,7 @@ Full checklist and failure modes: [bench-tracker.md](bench-tracker.md).
 | `permission denied` on `docker ps` | `newgrp docker` or re-login (not a reboot) |
 | Script exits 1, reboot-required still set | Run `./host/one_time.sh` again after the host is back |
 | Ansible `apt` / Docker repo errors | Pi has network; `ansible_distribution_release` matches your Pi OS codename |
-| Playbook OK but no `/opt/stacks/coordinator/compose.yaml` | Re-run with `-e coordinator_sync_repo=true` (default in `one_time.sh`) |
+| Playbook OK but no `/opt/stacks/coordinator/compose.yaml` | Re-run with `-e sync_repo=true` (default in `one_time.sh`) |
 
 ## Out of scope (separate issues)
 

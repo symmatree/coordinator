@@ -1,18 +1,19 @@
 # coordinator
 
-On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and time sync. Standalone stack for the Raspberry Pi 4B payload computer ([symmatree/coordinator](https://github.com/symmatree/coordinator)).
+On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and time sync. Hosts the stacks for both the Raspberry Pi 4B payload computer (**coordinator**) and the Pi Zero 2 W camera pods (**pod**) ([symmatree/coordinator](https://github.com/symmatree/coordinator)). The two devices share one bootstrap and CLI; see [docs/pi-zero-bringup.md](docs/pi-zero-bringup.md).
 
 ## Stack layout
 
 | Path | Role |
 |------|------|
-| `stacks/coordinator/compose.yaml` | Compose stack (installed to `/opt/stacks/coordinator/` on the Pi) |
-| `stacks/coordinator/.env` | Image tags, ipc dir, compose profiles |
+| `stacks/coordinator/` | Coordinator compose stack (installed to `/opt/stacks/coordinator/` on the Pi 4B) |
+| `stacks/pod/` | Pod compose stack (installed to `/opt/stacks/pod/` on each Pi Zero) |
 | `containers/vio-tracker/` | OAK-D `feature_tracker` image (arm64) |
-| `bin/coord` | Operator CLI over `docker compose` |
-| `host/ansible/` | Pi bootstrap (Docker, stack paths, `coord`) |
-| `host/one_time.sh` | One-time apt + Ansible entrypoint on the Pi |
-| `docs/` | Architecture, bench runbooks, references |
+| `containers/pod-camera/` | Pod capture image (arm64; Phase 2, placeholder) |
+| `bin/coord` | Shared operator CLI; auto-detects the device's stack under `/opt/stacks/*` |
+| `host/ansible/` | Shared bootstrap: `site.yaml` + roles (`docker-host`, `coord-stack`, `coordinator`, `pod`) |
+| `host/one_time.sh` | One-time apt + Ansible entrypoint; `one_time.sh [coordinator\|pod]` |
+| `docs/` | Architecture, bench runbooks, pod bringup, references |
 
 ## Vision stack
 
