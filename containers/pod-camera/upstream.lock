@@ -1,0 +1,6 @@
+# Pinned build inputs for coordinator-pod-camera image builds.
+# picamera2 + libcamera come from the Raspberry Pi apt archive at build time
+# (no git SHA to pin); keep RPI_SUITE aligned with the host Pi OS release.
+
+BASE_IMAGE=debian:bookworm-slim
+RPI_SUITE=bookworm
