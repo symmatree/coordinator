@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""vio-pose-tap -- record/print the vins_fusion pose stream.
+
+vins_fusion (VINS-Fusion apm_wiki) sends one datagram per estimate to the AF_UNIX
+dgram socket /tmp/chobits_server (on the host: ${COORDINATOR_IPC_DIR}/chobits_server,
+default /var/lib/coordinator/ipc/chobits_server):
+
+    10 little-endian float32 (40 bytes): quat(w,x,y,z) pos(x,y,z) vel(x,y,z)
+
+The wire format carries NO timestamp, so this tool stamps each datagram on receipt
+with two host clocks:
+    t_unix  CLOCK_REALTIME  -- wall clock; coarsely correlatable to FC/GPS time
+    t_mono  CLOCK_MONOTONIC -- no steps; drift-immune sample intervals (motion-fit)
+
+Only one consumer can bind a dgram socket, so run this when vins is NOT forwarding
+to the FC (GPS-primary / calibration runs). See docs/bench-estimator.md. This is the
+hand-rolled standalone recorder that coordinator issue #30 will fold into the stack
+(arm-gated, MAVLink-timestamped) once a full MAVLink feed exists.
+"""
+
+import argparse
+import os
+import signal
+import socket
+import struct
+import sys
+import time
+
+POSE_FMT = "<10f"
+POSE_SZ = struct.calcsize(POSE_FMT)  # 40
+DEFAULT_SOCKET = os.path.join(
+    os.environ.get("COORDINATOR_IPC_DIR", "/var/lib/coordinator/ipc"), "chobits_server"
+)
+COLUMNS = "t_unix,t_mono,qw,qx,qy,qz,px,py,pz,vx,vy,vz"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument(
+        "--socket", default=DEFAULT_SOCKET, help="AF_UNIX dgram path to bind (default: %(default)s)"
+    )
+    ap.add_argument("--out", metavar="CSV", help="append timestamped pose samples as CSV to this file")
+    ap.add_argument("--quiet", action="store_true", help="do not echo samples to stdout")
+    args = ap.parse_args()
+
+    # The consumer binds the socket; clear a stale node from a previous run first.
+    try:
+        os.unlink(args.socket)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        sys.exit(f"vio-pose-tap: cannot remove stale {args.socket}: {exc}")
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        sock.bind(args.socket)
+    except OSError as exc:
+        sys.exit(f"vio-pose-tap: cannot bind {args.socket}: {exc}")
+    sock.settimeout(1.0)  # so SIGINT/SIGTERM are noticed within ~1s even with no traffic
+
+    out = None
+    if args.out:
+        out = open(args.out, "a", buffering=1)
+        if out.tell() == 0:
+            out.write(COLUMNS + "\n")
+
+    running = True
+
+    def stop(*_):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+
+    print(
+        f"vio-pose-tap: listening on {args.socket}"
+        + (f", logging to {args.out}" if args.out else ""),
+        file=sys.stderr,
+    )
+
+    count = 0
+    while running:
+        try:
+            data = sock.recv(256)
+        except socket.timeout:
+            continue
+        except OSError:
+            break
+        t_unix = time.time()
+        t_mono = time.monotonic()
+        if len(data) < POSE_SZ:
+            continue
+        vals = struct.unpack(POSE_FMT, data[:POSE_SZ])
+        if out is not None:
+            out.write(f"{t_unix:.6f},{t_mono:.6f}," + ",".join(f"{v:.6f}" for v in vals) + "\n")
+        if not args.quiet:
+            qw, qx, qy, qz, px, py, pz, vx, vy, vz = vals
+            print(
+                f"{t_unix:.3f} q=({qw:+.3f},{qx:+.3f},{qy:+.3f},{qz:+.3f}) "
+                f"p=({px:+.2f},{py:+.2f},{pz:+.2f}) v=({vx:+.2f},{vy:+.2f},{vz:+.2f})"
+            )
+        count += 1
+
+    if out is not None:
+        out.close()
+    try:
+        os.unlink(args.socket)
+    except OSError:
+        pass
+    print(f"vio-pose-tap: {count} samples", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

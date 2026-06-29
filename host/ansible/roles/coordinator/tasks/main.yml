@@ -28,3 +28,12 @@
     dest: /var/lib/coordinator/config/oak_d.yaml
     mode: "0644"
     force: false
+
+# Host-side VINS pose recorder; binds the ipc pose socket (see
+# docs/bench-estimator.md). Gated on sync_repo like the coord CLI.
+- name: Install vio-pose-tap recorder
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/bin/vio-pose-tap"
+    dest: /usr/local/bin/vio-pose-tap
+    mode: "0755"
+  when: sync_repo | bool
