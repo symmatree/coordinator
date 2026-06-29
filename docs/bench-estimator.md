@@ -26,26 +26,14 @@ Ordering is not enforced: the tracker tolerates an absent listener (drops packet
 
 ## Verify pose output
 
-`vins_fusion` sends a `float[10]` per estimate to the Unix socket `/tmp/chobits_server` (on the host: `${COORDINATOR_IPC_DIR}/chobits_server`, i.e. `/var/lib/coordinator/ipc/chobits_server`): `quat(w,x,y,z)` + `pos(x,y,z)` + `vel(x,y,z)`. Tap it from the host -- bind the socket, then move the rig and watch position/attitude change:
+`vins_fusion` sends a `float[10]` per estimate to the Unix socket `/tmp/chobits_server` (on the host: `${COORDINATOR_IPC_DIR}/chobits_server`, i.e. `/var/lib/coordinator/ipc/chobits_server`): `quat(w,x,y,z)` + `pos(x,y,z)` + `vel(x,y,z)`. Tap it from the host with **`vio-pose-tap`** (installed at `/usr/local/bin/vio-pose-tap`): it binds the socket, stamps each datagram on receipt (the wire format carries no timestamp), and prints and/or appends CSV. Move the rig and watch position/attitude change:
 
-```python
-#!/usr/bin/env python3
-import socket, struct, os
-p = "/var/lib/coordinator/ipc/chobits_server"
-try:
-    os.unlink(p)
-except FileNotFoundError:
-    pass
-s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-s.bind(p)
-print("listening on", p)
-while True:
-    d = s.recv(64)
-    if len(d) >= 40:
-        qw, qx, qy, qz, px, py, pz, vx, vy, vz = struct.unpack("<10f", d[:40])
-        print(f"q=({qw:+.3f},{qx:+.3f},{qy:+.3f},{qz:+.3f}) "
-              f"p=({px:+.2f},{py:+.2f},{pz:+.2f}) v=({vx:+.2f},{vy:+.2f},{vz:+.2f})")
+```bash
+vio-pose-tap                      # print live to the terminal
+vio-pose-tap --out flight.csv     # also append CSV: t_unix,t_mono,quat(wxyz),pos(xyz),vel(xyz)
 ```
+
+`t_unix` is wall-clock (coarsely correlatable to FC/GPS time); `t_mono` is monotonic (step-immune sample intervals for the offline VINS-vs-GPS motion-fit). Only one consumer can bind the socket, so run this when vins is **not** forwarding to the FC (GPS-primary / calibration runs). This is the standalone-recorder prototype behind coordinator issue #30.
 
 (Alternative: `vins_fusion` also streams the same odometry over UDP to whoever first sends a datagram to its port `8800` -- handy for a remote tap. The Unix socket above is the contract `coordinator-mavlink` will use.)
 
@@ -65,7 +53,7 @@ What this does **not** prove: that the pose is metrically correct. Like the trac
 | `vio-estimator` logs empty | Same block-buffering trap as the tracker; the entrypoint wraps `vins_fusion` in `stdbuf -oL`. If you rebuilt locally, confirm that. |
 | Stuck at "waiting for image and imu..." | Tracker not sending, or socket paths not shared. Confirm `vio-tracker` is `Up` and emitting (its bench), and both containers mount the same `${COORDINATOR_IPC_DIR}:/tmp`. |
 | Pose diverges / never initializes | Calibration seed too far off, or insufficient motion. Excite all axes; try `estimate_extrinsic: 2`. This is expected pre-refinement -- see the calibration note above. |
-| No packets on `/tmp/chobits_server` | Nothing bound the socket when you checked; the tap script binds it. The estimator only sends once it has a pose; confirm it initialized first. |
+| No packets on `/tmp/chobits_server` | Nothing bound the socket when you checked; `vio-pose-tap` binds it. The estimator only sends once it has a pose; confirm it initialized first. |
 
 ## Relevant docs
 
