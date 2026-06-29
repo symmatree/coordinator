@@ -74,5 +74,6 @@ Hardcoded `/tmp/chobits_*` paths work with a shared ipc mount and no source chan
 ## Related docs
 
 - Container layout and profiles: [architecture.md](architecture.md)
+- How `oak_d.yaml` calibration is produced, validated, and stored: [calibration.md](calibration.md)
 - FC wiring and tuning (exploratory): [ardupilot-vio.md](ardupilot-vio.md)
 - Rekon design context: [central-hub.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/central-hub.md), [oak-d-mount.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/oak-d-mount.md), [arm-pods.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/arm-pods.md)
