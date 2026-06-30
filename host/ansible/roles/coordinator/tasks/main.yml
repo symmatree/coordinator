@@ -29,13 +29,17 @@
     mode: "0644"
     force: false
 
-# Host-side VINS pose recorder; binds the ipc pose socket (see
-# docs/bench-estimator.md). Gated on sync_repo like the coord CLI.
-- name: Install vio-pose-tap recorder
+# Host-side VIO tools: vio-pose-tap (decode chobits_server pose to CSV) and
+# vio-ipc-record (raw multi-socket capture of chobits_* streams for replay, #35).
+# Gated on sync_repo like the coord CLI.
+- name: Install host VIO tools
   ansible.builtin.copy:
-    src: "{{ repo_root }}/bin/vio-pose-tap"
-    dest: /usr/local/bin/vio-pose-tap
+    src: "{{ repo_root }}/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
     mode: "0755"
+  loop:
+    - vio-pose-tap
+    - vio-ipc-record
   when: sync_repo | bool
 
 # FC serial link for coordinator-mavlink. The router talks to the flight
