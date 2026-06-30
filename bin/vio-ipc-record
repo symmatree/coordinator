@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""vio-ipc-record -- raw capture of chobits_* IPC dgram streams for replay.
+
+Binds one or more AF_UNIX dgram sockets and records every datagram (raw bytes +
+receive timestamps) to a binary fixture, so the streams can be replayed back into
+the real estimator -- the batch evaluation harness (issue #35).
+
+Unlike vio-pose-tap (which decodes the chobits_server POSE *output* to CSV for
+human inspection), this records the RAW bytes of whichever sockets you name --
+typically the estimator INPUT, chobits_imu + chobits_features, so they can be
+replayed into vins_fusion.
+
+Single-consumer rule: only one process can bind a dgram socket, and the estimator
+binds its inputs. So to capture the estimator's inputs, run this with the
+estimator STOPPED (vio-tracker -> recorder). The matching "expected output" is
+then derived by replaying this fixture through the real estimator.
+
+Fixture format: a JSON sidecar manifest (<out>.json -- socket map, version, start
+time) plus framed binary records in <out>: per datagram,
+    <double t_mono><double t_unix><uint16 socket_id><uint32 length><length bytes>
+little-endian. The replayer (issue #35) reads both, sorts by t_mono, and re-sends
+honoring the recorded inter-packet timing.
+"""
+
+import argparse
+import json
+import os
+import select
+import signal
+import socket
+import struct
+import sys
+import time
+
+FRAME = struct.Struct("<ddHI")  # t_mono, t_unix, socket_id, payload length
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument(
+        "--socket", action="append", required=True, dest="sockets", metavar="PATH",
+        help="AF_UNIX dgram path to bind and record (repeatable)",
+    )
+    ap.add_argument("--out", required=True, help="binary fixture output path (manifest at <out>.json)")
+    ap.add_argument("--quiet", action="store_true", help="do not print the per-datagram tick")
+    args = ap.parse_args()
+
+    by_fd = {}
+    for sid, path in enumerate(args.sockets):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            sock.bind(path)
+        except OSError as exc:
+            sys.exit(f"vio-ipc-record: cannot bind {path}: {exc}")
+        by_fd[sock.fileno()] = (sid, sock)
+
+    with open(args.out + ".json", "w") as manifest:
+        json.dump(
+            {
+                "version": 1,
+                "frame_format": "<ddHI> (t_mono, t_unix, socket_id, length) then <length> raw bytes",
+                "sockets": dict(enumerate(args.sockets)),
+                "start_unix": time.time(),
+            },
+            manifest,
+            indent=2,
+        )
+
+    running = True
+
+    def stop(*_):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+
+    print(f"vio-ipc-record: recording {args.sockets} -> {args.out}", file=sys.stderr)
+
+    counts = [0] * len(args.sockets)
+    fds = list(by_fd)
+    with open(args.out, "wb") as out:
+        while running:
+            for fd in select.select(fds, [], [], 1.0)[0]:
+                sid, sock = by_fd[fd]
+                data = sock.recv(65536)
+                out.write(FRAME.pack(time.monotonic(), time.time(), sid, len(data)))
+                out.write(data)
+                counts[sid] += 1
+                if not args.quiet:
+                    print(f"{os.path.basename(args.sockets[sid])} +{len(data)}B", file=sys.stderr)
+
+    for path in args.sockets:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    summary = ", ".join(f"{os.path.basename(p)}={c}" for p, c in zip(args.sockets, counts))
+    print(f"vio-ipc-record: {summary}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
