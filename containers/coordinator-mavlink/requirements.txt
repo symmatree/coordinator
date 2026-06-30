@@ -1,0 +1,4 @@
+# Pinned, controlled deps for coordinator-mavlink (installed into a venv, not the
+# distro -- Debian has no python3-pymavlink and is stale anyway). Bump deliberately.
+pymavlink==2.4.49
+pyserial==3.5
