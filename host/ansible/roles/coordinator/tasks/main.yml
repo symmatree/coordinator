@@ -37,3 +37,34 @@
     dest: /usr/local/bin/vio-pose-tap
     mode: "0755"
   when: sync_repo | bool
+
+# FC serial link for coordinator-mavlink. The router talks to the flight
+# controller over the primary UART (GPIO14/15) at 1.5 Mbaud, which needs the
+# PL011 (ttyAMA0), not the mini-UART -- so disable-bt remaps /dev/serial0 ->
+# /dev/ttyAMA0 and frees a stable high-baud port (trades away onboard Bluetooth).
+# Standard Pi-4 recipe; confirm the alias on the bench. Reboot required.
+- name: Enable PL011 UART for the FC link (config.txt)
+  ansible.builtin.blockinfile:
+    path: /boot/firmware/config.txt
+    marker: "# {mark} COORDINATOR FC UART"
+    block: |
+      enable_uart=1
+      dtoverlay=disable-bt
+  notify: Reboot required for UART
+
+- name: Free the primary UART from the serial console (cmdline.txt)
+  ansible.builtin.replace:
+    path: /boot/firmware/cmdline.txt
+    regexp: '\s*console=(serial0|ttyAMA0|ttyS0),[0-9]+'
+    replace: ''
+  notify: Reboot required for UART
+
+- name: Disable serial-getty on the FC UART
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - serial-getty@ttyAMA0.service
+    - serial-getty@ttyS0.service
+  failed_when: false

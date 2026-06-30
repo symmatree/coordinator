@@ -5,3 +5,9 @@
 
 - name: Trigger udev
   ansible.builtin.command: udevadm trigger
+
+- name: Reboot required for UART
+  ansible.builtin.file:
+    path: /var/run/reboot-required
+    state: touch
+    mode: "0644"
