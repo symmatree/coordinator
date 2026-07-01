@@ -1,0 +1,42 @@
+name: stack-smoke
+# Batch VIO harness (coordinator #35), v1 = the router half:
+#   pose datagrams -> [REAL router.py] --udpout--> MAVLink --> [fake FC]
+# Drives the real coordinator-mavlink router with a fake FC and asserts the two
+# seams the router owns (pose socket byte-contract, outgoing MAVLink + axis flip +
+# timesync). Catches contract regressions no per-image build sees. Zero hardware.
+#
+# Later: the estimator half (real vins_fusion fed a recorded chobits_imu/features
+# fixture) joins to make this the full end-to-end stack smoke.
+on:
+  push:
+    branches: [main]
+    paths:
+      - harness/**
+      - containers/coordinator-mavlink/**
+      - .github/workflows/stack-smoke.yaml
+  pull_request:
+    paths:
+      - harness/**
+      - containers/coordinator-mavlink/**
+      - .github/workflows/stack-smoke.yaml
+  workflow_dispatch: {}
+
+jobs:
+  router-half:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Same pinned pymavlink the coordinator-mavlink image ships; pure-python
+      # path (DISABLE_MAVNATIVE) so no compiler is needed.
+      - name: Install pinned deps
+        env:
+          DISABLE_MAVNATIVE: "True"
+        run: pip install -r containers/coordinator-mavlink/requirements.txt
+
+      - name: Router <-> FC seam test
+        run: python3 harness/test_router_stack.py
