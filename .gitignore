@@ -4,3 +4,10 @@ stacks/coordinator/.env.local
 # Editor / OS
 *~
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Harness scratch (test_router_stack.py socket dir)
+harness/.smoke/
