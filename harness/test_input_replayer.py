@@ -71,7 +71,7 @@ def main():
     import socket as _socket
 
     tmp = tempfile.mkdtemp(prefix="input_replayer_test_")
-    fixture = os.path.join(tmp, "synthetic.bin")
+    fixture = os.path.join(tmp, "synthetic.feat")
 
     # Recorded paths mimic the Pi's absolute IPC dir; the replayer must remap them
     # to our temp dir by basename -- exactly the Pi-capture -> container-replay case.
