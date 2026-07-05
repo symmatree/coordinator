@@ -5,7 +5,7 @@ Coordinator-side VIO feeding the TBS Lucid H7. Upstream build reference: [Luxoni
 ## Wiring (flight)
 
 - OAK-D: Pi USB 3.0 (`vio-tracker` container).
-- FC MAVLink: Pi UART to a FC serial port with MAVLink2 (`SERIALn_PROTOCOL=2`, `SERIALn_BAUD=1500000`). Confirm device alias on bench (`/dev/serial0`, `/dev/ttyAMA0`, etc.) on `coordinator-mavlink`.
+- FC MAVLink: Pi primary UART -> FC **SERIAL4**. Pi side is `/dev/serial0` = `/dev/ttyAMA0` (PL011, via `enable_uart=1` + `disable-bt`; the coordinator Ansible role sets this): **GPIO14/TXD (header pin 8) -> FC RX, GPIO15/RXD (pin 10) -> FC TX, common GND (pin 6)**. MAVLink2 at 1.5 Mbaud -> FC `SERIAL4_PROTOCOL=2`, `SERIAL4_BAUD=1500000`. Not yet wired: `SERIAL4` is deliberately left at `None` (like the other unused ports) until the cable exists, so a disconnected port doesn't invite phantom-link troubleshooting. Set the protocol/baud when it's cabled.
 
 ## What the coordinator sends
 
