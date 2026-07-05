@@ -21,6 +21,8 @@ Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansi
 
 Use **Raspberry Pi Imager 2.0+** and pick **official Raspberry Pi OS (64-bit)** from the online OS list (not a bare local `.img` file). Nothing beyond 64-bit is required for issue #5; later host work (chrony, USB `br0`) adds boot config in follow-up playbooks.
 
+> The current official image is **Debian 13 "Trixie"**, whose network stack is **NetworkManager** (not `dhcpcd`/`wpa_supplicant`). Provisioning, the headless recovery runbook, and a **Trixie WiFi caveat** (Imager's cloud-init WiFi does not reliably persist — provision via `nmtui`) are in [coordinator-network.md](coordinator-network.md).
+
 ### Pre-flash configuration (what Imager still supports)
 
 Imager **did not** drop OS customization for official Pi OS images. In [Imager 2.0](https://www.raspberrypi.com/news/a-new-raspberry-pi-imager/) it moved from a hidden "advanced options" dialog into wizard **step 4 -- Configure your system** (hostname, locale, user, WiFi, SSH keys, Raspberry Pi Connect, etc.). That is still pre-imaging configuration baked into the written image.

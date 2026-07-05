@@ -62,4 +62,5 @@ What this does **not** prove: that the pose is metrically correct. Like the trac
 - [vio-integration.md](vio-integration.md) -- IPC layout, binary plan, socket contract
 - [architecture.md](architecture.md) -- compose profiles, ipc volume
 - [bench-tracker.md](bench-tracker.md) -- the tracker-only baseline (#8)
+- [bench-capture.md](bench-capture.md) -- record raw `chobits_imu`/`chobits_features` on the vehicle for offline replay (#35)
 - [containers/vio-estimator/README.md](../containers/vio-estimator/README.md) -- image build, no-ROS note
