@@ -78,7 +78,7 @@ COMPOSE_PROFILES=bench docker compose -f stacks/coordinator/compose.yaml up -d v
 # 2. tap its pose output to CSV
 vio-pose-tap --out pose-<run>.csv                 # binds /tmp/chobits_server
 # 3. replay the captured inputs into it
-python3 harness/input_replayer.py ~/captures/wave-<ts>.bin
+python3 harness/input_replayer.py ~/captures/wave-<ts>.feat
 ```
 
 The pose CSV (`t_unix,t_mono,qw..vz`) then feeds `analysis/vio-input-alignment.ipynb`

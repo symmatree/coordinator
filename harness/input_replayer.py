@@ -8,8 +8,8 @@ datagrams -- back into a running ``coordinator-vio-estimator`` (real ``vins_fusi
 which then emits pose on ``chobits_server``. Tap that with ``vio-pose-tap`` to get a
 pose CSV: post-hoc VINS pose regenerated from a captured flight's raw inputs.
 
-    tracker capture --[vio-ipc-record]--> fixture.bin (+ .json)
-    fixture.bin --[THIS]--> chobits_imu / chobits_features --> [real vins_fusion] --> chobits_server
+    tracker capture --[vio-ipc-record]--> fixture.feat (+ .json)
+    fixture.feat --[THIS]--> chobits_imu / chobits_features --> [real vins_fusion] --> chobits_server
 
 Fixture format (from vio-ipc-record, manifest version 1): a JSON sidecar
 ``<fixture>.json`` mapping socket_id -> recorded socket path, plus framed binary
@@ -39,7 +39,7 @@ shallow (``net.unix.max_dgram_qlen``, typically 10), so if the estimator can't k
 fast vins consumes -- that is the correct behavior for a faithful, drop-free replay.
 
     # estimator up (bench/flight profile, multiple_thread:0), pose-tap on chobits_server, then:
-    python3 input_replayer.py ~/captures/wave-20260705-112443.bin
+    python3 input_replayer.py ~/captures/wave-20260705-112443.feat
 """
 
 import argparse

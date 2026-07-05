@@ -35,7 +35,7 @@ docker ps --format '{{.Names}} {{.Status}}'  # want ONLY vio-tracker
 
 **3. Start the recorder (background; sudo — the ipc dir is root-owned)**
 ```bash
-OUT=/home/pi/captures/wave-$(date +%Y%m%d-%H%M%S).bin
+OUT=/home/pi/captures/wave-$(date +%Y%m%d-%H%M%S).feat   # .feat, NOT .bin — .bin collides with ArduPilot FC logs (#45)
 sudo nohup vio-ipc-record \
   --socket /var/lib/coordinator/ipc/chobits_imu \
   --socket /var/lib/coordinator/ipc/chobits_features \

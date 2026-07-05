@@ -15,6 +15,11 @@ binds its inputs. So to capture the estimator's inputs, run this with the
 estimator STOPPED (vio-tracker -> recorder). The matching "expected output" is
 then derived by replaying this fixture through the real estimator.
 
+Naming: give the fixture a ``.feat`` extension (chobits_imu + chobits_features raw
+input stream), e.g. ``wave-<ts>.feat``. Do NOT use ``.bin`` -- ArduPilot DataFlash FC
+logs are ``.bin`` too, and the nightly flight-analysis cron parses every ``*.bin`` on
+the NAS as MAVLink and chokes on these raw dgram fixtures (issue #45).
+
 Fixture format: a JSON sidecar manifest (<out>.json -- socket map, version, start
 time) plus framed binary records in <out>: per datagram,
     <double t_mono><double t_unix><uint16 socket_id><uint32 length><length bytes>
@@ -41,7 +46,7 @@ def main():
         "--socket", action="append", required=True, dest="sockets", metavar="PATH",
         help="AF_UNIX dgram path to bind and record (repeatable)",
     )
-    ap.add_argument("--out", required=True, help="binary fixture output path (manifest at <out>.json)")
+    ap.add_argument("--out", required=True, help="fixture output path, use a .feat extension not .bin (manifest at <out>.json)")
     ap.add_argument("--quiet", action="store_true", help="do not print the per-datagram tick")
     args = ap.parse_args()
 
