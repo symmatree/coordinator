@@ -40,3 +40,8 @@ jobs:
 
       - name: Router <-> FC seam test
         run: python3 harness/test_router_stack.py
+
+      # Estimator-half replayer: decode a synthetic fixture and assert byte-exact,
+      # correctly-routed, t_mono-ordered delivery. Pure stdlib, no deps.
+      - name: Input replayer test
+        run: python3 harness/test_input_replayer.py

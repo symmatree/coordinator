@@ -1,0 +1,5 @@
+# Local build/test tooling and assets are not part of the image build context.
+build-local.sh
+test.sh
+testdata/
+README.md
