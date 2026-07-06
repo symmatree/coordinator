@@ -4,13 +4,15 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-      # general text file...stuff.
+      # general text file...stuff. `overlay/` holds vendored upstream files (whole-file
+      # shadows); keep them byte-faithful so a diff vs upstream shows only our changes.
       - id: trailing-whitespace
-        exclude: "^(.*/dist/.*\\.js.*)|(.*/(.*-)?rendered\\.yaml)$"
+        exclude: "^(.*/dist/.*\\.js.*)|(.*/(.*-)?rendered\\.yaml)$|(.*/overlay/.*)"
       - id: end-of-file-fixer
-        exclude: "^.*/dist/.*\\.js.*$"
+        exclude: "^(.*/dist/.*\\.js.*)$|(.*/overlay/.*)"
       - id: fix-byte-order-marker
       - id: mixed-line-ending
+        exclude: "(.*/overlay/.*)"
         args:
           - --fix=lf
 

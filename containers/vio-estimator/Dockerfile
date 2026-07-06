@@ -46,7 +46,9 @@ RUN cd VINS-Fusion \
   && if [ -d /overlay/VINS-Fusion ]; then cp -a /overlay/VINS-Fusion/. . ; fi \
   && cmake -S vins_estimator -B build -DCMAKE_BUILD_TYPE=Release \
   && cmake --build build --parallel "$(nproc)" \
-  && install -D build/vins_fusion /opt/coordinator/bin/vins_fusion
+  && install -D build/vins_fusion /opt/coordinator/bin/vins_fusion \
+  # deterministic offline harness, built only when the overlay provides it (main_offline.cpp)
+  && if [ -f build/vins_fusion_offline ]; then install -D build/vins_fusion_offline /opt/coordinator/bin/vins_fusion_offline; fi
 
 FROM debian:bookworm-slim
 
@@ -64,7 +66,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /opt/coordinator/bin/vins_fusion /opt/coordinator/bin/vins_fusion
+# Whole bin dir so vins_fusion_offline comes along when the overlay builds it (main
+# just has vins_fusion). install -D set them 0755 in the builder; COPY preserves that.
+COPY --from=builder /opt/coordinator/bin/ /opt/coordinator/bin/
 COPY entrypoint.sh /opt/coordinator/entrypoint.sh
 RUN chmod +x /opt/coordinator/entrypoint.sh /opt/coordinator/bin/vins_fusion
 
