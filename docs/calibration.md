@@ -65,7 +65,7 @@ The calibration eval is not a bespoke subsystem — it is one more **flight-anal
 
 ## Cross-dependencies
 
-- **#11 chrony+PPS** — time alignment for VINS↔GPS cross-validation; precondition for trustworthy residuals.
+- **#11 chrony+PPS** — time alignment for VINS↔GPS cross-validation; precondition for trustworthy residuals. **Not fitted yet (2026-07-06)** — planned, not wired; this precondition is currently unmet.
 - **#10 coordinator-mavlink** — the pose consumer that logs the VINS stream in flight.
 - **#12 Pi Zero `br0`** — network path to pull Zero images (vs card-pull).
 - **`feature_tracker` MxId** — must emit the OAK-D serial so bundles/artifacts key correctly (today it prints "Device name" but not the MxId).

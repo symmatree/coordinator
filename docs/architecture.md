@@ -16,6 +16,12 @@ Rekon payload coordinator software for the Pi 4B central hub. Design notes live 
 | WiFi AP / station / off | **host** (or D-Bus-mounted utility container later) | NetworkManager integration |
 | Docker Engine, Dockge | **host** | Generic runtime |
 
+**PPS status (2026-07-06): not fitted.** No PPS hardware is wired anywhere yet -- not on the
+Coordinator, not on the Pi Zeros, and no GPS PPS line. The `chrony + PPS` row above is the
+*planned* design (DS3234 SQW -> GPIO 18 distribution, [#11](https://github.com/symmatree/coordinator/issues/11));
+until it is built, host time is NTP-after-boot only (no PPS discipline) and timestamps must not
+be assumed PPS-aligned. See also the no-RTC note in [coordinator-network.md](coordinator-network.md).
+
 ## Runtime paths (on Pi)
 
 | Path | Contents |
