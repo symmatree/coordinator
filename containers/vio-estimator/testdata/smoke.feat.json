@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "frame_format": "<ddHI> (t_mono, t_unix, socket_id, length) then <length> raw bytes",
+  "sockets": {
+    "0": "/var/lib/coordinator/ipc/chobits_imu",
+    "1": "/var/lib/coordinator/ipc/chobits_features"
+  },
+  "start_unix": 1783265083.9891942
+}

@@ -64,6 +64,9 @@ jobs:
           file: containers/vio-estimator/Dockerfile
           platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
+          # On PRs, load the built image into the local docker so the smoke test can
+          # run it (native arm64 on the arm runner). main just pushes (the PR gated it).
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.docker-metadata.outputs.tags }}
           labels: ${{ steps.docker-metadata.outputs.labels }}
           build-args: |
@@ -71,3 +74,12 @@ jobs:
             VINS_FUSION_SHA=${{ steps.pins.outputs.vins_fusion_sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Smoke: boot the estimator, replay a tiny fixture, assert finite pose. PR-only
+      # (main pushes the already-gated image). See containers/vio-estimator/test.sh.
+      - name: Smoke test
+        if: github.event_name == 'pull_request'
+        env:
+          RUNTIME: docker
+          IMAGE: ${{ fromJSON(steps.docker-metadata.outputs.json).tags[0] }}
+        run: bash containers/vio-estimator/test.sh
