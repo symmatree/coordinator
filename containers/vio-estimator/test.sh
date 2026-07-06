@@ -47,8 +47,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Rootful docker runs the container as root, so it would create the AF_UNIX input
+# sockets root-owned and the host-side replayer (runner user) couldn't sendto them.
+# Run as the invoking uid so sockets are host-user-owned. Rootless podman already maps
+# container-root -> host user, so it needs no --user.
+userflag=()
+[ "$RUNTIME" = docker ] && userflag=(--user "$(id -u):$(id -g)")
+
 echo "== tier 0: boot + bind sockets (image: $IMAGE) =="
-cid="$("$RUNTIME" run -d --rm -v "$IPC:/tmp" -v "$CFG:/config/oak_d.yaml:ro" "$IMAGE")" ||
+cid="$("$RUNTIME" run -d --rm "${userflag[@]}" -v "$IPC:/tmp" -v "$CFG:/config/oak_d.yaml:ro" "$IMAGE")" ||
 	{
 		echo "FAIL: could not start estimator container"
 		exit 1
