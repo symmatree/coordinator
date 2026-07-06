@@ -45,6 +45,12 @@ Each has: `wave-*.feat` (+ `.feat.json`) estimator-input fixture, the FC `.bin` 
 > **preliminary** until re-run on a trustworthy (native / offline-harness) estimator. Where a conclusion
 > is *robust to* that contamination (because it's common-mode across a controlled pair), it is marked **[robust]**.
 
+> **⚠ We have never observed live onboard behavior.** VIO was never fed to the FC (no serial link),
+> and no one has watched the live pose output in flight. *Every* observation here is from **offline
+> replay**. So even the foundational fact — does the estimator spool up / produce pose at all when
+> running live on the vehicle — is **unconfirmed**. (Expected to, being open-loop with no controls or
+> filtering to damp it — but a bet, not a measurement.)
+
 ---
 
 ## Theories
