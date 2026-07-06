@@ -33,9 +33,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
+# Clone + pin (its own layer, so it stays cached when only the overlay changes).
 RUN git clone --depth 1 --branch "${VINS_FUSION_BRANCH}" https://github.com/chobitsfan/VINS-Fusion.git \
   && cd VINS-Fusion \
-  && if [ -n "${VINS_FUSION_SHA}" ]; then git fetch --depth 1 origin "${VINS_FUSION_SHA}" && git checkout "${VINS_FUSION_SHA}"; fi \
+  && if [ -n "${VINS_FUSION_SHA}" ]; then git fetch --depth 1 origin "${VINS_FUSION_SHA}" && git checkout "${VINS_FUSION_SHA}"; fi
+
+# Overlay: whole-file shadows in overlay/VINS-Fusion/ are copied over the pinned checkout right
+# before building, so modified upstream files can be iterated with no fork/patch machinery yet.
+# Empty overlay = no-op (unchanged upstream build). See overlay/README.md.
+COPY overlay/ /overlay/
+RUN cd VINS-Fusion \
+  && if [ -d /overlay/VINS-Fusion ]; then cp -a /overlay/VINS-Fusion/. . ; fi \
   && cmake -S vins_estimator -B build -DCMAKE_BUILD_TYPE=Release \
   && cmake --build build --parallel "$(nproc)" \
   && install -D build/vins_fusion /opt/coordinator/bin/vins_fusion
