@@ -11,15 +11,28 @@ on:
       - .github/workflows/build-vio-estimator.yaml
   workflow_dispatch: {}
 
+env:
+  IMAGE_NAME: ghcr.io/symmatree/coordinator-vio-estimator
+
 jobs:
-  build-vio-estimator:
-    runs-on: ubuntu-24.04-arm
+  # One build per arch, each on a native runner (no qemu -- the amd64 Ceres/OpenCV
+  # compile under emulation is ~10x slower). On main each pushes an untagged, digest-only
+  # image; the merge job stitches the two digests into one multi-arch manifest with the
+  # real tags. On PRs each arch loads locally and runs the smoke test natively.
+  build:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
       packages: write
-    env:
-      IMAGE_NAME: ghcr.io/symmatree/coordinator-vio-estimator
     steps:
       - uses: actions/checkout@v4
 
@@ -57,29 +70,98 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
 
-      - name: Build and push
+      # PR: load into the local docker (type=docker) so the smoke test can run this arch
+      # natively -- no push. main: push a digest-only image (push-by-digest, no tag); the
+      # merge job assembles the tagged manifest. Cache is scoped per-arch so the two
+      # matrix legs don't clobber each other's layers.
+      - name: Build
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: containers/vio-estimator
           file: containers/vio-estimator/Dockerfile
-          platforms: linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          # On PRs, load the built image into the local docker so the smoke test can
-          # run it (native arm64 on the arm runner). main just pushes (the PR gated it).
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: ${{ steps.docker-metadata.outputs.tags }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: ${{ github.event_name == 'pull_request' && 'type=docker' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE_NAME) }}
           labels: ${{ steps.docker-metadata.outputs.labels }}
           build-args: |
             VINS_FUSION_BRANCH=${{ steps.pins.outputs.vins_fusion_branch }}
             VINS_FUSION_SHA=${{ steps.pins.outputs.vins_fusion_sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
-      # Smoke: boot the estimator, replay a tiny fixture, assert finite pose. PR-only
-      # (main pushes the already-gated image). See containers/vio-estimator/test.sh.
+      # Smoke: boot the estimator, replay a tiny fixture, assert finite pose. PR-only, run
+      # natively per-arch. See containers/vio-estimator/test.sh.
       - name: Smoke test
         if: github.event_name == 'pull_request'
         env:
           RUNTIME: docker
           IMAGE: ${{ fromJSON(steps.docker-metadata.outputs.json).tags[0] }}
         run: bash containers/vio-estimator/test.sh
+
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Stitch the per-arch digests into one multi-arch manifest and tag it. Push-only (PRs
+  # never reach here -- they proved each arch works via the native smoke test).
+  merge:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: docker-metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=branch
+            type=ref,event=tag
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        env:
+          DOCKER_METADATA_OUTPUT_JSON: ${{ steps.docker-metadata.outputs.json }}
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "${DOCKER_METADATA_OUTPUT_JSON}") \
+            $(printf "${IMAGE_NAME}@sha256:%s " *)
+
+      - name: Inspect
+        run: docker buildx imagetools inspect "${IMAGE_NAME}:${{ steps.docker-metadata.outputs.version }}"
