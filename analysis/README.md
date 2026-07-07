@@ -6,6 +6,8 @@ Flight-log and VIO analysis for the rekon10 platform.
 |------|------|
 | [`ardupilot_log.py`](ardupilot_log.py) | canonical `parse_log()` + ArduPilot message-type constants. Imported by the notebooks. |
 | [`vio-input-alignment.ipynb`](vio-input-alignment.ipynb) | aligns a `vio-ipc-record` fixture to the FC `.bin` by motion cross-correlation, compares OAK-D IMU vs FC IMU, and asks whether the camera IMU sees motor vibration (coordinator [#42](https://github.com/symmatree/coordinator/issues/42)). Run manually; not part of the nightly cron. |
+| [`vio_ekf_compare.py`](vio_ekf_compare.py) | vetted comparison lib: load VINS pose + FC EKF, time-align by angular-rate cross-correlation, Umeyama scale/rotation, ATE over the usable window. Imported by `vio-quality.ipynb`. |
+| [`vio-quality.ipynb`](vio-quality.ipynb) | per-flight comparison of the **deterministically regenerated** VINS pose (`*.vinspose.csv` from `vio-offline-runner`, with a provenance sidecar) against FC EKF/GPS truth. Parameterized by `input_file` (the `.bin`); **consumes** flight-analysis's `manifest.json` for FC facts rather than re-deriving them; emits `vio-quality.json`. Runs *after* flight-analysis. |
 
 ## The flight-analysis notebook runs as a nightly CronJob — it lives in `tiles`, not here
 

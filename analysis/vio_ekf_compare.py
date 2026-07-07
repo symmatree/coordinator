@@ -32,7 +32,10 @@ def load_vio_pose(pose_csv, replay_speed=1.0):
     body angular speed `w`. `replay_speed` rescales the tap's replay clock back to
     capture time (e.g. 0.9 if replayed at --speed 0.9)."""
     v = pd.read_csv(pose_csv)
-    v["te"] = (v["t_mono"] - v["t_mono"].iloc[0]) * replay_speed
+    # `t_mono` = the live replay-tap clock; `t` = the offline harness's sensor timestamp
+    # (estimator Headers). Both are elapsed-capture-time sources; prefer t_mono if present.
+    tcol = "t_mono" if "t_mono" in v.columns else "t"
+    v["te"] = (v[tcol] - v[tcol].iloc[0]) * replay_speed
     q = v[["qw", "qx", "qy", "qz"]].values
     dot = np.abs(np.sum(q[:-1] * q[1:], axis=1)).clip(-1, 1)
     dt = np.diff(v["te"].values)
