@@ -97,6 +97,46 @@ rc=$?
 	exit 1
 }
 
+# The offline runner (vio-offline-runner) regenerates pose deterministically and writes a
+# provenance sidecar. Run the same fixture into two dirs and assert byte-identical output
+# (determinism) + a valid sidecar. This exercises python3-in-image + vins_fusion_offline.
+echo "== offline runner: deterministic regen + provenance sidecar =="
+mkdir -p "$WORK/a" "$WORK/b"
+cp "$FIX" "$WORK/a/smoke.feat"
+cp "$FIX" "$WORK/b/smoke.feat"
+for d in a b; do
+	"$RUNTIME" run --rm "${userflag[@]}" \
+		-v "$WORK/$d:/data" -v "$CFG:/config/oak_d.yaml:ro" \
+		--entrypoint /opt/coordinator/bin/vio-offline-runner \
+		-e COORDINATOR_SHA=smoketest \
+		"$IMAGE" /data/smoke.feat >/dev/null || {
+		echo "FAIL: offline runner exited nonzero ($d)"
+		exit 1
+	}
+done
+
+if ! python3 - "$WORK/a" "$WORK/b" <<'PY'
+import csv, hashlib, json, math, sys
+a, b = sys.argv[1], sys.argv[2]
+csv_a, side_a = f"{a}/smoke.vinspose.csv", f"{a}/smoke.vinspose.polisher.json"
+def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
+ha, hb = sha(csv_a), sha(f"{b}/smoke.vinspose.csv")
+assert ha == hb, f"non-deterministic: pose CSVs differ ({ha[:12]} != {hb[:12]})"
+rows = list(csv.DictReader(open(csv_a)))
+assert len(rows) >= 10, f"only {len(rows)} poses"
+cols = ("qw","qx","qy","qz","px","py","pz","vx","vy","vz")
+assert all(math.isfinite(float(r[k])) for r in rows for k in cols), "non-finite pose"
+d = json.load(open(side_a))
+assert d["instrument"]["sha"] == "smoketest", "sidecar missing estimator sha"
+assert d["object"][0]["sha256"] and d["result"][0]["sha256"], "sidecar missing hashes"
+assert d["result"][0]["sha256"] == ha, "sidecar result sha != actual CSV sha"
+print(f"  ok: deterministic ({len(rows)} poses, CSV sha {ha[:12]}), sidecar valid")
+PY
+then
+	echo "SMOKE FAIL (offline runner)"
+	exit 1
+fi
+
 if [ "$TIER" = full ]; then
 	echo "== tier 2 (golden regression): NOT IMPLEMENTED -- needs the deterministic offline harness =="
 fi

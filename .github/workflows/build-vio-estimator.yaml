@@ -90,6 +90,7 @@ jobs:
           build-args: |
             VINS_FUSION_BRANCH=${{ steps.pins.outputs.vins_fusion_branch }}
             VINS_FUSION_SHA=${{ steps.pins.outputs.vins_fusion_sha }}
+            COORDINATOR_SHA=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
