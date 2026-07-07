@@ -54,7 +54,9 @@ FROM debian:bookworm-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# libceres3 pulls its own runtime deps (glog, suitesparse, lapack, tbb...).
+# libceres3 pulls its own runtime deps (glog, suitesparse, lapack, tbb...). python3 (not
+# -minimal, which omits json/hashlib) is only for offline_runner.py's provenance sidecar;
+# the flight binary itself needs none of it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     dumb-init \
@@ -64,13 +66,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopencv-core406 \
     libopencv-imgproc406 \
     libstdc++6 \
+    python3 \
   && rm -rf /var/lib/apt/lists/*
 
 # Whole bin dir so vins_fusion_offline comes along when the overlay builds it (main
 # just has vins_fusion). install -D set them 0755 in the builder; COPY preserves that.
 COPY --from=builder /opt/coordinator/bin/ /opt/coordinator/bin/
 COPY entrypoint.sh /opt/coordinator/entrypoint.sh
-RUN chmod +x /opt/coordinator/entrypoint.sh /opt/coordinator/bin/vins_fusion
+COPY offline_runner.py /opt/coordinator/bin/vio-offline-runner
+RUN chmod +x /opt/coordinator/entrypoint.sh /opt/coordinator/bin/vins_fusion \
+    /opt/coordinator/bin/vio-offline-runner
+
+# Provenance stamp for the offline runner: the coordinator commit (overlay + runner source)
+# and the pinned upstream vins commit. Placed LAST -- COORDINATOR_SHA changes every commit,
+# so keeping it after the apt + COPY layers leaves those cached across pushes. CI passes
+# COORDINATOR_SHA=github.sha; IMAGE_DIGEST is injected at run time by the k8s Job.
+ARG COORDINATOR_SHA=unknown
+ARG VINS_FUSION_SHA=unknown
+ENV COORDINATOR_SHA=${COORDINATOR_SHA} \
+    VINS_FUSION_SHA=${VINS_FUSION_SHA}
 
 WORKDIR /opt/coordinator
 

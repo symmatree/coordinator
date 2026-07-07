@@ -19,6 +19,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SHA="$(sed -n 's/^VINS_FUSION_SHA=//p' "$HERE/upstream.lock")"
 TAG="${1:-coordinator-vio-estimator:local}"
 STORE="${BUILDAH_STORE:-/tmp/buildah-store}"
+# Stamp the offline runner's provenance with the current commit (best-effort; a dirty tree
+# just means the sidecar SHA won't match a pushed image, which is fine for local runs).
+CSHA="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)"
 
 [ -n "$SHA" ] || {
 	echo "build-local: no VINS_FUSION_SHA in upstream.lock" >&2
@@ -33,4 +36,5 @@ echo "build-local: $TAG  (SHA ${SHA:0:12}, store $STORE)" >&2
 sudo mkdir -p "$STORE"
 exec sudo buildah --root "$STORE" \
 	--storage-driver overlay --storage-opt overlay.mount_program=/usr/bin/fuse-overlayfs \
-	bud --layers -t "$TAG" --build-arg VINS_FUSION_SHA="$SHA" "$HERE"
+	bud --layers -t "$TAG" --build-arg VINS_FUSION_SHA="$SHA" \
+	--build-arg COORDINATOR_SHA="$CSHA" "$HERE"
