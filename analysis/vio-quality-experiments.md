@@ -1,30 +1,43 @@
 # Experiments: VIO quality (rekon10 VINS-Fusion)
 
-*Single place to track theories, evidence, and experiments for **why the regenerated VINS
-pose diverges from the FC EKF/GPS**, and whether the estimator can produce a usable trajectory
-from this vehicle's data at all. Modeled on `fables/Datasets/experiments-house-model.md`.*
+*Single place to track theories, evidence, and experiments for **whether the OAK-D + VINS-Fusion
+estimator can produce a usable trajectory from this vehicle's data**, and under what configuration.
+Modeled on `fables/Datasets/experiments-house-model.md`.*
 
 **Origin:** coordinator [#42](https://github.com/symmatree/coordinator/issues/42) (bench capture,
 vibration question), [#35](https://github.com/symmatree/coordinator/issues/35) (replay harness).
 
-**Principal docs (feed these in):**
-- `docs/vio-offline-replay.md` — how pose is regenerated offline; the known failure mode.
-- `analysis/vio-ekf-comparison.ipynb` + `analysis/vio_ekf_compare.py` — output side: align VINS pose to the FC EKF, ATE + scale.
+**Reframed objective (2026-07-07).** The operational need is a **GPS-denied fallback** (multipath /
+canopy), where the scene is **near-field** and the goal is **local stability** — hold a hover, or hop
+10s of metres "ice-hole to ice-hole" — with graceful **"in doubt, land"** behaviour. The threat to
+design against is a **sudden lateral jump into an obstacle**, *not* global position error. So "VIO
+quality" decomposes, in priority order: (1) bounded local drift for hover + short hops; (2) a
+trustworthy **health/confidence signal** → hold/land (fail-safe, not fail-confident); (3) obstacle
+sensing from the same stereo depth. Global metric accuracy is a *post-hoc* mapping product, not a
+real-time requirement. See fables `Drones/rekon10/canopy-ops.md` (ice-hole doctrine + error budgets).
+
+**Principal docs / artifacts:**
+- `analysis/vio-quality.ipynb` (+ `analysis/vio_ekf_compare.py`) — per-flight VINS-vs-FC-EKF/GPS
+  comparison on the **tracked** pose, papermill-parameterized, emits `vio-quality.json`.
+- `containers/vio-estimator/offline_runner.py` (`vio-offline-runner`) — deterministic pose regen +
+  provenance sidecar (`*.vinspose.polisher.json`, records fixture/config/source SHAs).
 - `analysis/vio-input-alignment.ipynb` — input side: OAK-D IMU vs FC IMU, vibration PSD, feature health.
-- Upstream source (pinned): `chobitsfan/VINS-Fusion@c525184` `vins_estimator/src/estimator/estimator.cpp` (solver), `.../main.cpp` (socket loop); `chobitsfan/oak_d_vins_cpp@378f40f` `feature_tracker.cpp` (IMU/feature packing).
-- Seed calibration: `host/ansible/roles/coordinator/files/oak_d.yaml`.
+- Upstream (pinned): `chobitsfan/VINS-Fusion@c525184`; `chobitsfan/oak_d_vins_cpp@378f40f`.
+- Seed calibration: `host/ansible/roles/coordinator/files/oak_d.yaml` (`imu: 1`, `estimate_extrinsic: 2`).
+- Offline global-solve direction: [#59](https://github.com/symmatree/coordinator/issues/59) (GTSAM batch factor graph).
 
 ---
 
-## What "working" means (levels)
+## What "working" means (levels, reframed for the fallback use case)
 
-1. **Produces plausible, non-diverging pose** from real inputs (doesn't run away to km). *Not yet.*
-2. **Tracks the FC EKF/GPS within a few metres** over a flight. *Not yet.*
-3. **Metrically accurate** (scale ≈ 1, drift bounded) good enough to feed the FC in flight. *Goal.*
+1. **Non-diverging local pose** — doesn't run away; bounded drift over a leg. *Vision-only: yes. IMU-fusion: no (runs to km).*
+2. **Locally stable enough to hover + hop 10s of m**, with jumps small/rejectable. *Vision-only: promising on GPS-good proxy; hover untested.*
+3. **Fail-safe health signal** — the estimator (or the FC) can tell it's lost and hold/land, rather than confidently commanding into an obstacle. *Not built.*
+4. **Post-hoc metric reconstruction** for mapping (offline, GPS-anchored). *Direction: [#59](https://github.com/symmatree/coordinator/issues/59).*
 
-The distinction that actually matters right now (per the plan): **can the algorithm+calibration
-produce a good trajectory from this data at all** — a feasibility question — separately from whether
-we can reproduce that in real time on the Pi. Prove feasibility first; then solve real-time.
+Global metric accuracy in real time (feeding a confident absolute pose to the FC for autonomous
+traverse) is **explicitly not** the near-term goal — the evidence says that's the regime where this
+setup fails worst, and the operator (FPV) + post-hoc reconstruction cover it instead.
 
 ---
 
@@ -34,83 +47,101 @@ Two matched captures, 2026-07-05 (coordinator #42), on the NAS under `datasets/f
 
 | run | dir | motors | role |
 |-----|-----|--------|------|
-| **handheld** | `260705-handheld-noarm/` | **off** | vibration-free control |
+| **handheld** | `260705-handheld-noarm/` | **off** | low-vibration control (but hand motion ≠ vibration-free) |
 | **armed** | `260705-vio-logged/` | **on**, hard-mounted OAK-D | vibration treatment |
 
 Each has: `wave-*.feat` (+ `.feat.json`) estimator-input fixture, the FC `.bin` (1980-dated), tlog/rlog.
 
-> **⚠ Provenance / trust caveat.** Every VINS pose we have so far was regenerated under **qemu with
-> `max_solver_time: 0.04` and real-time-ish pacing** — a setup we now know is **non-deterministic and
-> likely solver-starved** (see Methodology confounds). Treat all "VINS pose" evidence below as
-> **preliminary** until re-run on a trustworthy (native / offline-harness) estimator. Where a conclusion
-> is *robust to* that contamination (because it's common-mode across a controlled pair), it is marked **[robust]**.
+**Two reconstructions per flight** (config-tagged): the **deployed** config (`imu: 1`, IMU-fusion) and
+**vision-only** (`imu: 0`, stereo-only). Provenance in the `*.vinspose.polisher.json` sidecar records
+which config (by sha256) produced each pose — the analysis records the `config_sha256` it consumed.
 
-> **⚠ We have never observed live onboard behavior.** VIO was never fed to the FC (no serial link),
-> and no one has watched the live pose output in flight. *Every* observation here is from **offline
-> replay**. So even the foundational fact — does the estimator spool up / produce pose at all when
-> running live on the vehicle — is **unconfirmed**. (Expected to, being open-loop with no controls or
-> filtering to damp it — but a bet, not a measurement.)
+> **✅ Provenance now tracked (was not).** Pose is regenerated by `vio-offline-runner` in the
+> vio-estimator image: single-threaded, no wall-clock solver cap, timestamp-ordered — **byte-reproducible**
+> (verified: the real fixtures re-run to identical sha256). This **supersedes** the earlier qemu/`0.04 s`
+> scratchpad poses, which had **no provenance** and disagreed with the tracked regen by ~2× on raw
+> displacement (e.g. armed 41.9 km tracked vs 73.9 km loose). Do not use the old loose `*.vinspose.csv`.
+
+> **⚠ Still never observed live onboard.** VIO was never fed to the FC (no serial link) and no one has
+> watched live pose in flight. Every observation here is **offline replay**. Whether the estimator even
+> spools up live on the Pi is still **unconfirmed**.
+
+> **⚠ GPS-good, open, well-lit proxy — not canopy.** Both flights had RTK the whole time; we *simulate*
+> GPS-denial by **withholding** intermediate GPS from the reconstruction (using it only as scoring
+> truth). The VIO itself ran in good visual conditions. Canopy — feature-poor, moving leaves, lighting
+> transitions, low light — is a **different, likely worse** environment and is **untested**. Treat every
+> number here as an **optimistic floor**.
 
 ---
 
 ## Theories
 
-Each theory: statement, evidence **for**, evidence **against**, status, and the experiment that
-would discriminate it. Evidence IDs (E#) are in the ledger below.
+Each theory: statement, evidence **for/against**, status, discriminator. Evidence IDs (E#) in the ledger.
 
-### T1 — Solver-iteration starvation under qemu
-*Under qemu, the wall-clock `max_solver_time: 0.04 s` budget lets Ceres run far fewer than the
-configured 8 iterations, degrading the estimate.*
-- **For:** E6 (the budget is a real wall-clock cap, `estimator.cpp:1083`; qemu is ~10× slower per iteration). The fact we *needed* to reach for a larger budget is itself weak evidence the cap binds.
-- **Against:** none yet.
-- **Status:** plausible, unmeasured. We have not counted actual iterations per frame.
-- **Discriminator:** X3 (offline harness with no wall-clock cap; if drift shrinks, T1 contributed).
+### T1 — Solver-iteration starvation under qemu — **DISPROVEN**
+- **Against:** E9 — the deterministic offline harness runs Ceres to completion (no wall-clock cap),
+  single-threaded, and reproduces the **same divergence**. Un-starving the solver changed nothing.
+- **Status:** **disproven as the cause.**
 
-### T2 — The 0.04 s budget also binds on the real Pi in flight
-*Even in production the Pi may not finish 8 iterations in 40 ms, so the deployed estimator is itself
-under-solved — i.e. this isn't only a qemu artifact.*
-- **For:** the tuning exists (`max_solver_time` set low deliberately) implying real-time pressure on the Pi.
-- **Against:** none yet.
-- **Status:** unmeasured and important — determines whether "fix the replay" is even enough.
-- **Discriminator:** X4 (instrument solver time / iteration count on the Pi in a real flight).
+### T7 — Our *replay* is the problem (I/O-timing artifact) — **DISPROVEN (as the cause)**
+- **For (historical):** E5 (init `R0` moved with replay pace).
+- **Against:** E9 — a deterministic, timestamp-ordered feed still diverges **identically and reproducibly**.
+- **Status:** timing coupling was real in the old path, but removing it entirely leaves the divergence
+  unchanged → **not the cause.** The deterministic harness is the trustworthy base for everything below.
 
-### T3 — Motor vibration corrupts the OAK-D IMU, degrading pose
+### T3 — Motor vibration corrupts the OAK-D IMU — **not isolated; do not credit**
 *The hard-mounted OAK-D IMU eats motor vibration, poisoning IMU preintegration.*
-- **For:** E1 (OAK-D accel band-power >5 Hz is ~400–500× higher armed vs handheld — the camera IMU *does* see the vibration).
-- **Against:** E2 **[robust]** (the **handheld** run, with motors off and no vibration, **also winds up** — so vibration is *not necessary* for the divergence). E4 (the IMU is likely BNO085 fused output, which is filtered and may not even faithfully carry the vibration into the estimate).
-- **Status:** **weakened as the primary cause.** The vibration-free control diverging is the strongest single fact we have, and it's robust to the qemu confound.
-- **Discriminator:** X2 (serious handheld-vs-armed control analysis on a clean run).
+- **For:** E1 (OAK-D accel band-power >5 Hz ~400–500× higher armed vs handheld — the camera IMU *does* see vibration).
+- **Against:** E2 (the **handheld** run *also* fails on IMU-fusion) — **but** "motors off" is **not**
+  "vibration-free": hand tremor, footfalls, and the walkaround itself inject IMU disturbance, so this
+  does **not** cleanly isolate vibration. E4 (BNO085 fused output may not faithfully carry vibration).
+- **Status:** **we have not attributed the IMU-fusion failure to vibration.** It could equally be
+  extrinsic error, time-sync, scale, or the fused-IMU model (T4/T5). Prior versions of this doc
+  over-claimed "vibration is not the cause"; the honest statement is *cause not isolated, either way*.
+- **Discriminator:** X8(c) synthetic vibration injection (breaking threshold vs measured spectrum); X7 raw IMU.
 
-### T4 — Cam↔IMU calibration / extrinsics are wrong
-*The seed `oak_d.yaml` uses identity `body_T_cam` extrinsics and un-refined IMU noise; a wrong
-lever-arm / orientation makes the fused estimate drift once accelerating.*
-- **For:** E3 (VINS over-scales and drifts from just after takeoff; velocity does not return to zero at hover — the classic signature of a mis-estimated bias / gravity / scale). Happens on **both** runs.
-- **Against:** none yet.
-- **Status:** leading candidate for a *fundamental* (non-replay) cause.
-- **Discriminator:** X1 (vision-only removes the IMU/extrinsic path entirely) + a real calibration.
-
-### T5 — The OAK-D IMU (BNO085 fused output) is intrinsically unsuitable for tight VIO
-*Fused/filtered IMU output (not raw), zero-at-rest, wrong noise model — VINS wants raw high-rate
-accel/gyro.*
-- **For:** E4 (gyro reads **exactly** 0.000 at rest in both runs — a fused/filtered signature, consistent with BNO085). E3 (velocity won't settle at rest).
-- **Against:** none yet.
-- **Status:** plausible; also blocks faithful vibration capture (ties to the feature-block roadmap: raw high-rate IMU).
-- **Discriminator:** X7 (capture raw high-rate OAK IMU and re-run) + X1 (vision-only sidesteps the IMU).
+### T4 / T5 — Cam↔IMU calibration/extrinsic wrong (T4) and/or BNO085 fused IMU unsuitable (T5)
+*The seed extrinsic is a rough guess refined online; the OAK-D IMU is fused/filtered, zero-at-rest,
+wrong noise model — either poisons the tightly-coupled fusion once accelerating.*
+- **For:** E3 (over-scale from takeoff; velocity won't zero at rest — bias/gravity/scale signature).
+  E4 (gyro reads **exactly** 0.000 at rest — a fused/filtered BNO085 signature). **E10** — **vision-only
+  (no IMU path at all) tracks the whole flight at ~1 m ATE, while IMU-fusion runs to 41.9 km.** So the
+  break is **in the IMU/extrinsic path**, not the vision — which is what T4/T5 assert (without yet
+  isolating *which* of the two).
+- **Status:** **the IMU-fusion path is where it breaks (strongly supported); the specific mechanism
+  (extrinsic vs. IMU model vs. time-sync) is not isolated.**
+- **Discriminator:** X8(b) true-vs-seed extrinsic on the harness; X7 raw high-rate IMU.
 
 ### T6 — Aggressive motion / feature geometry breaks tracking
-*Motion blur, feature loss, or insufficient parallax during aggressive motion starves the visual constraint.*
 - **For:** E7 (handheld feature count collapses to ~3/frame during the barrel roll).
-- **Against:** E7 also shows the **armed** run diverges while feature counts stay healthy (mean ~30, 0.3% <10) — so feature starvation is not the mechanism for armed.
-- **Status:** contributes to the *handheld barrel-roll* endgame only; not the general explanation.
-- **Discriminator:** X2 (analyse pre-maneuver windows) + X1 (vision-only under the same motion).
+- **Against:** E7 also shows the **armed** run diverges with healthy feature counts. And vision-only
+  tracks the armed flight fine (E10), so features aren't the ceiling there.
+- **Status:** contributes to the handheld barrel-roll endgame only; not the general explanation. May
+  also inflate the handheld vision-only metric (see the *singular-error* caveat).
 
-### T7 — Our *replay* is the problem, not the estimator (I/O-timing artifact)
-*The socket loop reads one IMU + one feature per `poll()`, so which measurements are batched — and the
-init window — depend on arrival timing. Our replay isn't a faithful or repeatable feed.*
-- **For:** E5 (VINS init `R0` **changed with replay pace** — delivery timing leaks into the estimate). E6 (real-time coupling via the wall-clock solver budget).
-- **Against:** E8 (the *shape* of the early trajectory tracks the EKF and aligns at NCC 0.93 — the estimator is doing something right, so it's not pure garbage-in).
-- **Status:** confirmed present; magnitude unknown. This is why offline determinism (control time) is the agreed next structural step.
-- **Discriminator:** X3 (deterministic offline feed — if results stabilise and improve, T7 was material).
+### T8 — Architecture: redundant, low-quality inertial fusion given authority (**new; leading**)
+*We run **two** inertial fusions in series: VINS fuses the **bad** IMU (BNO085 fused output,
+hard-mounted, online-estimated extrinsic/time) into a pose **first**, corrupting it, then feeds that to
+the FC's central EKF — which already fuses a **good**, vibration-isolated, calibrated IMU. The worse
+copy is given authority, and a tightly-coupled estimator **trusts** it (a factor with a weight), so a
+wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
+- **For:** E10 (vision-only, which uses **no** IMU, tracks; IMU-fusion explodes). The "VINS-Mono needs
+  both" assumption is **monocular** — mono is scale-blind, so IMU is its only scale source. **Stereo
+  observes scale from the baseline directly**, so VINS-**Fusion** stereo-only is a first-class supported
+  mode and needs no IMU for scale. Our `imu: 1` was a *choice*, and the wrong one for these flights.
+- **Against:** stereo scale weakens at range vs. the ~75 mm baseline (far/high scenes decay toward
+  monocular) — so "drop the IMU" is right for **near-field** (the actual use case) but not universally;
+  the long-term answer is likely to let the **FC's good IMU** do the inertial fusion once, not none anywhere.
+- **Status:** **leading architectural theory.** The natural fix: stereo VO → FC EKF (one good IMU does
+  inertial fusion once); IMU, if reintroduced, as a **preintegrated relative velocity factor** with an
+  honest covariance, not global authority ([#59](https://github.com/symmatree/coordinator/issues/59)).
+- **Discriminator:** X1 (done — vision-only tracks), X10 (FC-side gating/fusion), X9 (batch solve with/without IMU).
+
+> **⚠ Metric-inflation caveat (methodological).** A global metric (ATE, "massive divergence") can be
+> dominated by a **few bad segments** — one over/under-tight bend, one angular error — while the
+> trajectory is section-wise well matched. Before trusting any global number, check **local segment-wise
+> agreement vs. the global fit** (esp. the handheld vision-only: NCC 0.63 + barrel roll may be inflating
+> an otherwise-fine walkaround). Don't quote a global ATE that might be a couple of bad samples.
 
 ---
 
@@ -119,47 +150,80 @@ init window — depend on arrival timing. Our replay isn't a faithful or repeata
 | ID | Evidence | Source | Bears on |
 |----|----------|--------|----------|
 | E1 | OAK-D accel band-power (>5 Hz) ~400–500× higher armed vs handheld | `vio-input-alignment.ipynb` §3 | +T3 (IMU sees vibration) |
-| E2 | Handheld (no vibration) **also** winds up / diverges | `vio-ekf-comparison` handheld run | **−T3** [robust] |
-| E3 | VINS over-scales ~from takeoff; velocity doesn't return to 0 at hover | `vio-ekf-comparison.ipynb` §2 | +T4, +T5 |
+| E2 | Handheld (motors off) **also** fails on IMU-fusion | tracked regen | ~T3 (but motors-off ≠ vibration-free) |
+| E3 | IMU-fusion over-scales ~from takeoff; velocity doesn't return to 0 at rest | `vio-quality.ipynb` | +T4, +T5 |
 | E4 | Gyro reads **exactly** 0.000 at rest (both runs) | fixture decode | +T5 (BNO085 fused); −T3 |
-| E5 | Init `R0` changed with replay pace | fulliter smoke vs 0.9× run | +T7 |
-| E6 | `max_solver_time` is a wall-clock Ceres cap (0.04 s); qemu ~10× slower | `estimator.cpp:1083` | +T1, +T2, +T7 |
+| E5 | Init `R0` changed with replay pace (old qemu path) | historical | +T7 (historical) |
+| E6 | `max_solver_time` is a wall-clock Ceres cap (0.04 s) | `estimator.cpp:1083` | context for T2 |
 | E7 | Handheld feats → ~3/frame at barrel roll; armed diverges with healthy feats | `vio-input-alignment.ipynb` §4 | +T6 (handheld), −T6 (armed) |
-| E8 | Early trajectory tracks EKF shape; time-align NCC 0.93 (armed), confirmed by motor-spinup/climb | `vio-ekf-comparison.ipynb` §1–2 | −"fundamentally broken", −T7-as-total |
-
-*All output-side evidence (E2,E3,E5,E8) is from qemu/0.04 s runs — preliminary except where [robust].*
+| E8 | Early trajectory tracks EKF shape; time-align NCC ~0.95 (armed) | `vio-quality.ipynb` | −"fundamentally broken" |
+| **E9** | **Deterministic offline harness** (native, full Ceres iters, `num_threads=1`, timestamp-ordered) reproduces the **same divergence**, **byte-reproducible** across runs | `vio-offline-runner` | **−T1, −T7** (divergence is real, not a harness/replay artifact) |
+| **E10** | **Vision-only** (`imu:0`) tracks the **whole** flight — armed ATE **0.98 m**, handheld 3.34 m (global best-fit, scale ~0.9); **IMU-fusion** (`imu:1`) runs to **41.9 km** (armed), 218 m (handheld), speed→1076 m/s | `vio-quality.ipynb`, tracked regen | **+T4/T5/T8** (break is in the IMU path); scale from stereo baseline |
+| **E11** | **Drift vs. anchor spacing** (armed, GPS withheld, backyard proxy): locally-rigid residual rms **6/16/26/37/64 cm** at K = **2/5/10/20/40 m** | K-sweep on vision-only track | ice-hole leg budget; +[#59](https://github.com/symmatree/coordinator/issues/59) |
+| **E12** | Vision-only inter-sample steps: **99% < 10 cm** (smooth), but **rare 1–2 m single-sample jumps** (max 128 cm armed, 239 cm handheld) | jump analysis on tracked track | the real safety threat; fail-**confident** for IMU-fusion (smooth 1076 m/s) |
 
 ---
 
-## Experiments (next steps)
+## Experiments
 
-Ordered by value ÷ cost. Most need a **trustworthy estimator** first (X3), except where noted.
-
-- [ ] **X1 — Vision-only (stereo, `USE_IMU: 0`).** Run VINS stereo-only on the same features; optionally a GPS-anchored stereo bundle adjustment over the feature tracks (start/end stationary GPS as anchors). **The key discriminator:** if vision alone tracks, the fault is the IMU/extrinsic path (→T4/T5); if vision alone also fails, the feature/camera data itself is the ceiling. Config-level first cut; runnable without the full harness. *(This is Seth's SfM/loop-closure idea; the cheap proxy is `USE_IMU:0`, the rigorous version is the custom GPS-anchored BA.)*
-- [ ] **X8 — Synthetic VI ablation (known-world simulator).** Generate the IMU + stereo-feature measurements a sensor suite *would* produce along a known truth trajectory — the FC **EKF** state (position/velocity/attitude) — feed them to the real estimator, and compare the output back to that truth. **Closed loop, so the EKF's absolute accuracy doesn't matter** (we recover the trajectory we generated from). Inverts the problem: start clean, add degradations, find what breaks it.
-  - **(a) Perfect world first** — clean features from well-conditioned invented landmarks + ideal IMU. If the estimator can't recover a *clean* world, the ceiling is the **estimator/config/calibration** itself. Cheapest, most decisive first cut (+T4, −input-quality).
-  - **(b) Calibration test** — generate with the *true* cam↔IMU extrinsic, run with the *seed identity* extrinsic; if that alone reproduces the over-scale/drift (E3), **T4 confirmed** — and shows whether online `estimate_extrinsic` recovers from a bad seed.
-  - **(c) Degrade one axis at a time** — inject the measured vibration spectrum into the IMU (→T3), model BNO085 fusion/zero-at-rest (→T5), add feature noise/dropout (→T6). Compare each **breaking threshold** to the measured real-data characteristics: if real vibration is *below* the threshold, it contributes but isn't the trigger (could resolve the E1-vs-E2 tension).
-  - **Caveats:** tests the **estimator only**, not the real tracker (we can't easily test feature extraction); the scene/landmark model is an invented knob; run on the **offline harness (X3)** for clean results; derive the synthetic IMU from EKF **velocity/attitude** (not double-differenced position), lightly smoothed, so it stays dynamically consistent with the features. Real work — a small VI simulator (anticipated in #35).
-- [ ] **X2 — Serious handheld-vs-armed control analysis.** Handheld is the vibration-free control; its behaviour directly tests T3. **The winding-up conclusion is [robust]** to the qemu confound because the contamination is common-mode across the pair — if handheld winds up without vibration, vibration isn't necessary. Do this properly (per-axis, pre-maneuver window) instead of hand-waving "maybe vibration."
-- [ ] **X3 — Deterministic offline harness (native x86 build).** Fork the estimator input loop to feed the fixture in `t_mono` order synchronously, drop the wall-clock solver cap; build native (no qemu). Gives a **reproducible, un-starved** baseline → discriminates T1 and T7, and becomes the invariant for any further fork. *(Scoped separately; the agreed structural next step.)*
-- [ ] **X4 — Measure solver time / iteration count on the real Pi in flight.** Directly tests T2 (does the 0.04 s budget bind in production?). Determines whether fixing the replay is sufficient or the deployed estimator is itself under-solved.
-- [ ] **X5 — FC-IMU substitution (redesign; not on current data).** Feed the FC IMU (better vibration damping) in place of the OAK-D IMU to test T3. **Confounded on existing data:** the FC IMU is logged at only ~25 Hz (batch off) — too sparse for preintegration — and the cam↔IMU extrinsic is calibrated for the OAK-D location, not the FC. Needs a purpose-built capture (high-rate FC IMU logging + a measured FC-IMU→camera extrinsic). Until then, **X2's motors-off control is the cleaner "less vibration" test.**
-- [ ] **X7 — Capture raw high-rate OAK-D IMU (vs BNO085 fused).** Tests T5 and unblocks faithful vibration capture. Ties to the tracker/feature-block roadmap (raw IMU mode, higher rate).
+- [x] **X1 — Vision-only (stereo, `imu:0`) — DONE (E10).** Tracks the whole flight (~1 m ATE armed). The
+  fault is the IMU/extrinsic path, not the vision. Scale is stereo-observable without IMU.
+- [x] **X3 — Deterministic offline harness — DONE (E9, #54).** `vio-offline-runner`: byte-reproducible;
+  divergence is real (T1/T7 disproven). Now the trustworthy base for everything else.
+- [ ] **X9 — Offline batch factor-graph solve (GTSAM), GPS-anchored — [#59](https://github.com/symmatree/coordinator/issues/59).**
+  Relative visual factors + sparse GPS priors at tack points (intermediate GPS withheld), seeded from
+  vision-only; extensible to IMU as **preintegrated relative velocity factors** (velocity-at-time, not
+  global assertions) to compare with/without IMU on equal footing. Directly tests the PPK endpoint-lock
+  premise and E11. Runnable on existing data.
+- [ ] **X10 — EKF innovation-gate / jump handling (no new filter).** Replay the tracked VIO (jumps and
+  all) through ArduPilot EKF3 (SITL/log) and check whether the **existing** `EK3_POS_I_GATE` (+ source
+  noise, `EK3_GLITCH_RAD`) rejects the E12 jumps *without* rejecting real motion. Lane switching
+  (`EK3_IMU_MASK`/`EK3_ERR_THRESH`) is a **different** mechanism (IMU-core health, not measurement
+  outliers). **Don't build a filter** until the existing gate is shown insufficient.
+- [ ] **X8 — Synthetic VI ablation (known-world simulator).** Generate IMU + stereo-feature measurements
+  along a known truth trajectory (FC EKF state); (a) perfect world → is the ceiling the estimator/config?
+  (b) true-vs-seed extrinsic → isolates T4; (c) inject measured vibration/BNO085 model/feature dropout →
+  breaking threshold vs measured. Run on the harness. Real work (a small VI simulator).
+- [ ] **X2 — Local-vs-global agreement check (cheap; do before trusting global metrics).** Segment-wise
+  rigidity vs global fit (the metric-inflation caveat), esp. handheld vision-only.
+- [ ] **X4 — Measure solver time / iteration count on the real Pi in flight** (T2: does 0.04 s bind live?).
+- [ ] **X5 — FC-IMU substitution** (redesign; confounded on current data — FC IMU ~25 Hz, extrinsic for OAK-D location).
+- [ ] **X7 — Capture raw high-rate OAK-D IMU** (vs BNO085 fused; tests T5, unblocks faithful vibration capture).
 
 ---
 
 ## Conclusions (distilled so far)
 
-1. **The estimator is not fundamentally broken on this data** — it tracks the takeoff and time-aligns cleanly (E8). The failure is a *degradation/drift*, not garbage-out.
-2. **Vibration is not the necessary cause** of the divergence — the motors-off control diverges too (E2, [robust]). This is the single most useful fact and it was available the whole time; we should stop treating "maybe it's vibration" as unfalsifiable.
-3. **The strongest fundamental-cause candidate is calibration / IMU (T4/T5)** — over-scale from takeoff and velocity that won't zero at rest are bias/gravity/scale signatures, present on both runs.
-4. **We cannot yet separate real degradation from replay artifact** (T1/T7) — which is exactly why the deterministic offline harness (X3) is the gating next step, and why current numbers are preliminary.
+1. **The divergence is REAL and reproducible** — not a qemu/replay artifact (E9). T1/T7 disproven.
+2. **Vision-only works; IMU-fusion is catastrophic** (E10). Stereo gives metric scale from the baseline,
+   so the IMU is not needed for scale in this near-field use case; "need both" is a **monocular** premise
+   we don't share. The break is **in the IMU/extrinsic path** — but *which* mechanism (extrinsic / IMU
+   model / time-sync / vibration) is **not isolated**, and we should stop asserting any single one.
+3. **The leading architectural read (T8):** we run a redundant, low-quality inertial fusion (bad IMU,
+   given authority) in front of the FC's good-IMU EKF. Natural fix: stereo VO → FC EKF; IMU only as a
+   properly-weighted relative velocity factor if at all ([#59](https://github.com/symmatree/coordinator/issues/59)).
+4. **The safety threat is sudden jumps, not gradual drift** (E12) — and dropping the IMU removes the
+   *catastrophic* runaway but **not** the rare 1–2 m jumps. Handle those with the **existing** EKF
+   innovation gate (X10), not a new filter. The IMU-fusion failure is **fail-confident** (smooth 1076 m/s),
+   which is the worst mode for "in doubt, land."
+5. **Drift over ice-hole-length legs looks acceptable on the proxy** (E11): ~tens of cm rms out to
+   10–20 m, ~0.6 m by 40 m — within the `canopy-ops.md` mapping budget. **Optimistic floor** (GPS-good,
+   open, not canopy; rigid-fit proxy, which a batch solve should match or beat).
+
+**Operational consequence:** the plan that fits the evidence is **VIO = local stability** (hover +
+operator-commanded deltas), **operator = global navigation** (FPV via VTX), GPS at ice-hole endpoints,
+and **retroactive** GPS-anchored batch reconstruction for the map ([#59](https://github.com/symmatree/coordinator/issues/59)).
+Drift is tolerated (operator + post-hoc); jumps must be handled (they break even a hover). See
+`Drones/rekon10/canopy-ops.md`.
 
 ---
 
-## Methodology confounds (must fix before trusting numbers)
+## Methodology confounds
 
-- **qemu solver starvation (T1):** wall-clock `max_solver_time` under ~10× emulation → too few iterations.
-- **Non-determinism / I/O timing (T7):** the socket poll loop couples the estimate to arrival timing; `R0` moved with pace (E5). You cannot get time-invariant replay from real-time-clock code without controlling time.
-- **No provenance on regenerated pose:** the `*.vinspose.csv` on the NAS were produced from ephemeral config/orchestration with no sidecar recording fixture sha, image digest, config, or replay speed. **Do not extend analysis on these**; regenerate with provenance once X3 exists.
+- **Resolved:** qemu solver starvation (T1) and non-deterministic replay (T7) — the offline harness is
+  deterministic and un-starved (E9). Provenance — the tracked runner writes a sidecar (fixture/config/
+  source SHAs); the old loose `*.vinspose.csv` (no provenance) are superseded and must not be used.
+- **Open:** **GPS-good open proxy ≠ canopy** (optimistic floor); **hover untested** (all flights moving);
+  **metric inflation** by singular errors (check local-vs-global before trusting a global ATE); the
+  **rigid-fit K-sweep** (E11) is a proxy — the batch solve (#59) is the real measurement; **cause of the
+  IMU-fusion failure not isolated** (T3/T4/T5 all open).
