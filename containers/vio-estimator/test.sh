@@ -115,7 +115,7 @@ for d in a b; do
 	}
 done
 
-if ! python3 - "$WORK/a" "$WORK/b" <<'PY'
+if ! python3 - "$WORK/a" "$WORK/b" <<'PY'; then
 import csv, hashlib, json, math, sys
 a, b = sys.argv[1], sys.argv[2]
 csv_a, side_a = f"{a}/smoke.vinspose.csv", f"{a}/smoke.vinspose.polisher.json"
@@ -132,7 +132,6 @@ assert d["object"][0]["sha256"] and d["result"][0]["sha256"], "sidecar missing h
 assert d["result"][0]["sha256"] == ha, "sidecar result sha != actual CSV sha"
 print(f"  ok: deterministic ({len(rows)} poses, CSV sha {ha[:12]}), sidecar valid")
 PY
-then
 	echo "SMOKE FAIL (offline runner)"
 	exit 1
 fi
