@@ -82,6 +82,10 @@ jobs:
           file: containers/vio-estimator/Dockerfile
           platforms: linux/${{ matrix.arch }}
           outputs: ${{ github.event_name == 'pull_request' && 'type=docker' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE_NAME) }}
+          # PR (type=docker): tag the loaded image so the smoke test can reference it.
+          # push (push-by-digest): no tag -- the image is pushed by digest, the merge job
+          # applies the tags to the assembled manifest.
+          tags: ${{ github.event_name == 'pull_request' && steps.docker-metadata.outputs.tags || '' }}
           labels: ${{ steps.docker-metadata.outputs.labels }}
           build-args: |
             VINS_FUSION_BRANCH=${{ steps.pins.outputs.vins_fusion_branch }}
