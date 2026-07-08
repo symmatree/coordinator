@@ -181,22 +181,29 @@ wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
   differ. Per-value tables + provenance: `<fixture>.max_num_iterations-sweep.json` in each flight dir.
   `WINDOW_SIZE` is compile-time (not swept here). One outlier: `iters=4` scored 1.64 m (convergence
   artifact), flagged not smoothed.
-- [x] **X12 — Handheld slow-motion capture (stereo-only) — DONE (partial).** The `260705-handheld-noarm`
-  `wave` fixture is a **real, valid** passage of the vehicle through space — gentle (|gyro| max 83 deg/s,
-  attitude rate max 44 deg/s, **0%** above the 200 deg/s cutoff), **RTK-fixed** FC truth (GPS Status
-  median 5, 22–31 sats), and **slow** (max ground speed 1.15 m/s, 48% of samples < 0.1 m/s). The FC not
-  driving the motors does **not** invalidate it. Current stereo-only tracks it within ~1 m for **~55 s**,
-  then a **discrete breakdown** (err 1→5 m in ~5 s, during a motion segment ~0.7–1.05 m/s, coincident
-  with the estimator's `unstable tracking...`). **This is what the CURRENT code does** — VINS-Fusion's
-  feature-count threshold + incremental marginalization + no relocalization — **not an inherent limit of
-  the motion or data**; the same fixture is a candidate for the batch solve (#59) to reconstruct.
-  **Cause not isolated:** near-stationary stretches are the *stablest* part (drift-rate lowest at
-  <0.05 m/s), so it is NOT low-parallax hover starvation as first guessed; the drift-vs-speed correlation
-  is confounded by global-scale error (a wrong scale makes error grow ∝ distance) and by the fit mixing
-  pre/post-break samples. Global ATE is the wrong lens here (X2). The handheld `<fixture>.max_num_iterations-sweep.json`
-  numbers (ATE 2–6 m, swinging scale) are that metric mangling a track-then-break trajectory, not a
-  fixture defect. Isolation TODO: locate the ~55 s event vs feature count; decouple scale (fixed-scale /
-  per-segment fit); segment-wise drift-rate instead of a single global fit.
+- [x] **X12 — Handheld slow-and-steady capture (stereo-only): local shape excellent, global frame smeared — DONE (an X2 instance).**
+  The `260705-handheld-noarm` `wave` fixture is a **real, valid** passage of the vehicle through space
+  (the FC not driving the motors does not invalidate it). Measured facts:
+  - **Gentle + slow, by design** (pilot: deliberately slow-and-steady): translation p90 0.38 / **max
+    1.20 m/s**, |gyro| p90 10 / **max 83 deg/s**, attitude rate max 44 (0% above the 200 deg/s cutoff).
+    The flown `vio-logged` mission moves **~2x faster** (speed max 2.55 m/s; rotation comparable, |gyro|
+    max 97). FC truth is **RTK-fixed** (GPS Status median 5, 22–31 sats).
+  - **Local shape is tracked very well throughout:** per-20 s sliding-window Umeyama gives **median local
+    ATE 0.12 m** (most windows 2–44 cm). The single global-fit ATE (3.34 m; the 2–6 m sweep numbers) is
+    **~28x worse purely as a global-frame offset**, not a tracking failure. Near-stationary holds are the
+    stablest part (tiny local error; global scale is just unconstrained there on ~no translation).
+  - So the poor global number is the **metric + the estimator's lack of a global datum** (no loop closure
+    / lossy incremental marginalization, per `vins-stereo-only.md`) — **what the current code does, not an
+    inherent limit of the motion or data.** Consistent with the pilot's direct read that a turn's rotation
+    was left too open, offsetting everything downstream in the global frame while relative tracking holds.
+    Same data is a strong candidate for the batch solve (#59) to reconstruct globally.
+
+  Retractions (don't restate): my earlier "discrete breakdown at ~55 s" is **disproven** by the local
+  metric (shape stays good); "coincident with `unstable tracking`" was never timed and is dropped; the
+  "low-parallax hover starvation" guess is **disproven** (near-stationary is the *stablest* part). Not yet
+  isolated (so not asserted): whether the residual global offset is dominated by a rotation vs a scale
+  error — both give local-good/global-bad; the drift-vs-speed correlation is confounded by scale
+  (wrong scale -> error ∝ distance). TODO: per-segment VINS rotation vs FC `ATT` to test the rotation read.
 - [ ] **X9 — Offline batch factor-graph solve (GTSAM), GPS-anchored — [#59](https://github.com/symmatree/coordinator/issues/59).**
   Relative visual factors + sparse GPS priors at tack points (intermediate GPS withheld), seeded from
   vision-only; extensible to IMU as **preintegrated relative velocity factors** (velocity-at-time, not
