@@ -9,9 +9,9 @@ Coordinator-side VIO feeding the TBS Lucid H7. Upstream build reference: [Luxoni
 
 ## What the coordinator sends
 
-The **coordinator MAVLink router** (`coordinator-mavlink`) publishes visual-odometry MAVLink to the FC. During bring-up, chobitsfan `mavlink_udp` is a reference for message types and axis handling; shipping code replaces it.
+The **coordinator MAVLink router** (`coordinator-mavlink`) publishes visual-odometry MAVLink to the FC: `ATT_POS_MOCAP` (position + covariance) and `VISION_SPEED_ESTIMATE` (dPos/dt velocity + covariance), plus a `TIMESYNC` reply. It is seeded from chobitsfan `mavlink_udp` but diverged -- design of record: [coordinator-mavlink.md](coordinator-mavlink.md).
 
-The Pi supplies estimates; fusion is FC-side via `EK3_SRC*` when `VISO_TYPE` is enabled. Exact message set follows the router implementation (chobitsfan uses e.g. `ATT_POS_MOCAP` and `VISION_SPEED_ESTIMATE`).
+The Pi supplies estimates; fusion is FC-side via `EK3_SRC*` when `VISO_TYPE` is enabled. FC-side covariance/gate mechanics: [ardupilot-extnav-fusion.md](ardupilot-extnav-fusion.md).
 
 ## Rekon context (not a param recipe)
 
