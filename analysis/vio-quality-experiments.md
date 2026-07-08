@@ -170,6 +170,17 @@ wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
   fault is the IMU/extrinsic path, not the vision. Scale is stereo-observable without IMU.
 - [x] **X3 — Deterministic offline harness — DONE (E9, #54).** `vio-offline-runner`: byte-reproducible;
   divergence is real (T1/T7 disproven). Now the trustworthy base for everything else.
+- [x] **X11 — Ceres iteration-count sweep (offline, stereo-only) — DONE ([#63](https://github.com/symmatree/coordinator/issues/63)).**
+  `analysis/tools/vio_param_sweep.py` swept `max_num_iterations` = {2,4,6,8,12,16,24,32} on the flown
+  fixture (`260705-vio-logged`), scored vs FC EKF. Result: **ATE is flat (~0.95–0.99 m) from 6 through
+  32 iterations, and 24 vs 32 are numerically identical (solve converged); scale ~0.90 throughout.**
+  So the **deployed 8-iteration budget does not starve the solve** — the offline quality answer to T2 /
+  X4 (whether 0.04 s / 8 iters binds), complementing T1's "un-starving changed nothing" from the
+  divergence angle. `imu:1` for contrast scores only a degenerate ~16 s pre-divergence window (scale
+  ~0.1–0.35) — not a tuning signal, another face of E10. Caveat: one flight, GPS-good/open; canopy will
+  differ. Per-value tables + provenance: `<fixture>.max_num_iterations-sweep.json` in each flight dir.
+  `WINDOW_SIZE` is compile-time (not swept here). One outlier: `iters=4` scored 1.64 m (convergence
+  artifact), flagged not smoothed.
 - [ ] **X9 — Offline batch factor-graph solve (GTSAM), GPS-anchored — [#59](https://github.com/symmatree/coordinator/issues/59).**
   Relative visual factors + sparse GPS priors at tack points (intermediate GPS withheld), seeded from
   vision-only; extensible to IMU as **preintegrated relative velocity factors** (velocity-at-time, not
