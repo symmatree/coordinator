@@ -60,6 +60,15 @@ VIO.
 `VISO_VEL_M_NSE`/`VISO_POS_M_NSE` are low enough not to clobber them (they are floors). The
 `EK3_*_M_NSE` params do not affect VIO.
 
+**As implemented (`coordinator-mavlink`, #62 Part 1):** the router now sends both covariances
+(previously omitted -> floored to 0.1, over-trusting). Velocity noise defaults to
+`MAVLINK_VEL_NSE=0.15` m/s (measured; dPos/dt vs FC EKF), position to `MAVLINK_POS_NSE=0.30` m
+(conservative placeholder, above the 0.2 floor, pending SITL/flight tuning). Because the FC
+collapses `VISION_SPEED_ESTIMATE.covariance` to `sqrt(cov[0]+cov[4]+cov[8])`, the router puts
+`σ²/3` on each velocity diagonal so the FC's effective noise equals `MAVLINK_VEL_NSE` (not
+`√3·` it). `ATT_POS_MOCAP.covariance` (row-major upper-triangle, states x,y,z,roll,pitch,yaw)
+carries the position variance on the x/y/z diagonal (indices 0/6/11).
+
 ## Velocity-only ExtNav: not supported standalone (#23485 OPEN)
 
 To fuse velocity as a real aid the filter must enter an aiding mode; `readyToUseExtNav()`
@@ -89,12 +98,16 @@ So velocity naturally rides out isolated VIO spikes; position needs `EK3_GLITCH_
 - Sources: `EK3_SRCn_POSXY=6` (ExtNav) required; add `VELXY=6` when a real velocity exists;
   `POSZ`, `YAW` per environment. `EK3_POS_I_GATE`/`EK3_VEL_I_GATE`/`EK3_GLITCH_RAD` are the
   consistency/reset knobs (shared across sources).
-- **Reset counter:** propagate the VINS reset counter through
-  `ATT_POS_MOCAP`/`VISION_POSITION_ESTIMATE.reset_counter` -> `posReset` ->
+- **Reset counter:** propagate the VINS reset counter -> `posReset` ->
   `ResetPositionNE` (`PosVelFusion.cpp:651-658`). A VINS re-init (each ice-hole leg) then
   triggers a **clean** EKF position reset instead of being fought as a glitch. The current
-  `coordinator-mavlink` router does not send it yet -- a worthwhile follow-up for the
-  interrupted-GPS model.
+  `coordinator-mavlink` router does **not** send it yet -- and it needs two upstream changes,
+  not just a router tweak: (1) the `float[10]` `chobits_server` datagram carries no reset
+  counter, so the estimator/tap must plumb it through; (2) **`ATT_POS_MOCAP` has no
+  `reset_counter` field** in the MAVLink dialect (pymavlink 2.4.49) -- only
+  `VISION_POSITION_ESTIMATE` does, so position-reset propagation means switching that message
+  (`VISION_SPEED_ESTIMATE` does carry `reset_counter`, but that resets velocity, not position).
+  A worthwhile follow-up for the interrupted-GPS model.
 - Constants (not params): `extNavVelVarAccScale=0.05` (`AP_NavEKF3.h:497`),
   `extNavIntervalMin_ms=20` (50 Hz cap, `:523`).
 

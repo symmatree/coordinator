@@ -25,8 +25,10 @@ import subprocess
 import sys
 import time
 
-from fake_fc import FakeFC, check_att_pos_mocap, check_vision_speed
-from pose_replayer import read_poses, send_pose
+os.environ.setdefault("MAVLINK20", "1")  # match the router (covariance extensions)
+
+from fake_fc import FakeFC, check_att_pos_mocap, check_vision_speed  # noqa: E402
+from pose_replayer import read_poses, send_pose  # noqa: E402
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -41,22 +43,35 @@ def find_router():
     return "/opt/coordinator/router.py"
 
 
-# Distinct, asymmetric poses: a wrong axis, dropped flip, or swapped field is caught.
-# (quat w,x,y,z), (pos x,y,z), (vel x,y,z)
+# Distinct, asymmetric poses with strictly nonzero per-step position deltas so the
+# dPos/dt velocity has a determinate sign on every axis (a dropped flip or a
+# not-computed velocity is caught). The estimator velocity field is deliberately
+# junk -- the router ignores it and derives velocity from dPos/dt (#62).
+# (quat w,x,y,z), (pos x,y,z), (junk vel x,y,z)
 SYNTHETIC = [
-    ((1.0, 0.0, 0.0, 0.0), (7.0, 2.0, 3.0), (0.5, 0.6, 0.7)),
-    ((0.966, 0.259, 0.0, 0.0), (-1.5, 4.0, -2.5), (-0.3, 0.2, -0.9)),
-    ((0.707, 0.0, 0.707, 0.0), (10.0, -8.0, 0.5), (1.1, -1.2, 1.3)),
-    ((0.5, 0.5, 0.5, 0.5), (0.0, 0.0, -12.0), (-0.01, 0.0, 0.04)),
+    ((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (9.0, 9.0, 9.0)),
+    ((0.966, 0.259, 0.0, 0.0), (1.0, -1.0, 2.0), (9.0, 9.0, 9.0)),   # d=(+1,-1,+2)
+    ((0.707, 0.0, 0.707, 0.0), (3.0, 1.0, -1.0), (9.0, 9.0, 9.0)),   # d=(+2,+2,-3)
+    ((0.5, 0.5, 0.5, 0.5), (2.0, 4.0, 1.0), (9.0, 9.0, 9.0)),        # d=(-1,+3,+2)
 ]
 
 
-def drive_one(fc, sock, sockpath, quat, pos, vel):
-    """Send one pose; wait for its ATT_POS_MOCAP + VISION_SPEED_ESTIMATE; check them."""
+# Space poses like a real camera cadence (tens of ms), not sub-millisecond bursts:
+# the router skips dPos/dt below MIN_DT=1ms (duplicate-sample hygiene), which a
+# back-to-back test send would trip spuriously.
+POSE_SPACING_S = 0.02
+
+
+def drive_one(fc, sock, sockpath, quat, pos, vel, dpos):
+    """Send one pose; check its ATT_POS_MOCAP, and its dPos/dt VISION_SPEED_ESTIMATE
+    when a previous pose exists (dpos is None for the first pose -> no velocity)."""
+    if dpos is not None:
+        time.sleep(POSE_SPACING_S)
     send_pose(sock, sockpath, (*quat, *pos, *vel))
     apm = vse = None
+    want_vse = dpos is not None
     end = time.time() + 1.0
-    while time.time() < end and (apm is None or vse is None):
+    while time.time() < end and (apm is None or (want_vse and vse is None)):
         m = fc.recv(timeout=0.2)
         if m is None:
             continue
@@ -69,10 +84,13 @@ def drive_one(fc, sock, sockpath, quat, pos, vel):
         errs.append("no ATT_POS_MOCAP")
     else:
         errs += check_att_pos_mocap(apm, quat, pos)
-    if vse is None:
-        errs.append("no VISION_SPEED_ESTIMATE")
-    else:
-        errs += check_vision_speed(vse, vel)
+    if want_vse:
+        if vse is None:
+            errs.append("no VISION_SPEED_ESTIMATE (dPos/dt velocity not emitted)")
+        else:
+            errs += check_vision_speed(vse, dpos)
+    elif vse is not None:
+        errs.append("unexpected VISION_SPEED_ESTIMATE on first pose (no prior for dPos/dt)")
     return errs
 
 
@@ -113,13 +131,18 @@ def main():
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
 
         print(f"driving {len(SYNTHETIC)} synthetic poses through {os.path.basename(router)}")
+        prev_pos = None
         for i, (quat, pos, vel) in enumerate(SYNTHETIC):
-            errs = drive_one(fc, sock, sockpath, quat, pos, vel)
+            dpos = None if prev_pos is None else tuple(b - a for a, b in zip(prev_pos, pos))
+            errs = drive_one(fc, sock, sockpath, quat, pos, vel, dpos)
             if errs:
                 ok = False
                 print(f"  pose {i}: FAIL -- " + "; ".join(errs))
             else:
-                print(f"  pose {i}: ok (pos flip + quaternion + velocity flip)")
+                kind = "pos flip + quaternion + covariance" if dpos is None else \
+                    "pos + quaternion + dPos/dt velocity flip + covariance"
+                print(f"  pose {i}: ok ({kind})")
+            prev_pos = pos
 
         # Optional: sanity-replay a real capture -- assert it doesn't crash the router
         # and that pose/velocity keep flowing (values are motion, not fixed asserts).

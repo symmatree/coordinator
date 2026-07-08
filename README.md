@@ -21,7 +21,7 @@ On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and 
 |---------|------|--------|
 | `vio-tracker` | OAK-D `feature_tracker` (USB) | Image + CI in progress |
 | `vio-estimator` | `vins_fusion` | Planned |
-| `coordinator-mavlink` | Coordinator MAVLink router to FC | Planned |
+| `coordinator-mavlink` | Coordinator MAVLink router to FC | Router built (pose + dPos/dt velocity + covariance); first FC run pending ([design](docs/coordinator-mavlink.md)) |
 
 Processes share Unix sockets via `${COORDINATOR_IPC_DIR}` mounted at `/tmp`. Details: [docs/vio-integration.md](docs/vio-integration.md).
 

@@ -21,10 +21,15 @@ Run standalone to watch a live/replayed stream (Ctrl-C to stop):
 """
 
 import argparse
+import math
+import os
 import sys
 import time
 
-from pymavlink import mavutil
+# v2.0 dialect so the covariance/reset_counter extensions decode (router sends them).
+os.environ.setdefault("MAVLINK20", "1")
+
+from pymavlink import mavutil  # noqa: E402
 
 
 class FakeFC:
@@ -77,8 +82,9 @@ class FakeFC:
 AXIS_FLIP_TOL = 1e-4
 
 
-def check_att_pos_mocap(msg, q, pos):
-    """Verify ATT_POS_MOCAP passes the quaternion and applies the (x,-y,-z) flip."""
+def check_att_pos_mocap(msg, q, pos, pos_nse=0.30):
+    """Verify ATT_POS_MOCAP passes the quaternion, applies the (x,-y,-z) flip, and
+    carries the honest position covariance (diagonal = pos_nse**2 at index 0)."""
     ex, ey, ez = pos[0], -pos[1], -pos[2]
     errs = []
     if not (abs(msg.x - ex) < AXIS_FLIP_TOL and abs(msg.y - ey) < AXIS_FLIP_TOL
@@ -86,16 +92,30 @@ def check_att_pos_mocap(msg, q, pos):
         errs.append(f"position ({msg.x},{msg.y},{msg.z}) != expected ({ex},{ey},{ez})")
     if not all(abs(a - b) < AXIS_FLIP_TOL for a, b in zip(msg.q, q)):
         errs.append(f"quaternion {list(msg.q)} != expected {list(q)}")
+    if not abs(msg.covariance[0] - pos_nse * pos_nse) < 1e-4:
+        errs.append(f"position covariance[0] {msg.covariance[0]} != {pos_nse * pos_nse}")
     return errs
 
 
-def check_vision_speed(msg, vel):
-    """Verify VISION_SPEED_ESTIMATE applies the (x,-y,-z) flip."""
-    ex, ey, ez = vel[0], -vel[1], -vel[2]
-    if not (abs(msg.x - ex) < AXIS_FLIP_TOL and abs(msg.y - ey) < AXIS_FLIP_TOL
-            and abs(msg.z - ez) < AXIS_FLIP_TOL):
-        return [f"velocity ({msg.x},{msg.y},{msg.z}) != expected ({ex},{ey},{ez})"]
-    return []
+def check_vision_speed(msg, dpos, vel_nse=0.15):
+    """Verify VISION_SPEED_ESTIMATE is the router's dPos/dt velocity.
+
+    Velocity is derived from the position delta (dpos = pos - prev_pos), so we
+    check the per-axis SIGN with the (x,-y,-z) flip -- sign(vx)=sign(dx),
+    sign(vy)=-sign(dy), sign(vz)=-sign(dz) -- rather than an exact magnitude
+    (dt is the router's receipt interval, not known here). Also checks the honest
+    velocity covariance: the FC-scalar sqrt(cov[0]+cov[4]+cov[8]) == vel_nse.
+    """
+    errs = []
+    for name, got, d, flip in (("x", msg.x, dpos[0], 1), ("y", msg.y, dpos[1], -1),
+                               ("z", msg.z, dpos[2], -1)):
+        want_sign = flip * (1 if d > 0 else -1 if d < 0 else 0)
+        if want_sign and (got > 0) != (want_sign > 0):
+            errs.append(f"velocity {name}={got:+.3f} wrong sign for dpos {d:+.3f} (flip {flip})")
+    fc_err = math.sqrt(msg.covariance[0] + msg.covariance[4] + msg.covariance[8])
+    if not abs(fc_err - vel_nse) < 1e-3:
+        errs.append(f"velocity covariance FC-scalar {fc_err:.4f} != {vel_nse}")
+    return errs
 
 
 def main():
