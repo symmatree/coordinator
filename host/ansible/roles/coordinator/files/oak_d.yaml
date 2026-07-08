@@ -1,29 +1,34 @@
 %YAML:1.0
 # OAK-D calibration / tuning for vins_fusion (VINS-Fusion apm_wiki).
 #
-# SEED VALUES -- not a measured calibration. The intent (per the bring-up plan)
-# is to get the vision chain running end to end now and refine the constants
-# later from a bundle adjustment over a real flight, rather than hand-picking
-# checkerboard corners. estimate_extrinsic and estimate_td are therefore left ON
-# so vins_fusion optimizes the cam<->IMU transform and time offset online from
-# these initial guesses. If initialization is poor on the bench, set
-# estimate_extrinsic to 2 (full self-calibration, no prior) and excite all axes.
+# STEREO-ONLY (imu: 0). The deployed estimator runs stereo VIO WITHOUT the IMU:
+# tightly-coupled IMU fusion on this airframe diverges (runs away to km), while
+# stereo-only tracks a whole flight at ~1 m ATE with metric scale from the known
+# baseline. Rationale + source analysis: docs/vins-stereo-only.md; evidence:
+# analysis/vio-quality-experiments.md (offline iteration sweep, coordinator #63).
+# NOTE: validated OFFLINE (pose regen from recorded features); online behaviour on
+# the vehicle is not yet flight-proven.
 #
-# vins_fusion reads ONLY these fields (see vins_estimator parameters.cpp): IMU
-# noise, cam<->IMU extrinsics, and solver/timing knobs. Camera intrinsics live in
-# feature_tracker -- features arrive already normalized, so there is no
-# cam0_calib/image_width here.
+# With USE_IMU=0 the estimator FORCES estimate_extrinsic and estimate_td to 0 at
+# load and holds the stereo baseline (body_T_cam*) rigid -- scale comes from that
+# baseline, not the IMU (vins-stereo-only.md). The IMU-noise block and g_norm
+# below are therefore UNUSED; kept for reference / if IMU is ever re-enabled.
+#
+# SEED VALUES -- not a measured calibration; the baseline especially wants a real
+# stereo cal (the recovered scale sits ~10% off, consistent with baseline error).
+# vins_fusion reads ONLY these fields (see vins_estimator parameters.cpp). Camera
+# intrinsics live in feature_tracker -- features arrive already normalized, so
+# there is no cam0_calib/image_width here.
 
-imu: 1
+imu: 0
 num_of_cam: 2
 multiple_thread: 1
 output_path: "/tmp/vins/"
 
-# --- Extrinsics: IMU(body) <- camera. SEED guesses, refined online. ---
-# feature_tracker (apm_wiki) remaps the OAK-D IMU into the left-camera optical
-# frame, so identity rotation is a reasonable initial guess. cam1 (right) is one
-# stereo baseline (~75 mm) along +X from cam0 (left). Sign/rotation are seeds.
-estimate_extrinsic: 1   # 0 fixed, 1 optimize around guess, 2 no prior (calibrate)
+# --- Extrinsics: body <- camera. cam1 (right) is one stereo baseline (~75 mm)
+# along +X from cam0 (left); this baseline is what pins metric scale. Held rigid
+# in stereo-only (estimate_extrinsic forced to 0 without an IMU). SEED guesses. ---
+estimate_extrinsic: 0   # 0 fixed, 1 optimize around guess, 2 no prior (calibrate)
 
 body_T_cam0: !!opencv-matrix
    rows: 4
@@ -43,15 +48,15 @@ body_T_cam1: !!opencv-matrix
           0.0, 0.0, 1.0, 0.0,
           0.0, 0.0, 0.0, 1.0]
 
-# --- IMU noise: euroc-class starting points; refine per the OAK-D IMU. ---
+# --- IMU noise: UNUSED in stereo-only (no IMU factor). Kept for reference. ---
 acc_n: 0.1          # accelerometer measurement noise std
 gyr_n: 0.01         # gyroscope measurement noise std
 acc_w: 0.001        # accelerometer bias random-walk noise std
 gyr_w: 0.0001       # gyroscope bias random-walk noise std
 g_norm: 9.805       # gravity magnitude
 
-# --- Time offset (camera vs IMU clock). ---
-estimate_td: 1      # estimate cam<->IMU time offset online
+# --- Time offset (camera vs IMU clock). Forced to 0 without an IMU. ---
+estimate_td: 0      # estimate cam<->IMU time offset online (unused in stereo-only)
 td: 0.0             # initial offset, seconds
 
 # --- Solver (kept real-time). ---
