@@ -271,16 +271,21 @@ no hardware:
   it. Velocity-only is unsupported (must send position). `VISO_DELAY_MS` = measured VINS->FC latency;
   MAVLink2 required; 50 Hz ExtNav cap (`extNavIntervalMin_ms=20`).
 - **Bench host:** x86_64, 32 cores, ~26 TB free. ArduPilot cloned at `/home/jovyan/ardupilot`; build SITL
-  at the **Copter-4.6.3** tag to match the vehicle (`92b0cd78`). `MAVProxy`/`empy`/`future` still to
-  install (runtime, then bake into the tiles image per `~/AGENTS.md`).
-- **Version skew (measured, 2026-07-09):** 4.6.3 is 2025-11-18 (~8 mo); master is **+7419 commits** with
-  heavy EKF churn -- `AP_NavEKF3_PosVelFusion.cpp` (the fusion/gate/`GLITCH_RAD`/reset file the audit
-  leans on) has **~581 lines** changed alone. `docs/ardupilot-extnav-fusion.md` was read against
-  **master**, so its **line numbers and some symbol names are stale for 4.6.3** (e.g. `ResetPositionNE` /
-  `_gpsPosInnovGate` are master spellings; the *mechanics* -- `GLITCH_RAD`, `posErr`/covariance floor --
-  still exist at the tag, relocated/renamed). **Impact is contained:** we build SITL at 4.6.3, so the
-  audit runs on the EKF the vehicle flies; the only residue is to re-verify the reference doc's exact
-  params/lines against the now-cloned 4.6.3 source before #68 quotes them.
+  at the **`ArduPilot-4.7` branch (4.7.0-beta7)** -- the adopted target (below). `MAVProxy`/`empy`/`future`
+  still to install (runtime, then bake into the tiles image per `~/AGENTS.md`).
+- **Firmware target -- adopt 4.7 (decision, #64).** The stable channel dead-ends at 4.6.3 (the
+  `ArduPilot-4.6` branch is +1 commit, **zero** EKF/VIO changes); the live options are **4.7.0-beta7**
+  (+71 EKF/VIO commits) and master (4.8-dev). 4.7 reworked our exact path -- notably `EKF3 uses the
+  **correct** extnav variances for posvel fusion` (4.6.3 clamps vel/pos err at `5`/`10`; 4.7 at `50`/`100`
+  -- and `docs/ardupilot-extnav-fusion.md`, read against master, already documents the 4.7 values, so it
+  becomes *correct* for the vehicle once we move), GPS-anchored VisualOdom (overlaps #65), and
+  @chobitsfan's covariance-consumption fix on `ATT_POS_MOCAP` (#62/#66). With **zero on-vehicle VIO
+  investment** (VIO has only ever blocked arming), there's nothing to hold back: **move the vehicle to
+  4.7 and anchor SITL to 4.7-beta7** (tracking 4.7.0 stable). Bonuses for this airframe: the **Benewake
+  TFS20L** rangefinder gains a driver (`RNGFND_TYPE=46`, I2C -- absent at 4.6.3, which is why it never
+  worked), and `TBS_LUCID_H7` MPU6000 board-rev support is purely additive (our board is unaffected).
+  Caveat: 4.7.0 is still beta7; re-verify params after flashing (new `EK3_OPTIONS`/`EK3_PRIMARY`, changed
+  `FuseAllVelocities` default) and expect EKF/nav arming-gate behavior to change.
 
 **Not yet extracted (needs the segmented-fingerprint tool):** oscillation frequency/amplitude for the
 autotune twitches and the `vertical-bounce` event (band-limited above the maneuver envelope); stable-
@@ -297,9 +302,11 @@ matchability corollary.
 - [ ] **Build the segmented-fingerprint tool** (`analysis/`, beside `ardupilot_log.py`): per-`ATDE`
   twitch and `vertical-bounce` windows, band-limited spectra, `ATUN` response amplitudes, stable-hover
   RMS. Produces the LA2/LA3/LA4 real-side targets. **Fixes the targets before fitting the sim.**
-- [ ] **Stand up SITL** -- ArduPilot cloned at `/home/jovyan/ardupilot`; checkout the **Copter-4.6.3**
-  tag (match the vehicle), `./waf configure --board sitl && ./waf copter`; install `empy`/`MAVProxy`/`future`
-  at runtime, then PR to tiles to bake them.
+- [ ] **Stand up SITL** -- ArduPilot cloned at `/home/jovyan/ardupilot`; checkout the **`ArduPilot-4.7`
+  branch (4.7.0-beta7)** (the adopted target), `./waf configure --board sitl && ./waf copter`; install
+  `empy`/`MAVProxy`/`future` at runtime, then PR to tiles to bake them.
+- [ ] **Vehicle upgrade prep (#64):** generate a 4.6.3 -> 4.7 param diff (new/renamed/changed-default),
+  fold in the `TFS20L` `RNGFND` setup (`RNGFND_TYPE=46`, I2C) so the on-vehicle flash is a known quantity.
 - [ ] **S2 retro-confirm (LA2/LC1):** predict the instability-onset gain in SITL, compare to the autotune
   boundary. Zero new flights. First real predict-then-confirm.
 - [ ] **Verify the ExtNav injection mechanism:** evaluate SITL's built-in simulated-Vicon/ExtNav rig
