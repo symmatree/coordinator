@@ -1,0 +1,61 @@
+name: build-oak-still-capture
+on:
+  push:
+    branches: [main]
+    paths:
+      - containers/oak-still-capture/**
+      - .github/workflows/build-oak-still-capture.yaml
+  pull_request:
+    paths:
+      - containers/oak-still-capture/**
+      - .github/workflows/build-oak-still-capture.yaml
+  workflow_dispatch: {}
+
+jobs:
+  build-oak-still-capture:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      IMAGE_NAME: ghcr.io/symmatree/coordinator-oak-still-capture
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: docker-metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=branch
+            type=ref,event=tag
+
+      # The Dockerfile runs the writer test (test_capture.py) at build time, so this
+      # build also validates the frame->disk path on native arm64. The depthai device
+      # loop is hardware-gated and not exercised in CI.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: containers/oak-still-capture
+          file: containers/oak-still-capture/Dockerfile
+          platforms: linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.docker-metadata.outputs.tags }}
+          labels: ${{ steps.docker-metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

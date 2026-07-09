@@ -5,6 +5,8 @@
 #   tracker (default): vio-tracker only -- OAK-D feature extraction bench
 #   bench:             vio-tracker + vio-estimator -- full vision chain, no FC
 #   flight:            bench + coordinator-mavlink
+#   capture:           oak-still-capture ONLY -- RGB stills; owns the OAK-D, so it is
+#                      mutually exclusive with the tracker/bench/flight profiles (#72)
 #
 # Tags from .env. No tracker->estimator depends_on: that service is absent in the
 # tracker profile (would error "depends on undefined service"), and ordering is
@@ -60,6 +62,21 @@ services:
     environment:
       - MAVLINK_DEVICE
       - MAVLINK_BAUD
+
+  # RGB still capture (#72). Owns the OAK-D like vio-tracker (same /dev/bus/usb
+  # bind-mount + privileged for MyriadX re-enumeration), so it is a standalone
+  # `capture` profile -- do NOT run it with tracker/bench/flight (single USB device).
+  oak-still-capture:
+    image: ghcr.io/symmatree/coordinator-oak-still-capture:${OAK_STILL_CAPTURE_VERSION}
+    container_name: coordinator_oak_still_capture
+    profiles: [capture]
+    privileged: true
+    restart: unless-stopped
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - ${COORDINATOR_CAPTURES_DIR}:/captures
+    env_file:
+      - .env
 
 x-dockge:
   urls: []
