@@ -100,7 +100,7 @@ Each theory: statement, evidence **for/against**, status, discriminator. Evidenc
   over-claimed "vibration is not the cause"; the honest statement is *cause not isolated, either way*.
 - **Discriminator:** X8(c) synthetic vibration injection (breaking threshold vs measured spectrum); X7 raw IMU.
 
-### T4 / T5 — Cam↔IMU calibration/extrinsic wrong (T4) and/or BNO085 fused IMU unsuitable (T5)
+### T4 / T5 — Cam↔IMU calibration/extrinsic wrong (T4) and/or BNO085 IMU data-path mismatch (T5)
 *The seed extrinsic is a rough guess refined online; the OAK-D IMU is fused/filtered, zero-at-rest,
 wrong noise model — either poisons the tightly-coupled fusion once accelerating.*
 - **For:** E3 (over-scale from takeoff; velocity won't zero at rest — bias/gravity/scale signature).
@@ -108,6 +108,15 @@ wrong noise model — either poisons the tightly-coupled fusion once acceleratin
   (no IMU path at all) tracks the whole flight at ~1 m ATE, while IMU-fusion runs to 41.9 km.** So the
   break is **in the IMU/extrinsic path**, not the vision — which is what T4/T5 assert (without yet
   isolating *which* of the two).
+- **Against (argument, not yet measured):** the OAK-D is the **ArduPilot-wiki reference platform** for
+  this exact pipeline and is used for indoor nav — where walls are the ground truth and a km-scale
+  divergence would be obvious — so the *same hardware* does not inherently run away. That shifts weight
+  from "the BNO085 part is unsuitable" toward **our IMU data path** (DepthAI output mode/rate/timestamp
+  sync; the IMU→camera **axis remapping**). Extrinsics are rigid factory geometry (single machined
+  housing; Luxonis EEPROM cal), so "unknown seed extrinsic" overstates it — baseline/translation are
+  trustworthy; the plausible residual is the axis remap. E4 (processed gyro at rest) still stands as a
+  real signature we may be feeding VINS the wrong IMU product/mode. **Net: nothing isolates this; less
+  "bad part", more "our data path" — unproven either way.**
 - **Status:** **the IMU-fusion path is where it breaks (strongly supported); the specific mechanism
   (extrinsic vs. IMU model vs. time-sync) is not isolated.**
 - **Discriminator:** X8(b) true-vs-seed extrinsic on the harness; X7 raw high-rate IMU.
@@ -137,11 +146,15 @@ wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
   honest covariance, not global authority ([#59](https://github.com/symmatree/coordinator/issues/59)).
 - **Discriminator:** X1 (done — vision-only tracks), X10 (FC-side gating/fusion), X9 (batch solve with/without IMU).
 
-> **⚠ Metric-inflation caveat (methodological).** A global metric (ATE, "massive divergence") can be
-> dominated by a **few bad segments** — one over/under-tight bend, one angular error — while the
-> trajectory is section-wise well matched. Before trusting any global number, check **local segment-wise
-> agreement vs. the global fit** (esp. the handheld vision-only: NCC 0.63 + barrel roll may be inflating
-> an otherwise-fine walkaround). Don't quote a global ATE that might be a couple of bad samples.
+> **⚠ Metric-inflation caveat (methodological) — CONFIRMED (E14).** A global metric (ATE, "massive
+> divergence") can be dominated by a **few bad segments** — one over/under-tight bend, one angular error
+> — while the trajectory is section-wise well matched. **Demonstrated on the handheld vision-only run:**
+> per-20 s local ATE **0.12 m** while the single global fit reads **3.34 m** (~28×) — the global number
+> is a couple of bad angles (a mis-estimated turn) smearing an otherwise well-tracked trajectory, exactly
+> what this caveat warns about. Always check **local segment-wise agreement** before quoting a global ATE.
+> (Note: the `imu:1` global figures in E10 were only ever characterized globally, not held to this local
+> metric; their divergence magnitude is real — rotation preserves distance — but the mechanism was never
+> checked the same way.)
 
 ---
 
@@ -161,6 +174,8 @@ wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
 | **E10** | **Vision-only** (`imu:0`) tracks the **whole** flight — armed ATE **0.98 m**, handheld 3.34 m (global best-fit, scale ~0.9); **IMU-fusion** (`imu:1`) runs to **41.9 km** (armed), 218 m (handheld), speed→1076 m/s | `vio-quality.ipynb`, tracked regen | **+T4/T5/T8** (break is in the IMU path); scale from stereo baseline |
 | **E11** | **Drift vs. anchor spacing** (armed, GPS withheld, backyard proxy): locally-rigid residual rms **6/16/26/37/64 cm** at K = **2/5/10/20/40 m** | K-sweep on vision-only track | ice-hole leg budget; +[#59](https://github.com/symmatree/coordinator/issues/59) |
 | **E12** | Vision-only inter-sample steps: **99% < 10 cm** (smooth), but **rare 1–2 m single-sample jumps** (max 128 cm armed, 239 cm handheld) | jump analysis on tracked track | the real safety threat; fail-**confident** for IMU-fusion (smooth 1076 m/s) |
+| **E13** | **Offline continuous timesync** (windowed angular-rate cross-correlation, VINS pose vs FC, flown log): global align **NCC 0.95**; per-40 s residual offset **std 16 ms, range 40 ms** over 4 min — a smooth **~160 ppm** clock-rate drift, no jitter/jumps | `vio_ekf_compare.align_time` (windowed) | +[#65](https://github.com/symmatree/coordinator/issues/65) timing tractable (TIMESYNC-disciplinable; PPS not needed for consistency) |
+| **E14** | **Handheld local vs global:** per-20 s sliding-window fit **median local ATE 0.12 m** (2–44 cm) vs **3.34 m** single global fit (~28×) — shape tracked throughout; the global number is a frame offset (a mis-estimated turn), not tracking failure | sliding-window fit (X12) | confirms the metric-inflation caveat; −"handheld vision-only is bad" |
 
 ---
 
