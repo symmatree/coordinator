@@ -2,6 +2,52 @@
 
 Rekon payload coordinator software for the Pi 4B central hub. Design notes live in the private [facts](https://github.com/symmatree/fables) repo (`fables/Drones/rekon10/central-hub.md`, `fables/Drones/coordinator/virtualization-study.md`).
 
+## Operational use cases (first-flight lessons)
+
+*Motivational scenarios, not a settled design -- captured from the first VIO-enabled flight
+attempts (2026-07-09) to drive the coordinator's control/ergonomics work. Details still to be
+worked through.*
+
+**The triggering incident.** With `VISO_TYPE=1` set, the FC **refused to arm because the visual
+system was not healthy** -- correct and safe, but the ergonomics are poor: the failure surfaces
+only at arm time, and `VISO_TYPE` needs an **FC reboot** to change, so it cannot be trivially bound
+to the runtime EKF-source switch. First operational takeaway: the operator needs to know the vision
+stack's readiness *before* it matters, and mode changes are heavyweight enough to want a deliberate,
+checked path.
+
+**UC1 -- Command by intent; the coordinator checks preconditions.** The operator tells the
+coordinator *what they want* ("start full VIO", "start input logging") and the coordinator validates
+its own preconditions -- tracker running, estimator producing pose, OAK-D USB healthy, calibration
+loaded -- and reports **ready / not-ready with a reason**, instead of the operator discovering in
+flight that a stereo stream never started. A stronger form: the coordinator **gates the unsafe
+action** -- e.g. only assert the VIO EKF source once it holds a good estimate, decoupling the
+operator's request from the raw switch. (Open: for the specific *source-switch* case the benefit may
+be marginal given the VISO/reboot constraints; the durable value is the general **intent ->
+precondition-check -> report** pattern.)
+
+**UC2 -- On-vehicle control surface (pHAT screen + buttons); laptop-free ops.** Run a coordinator
+flight without a laptop. The top pHAT display shows coordinator **state** (VIO mode, stereo/estimator
+health, FC link, a green/red *ready* light); buttons drive the common actions -- **pull + restart**
+(green light when it is back up), **start input logging**, **start full VIO**, **commanded
+shutdown**, and possibly **"switch mode + reboot"** (since `VISO_TYPE` needs a reboot). This is
+`coord`'s actions and states bound to physical I/O instead of an SSH session.
+
+**UC3 -- FC and coordinator run independently.** Each must be useful without the other: the
+coordinator for bench work, troubleshooting, and **alternate payload modules**; the FC to fly (the
+arming gate is the friction point). Powering one without the other is a **normal state, not an
+error** -- the router already tolerates an absent FC; keep that property and extend it to the whole
+stack.
+
+**UC4 -- Graceful degradation with no serial link.** With the FC link absent or down, the coordinator
+still runs and **clearly reports "no link"**, and distinguishes a **recoverable** condition (link
+returns when cabled / the FC boots) from one that **needs a reboot** -- surfaced on the display so
+the operator knows which, without a laptop.
+
+**Cross-cutting principle.** The coordinator is an **autonomous payload commanded by intent that
+reports its own readiness** -- not a passive pipe that fails silently or reveals problems only in
+flight. The design details (transport for operator intent, the health/readiness model, the
+display/button mapping, and how "mode + reboot" is triggered safely) are the next conversation.
+
 ## Host vs container
 
 | Responsibility | Where | Why |
