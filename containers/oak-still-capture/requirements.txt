@@ -1,0 +1,5 @@
+# Pinned deps for oak-still-capture. depthai (python) tracks the depthai-core the
+# vio-tracker pins (v2.25.0); numpy < 2 for depthai/opencv ABI. Bump deliberately.
+depthai==2.25.0.0
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
