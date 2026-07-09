@@ -1,0 +1,329 @@
+# Experiments: SITL scenarios and validation (does silicon match the vehicle?)
+
+*Single place to track the claims, scenarios, and evidence for **using ArduPilot SITL (and the
+FC-in-the-loop) on Linux as an instrument for the rekon10 flight stack** -- and, crucially, for
+knowing **which conclusions from silicon we are allowed to carry to the vehicle, and vice versa.**
+Modeled on `fables/Datasets/experiments-house-model.md` and its sibling
+`analysis/vio-quality-experiments.md` (estimator quality). This doc is the **FC / EKF / dynamics**
+side; the estimator side lives in the sibling.*
+
+**Origin:** coordinator [#64](https://github.com/symmatree/coordinator/issues/64) (SITL bench),
+[#68](https://github.com/symmatree/coordinator/issues/68) (gate/GLITCH_RAD audit),
+[#67](https://github.com/symmatree/coordinator/issues/67) (reset-counter),
+[#65](https://github.com/symmatree/coordinator/issues/65) (GPS-anchored co-estimation),
+[#63](https://github.com/symmatree/coordinator/issues/63) (Ceres tuning). Refs
+[#42](https://github.com/symmatree/coordinator/issues/42).
+
+> **CAUTION -- the load-bearing caveat.** We have **never observed live onboard VIO/EKF behavior**
+> (sibling doc; commit `33cb9f9`). No VIO has been fed to the FC, no one has watched live pose or EKF
+> health in flight, and it is unconfirmed the estimator even spools up live on the Pi. So **every
+> "onboard" box below is empty until a first live bench/flight.** This is not a footnote: Claim C (below)
+> has *zero* confirming evidence today, and Claim A can only be anchored against **recorded** onboard
+> logs, not live behavior. The whole point of this doc is to stop us from laundering a silicon result
+> into a vehicle claim without that anchor.
+
+---
+
+## The three claims (first-order theorems)
+
+Each is a **directional sufficiency** claim -- "sufficient **for a purpose**", never "identical". The
+scenarios in the catalog are the **lemmas**; evidence fills the boxes under each.
+
+- **Claim A -- Linux behaves like onboard (sufficiently).**
+  SITL / Replay on x86 reproduces the real FC's EKF estimates, health, and closed-loop dynamics closely
+  enough to trust a silicon result about the vehicle. *Direction: silicon -> license to conclude about
+  the vehicle.* Anchored by matching **recorded** onboard behavior.
+
+- **Claim B -- We can generate or derive realistic synthetic data.**
+  The inputs we feed (recorded `.feat` replays, derived ExtNav with honest covariance, injected
+  pathologies, a parameterized airframe model, idealized feature tracks) are faithful enough that
+  conclusions drawn on them transfer. *Direction: constructed inputs -> valid conclusions.*
+
+- **Claim C -- Onboard behaves like Linux (sufficiently, for particular use cases).**
+  A thing **predicted or tuned in silicon** produces the predicted effect on the vehicle, for a named
+  use case. *Direction: silicon prediction -> confirmed on hardware.* This is the payoff direction and
+  today has **no evidence at all** (see the caveat).
+
+Claims A and C are **not** the same statement run backwards. A licenses "silicon says X about the
+vehicle"; C licenses "we changed the vehicle based on silicon and it did what silicon predicted." A can
+be anchored on data we already have (recorded logs); C requires a deliberate predict-then-confirm loop
+on hardware.
+
+---
+
+## What we want SITL for (use cases -> which claim each needs)
+
+"Sufficiently" is meaningless without a purpose. The use cases, and the claim/fidelity each requires:
+
+| Use case | Needs | Fidelity required |
+|----------|-------|-------------------|
+| U1 -- EKF gate / `GLITCH_RAD` audit ([#68](https://github.com/symmatree/coordinator/issues/68)) | A (EKF fidelity) + B (realistic ExtNav) | high: quantitative gate behavior must match |
+| U2 -- Reset-counter mechanism ([#67](https://github.com/symmatree/coordinator/issues/67)) | wiring/mechanism only | low: "does one reset fire" is a causal-wiring check, realism irrelevant |
+| U3 -- GPS-anchored co-estimation dev ([#65](https://github.com/symmatree/coordinator/issues/65)) | A + B | medium: integration correctness, then C to trust onboard |
+| U4 -- Autotune / PID de-risking | A (dynamic twin) | medium: bifurcation threshold + hover, ensemble oscillation |
+| U5 -- Failure-mode reproduction + mitigation | A + C | high: must reproduce a real failure, then confirm the fix flies |
+
+Note the spread: U2 needs almost nothing (a mechanism check), U1/U5 need the strong form of A. Do not
+quote a U2-grade result as if it validated U1.
+
+---
+
+## Matchability regimes (the principle that scores every lemma)
+
+*Distilled truth, house-doc "Conclusions" style. Match each quantity at the level its physics allows;
+quoting a chaotic quantity as point-matched, or a real-vehicle property as sim-predictable, is the
+classic error.*
+
+1. **Bifurcation thresholds -- point-matchable, the sweet spot.** The *location* of a regime boundary
+   (the gain where control breaks into oscillation) is a robust, low-dimensional feature even when
+   everything past it is chaotic. It is also a pure closed-loop property, so SITL can predict it from
+   gains + inertia without any real-vehicle nuisance physics. This is why "crank the PID until it breaks"
+   is the best first target.
+2. **Chaotic trajectories -- ensemble-matchable only.** The full oscillation waveform is a double
+   pendulum: sensitive dependence, no point match. Match the *distribution* -- dominant frequency band,
+   amplitude envelope, RMS -- never the time series.
+3. **Convergent estimator outputs -- split this one, it is a trap.** Two kinds, only one predictable:
+   - **Closed-loop given known inputs** (steady-state EKF innovation level, notch-tracks-RPM, wind
+     estimate): genuinely predictable; SITL should hit it.
+   - **Property of the real physical vehicle** (mag hard/soft-iron offsets; hover throttle -- battery
+     sag, mass, thermal, wind): SITL has none of that iron and no sag by default, so it **cannot predict
+     the real number.** It can only validate that the calibration algorithm *converges* if you inject a
+     known truth into SIM. Reproducible-as-a-process, not a reality-prediction.
+
+**Corollary -- the self-certification trap.** A scenario whose input **and** expected output are both
+authored by us (pure synthetic, no external referent) can only confirm wiring or our reading of the
+code -- it supports **B (mechanism)** and nothing about onboard behavior. A "pass" may just mean the
+input was too clean; a "fail" may just mean we synthesized a pathology reality never produces. Synthetic
+alone never supports A or C.
+
+**Corollary -- getting the invariant right is itself the work.** A naive whole-log FFT of the
+`260613-vertical-bounce` log peaks at ~0.4 Hz -- the *maneuver envelope*, not the instability. The
+instability fingerprint only appears after **segmenting to the event and band-limiting above the
+maneuver band.** Same lesson as the estimator replay (sibling T7 / the `--fast` arrival-ratio bug):
+timing and windowing are load-bearing; a plausible number computed the easy way answers a different
+question than you think.
+
+---
+
+## Validation strategy (how a lemma actually gets confirmed)
+
+- **Anchor, then perturb by a minimal delta.** Establish an **overlap regime** where silicon and the
+  vehicle are driven identically and demonstrably agree (Replay fidelity; or a live-FC bench A/B on the
+  same ExtNav), *then* extend one delta out (add ExtNav; change one gate). A discrepancy is then
+  attributable to the delta, not to "SITL is a different animal." Without the anchor, no silicon result
+  means anything.
+- **Predict-then-confirm for Claim C.** Fix the prediction (peak location, curve shape, magnitude)
+  **before** the confirming runs, so the vehicle can falsify it. A confirmed prediction is stronger than
+  any retrodictive fit -- it shows silicon has predictive power, not just echo. (Sibling discipline:
+  hold reruns able to falsify; do not launder an ad-hoc fit through a rigor process.)
+- **Retro-confirm for free where the vehicle already flew the test.** Autotune already walked the
+  vehicle to its stability boundary; predicting that boundary in silicon and comparing needs **zero new
+  flights**. Prefer these before spending airframe risk.
+
+---
+
+## Scenario / lemma catalog
+
+Grouped under the three claims. Each lemma: statement, matchability regime, real-side anchor, status.
+Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, sim not yet built),
+**Open theory**, **Confirmed**, **Excluded** (belongs out of this claim).
+
+### Claim A -- Linux behaves like onboard (sufficiently)
+
+- **LA1 -- EKF Replay fidelity (the anchor).** SITL/Replay EKF3, fed a flight's **logged** sensors,
+  reproduces that flight's own logged `XKF*` position/velocity/innovations/variances. Validates that our
+  bench build + params + frame conventions + analysis pipeline **are** the aircraft (not the EKF
+  algorithm -- same code both sides). *Regime:* closed-loop-deterministic. *Anchor:* a `LOG_REPLAY=1`
+  flight log. *Status:* **BLOCKED** -- both 260705 logs are `LOG_REPLAY=0` with **zero** replay-format
+  messages (`RFRH`/`RISI`/`REV2`/... absent; verified by byte scan). Cannot Replay the data we have.
+  *Unblock:* one param on the next capture (see Next steps). Note LA1 has **no ExtNav** even once
+  unblocked (VIO never reached the FC in those flights).
+
+- **LA2 -- Instability-onset gain (bifurcation threshold; first target).** SITL, parameterized to the
+  airframe, goes unstable at ~the gain the real vehicle did. *Regime:* bifurcation threshold
+  (point-matchable). *Anchor:* the autotune boundary in `260613-autotune-1` -- converged
+  `ATC_RAT_RLL_P 0.085 / RLL_D 0.0041`, `PIT_P 0.101 / PIT_D 0.0035` at `AUTOTUNE_AGGR 0.075`, from a
+  pre-tune `0.135/0.135`. *Status:* **Ready** -- retro-confirmable, zero new flights.
+
+- **LA3 -- Stable-hover floor.** With the tuned gains, SITL holds a bounded hover; attitude RMS in the
+  real ballpark. *Regime:* convergent/qualitative + coarse magnitude. *Anchor:* a low-command `ATT`
+  segment from a flight (RMS to extract). *Status:* **Ready** (real-side RMS not yet extracted).
+
+- **LA4 -- Oscillation waveform (ensemble only).** When unstable, SITL's oscillation frequency band
+  overlaps the real twitch/bounce response band. *Regime:* chaotic -> ensemble-match only (frequency
+  band + amplitude envelope, never the time series). *Anchor:* **segmented** autotune-twitch and
+  `vertical-bounce` spectra -- NOT the naive whole-log ~0.4 Hz envelope. *Status:* **Ready**, pending
+  segmented extraction.
+
+- **LA5 -- Convergent closed-loop quantities.** Steady-state EKF innovation levels; notch tracks RPM
+  (`INS_HNTCH_FREQ 58.8 Hz` at hover); wind estimate -- sim matches real given known inputs. *Regime:*
+  convergent-predictable. *Status:* **Open theory**.
+
+- **LA-X -- Excluded from Claim A (honesty box).** Hover throttle (`MOT_THST_HOVER` ~0.41-0.49 across
+  credible runs; 0.149 in `1-notch` discarded as unconverged; it **hunts** with battery sag/mass/wind)
+  and mag-cal offsets are **real-vehicle properties SITL cannot predict**. Use as coarse sanity bands /
+  algorithm-convergence checks only; **do not** count a hover-throttle match as evidence for Claim A.
+
+### Claim B -- We can generate or derive realistic synthetic data
+
+- **LB1 -- Recorded `.feat` replay is faithful (with a timing caveat).** Replaying a recorded fixture
+  through the real `vins_fusion` reproduces production behavior. *Status:* **Confirmed with caveat** --
+  the deterministic offline runner is byte-reproducible (sibling E9/X3), but only because timing was
+  removed; the earlier live path proved arrival-timing is load-bearing (`--fast` diverges; sibling T7).
+  So "recorded replay" is faithful **only at correct pacing**.
+
+- **LB2 -- Derived ExtNav is realistic.** Recorded VINS pose + honest covariance
+  ([#66](https://github.com/symmatree/coordinator/issues/66)) + stable clock offset (sibling E13:
+  NCC 0.95, offset std 16 ms / ~160 ppm) is representative of what the live router would emit. *Status:*
+  **Ready** -- credible, not yet exercised into a real EKF.
+
+- **LB3 -- Synthetic pathologies (the Tier-0 ceiling).** Injected 1-2 m position jumps (sibling E12:
+  max 128 cm armed / 239 cm handheld; 99% < 10 cm), ~29 m/s dPos/dt velocity spikes (0.2%), drift, and
+  reset events match measured statistics. *Regime / status:* synthetic -> supports **mechanism/wiring
+  only** (self-certification trap). Good enough for U2 (reset fires) and for dialing gate arithmetic;
+  **not** behavioral evidence for U1's audit conclusion. Note the FC handles the velocity spikes **by
+  design** (gate-dropped, no glitch radius), so the injected-pathology work centers on **position** jumps
+  (`EK3_GLITCH_RAD`), not velocity. Ceiling: only as good as the measured stats, blind to any
+  timing-coupling we did not reproduce.
+
+- **LB4 -- Synthetic airframe dynamics.** SITL's airframe model parameterized to rekon10 (mass ~2 kg,
+  thrust curve from dyno data, arm length, motor/prop) is realistic. *Validated by* LA2/LA3, not on its
+  own. *Key unknown:* **rotational inertia** (needs a CAD estimate or bifilar-pendulum measurement);
+  hover-throttle match tests the mass/thrust half, oscillation match tests the inertia half. *Status:*
+  **Open** -- model not yet built.
+
+- **LB5 -- Idealized / counterfactual input (estimator ceiling).** Bundle-adjusted or simulated-perfect
+  feature tracks characterize the estimator's ceiling decoupled from the live front end. *Status:*
+  overlaps sibling **X8** (synthetic VI ablation, known-world simulator) and
+  [#35](https://github.com/symmatree/coordinator/issues/35). Purpose is ceiling, not realism.
+
+### Claim C -- Onboard behaves like Linux (sufficiently, for particular use cases)
+
+*All of these are **empty** today -- no live onboard observation exists. Listed as the targets a
+predict-then-confirm loop must hit.*
+
+- **LC1 -- Param-tuning transfer.** A param swept in SITL yields the predicted effect on hardware (peak
+  location, falloff shape, magnitude) over a couple of confirming runs. *First target:* the PID stability
+  margin (predict boundary in SITL, confirm against fresh runs -- after LA2 retro-check passes).
+  *Status:* **Open, no evidence.**
+
+- **LC2 -- Gate / EKF safety transfer ([#68](https://github.com/symmatree/coordinator/issues/68)).**
+  `GLITCH_RAD` / `POS_I_GATE` / `VEL_I_GATE` settings found safe in SITL are safe onboard, across VIO
+  drift+jumps and GPS-recovery. **Narrowed by the FC mechanics** (`docs/ardupilot-extnav-fusion.md`):
+  velocity has *no* glitch radius -- a single-sample spike just fails `EK3_VEL_I_GATE`, is dropped, and
+  the state coasts, so the velocity-spike question is "confirm the design holds"; the **real tuning
+  surface is position jumps via `EK3_GLITCH_RAD`** (past `sq(GLITCH_RAD)` -> snap/`ResetPosition`). Hard
+  constraint: **velocity-only ExtNav is unsupported** ([#23485](https://github.com/ArduPilot/ardupilot/issues/23485))
+  -> position must be sent (`EK3_SRC1_POSXY=6`); velocity is an optional add. *Status:* **Open, no evidence.**
+
+- **LC3 -- Failure reproduction -> mitigation transfer.** A failure seen (or that would be seen) onboard
+  -- the fail-confident IMU-fusion runaway (sibling E10/E12: 41.9 km, 1076 m/s), VIO divergence on
+  aggressive rotation, the `vertical-bounce` -- reproduced in SITL, its mitigation validated in SITL, and
+  confirmed to fly. *Status:* **Open, no evidence.**
+
+- **LC4 -- Co-estimation loop transfer ([#65](https://github.com/symmatree/coordinator/issues/65)).**
+  The `globalOpt` GPS-anchored ExtNav pose behaves onboard as it did in SITL. *Status:* **Open, no
+  evidence.**
+
+---
+
+## Scenarios and events (experiments-log analog)
+
+One row per scenario. Fill boxes as data arrives. "Sim status" and "Onboard status" are separate columns
+on purpose -- the whole discipline is not to conflate them.
+
+| # | Scenario / event | Claim.Lemma | Regime | Real-side anchor (have?) | Sim status | Onboard status |
+|---|------------------|-------------|--------|--------------------------|-----------|----------------|
+| S1 | Replay a real flight's sensors through EKF3, match logged `XKF*` | A.LA1 | closed-loop | **no** -- needs `LOG_REPLAY=1` capture | not built | recorded only |
+| S2 | Crank PID gain until control breaks; compare onset to autotune boundary | A.LA2 / C.LC1 | bifurcation | **yes** -- autotune-1 boundary | not built | flew (autotune) |
+| S3 | Hold a stable hover; compare attitude RMS | A.LA3 | convergent/qual | partial -- extract from `ATT` | not built | flew |
+| S4 | Reproduce an oscillation band (twitch / vertical-bounce) | A.LA4 | chaotic/ensemble | partial -- needs segmented spectra | not built | flew |
+| S5 | Notch tracks RPM at hover (58.8 Hz) | A.LA5 | convergent-pred | **yes** -- `INS_HNTCH` + RCOU | not built | flew |
+| S6 | Feed derived ExtNav (pose + honest cov) into EKF3; does it fuse? | B.LB2 | -- | **yes** -- tracked pose + #66 | not built | never live |
+| S7a | Velocity spike (29 m/s) rides out `EK3_VEL_I_GATE` -- confirm the by-design single-sample drop holds | B.LB3 / C.LC2 | mechanism | **yes** -- E12 | not built | never live |
+| S7b | Position jump (1-2 m): `EK3_GLITCH_RAD` snap-vs-hold -- **the real audit surface** | B.LB3 / C.LC2 | synthetic->mech | **yes** -- E12 | not built | never live |
+| S8 | Reset-counter -> one clean `ResetPositionNE` | B.LB3 (mech) | mechanism | n/a (wiring) | not built | never live |
+| S9 | globalOpt GPS-anchored pose loop | B.LB5 / C.LC4 | -- | partial -- GPS in `.bin` | not built | never live |
+| S10 | IMU-fusion fail-confident runaway reproduced + mitigated | C.LC3 | -- | **yes** -- E10/E12 | not built | recorded only |
+
+---
+
+## Data inventory and real-side fingerprints
+
+Grounded numbers we can define targets from **now**, from data on the NAS (`datasets/flights/rekon10/`),
+no hardware:
+
+- **Autotune boundary** (`260613-autotune-1`): converged `RLL_P 0.085 / RLL_D 0.0041`,
+  `PIT_P 0.101 / PIT_D 0.0035`, `AUTOTUNE_AGGR 0.075`; pre-tune `0.135/0.135`. `ATUN` (184) + `ATDE`
+  (20500) mark the twitches; `RATE`/`PIDR/P/Y` at ~230k samples each carry the response.
+- **Notch:** `INS_HNTCH_FREQ 58.8 Hz` (motor fundamental at hover).
+- **Hover-throttle band (sanity only):** ~0.41-0.49 (0.149 discarded); hunts within/among flights.
+- **Log rate:** IMU ~400 Hz (instance 0), `GYR` faster, `VIBE` present -- rich enough for segmented
+  spectra.
+- **Replay-readiness:** both 260705 flight logs `LOG_REPLAY=0`, no replay-format messages ->
+  **LA1 blocked** until a re-capture.
+- **ExtNav ingredients:** tracked VINS pose (`*.vinspose.csv`, provenance sidecar), honest covariance
+  (#66), stable clock offset (E13). `EK3_SRC1_POSXY=3` (GPS), `VISO_TYPE=0`, `AHRS_EKF_TYPE=3` in the
+  flown configs.
+- **SITL ExtNav config** (from `docs/ardupilot-extnav-fusion.md`): `VISO_TYPE=1`, `EK3_SRC1_POSXY=6`
+  (+`VELXY=6` for velocity). The FC takes covariance from the MAVLink message, **floored** by
+  `VISO_POS_M_NSE`/`VISO_VEL_M_NSE` -- keep those floors **below** the honest 0.30/0.15 or they clobber
+  it. Velocity-only is unsupported (must send position). `VISO_DELAY_MS` = measured VINS->FC latency;
+  MAVLink2 required; 50 Hz ExtNav cap (`extNavIntervalMin_ms=20`).
+- **Bench host:** x86_64, 32 cores, ~26 TB free. ArduPilot cloned at `/home/jovyan/ardupilot`; build SITL
+  at the **Copter-4.6.3** tag to match the vehicle (`92b0cd78`). `MAVProxy`/`empy`/`future` still to
+  install (runtime, then bake into the tiles image per `~/AGENTS.md`).
+- **Version skew (measured, 2026-07-09):** 4.6.3 is 2025-11-18 (~8 mo); master is **+7419 commits** with
+  heavy EKF churn -- `AP_NavEKF3_PosVelFusion.cpp` (the fusion/gate/`GLITCH_RAD`/reset file the audit
+  leans on) has **~581 lines** changed alone. `docs/ardupilot-extnav-fusion.md` was read against
+  **master**, so its **line numbers and some symbol names are stale for 4.6.3** (e.g. `ResetPositionNE` /
+  `_gpsPosInnovGate` are master spellings; the *mechanics* -- `GLITCH_RAD`, `posErr`/covariance floor --
+  still exist at the tag, relocated/renamed). **Impact is contained:** we build SITL at 4.6.3, so the
+  audit runs on the EKF the vehicle flies; the only residue is to re-verify the reference doc's exact
+  params/lines against the now-cloned 4.6.3 source before #68 quotes them.
+
+**Not yet extracted (needs the segmented-fingerprint tool):** oscillation frequency/amplitude for the
+autotune twitches and the `vertical-bounce` event (band-limited above the maneuver envelope); stable-
+hover attitude RMS. A naive whole-log FFT gives ~0.4 Hz (the maneuver, not the instability) -- see the
+matchability corollary.
+
+---
+
+## Next steps (prioritized)
+
+- [ ] **Add `LOG_REPLAY=1` (with `LOG_DISARMED`) to the capture recipe.** One param; unblocks LA1 (the
+  Claim-A anchor) and S1/S10. De-risk-now: bank it into the [#42](https://github.com/symmatree/coordinator/issues/42)
+  / [#30](https://github.com/symmatree/coordinator/issues/30) capture steps regardless of anything else.
+- [ ] **Build the segmented-fingerprint tool** (`analysis/`, beside `ardupilot_log.py`): per-`ATDE`
+  twitch and `vertical-bounce` windows, band-limited spectra, `ATUN` response amplitudes, stable-hover
+  RMS. Produces the LA2/LA3/LA4 real-side targets. **Fixes the targets before fitting the sim.**
+- [ ] **Stand up SITL** -- ArduPilot cloned at `/home/jovyan/ardupilot`; checkout the **Copter-4.6.3**
+  tag (match the vehicle), `./waf configure --board sitl && ./waf copter`; install `empy`/`MAVProxy`/`future`
+  at runtime, then PR to tiles to bake them.
+- [ ] **S2 retro-confirm (LA2/LC1):** predict the instability-onset gain in SITL, compare to the autotune
+  boundary. Zero new flights. First real predict-then-confirm.
+- [ ] **Verify the ExtNav injection mechanism:** evaluate SITL's built-in simulated-Vicon/ExtNav rig
+  (`SIM_VICON_*`, `SIM_VICON_TMASK`) **first** -- it is the existing ExtNav-into-SITL path; the open
+  question is whether it can carry *our recorded* pose vs only sim truth. Fallback: can recorded ExtNav
+  ride alongside replayed sensors via stock `Tools/Replay`, or must it be live SITL? Decides whether the
+  strongest real-data ExtNav test (S6+S1 combined) is constructible.
+- [ ] **S6 plumbing (cheaper than it looks):** the router already speaks `udpout` to `fake_fc.py` and
+  that seam is CI-tested (`test_router_stack.py` / `stack-smoke.yaml`), so SITL is a **drop-in real FC at
+  the same endpoint** -- the work is SITL config + EKF observation, not new router plumbing. Config per
+  LC2 / data inventory (`VISO_TYPE=1`, `EK3_SRC1_POSXY=6`, `VISO_*_M_NSE` floors below 0.30/0.15,
+  `VISO_DELAY_MS`, MAVLink2). Confirm EKF3 actually fuses (watch `XKF*` innovations, `EKF_STATUS_REPORT`).
+  First proof the coordinator's output moves a real EKF -- a milestone even before the audits.
+- [ ] **Live-FC bench A/B (Claim A, no re-fly):** feed identical derived ExtNav into the real H7 and
+  SITL, compare EKFs -- but **measure the delivery-timing skew** (serial vs UDP), do not assume it away.
+
+---
+
+## Cross-links
+
+- Sibling estimator tracker: `analysis/vio-quality-experiments.md` (T#/E#/X# ledger; X8 and X10 are the
+  synthetic-simulator and EKF-gate scenarios referenced here).
+- `docs/vio-offline-replay.md` -- regenerating pose from a fixture (the input to S6/S10).
+- `docs/ardupilot-extnav-fusion.md` -- FC-side ExtNav fusion + covariance floors (`VISO_*_M_NSE`).
+- `docs/vins-stereo-only.md` -- why the stereo-only pose drifts (no global datum).
+- `harness/README.md` -- router half (`fake_fc.py`, `pose_replayer.py`) that SITL replaces the far end of.
+- fables `Drones/rekon10/canopy-ops.md` -- the ice-hole error budget the whole thing serves.
