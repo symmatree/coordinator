@@ -11,7 +11,11 @@ worked through.*
 **The triggering incident.** With `VISO_TYPE=1` set, the FC **refused to arm because the visual
 system was not healthy** -- correct and safe, but the ergonomics are poor: the failure surfaces
 only at arm time, and `VISO_TYPE` needs an **FC reboot** to change, so it cannot be trivially bound
-to the runtime EKF-source switch. First operational takeaway: the operator needs to know the vision
+to the runtime EKF-source switch. (Likely mechanism: the pre-arm `VisOdom` health check, which fires
+on `VISO_TYPE != 0` **+ unhealthy** -- i.e. tied to VIO being *enabled*, **not** to whether ExtNav is
+an active `EK3_SRC`. Confirm in SITL, [#64](https://github.com/symmatree/coordinator/issues/64). If so,
+the only ways to arm are: feed valid pose so VIO reads healthy (UC1), disable that pre-arm bit, or
+`VISO_TYPE=0` + reboot.) First operational takeaway: the operator needs to know the vision
 stack's readiness *before* it matters, and mode changes are heavyweight enough to want a deliberate,
 checked path.
 
@@ -25,12 +29,26 @@ operator's request from the raw switch. (Open: for the specific *source-switch* 
 be marginal given the VISO/reboot constraints; the durable value is the general **intent ->
 precondition-check -> report** pattern.)
 
-**UC2 -- On-vehicle control surface (pHAT screen + buttons); laptop-free ops.** Run a coordinator
-flight without a laptop. The top pHAT display shows coordinator **state** (VIO mode, stereo/estimator
-health, FC link, a green/red *ready* light); buttons drive the common actions -- **pull + restart**
-(green light when it is back up), **start input logging**, **start full VIO**, **commanded
-shutdown**, and possibly **"switch mode + reboot"** (since `VISO_TYPE` needs a reboot). This is
+**UC2 -- On-vehicle control surface (Top pHAT screen + buttons); laptop-free ops.** Run a coordinator
+flight without a laptop, using the already-stocked **SparkFun Top pHAT (DEV-16301)**: a **2.4" color
+TFT**, **six RGB LEDs**, a **joystick + two buttons**, mics/speaker, and a **hardware Pi power-off
+switch** (LEDs + buttons on I2C `0x71`, TFT on SPI -- [host-setup.md](host-setup.md)). The display shows
+coordinator **state** (VIO mode, stereo/estimator health, FC link); the **RGB LEDs** are the green/red
+**readiness** signal; the joystick + buttons drive the common actions -- **pull + restart** (LED green
+when back up), **start input logging**, **start full VIO**, **graceful shutdown** (the hardware switch is
+the hard cutoff), and possibly **"switch mode + reboot"** (since `VISO_TYPE` needs a reboot). This is
 `coord`'s actions and states bound to physical I/O instead of an SSH session.
+
+**Control paths (who commands what, when).** In-flight **flight-mode / EKF-source** changes are on the
+**RC transmitter via the FC** -- the pHAT is unreachable once airborne, and the safety-critical fallback
+ladder (GPS position-hold -> switch to **VIO** -> **alt-hold** if VIO also fails, Z held via `EK3_SRC2`
+-> **stabilize** as last resort, with real operator-crash risk) is inherently a radio task. So the
+coordinator's *in-flight* job is to **report VIO/estimator health to the GCS / goggles** so the operator
+can make those switches with information (the FC's innovation gates reject a bad ExtNav pose as the
+safety net). The pHAT + network API (UC2) are for **ground / lifecycle** control, not flight control.
+Near-term the first flights are just **"watch GPS degrade and characterize the failure modes"** -- we do
+not know them yet; manual ice-hole missions and, much later, automated "peel the onion" boundary mapping
+come after.
 
 **UC3 -- FC and coordinator run independently.** Each must be useful without the other: the
 coordinator for bench work, troubleshooting, and **alternate payload modules**; the FC to fly (the
@@ -43,10 +61,34 @@ still runs and **clearly reports "no link"**, and distinguishes a **recoverable*
 returns when cabled / the FC boots) from one that **needs a reboot** -- surfaced on the display so
 the operator knows which, without a laptop.
 
+**UC5 -- Calibration / validation capture missions (minor).** Fly deliberate patterns purely to record
+VIO **input fixtures** (the `vio-ipc-record` streams, [#45](https://github.com/symmatree/coordinator/issues/45))
+for offline tuning and validation -- the iteration sweep ([#63](https://github.com/symmatree/coordinator/issues/63)),
+the batch-solve ceiling ([#59](https://github.com/symmatree/coordinator/issues/59)), calibration. A
+"capture" intent distinct from operational VIO: the operator commands a logging run and the coordinator
+**confirms the streams are actually recording** (UC1) instead of finding an empty capture afterward.
+
+**UC6 -- OAK-D color stills for imagery + mapping (priority).** Periodically capture full-resolution
+stills from the OAK-D **RGB** camera to disk -- **timestamped**, and ideally reported to the FC as a
+camera-trigger event (`CAMERA_TRIGGER` / logged `CAM`) so the FC log geotags each frame (times may need
+later correction, but it is a start). This is the **only onboard stills-quality camera** (the VTX is
+FPV-only, separate, with its own quality issues to diagnose). It feeds several products: **optical SfM**
+via OpenDroneMap (the [mapping pipeline](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/mapping.md)),
+**timelapse / movies** (real-time or sped up), and **high-quality single stills** (sunsets, prints).
+Constraint: the OAK-D is a single USB device owned by the tracker pipeline, so RGB capture rides in that
+pipeline (an added still branch) or a dedicated capture profile -- not a second process contending for
+the same device.
+
 **Cross-cutting principle.** The coordinator is an **autonomous payload commanded by intent that
 reports its own readiness** -- not a passive pipe that fails silently or reveals problems only in
-flight. The design details (transport for operator intent, the health/readiness model, the
-display/button mapping, and how "mode + reboot" is triggered safely) are the next conversation.
+flight. **On host vs container:** the supervisor is intended to be a **container**, not a host process --
+the Top pHAT is device-passthrough (I2C `0x71` + SPI TFT, the same pattern the OAK-D USB and FC serial
+already use) and lifecycle control (pull/restart siblings) is the Docker-socket pattern **Dockge**
+already uses; host dependencies stay limited to what genuinely needs low-level hardware (PPS), per the
+minimize-host-deps goal. Only host reboot is truly host-coupled (a minimal privileged call or tiny helper
+-- and the Top pHAT even has a hardware power-off switch). The remaining design details (transport for
+operator intent, the health/readiness model, display/button mapping, and how "mode + reboot" fires
+safely) are the next conversation.
 
 ## Host vs container
 
