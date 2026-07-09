@@ -43,9 +43,9 @@ BlueOS `mavlink2restForwarder.py` listens on the same `/tmp/chobits_server` cont
 One USB device, one `dai::Device`, one pipeline in `feature_tracker` today: mono L/R @ 640x400, on-device feature tracking, stereo disparity, IMU.
 
 - **Two processes cannot each open the OAK-D** for independent pipelines in the usual Luxonis model.
-- **Extra outputs** (JPEG/H264 stills, logged disparity, obstacle sampling) are added as `XLinkOut` branches on the **same** pipeline in the process that already holds the device -- not a sidecar with its own USB open.
+- **Extra outputs** (stills, logged disparity, obstacle sampling) are added as `XLinkOut` branches on the **same** pipeline in the process that already holds the device -- not a sidecar with its own USB open.
 
-Disparity frames already exist in-process for stereo matching; they are not written to disk today.
+**Implemented ([#72](https://github.com/symmatree/coordinator/issues/72)):** the tracker overlay now saves, *concurrent with VIO*, **periodic disparity** (the frame that already exists in-process, PNG) and **RGB stills** (a `ColorCamera` still branch on the same pipeline, host-encoded JPEG), each with a JSON sidecar carrying the **device sensor timestamp** -- so imagery is time-aligned with the VIO features/pose by the same device clock. Opt-in via `OAK_CAPTURE_DIR`; unset -> exactly upstream behaviour. The standalone `oak-still-capture` container is the *VIO-off* capture case (the "sidecar with its own USB" -- valid only when the tracker isn't running).
 
 ### Coordinator MAVLink router (`coordinator-mavlink`)
 

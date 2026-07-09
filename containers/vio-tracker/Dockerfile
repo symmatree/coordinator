@@ -36,8 +36,13 @@ RUN git clone --depth 1 --branch "${DEPTHAI_CORE_TAG}" https://github.com/luxoni
 
 RUN git clone --depth 1 --branch "${OAK_D_VINS_CPP_BRANCH}" https://github.com/chobitsfan/oak_d_vins_cpp.git \
   && cd oak_d_vins_cpp \
-  && if [ -n "${OAK_D_VINS_CPP_SHA}" ]; then git fetch --depth 1 origin "${OAK_D_VINS_CPP_SHA}" && git checkout "${OAK_D_VINS_CPP_SHA}"; fi \
-  && sed -i 's/dai::Device device(pipeline)/dai::Device device(pipeline, dai::UsbSpeed::HIGH)/' feature_tracker.cpp \
+  && if [ -n "${OAK_D_VINS_CPP_SHA}" ]; then git fetch --depth 1 origin "${OAK_D_VINS_CPP_SHA}" && git checkout "${OAK_D_VINS_CPP_SHA}"; fi
+
+# Our overlay of feature_tracker.cpp: periodic disparity + RGB still capture (#72), plus the
+# UsbSpeed::HIGH change (was a sed). Kept byte-diffable vs the pinned upstream.
+COPY overlay/oak_d_vins_cpp/feature_tracker.cpp /src/oak_d_vins_cpp/feature_tracker.cpp
+
+RUN cd /src/oak_d_vins_cpp \
   && cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release -Ddepthai_DIR=/opt/depthai/lib/cmake/depthai \
   && cmake --build build --parallel "$(nproc)" \
   && install -D build/feature_tracker /opt/coordinator/bin/feature_tracker
@@ -53,6 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libopencv-calib3d406 \
     libopencv-core406 \
+    libopencv-imgcodecs406 \
     libopencv-imgproc406 \
     libstdc++6 \
     libusb-1.0-0 \

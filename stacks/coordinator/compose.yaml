@@ -30,6 +30,8 @@ services:
       - /dev/bus/usb:/dev/bus/usb
       - ${COORDINATOR_IPC_DIR}:/tmp
       - ${COORDINATOR_CONFIG_DIR}:/config:ro
+      # #72: periodic disparity + RGB stills written here when OAK_CAPTURE_DIR is set (in .env).
+      - ${COORDINATOR_CAPTURES_DIR}:/captures
     env_file:
       - .env
 

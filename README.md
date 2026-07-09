@@ -19,7 +19,7 @@ On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and 
 
 | Service | Role | Status |
 |---------|------|--------|
-| `vio-tracker` | OAK-D `feature_tracker` (USB) | Image + CI in progress |
+| `vio-tracker` | OAK-D `feature_tracker` (USB); opt-in disparity + RGB still capture ([#72](https://github.com/symmatree/coordinator/issues/72)) | Image + CI in progress |
 | `vio-estimator` | `vins_fusion` | Planned |
 | `coordinator-mavlink` | Coordinator MAVLink router to FC | Router built (pose + dPos/dt velocity + covariance); first FC run pending ([design](docs/coordinator-mavlink.md)) |
 | `oak-still-capture` | OAK-D RGB stills to disk (`capture` profile) | Container + writer test built; depthai loop hardware-untested ([#72](https://github.com/symmatree/coordinator/issues/72)) |
