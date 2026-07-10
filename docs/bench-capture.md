@@ -7,6 +7,8 @@ Capture the tracker's **input** streams (`chobits_imu` + `chobits_features`) on 
 
 Here we record the estimator's **inputs**, with the estimator **off**, and regenerate pose offline. No tee needed (see #30).
 
+For the **armed / in-flight** case -- same input streams, but the estimator is *running* and holds the sockets -- the tracker tees its own output to a `.feat` instead (coordinator #78, in the `vio-tracker` overlay). Same fixture format, so [vio-offline-replay.md](vio-offline-replay.md) consumes either one identically; this doc is the estimator-off path.
+
 ## Two gotchas that will bite you
 
 1. **The estimator holds the input sockets.** `chobits_imu`/`chobits_features` are single-consumer AF_UNIX dgram sockets; `vio-estimator` binds them in the `bench`/`flight` profiles. The recorder can't bind them until the estimator is stopped. **`coord stop` does *not* stop the estimator** if it's running out of the active profile (it lives in `bench`/`flight`; with `COMPOSE_PROFILES=tracker`, `down` leaves it). Kill it explicitly:

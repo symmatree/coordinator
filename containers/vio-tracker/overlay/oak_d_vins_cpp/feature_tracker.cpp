@@ -19,6 +19,7 @@
 #include <opencv2/imgproc.hpp>    // #72: cv::cvtColor (NV12 -> BGR for stills)
 #include <ctime>
 #include <cstdlib>  // #72: getenv/atof/atoi
+#include <cstdint>  // #78: uint16_t/uint32_t for the .feat frame header
 
 // Includes common necessary includes for development using depthai library
 #include "depthai/depthai.hpp"
@@ -153,6 +154,34 @@ static void write_sidecar(const std::string& base, const std::string& node, long
     if (exposure_us >= 0) fprintf(f, ",\"exposure_us\":%lld,\"iso\":%d", exposure_us, iso);
     fprintf(f, "}\n");
     fclose(f);
+}
+
+// --- coordinator #78: tee the estimator's raw input datagrams (chobits_imu +
+// chobits_features) to a .feat file in the SAME framed format vio-ipc-record writes, so a
+// flight with the estimator *running* still yields a fixture replayable through vins_fusion
+// offline (input_replayer, #35). #42 captures the same streams with the estimator off; here
+// the tracker -- the sender -- tees its own output, so there is no socket contention. Same
+// OAK_CAPTURE_DIR gate and session dir as the #72 capture above.
+
+static FILE* feat_file = nullptr;                 // open only while capturing
+static constexpr uint16_t FEAT_SID_IMU = 0;       // socket ids in the .feat manifest;
+static constexpr uint16_t FEAT_SID_FEATURES = 1;  // input_replayer maps them by basename
+
+// Append one framed datagram: <ddHI> little-endian (t_mono, t_unix, socket_id, length) then
+// the raw payload bytes -- byte-identical to what sendto() puts on the wire, so the replayer
+// re-sends vins its own bytes. Fields are written separately (not as a packed struct) to
+// avoid C struct padding; Pi/arm64 and x86 are both little-endian, matching Python's '<'.
+static void feat_tee(uint16_t socket_id, const void* payload, uint32_t length) {
+    if (!feat_file) return;
+    double t_mono = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    double t_unix = std::chrono::duration<double>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    fwrite(&t_mono, sizeof t_mono, 1, feat_file);
+    fwrite(&t_unix, sizeof t_unix, 1, feat_file);
+    fwrite(&socket_id, sizeof socket_id, 1, feat_file);
+    fwrite(&length, sizeof length, 1, feat_file);
+    if (length) fwrite(payload, 1, length, feat_file);
 }
 
 int main(int argc, char **argv) {
@@ -328,6 +357,28 @@ int main(int argc, char **argv) {
         still_ctrl_queue = device.getInputQueue("stillControl");
         std::cout << "capture: dir=" << session_dir << " disp_hz=" << disp_hz
                   << " still_hz=" << still_hz << " jpeg_q=" << jpeg_q << "\n";
+
+        // #78: open the .feat input tee + write its manifest (matches vio-ipc-record v1).
+        std::string feat_path = session_dir + "/" + node + "_" + sess + ".feat";
+        feat_file = fopen(feat_path.c_str(), "wb");
+        if (feat_file) {
+            FILE* mf = fopen((feat_path + ".json").c_str(), "w");
+            if (mf) {
+                double now_unix = std::chrono::duration<double>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                fprintf(mf,
+                    "{\n  \"version\": 1,\n"
+                    "  \"frame_format\": \"<ddHI> (t_mono, t_unix, socket_id, length) then <length> raw bytes\",\n"
+                    "  \"sockets\": {\"%u\": \"%s\", \"%u\": \"%s\"},\n"
+                    "  \"start_unix\": %.6f\n}\n",
+                    (unsigned)FEAT_SID_IMU, imu_addr.sun_path,
+                    (unsigned)FEAT_SID_FEATURES, features_addr.sun_path, now_unix);
+                fclose(mf);
+            }
+            std::cout << "capture: feat tee -> " << feat_path << "\n";
+        } else {
+            std::cout << "capture: WARN could not open feat tee " << feat_path << "\n";
+        }
     }
 
     int l_seq = -1, r_seq = -2, disp_seq = -3;
@@ -403,6 +454,7 @@ int main(int argc, char **argv) {
                     big_buf[6] = -gyro.x;
                 }
                 sendto(ipc_sock, big_buf, 7*sizeof(double), 0, (struct sockaddr*)&imu_addr, sizeof(struct sockaddr_un));
+                feat_tee(FEAT_SID_IMU, big_buf, (uint32_t)(7*sizeof(double)));  // #78
             }
             if (!imu_ok) {
                 imu_ok = true;
@@ -561,6 +613,7 @@ int main(int argc, char **argv) {
             if (imu_ok && c > 0) {
                 big_buf[0] = c;
                 sendto(ipc_sock, big_buf, 13*sizeof(double)*c+2*sizeof(double), 0, (struct sockaddr*)&features_addr, sizeof(struct sockaddr_un));
+                feat_tee(FEAT_SID_FEATURES, big_buf, (uint32_t)(13*sizeof(double)*c+2*sizeof(double)));  // #78
             }
             l_prv_features = features;
             prv_features_tp = features_tp;
@@ -574,6 +627,7 @@ int main(int argc, char **argv) {
     }
 
     close(ipc_sock);
+    if (feat_file) fclose(feat_file);  // #78: flush + close the input tee
     printf("bye\n");
 
     return 0;
