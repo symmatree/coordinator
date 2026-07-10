@@ -310,8 +310,8 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
   Claim-A anchor) and S1/S10. De-risk-now: bank it into the [#42](https://github.com/symmatree/coordinator/issues/42)
   / [#30](https://github.com/symmatree/coordinator/issues/30) capture steps regardless of anything else.
 - [ ] **Build the segmented-fingerprint tool** (`analysis/`, beside `ardupilot_log.py`): per-`ATDE`
-  twitch and `vertical-bounce` windows, band-limited spectra, `ATUN` response amplitudes, stable-hover
-  RMS. Produces the LA2/LA3/LA4 real-side targets. **Fixes the targets before fitting the sim.**
+  twitch windows, band-limited spectra, `ATUN` response amplitudes, stable-hover RMS. Produces the
+  LA2/LA3/LA4 real-side targets. **Fixes the targets before fitting the sim.**
 - [ ] **Stand up SITL** -- ArduPilot cloned at `/home/jovyan/ardupilot`; checkout the **`ArduPilot-4.7`
   branch (4.7.0-beta7)** (the adopted target), `./waf configure --board sitl && ./waf copter`; install
   `empy`/`MAVProxy`/`future` at runtime, then PR to tiles to bake them.
