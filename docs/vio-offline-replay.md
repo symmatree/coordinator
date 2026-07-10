@@ -21,9 +21,11 @@ the analysis/notebook box). Both are documented below.
 
 ## What you need
 
-- The fixture: `wave-<ts>.feat` + `wave-<ts>.feat.json` (from `bin/vio-ipc-record`; see
-  [bench-capture.md](bench-capture.md)). The `.feat` extension keeps these raw estimator-input
-  streams from colliding with ArduPilot FC `.bin` logs (#45).
+- The fixture: a `.feat` + `.feat.json` pair, from either source (same format, consumed
+  identically): a **bench** `wave-<ts>.feat` (estimator off, `bin/vio-ipc-record`; see
+  [bench-capture.md](bench-capture.md)), or an **in-flight** `<node>_<sess>.feat` teed by the
+  `vio-tracker` overlay with the estimator running (#78). The `.feat` extension keeps these raw
+  estimator-input streams from colliding with ArduPilot FC `.bin` logs (#45).
 - The estimator image `ghcr.io/symmatree/coordinator-vio-estimator` (public on GHCR).
 - A `vins_fusion` config. Start from the seed `host/ansible/roles/coordinator/files/oak_d.yaml`,
   **with one change: `multiple_thread: 0`** (see "Determinism" below).

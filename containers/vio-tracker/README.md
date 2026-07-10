@@ -10,6 +10,10 @@ The overlay adds **opt-in capture, concurrent with VIO**: periodic **disparity**
 
 Also folds in the `UsbSpeed::HIGH` change (was a Dockerfile `sed`) and adds `SIGTERM` handling for clean `docker stop`.
 
+## Input tee ([#78](https://github.com/symmatree/coordinator/issues/78))
+
+Under the **same `OAK_CAPTURE_DIR` gate and session dir**, the overlay also **tees the estimator's raw input datagrams** -- the `chobits_imu` + `chobits_features` streams -- to `<session>/<node>_<sess>.feat` (+ a `.feat.json` manifest), in the **exact framed format `bin/vio-ipc-record` writes** (`<ddHI>` little-endian: `t_mono, t_unix, socket_id, length`, then the raw payload). Because the tracker is the *sender*, this needs no socket bind and runs **with the estimator live** -- so an armed flight yields a fixture replayable through the real `vins_fusion` offline (`harness/input_replayer.py`, [docs/vio-offline-replay.md](../../docs/vio-offline-replay.md)), exactly like a bench `wave-*.feat`. This is the **armed counterpart to [#42](https://github.com/symmatree/coordinator/issues/42)** (which records the same streams with the estimator *off*, so it needs no tee). Unset `OAK_CAPTURE_DIR` and no `.feat` is written.
+
 ## Image contents
 
 - `/opt/coordinator/bin/feature_tracker` -- mono/stereo feature tracking, IMU, disparity, opt-in disparity/still capture; publishes Unix dgram sockets under `/tmp/chobits_*`
