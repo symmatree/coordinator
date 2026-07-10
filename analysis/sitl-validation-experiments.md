@@ -14,13 +14,18 @@ side; the estimator side lives in the sibling.*
 [#63](https://github.com/symmatree/coordinator/issues/63) (Ceres tuning). Refs
 [#42](https://github.com/symmatree/coordinator/issues/42).
 
-> **CAUTION -- the load-bearing caveat.** We have **never observed live onboard VIO/EKF behavior**
-> (sibling doc; commit `33cb9f9`). No VIO has been fed to the FC, no one has watched live pose or EKF
-> health in flight, and it is unconfirmed the estimator even spools up live on the Pi. So **every
-> "onboard" box below is empty until a first live bench/flight.** This is not a footnote: Claim C (below)
-> has *zero* confirming evidence today, and Claim A can only be anchored against **recorded** onboard
-> logs, not live behavior. The whole point of this doc is to stop us from laundering a silicon result
-> into a vehicle claim without that anchor.
+> **UPDATE 2026-07-09 -- first live onboard flight; caveat partially retired.** `260709-vio-first-light`
+> is the first VIO-in-the-loop flight: `VISO_TYPE=1`, the router's `ATT_POS_MOCAP`+`VISION_SPEED_ESTIMATE`
+> reached and were **logged by the FC** (`VISP`=8420 / `VISV`=8419), the estimator ran live (~27 ms/solve),
+> on a real GPS-degraded woods traverse, captured **replay-grade** (`LOG_REPLAY=1`). So **Claim C has its
+> first data point and LA1's anchor exists and is verified** (below). Remaining caveat: `EK3_SRC1=GPS` this
+> flight, so VIO was received/logged but the EKF stayed **GPS-primary** -- it did not yet *depend* on VIO
+> for position. The general discipline still holds: do not launder a silicon result into a vehicle claim
+> without the anchor.
+>
+> **Original caveat (pre-2026-07-09), kept as the baseline this flight moved off:** we had **never observed
+> live onboard VIO/EKF behavior** (sibling doc; commit `33cb9f9`) -- every observation was offline replay,
+> so Claim C had zero evidence and Claim A could only anchor on recorded logs.
 
 ---
 
@@ -96,10 +101,11 @@ code -- it supports **B (mechanism)** and nothing about onboard behavior. A "pas
 input was too clean; a "fail" may just mean we synthesized a pathology reality never produces. Synthetic
 alone never supports A or C.
 
-**Corollary -- getting the invariant right is itself the work.** A naive whole-log FFT of the
-`260613-vertical-bounce` log peaks at ~0.4 Hz -- the *maneuver envelope*, not the instability. The
-instability fingerprint only appears after **segmenting to the event and band-limiting above the
-maneuver band.** Same lesson as the estimator replay (sibling T7 / the `--fast` arrival-ratio bug):
+**Corollary -- getting the invariant right is itself the work.** A naive whole-log FFT of an autotune log
+peaks at the *maneuver / twitch-cadence envelope* (~0.4-3 Hz), not the closed-loop oscillation; the real
+fingerprint only appears after **segmenting to the twitch event and band-limiting above the maneuver
+band.** (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillation -- an easy mislabel.)
+Same lesson as the estimator replay (sibling T7 / the `--fast` arrival-ratio bug):
 timing and windowing are load-bearing; a plausible number computed the easy way answers a different
 question than you think.
 
@@ -134,10 +140,12 @@ Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, s
   reproduces that flight's own logged `XKF*` position/velocity/innovations/variances. Validates that our
   bench build + params + frame conventions + analysis pipeline **are** the aircraft (not the EKF
   algorithm -- same code both sides). *Regime:* closed-loop-deterministic. *Anchor:* a `LOG_REPLAY=1`
-  flight log. *Status:* **BLOCKED** -- both 260705 logs are `LOG_REPLAY=0` with **zero** replay-format
-  messages (`RFRH`/`RISI`/`REV2`/... absent; verified by byte scan). Cannot Replay the data we have.
-  *Unblock:* one param on the next capture (see Next steps). Note LA1 has **no ExtNav** even once
-  unblocked (VIO never reached the FC in those flights).
+  flight log. *Status:* **Anchor captured & verified (2026-07-09).** `260709-vio-first-light` is
+  `LOG_REPLAY=1` with the full replay suite (`RFRH`/`RFRF` ~369k, `RISI` 737k, `RGPI`/`RGPJ`, `RMGI`,
+  `RBRI`, and `REPH`/`REVH`/`RVOH` -- the ExtNav in replay form), verified by byte scan. **Unlike the
+  260705 logs it carries the ExtNav** (`VISP`=8420 / `VISV`=8419) from a real GPS-degraded woods traverse.
+  Replay-fidelity run pending. `EK3_SRC1=GPS` this flight (GPS-primary), so a Replay forcing
+  `EK3_SRC=ExtNav` also yields the VIO-primary counterfactual on the same real data.
 
 - **LA2 -- Instability-onset gain (bifurcation threshold; first target).** SITL, parameterized to the
   airframe, goes unstable at ~the gain the real vehicle did. *Regime:* bifurcation threshold
@@ -150,10 +158,10 @@ Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, s
   segment from a flight (RMS to extract). *Status:* **Ready** (real-side RMS not yet extracted).
 
 - **LA4 -- Oscillation waveform (ensemble only).** When unstable, SITL's oscillation frequency band
-  overlaps the real twitch/bounce response band. *Regime:* chaotic -> ensemble-match only (frequency
-  band + amplitude envelope, never the time series). *Anchor:* **segmented** autotune-twitch and
-  `vertical-bounce` spectra -- NOT the naive whole-log ~0.4 Hz envelope. *Status:* **Ready**, pending
-  segmented extraction.
+  overlaps the real **autotune-twitch** response band. *Regime:* chaotic -> ensemble-match only (frequency
+  band + amplitude envelope, never the time series). *Anchor:* **segmented** autotune-twitch spectra
+  (per-`ATDE` window). NB `260613-vertical-bounce` is a **fast vertical climb, not an oscillation** -- not
+  an LA4 source. *Status:* **Ready**, pending segmented extraction.
 
 - **LA5 -- Convergent closed-loop quantities.** Steady-state EKF innovation levels; notch tracks RPM
   (`INS_HNTCH_FREQ 58.8 Hz` at hover); wind estimate -- sim matches real given known inputs. *Regime:*
@@ -218,8 +226,8 @@ predict-then-confirm loop must hit.*
 
 - **LC3 -- Failure reproduction -> mitigation transfer.** A failure seen (or that would be seen) onboard
   -- the fail-confident IMU-fusion runaway (sibling E10/E12: 41.9 km, 1076 m/s), VIO divergence on
-  aggressive rotation, the `vertical-bounce` -- reproduced in SITL, its mitigation validated in SITL, and
-  confirmed to fly. *Status:* **Open, no evidence.**
+  aggressive rotation, or the `260709` "Bad Vision Position" pre-arm -- reproduced in SITL, its mitigation
+  validated in SITL, and confirmed to fly. *Status:* **Open, no evidence.**
 
 - **LC4 -- Co-estimation loop transfer ([#65](https://github.com/symmatree/coordinator/issues/65)).**
   The `globalOpt` GPS-anchored ExtNav pose behaves onboard as it did in SITL. *Status:* **Open, no
@@ -234,10 +242,10 @@ on purpose -- the whole discipline is not to conflate them.
 
 | # | Scenario / event | Claim.Lemma | Regime | Real-side anchor (have?) | Sim status | Onboard status |
 |---|------------------|-------------|--------|--------------------------|-----------|----------------|
-| S1 | Replay a real flight's sensors through EKF3, match logged `XKF*` | A.LA1 | closed-loop | **no** -- needs `LOG_REPLAY=1` capture | not built | recorded only |
+| S1 | Replay a real flight's sensors through EKF3, match logged `XKF*` | A.LA1 | closed-loop | **yes** -- `260709` `LOG_REPLAY=1`+ExtNav | not built | flew (260709) |
 | S2 | Crank PID gain until control breaks; compare onset to autotune boundary | A.LA2 / C.LC1 | bifurcation | **yes** -- autotune-1 boundary | not built | flew (autotune) |
 | S3 | Hold a stable hover; compare attitude RMS | A.LA3 | convergent/qual | partial -- extract from `ATT` | not built | flew |
-| S4 | Reproduce an oscillation band (twitch / vertical-bounce) | A.LA4 | chaotic/ensemble | partial -- needs segmented spectra | not built | flew |
+| S4 | Reproduce an oscillation band (autotune twitch) | A.LA4 | chaotic/ensemble | partial -- needs segmented spectra | not built | flew |
 | S5 | Notch tracks RPM at hover (58.8 Hz) | A.LA5 | convergent-pred | **yes** -- `INS_HNTCH` + RCOU | not built | flew |
 | S6 | Feed derived ExtNav (pose + honest cov) into EKF3; does it fuse? | B.LB2 | -- | **yes** -- tracked pose + #66 | not built | never live |
 | S7a | Velocity spike (29 m/s) rides out `EK3_VEL_I_GATE` -- confirm the by-design single-sample drop holds | B.LB3 / C.LC2 | mechanism | **yes** -- E12 | not built | never live |
@@ -260,8 +268,10 @@ no hardware:
 - **Hover-throttle band (sanity only):** ~0.41-0.49 (0.149 discarded); hunts within/among flights.
 - **Log rate:** IMU ~400 Hz (instance 0), `GYR` faster, `VIBE` present -- rich enough for segmented
   spectra.
-- **Replay-readiness:** both 260705 flight logs `LOG_REPLAY=0`, no replay-format messages ->
-  **LA1 blocked** until a re-capture.
+- **Replay anchor (`260709-vio-first-light`, 2026-07-09):** `LOG_REPLAY=1`, full replay suite +
+  **ExtNav** (`VISP`=8420 / `VISV`=8419, replay-form `REPH`/`REVH`/`RVOH`); GPS status spans RTK-fixed(6)
+  -> float(5) -> DGPS(4) -> 3D(3) = real under-canopy degradation; `EK3_SRC1=GPS` (GPS-primary this
+  flight). The earlier 260705 logs are `LOG_REPLAY=0` (not Replay-able).
 - **ExtNav ingredients:** tracked VINS pose (`*.vinspose.csv`, provenance sidecar), honest covariance
   (#66), stable clock offset (E13). `EK3_SRC1_POSXY=3` (GPS), `VISO_TYPE=0`, `AHRS_EKF_TYPE=3` in the
   flown configs.
@@ -288,9 +298,9 @@ no hardware:
   `FuseAllVelocities` default) and expect EKF/nav arming-gate behavior to change.
 
 **Not yet extracted (needs the segmented-fingerprint tool):** oscillation frequency/amplitude for the
-autotune twitches and the `vertical-bounce` event (band-limited above the maneuver envelope); stable-
-hover attitude RMS. A naive whole-log FFT gives ~0.4 Hz (the maneuver, not the instability) -- see the
-matchability corollary.
+autotune twitches (band-limited above the maneuver envelope); stable-hover attitude RMS. A naive whole-log
+FFT gives the maneuver/twitch-cadence envelope, not the closed-loop oscillation -- see the matchability
+corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillation.)
 
 ---
 
