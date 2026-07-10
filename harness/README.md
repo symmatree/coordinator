@@ -22,10 +22,12 @@ vio-ipc-record fixture -> [input_replayer.py] -> chobits_imu / chobits_features
     -> [REAL vins_fusion] -> chobits_server -> [vio-pose-tap] -> pose CSV
 ```
 
-The fixture comes from a bench capture with the estimator **stopped** (tracker ->
-`vio-ipc-record`, so the recorder can bind the input sockets) -- see coordinator
-#42 for the first such captures. Post-hoc pose from captured inputs is the
-foundation of the VIO-quality analysis (`analysis/vio-input-alignment.ipynb`).
+The fixture comes from either of two sources, same format: a **bench** capture with
+the estimator **stopped** (tracker -> `vio-ipc-record`, so the recorder can bind the
+input sockets -- see coordinator #42), or an **in-flight** capture with the estimator
+**running**, where the tracker tees its own `chobits_imu`/`chobits_features` output to
+a `.feat` (coordinator #78, `vio-tracker` overlay). Post-hoc pose from captured inputs
+is the foundation of the VIO-quality analysis (`analysis/vio-input-alignment.ipynb`).
 
 ## Pieces
 
