@@ -62,15 +62,20 @@ which config (by sha256) produced each pose — the analysis records the `config
 > scratchpad poses, which had **no provenance** and disagreed with the tracked regen by ~2× on raw
 > displacement (e.g. armed 41.9 km tracked vs 73.9 km loose). Do not use the old loose `*.vinspose.csv`.
 
-> **⚠ Still never observed live onboard.** VIO was never fed to the FC (no serial link) and no one has
-> watched live pose in flight. Every observation here is **offline replay**. Whether the estimator even
-> spools up live on the Pi is still **unconfirmed**.
+> **UPDATE 2026-07-09 -- first live onboard flight (`260709-vio-first-light`).** VIO was fed to the FC
+> (`VISO_TYPE=1`); the estimator ran live (~27 ms/solve) and its pose reached and was logged by the FC
+> (`VISP`=8420 / `VISV`=8419). **But the live pose was garbage** (E15): positions diverged to +/-1.3e6 m,
+> velocities to +/-2.6e7 m/s -- far worse than any offline replay -- so the FC's VisOdom health check
+> rejected it and it flew GPS-primary (`EK3_SRC1=GPS`). So the estimator *does* spool up live and we now
+> have first onboard evidence -- but not yet a *working* onboard pose. (Prior caveat, kept: until this
+> flight every observation was offline replay.)
 
-> **⚠ GPS-good, open, well-lit proxy — not canopy.** Both flights had RTK the whole time; we *simulate*
-> GPS-denial by **withholding** intermediate GPS from the reconstruction (using it only as scoring
-> truth). The VIO itself ran in good visual conditions. Canopy — feature-poor, moving leaves, lighting
-> transitions, low light — is a **different, likely worse** environment and is **untested**. Treat every
-> number here as an **optimistic floor**.
+> **⚠ GPS-good open proxy (260705) vs. real canopy (260709).** The E1-E14 numbers are from the two
+> **260705** flights: RTK throughout, good visual conditions, canopy *simulated* by withholding
+> intermediate GPS -- treat those as an **optimistic floor**. **260709** is the first *real* under-canopy
+> flight (GPS actually degraded RTK-fixed -> float -> DGPS -> 3D; feature-poor woods) and it **confirms
+> "likely worse"**: the live estimator diverged to megameter scale (E15). The caveat now has data behind
+> it, not just caution.
 
 ---
 
@@ -176,11 +181,20 @@ wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
 | **E12** | Vision-only inter-sample steps: **99% < 10 cm** (smooth), but **rare 1–2 m single-sample jumps** (max 128 cm armed, 239 cm handheld) | jump analysis on tracked track | the real safety threat; fail-**confident** for IMU-fusion (smooth 1076 m/s) |
 | **E13** | **Offline continuous timesync** (windowed angular-rate cross-correlation, VINS pose vs FC, flown log): global align **NCC 0.95**; per-40 s residual offset **std 16 ms, range 40 ms** over 4 min — a smooth **~160 ppm** clock-rate drift, no jitter/jumps | `vio_ekf_compare.align_time` (windowed) | +[#65](https://github.com/symmatree/coordinator/issues/65) timing tractable (TIMESYNC-disciplinable; PPS not needed for consistency) |
 | **E14** | **Handheld local vs global:** per-20 s sliding-window fit **median local ATE 0.12 m** (2–44 cm) vs **3.34 m** single global fit (~28×) — shape tracked throughout; the global number is a frame offset (a mis-estimated turn), not tracking failure | sliding-window fit (X12) | confirms the metric-inflation caveat; −"handheld vision-only is bad" |
+| **E15** | **First live onboard (260709, real under-canopy).** Live stereo pose fed to the FC **diverged catastrophically** -- `VISP` positions to **±1.3e6 m**, `VISV` to **±2.6e7 m/s**, sent with a **constant 0.2 m** covariance (fail-confident); `Rst`=0 (no reset-counter, #67). FC ran GPS-primary (`EK3_SRC1=GPS`); `VisOdom: not healthy` blocked arming ~10 min. GPS degraded RTK-fixed→3D; ~52 m vertical run, 10 m/s max climb. | FC `.bin` decode (`VISP`/`VISV`, #10) | live ≠ offline; real-canopy failure far worse than the ~1 m open proxy; **no `.feat` captured → cause not diagnosable in detail** |
 
 ---
 
 ## Experiments
 
+- [ ] **X13 — 260709 first-light forensics (what we CAN do without `.feat`).** Feature vectors were
+  **not** captured, so offline pose-regen (#42) is blocked for this flight — we cannot re-derive *why* the
+  live pose diverged in detail. What we *can* do: the FC `.bin` + ~1104 coordinator captures (disparity +
+  12 MP stills; `analysis/vio-first-light-captures.ipynb`). Bridge the clocks via **`VISP.CTimeMS`
+  (coordinator time, logged in the FC `.bin`) ↔ capture `monotonic_ns`**, place stills/disparity on the
+  EKF/GPS timeline, and line up scene transitions (clearing the treeline → full-sky view, entering shadow)
+  against the GPS-status degradation and the divergence onset. Qualitative, but the best available handle
+  on the *why*. **Next capture must record `.feat`.**
 - [x] **X1 — Vision-only (stereo, `imu:0`) — DONE (E10).** Tracks the whole flight (~1 m ATE armed). The
   fault is the IMU/extrinsic path, not the vision. Scale is stereo-observable without IMU.
 - [x] **X3 — Deterministic offline harness — DONE (E9, #54).** `vio-offline-runner`: byte-reproducible;
