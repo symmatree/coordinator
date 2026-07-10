@@ -139,7 +139,7 @@ GPS-anchored co-estimation in #65) is future work.
 
 | Env / arg | Default | Meaning |
 |-----------|---------|---------|
-| `MAVLINK_DEVICE` / `--device` | `/dev/serial0` | FC UART (or `udpout:host:port` for the harness) |
+| `MAVLINK_DEVICE` / `--device` | `/dev/ttyAMA0` | FC UART (or `udpout:host:port` for the harness). Deployed stack uses the **real node `/dev/ttyAMA0`**, not the `/dev/serial0` symlink -- Docker `devices:` does not follow symlinks, so a `serial0` mapping never appears in the container and the router crash-loops on ENOENT (bench 2026-07-09). |
 | `MAVLINK_BAUD` / `--baud` | 1500000 | UART baud (FC `SERIAL4_BAUD=1500`) |
 | `MAVLINK_POSE_SOCKET` / `--socket` | `/tmp/chobits_server` | pose IPC datagram socket |
 | `MAVLINK_SRC_SYSTEM` / `--source-system` | 1 | MAVLink source system id |
