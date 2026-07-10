@@ -11,3 +11,4 @@ __pycache__/
 
 # Harness scratch (test_router_stack.py socket dir)
 harness/.smoke/
+.ipynb_checkpoints/
