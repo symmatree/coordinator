@@ -212,8 +212,19 @@ Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, s
 
 ### Claim C -- Onboard behaves like Linux (sufficiently, for particular use cases)
 
-*All of these are **empty** today -- no live onboard observation exists. Listed as the targets a
-predict-then-confirm loop must hit.*
+*Updated 2026-07-10: no longer all empty. `260709` gave the first onboard observation, and we now have
+the **first prediction on record** (below). Still: no *working* onboard VIO pose, and no *confirmed*
+predict-then-confirm yet -- the flash is pending.*
+
+> **PREDICTION P1 (2026-07-10, [#80](https://github.com/symmatree/coordinator/issues/80)) -- the 4.7
+> upgrade is neutral for GPS-primary flight.** *Silicon:* `Tools/Replay` shows 4.7-beta7's EKF3 ==
+> the flight's own 4.6.3 EKF3 to **1 mm / 0.01 deg** on real GPS-primary data (`260709`), on top of a
+> ~1 um cross-arch fidelity floor. *Claim:* flashing 4.7-beta7 with the params transitioned (#80)
+> **preserves GPS-primary flight behavior.** *Confirm:* the flash + one GPS-primary flight. *Scope:*
+> mainline (GPS-primary) **only** -- the ExtNav path is **not** predicted (it wasn't exercised;
+> `EK3_SRC1=GPS`). First Claim-C predict-then-confirm on the record; **falsified** if GPS-primary flight
+> misbehaves post-flash. (Not a bold prediction -- a minor upgrade neutral in the mainline case -- but a
+> legit one: silicon on the record before hardware.)
 
 - **LC1 -- Param-tuning transfer.** A param swept in SITL yields the predicted effect on hardware (peak
   location, falloff shape, magnitude) over a couple of confirming runs. *First target:* the PID stability
@@ -300,7 +311,9 @@ no hardware:
   TFS20L** rangefinder gains a driver (`RNGFND_TYPE=46`, I2C -- absent at 4.6.3, which is why it never
   worked), and `TBS_LUCID_H7` MPU6000 board-rev support is purely additive (our board is unaffected).
   Caveat: 4.7.0 is still beta7; re-verify params after flashing (new `EK3_OPTIONS`/`EK3_PRIMARY`, changed
-  `FuseAllVelocities` default) and expect EKF/nav arming-gate behavior to change.
+  `FuseAllVelocities` default) and expect EKF/nav arming-gate behavior to change. **Validated offline
+  (2026-07-10):** Replay on `260709` shows 4.7 EKF == 4.6.3 EKF to **1 mm / 0.01 deg** for GPS-primary --
+  the upgrade is neutral for the mainline regime (Prediction P1 above; upgrade tracked in #80).
 
 **Not yet extracted (needs the segmented-fingerprint tool):** oscillation frequency/amplitude for the
 autotune twitches (band-limited above the maneuver envelope); stable-hover attitude RMS. A naive whole-log
