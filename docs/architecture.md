@@ -67,6 +67,10 @@ for offline tuning and validation -- the iteration sweep ([#63](https://github.c
 the batch-solve ceiling ([#59](https://github.com/symmatree/coordinator/issues/59)), calibration. A
 "capture" intent distinct from operational VIO: the operator commands a logging run and the coordinator
 **confirms the streams are actually recording** (UC1) instead of finding an empty capture afterward.
+Since [#78](https://github.com/symmatree/coordinator/issues/78) the tracker **tees this input fixture to a
+`.feat` on every flight with the estimator running** (gated by `OAK_CAPTURE_DIR`), so a replayable fixture
+no longer requires a dedicated estimator-off `vio-ipc-record` run -- deliberate capture patterns now just
+add calibration coverage, not the only way to get the fixture at all.
 
 **UC6 -- OAK-D color stills for imagery + mapping (priority).** Periodically capture full-resolution
 stills from the OAK-D **RGB** camera to disk -- **timestamped**, and ideally reported to the FC as a
