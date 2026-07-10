@@ -18,7 +18,8 @@ side; the estimator side lives in the sibling.*
 > is the first VIO-in-the-loop flight: `VISO_TYPE=1`, the router's `ATT_POS_MOCAP`+`VISION_SPEED_ESTIMATE`
 > reached and were **logged by the FC** (`VISP`=8420 / `VISV`=8419), the estimator ran live (~27 ms/solve),
 > on a real GPS-degraded woods traverse, captured **replay-grade** (`LOG_REPLAY=1`). So **Claim C has its
-> first data point and LA1's anchor exists and is verified** (below). Remaining caveat: `EK3_SRC1=GPS` this
+> first data point and LA1 is now CONFIRMED** -- Replay reproduces the flight's own EKF to ~1 um (below).
+> Remaining caveat: `EK3_SRC1=GPS` this
 > flight, so VIO was received/logged but the EKF stayed **GPS-primary** -- it did not yet *depend* on VIO
 > for position. The general discipline still holds: do not launder a silicon result into a vehicle claim
 > without the anchor.
@@ -140,12 +141,16 @@ Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, s
   reproduces that flight's own logged `XKF*` position/velocity/innovations/variances. Validates that our
   bench build + params + frame conventions + analysis pipeline **are** the aircraft (not the EKF
   algorithm -- same code both sides). *Regime:* closed-loop-deterministic. *Anchor:* a `LOG_REPLAY=1`
-  flight log. *Status:* **Anchor captured & verified (2026-07-09).** `260709-vio-first-light` is
-  `LOG_REPLAY=1` with the full replay suite (`RFRH`/`RFRF` ~369k, `RISI` 737k, `RGPI`/`RGPJ`, `RMGI`,
-  `RBRI`, and `REPH`/`REVH`/`RVOH` -- the ExtNav in replay form), verified by byte scan. **Unlike the
-  260705 logs it carries the ExtNav** (`VISP`=8420 / `VISV`=8419) from a real GPS-degraded woods traverse.
-  Replay-fidelity run pending. `EK3_SRC1=GPS` this flight (GPS-primary), so a Replay forcing
-  `EK3_SRC=ExtNav` also yields the VIO-primary counterfactual on the same real data.
+  flight log. *Status:* **CONFIRMED (2026-07-10).** `260709-vio-first-light` is `LOG_REPLAY=1` with the
+  full replay suite (`RFRH`/`RFRF` ~369k, `RISI` 737k, `RGPI`/`RGPJ`, `RMGI`, `RBRI`, and `REPH`/`REVH`/
+  `RVOH` -- the ExtNav in replay form). **Fidelity result:** our x86 4.6.3 `Tools/Replay` reproduces the
+  **H7-flown** 4.6.3 EKF's `XKF1` position to **~1 um over the 55 m trajectory** (rms ~0, max 0.001 mm;
+  velocity to um/s; **1.7e-8 relative**) -- the bench *is* the aircraft's EKF to float precision, **across
+  ARM->x86**. (`check_replay` flags only last-bit FP mismatches in the yaw-GSF/quaternion/innovation
+  fields -- expected cross-arch, not divergence.) This is the first **Confirmed** lemma and the anchor the
+  rest of Claim A hangs on. Note it carries the ExtNav (`VISP`=8420/`VISV`=8419) but `EK3_SRC1=GPS`
+  (GPS-primary), so a Replay forcing `EK3_SRC=ExtNav` yields the VIO-primary counterfactual on the same
+  real data (next).
 
 - **LA2 -- Instability-onset gain (bifurcation threshold; first target).** SITL, parameterized to the
   airframe, goes unstable at ~the gain the real vehicle did. *Regime:* bifurcation threshold
@@ -242,7 +247,7 @@ on purpose -- the whole discipline is not to conflate them.
 
 | # | Scenario / event | Claim.Lemma | Regime | Real-side anchor (have?) | Sim status | Onboard status |
 |---|------------------|-------------|--------|--------------------------|-----------|----------------|
-| S1 | Replay a real flight's sensors through EKF3, match logged `XKF*` | A.LA1 | closed-loop | **yes** -- `260709` `LOG_REPLAY=1`+ExtNav | not built | flew (260709) |
+| S1 | Replay a real flight's sensors through EKF3, match logged `XKF*` | A.LA1 | closed-loop | **yes** -- `260709` `LOG_REPLAY=1`+ExtNav | **CONFIRMED** (~1um) | flew (260709) |
 | S2 | Crank PID gain until control breaks; compare onset to autotune boundary | A.LA2 / C.LC1 | bifurcation | **yes** -- autotune-1 boundary | not built | flew (autotune) |
 | S3 | Hold a stable hover; compare attitude RMS | A.LA3 | convergent/qual | partial -- extract from `ATT` | not built | flew |
 | S4 | Reproduce an oscillation band (autotune twitch) | A.LA4 | chaotic/ensemble | partial -- needs segmented spectra | not built | flew |
