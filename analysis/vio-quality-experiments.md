@@ -92,7 +92,11 @@ Each theory: statement, evidence **for/against**, status, discriminator. Evidenc
 - **For (historical):** E5 (init `R0` moved with replay pace).
 - **Against:** E9 — a deterministic, timestamp-ordered feed still diverges **identically and reproducibly**.
 - **Status:** timing coupling was real in the old path, but removing it entirely leaves the divergence
-  unchanged → **not the cause.** The deterministic harness is the trustworthy base for everything below.
+  unchanged → **not the cause.** The deterministic harness is a trustworthy base for **config-independent**
+  conclusions only — the divergence is *real and achievable* with this code + these inputs on some
+  hardware, and byte-reproducible. It says **nothing** about real-time, threaded, or cross-platform
+  behavior: the offline config (`num_threads=1`, no Ceres wall-clock cap, stepped time) may not represent
+  the live one — unestablished, not assumed (see Methodology confounds).
 
 ### T3 — Motor vibration corrupts the OAK-D IMU — **not isolated; do not credit**
 *The hard-mounted OAK-D IMU eats motor vibration, poisoning IMU preintegration.*
@@ -198,7 +202,10 @@ wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
 - [x] **X1 — Vision-only (stereo, `imu:0`) — DONE (E10).** Tracks the whole flight (~1 m ATE armed). The
   fault is the IMU/extrinsic path, not the vision. Scale is stereo-observable without IMU.
 - [x] **X3 — Deterministic offline harness — DONE (E9, #54).** `vio-offline-runner`: byte-reproducible;
-  divergence is real (T1/T7 disproven). Now the trustworthy base for everything else.
+  divergence is real (T1/T7 disproven). This is a trustworthy base for **config-independent** conclusions
+  only (the divergence is real, *achievable* with this code + these inputs on some hardware, and
+  reproducible) — **not** a "base for everything": it is silent on real-time / threaded / cross-platform
+  behavior (see T7 status + Methodology confounds).
 - [x] **X11 — Ceres iteration-count sweep (offline, stereo-only) — DONE ([#63](https://github.com/symmatree/coordinator/issues/63)).**
   `analysis/tools/vio_param_sweep.py` swept `max_num_iterations` = {2,4,6,8,12,16,24,32} on the flown
   fixture (`260705-vio-logged`), scored vs FC EKF. Result: **ATE is flat (~0.95–0.99 m) from 6 through
@@ -286,6 +293,21 @@ Drift is tolerated (operator + post-hoc); jumps must be handled (they break even
 - **Resolved:** qemu solver starvation (T1) and non-deterministic replay (T7) — the offline harness is
   deterministic and un-starved (E9). Provenance — the tracked runner writes a sidecar (fixture/config/
   source SHAs); the old loose `*.vinspose.csv` (no provenance) are superseded and must not be used.
+- **Open — does the offline config represent the real one?** X3/E9 fix the *offline deterministic* config
+  (`num_threads=1`, no Ceres wall-clock cap, stepped time, whatever host); we treat its results as the
+  base but haven't shown they transfer to the live/flight config. These are **open theses, not a program**
+  — no single run settles any; collect *directional indicators* and resist premature certainty. And the
+  list of factors below is itself a guess (the same completeness error as "trustworthy base for
+  everything") — there is very likely one we have not named (thermal throttle, memory/disk pressure; LGTM
+  metrics shrink that blind spot, they don't close it):
+  - *free-threaded + wall-clock-capped runs may produce a **family** of results distributed around the
+    synchronous one* — falsifiable; the E15 live blow-up (~1300 km) vs offline E10 (~42 km) is a hint,
+    but confounded (different flight).
+  - *x86 ≡ arm64 offline for a given signal* — the coarse diverge/stays-bounded boolean is checkable
+    **now** on the 260705 fixtures (needs the amd64 estimator image, #85); finer agreement is only
+    meaningful once a run is bounded.
+  - *offline ≡ live on the same host* — gated on a joint capture (feat #78 + onboard pose #30 +
+    `LOG_REPLAY=1`), so we can compare re-estimation against the flight's own onboard pose.
 - **Open:** **GPS-good open proxy ≠ canopy** (optimistic floor); **hover untested** (all flights moving);
   **metric inflation** by singular errors (check local-vs-global before trusting a global ATE); the
   **rigid-fit K-sweep** (E11) is a proxy — the batch solve (#59) is the real measurement; **cause of the
