@@ -3,9 +3,16 @@
 *Single place to track the claims, scenarios, and evidence for **using ArduPilot SITL (and the
 FC-in-the-loop) on Linux as an instrument for the rekon10 flight stack** -- and, crucially, for
 knowing **which conclusions from silicon we are allowed to carry to the vehicle, and vice versa.**
-Modeled on `fables/Datasets/experiments-house-model.md` and its sibling
-`analysis/vio-quality-experiments.md` (estimator quality). This doc is the **FC / EKF / dynamics**
-side; the estimator side lives in the sibling.*
+This doc is the **FC / EKF / dynamics** side; the estimator side lives in
+`analysis/vio-quality-experiments.md`.*
+
+**How this doc works** (same model as `vio-quality-experiments.md` — see its "How this doc works"): it is a **map of
+belief, not a project plan**. The **Claims (A/B/C)** are the spine; each **lemma (`LA#`/`LB#`/`LC#`)** is
+a specific instance a claim rests on, owning its regime, real-side anchor, and status; **scenarios
+(`S#`)** are candidate probes (a backlog, uncommitted), and **evidence** is cited by ID (`E#` here or in
+`vio-quality-experiments.md`). A single run rarely settles a lemma — collect directional indicators — and anchor to the
+real system rather than self-certifying on synthetic input. Structure generalizes
+`fables/Datasets/experiments-house-model.md` from a map to a flight stack.
 
 **Origin:** coordinator [#64](https://github.com/symmatree/coordinator/issues/64) (SITL bench),
 [#68](https://github.com/symmatree/coordinator/issues/68) (gate/GLITCH_RAD audit),
@@ -25,7 +32,7 @@ side; the estimator side lives in the sibling.*
 > without the anchor.
 >
 > **Original caveat (pre-2026-07-09), kept as the baseline this flight moved off:** we had **never observed
-> live onboard VIO/EKF behavior** (sibling doc; commit `33cb9f9`) -- every observation was offline replay,
+> live onboard VIO/EKF behavior** (`vio-quality-experiments.md`; commit `33cb9f9`) -- every observation was offline replay,
 > so Claim C had zero evidence and Claim A could only anchor on recorded logs.
 
 ---
@@ -106,7 +113,7 @@ alone never supports A or C.
 peaks at the *maneuver / twitch-cadence envelope* (~0.4-3 Hz), not the closed-loop oscillation; the real
 fingerprint only appears after **segmenting to the twitch event and band-limiting above the maneuver
 band.** (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillation -- an easy mislabel.)
-Same lesson as the estimator replay (sibling T7 / the `--fast` arrival-ratio bug):
+Same lesson as the estimator replay (`vio-quality-experiments.md` T7 / the `--fast` arrival-ratio bug):
 timing and windowing are load-bearing; a plausible number computed the easy way answers a different
 question than you think.
 
@@ -121,7 +128,7 @@ question than you think.
   means anything.
 - **Predict-then-confirm for Claim C.** Fix the prediction (peak location, curve shape, magnitude)
   **before** the confirming runs, so the vehicle can falsify it. A confirmed prediction is stronger than
-  any retrodictive fit -- it shows silicon has predictive power, not just echo. (Sibling discipline:
+  any retrodictive fit -- it shows silicon has predictive power, not just echo. (Discipline from `vio-quality-experiments.md`:
   hold reruns able to falsify; do not launder an ad-hoc fit through a rigor process.)
 - **Retro-confirm for free where the vehicle already flew the test.** Autotune already walked the
   vehicle to its stability boundary; predicting that boundary in silicon and comparing needs **zero new
@@ -179,7 +186,7 @@ Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, s
   replays the *recorded* ExtNav (CONFIRMED ~1 um); LB1/S6 regenerates pose offline; LA6 substitutes the
   regenerated ExtNav for the recorded one end-to-end -- the difference from LA1 is that ExtNav is
   *re-estimated*, not read back. *Regime:* inherits the estimator's -- so at today's signal quality
-  (megameter divergence, sibling E15) the honest first target is **failure reproduction** (does the
+  (megameter divergence, `vio-quality-experiments.md` E15) the honest first target is **failure reproduction** (does the
   offline all-up diverge the way the flight did -> LC3), **not** fidelity; fidelity is a target only once
   an onboard run is bounded. *Anchor:* a flight captured with `.feat` **and** `LOG_REPLAY=1` **and**
   onboard pose together -- which we do not yet have (see "the missing joint capture", below). *Status:*
@@ -194,16 +201,16 @@ Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, s
 
 - **LB1 -- Recorded `.feat` replay is faithful (with a timing caveat).** Replaying a recorded fixture
   through the real `vins_fusion` reproduces production behavior. *Status:* **Confirmed with caveat** --
-  the deterministic offline runner is byte-reproducible (sibling E9/X3), but only because timing was
-  removed; the earlier live path proved arrival-timing is load-bearing (`--fast` diverges; sibling T7).
+  the deterministic offline runner is byte-reproducible (`vio-quality-experiments.md` E9/X3), but only because timing was
+  removed; the earlier live path proved arrival-timing is load-bearing (`--fast` diverges; `vio-quality-experiments.md` T7).
   So "recorded replay" is faithful **only at correct pacing**.
 
 - **LB2 -- Derived ExtNav is realistic.** Recorded VINS pose + honest covariance
-  ([#66](https://github.com/symmatree/coordinator/issues/66)) + stable clock offset (sibling E13:
+  ([#66](https://github.com/symmatree/coordinator/issues/66)) + stable clock offset (`vio-quality-experiments.md` E13:
   NCC 0.95, offset std 16 ms / ~160 ppm) is representative of what the live router would emit. *Status:*
   **Ready** -- credible, not yet exercised into a real EKF.
 
-- **LB3 -- Synthetic pathologies (the Tier-0 ceiling).** Injected 1-2 m position jumps (sibling E12:
+- **LB3 -- Synthetic pathologies (the Tier-0 ceiling).** Injected 1-2 m position jumps (`vio-quality-experiments.md` E12:
   max 128 cm armed / 239 cm handheld; 99% < 10 cm), ~29 m/s dPos/dt velocity spikes (0.2%), drift, and
   reset events match measured statistics. *Regime / status:* synthetic -> supports **mechanism/wiring
   only** (self-certification trap). Good enough for U2 (reset fires) and for dialing gate arithmetic;
@@ -220,7 +227,7 @@ Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, s
 
 - **LB5 -- Idealized / counterfactual input (estimator ceiling).** Bundle-adjusted or simulated-perfect
   feature tracks characterize the estimator's ceiling decoupled from the live front end. *Status:*
-  overlaps sibling **X8** (synthetic VI ablation, known-world simulator) and
+  overlaps `vio-quality-experiments.md` **X8** (synthetic VI ablation, known-world simulator) and
   [#35](https://github.com/symmatree/coordinator/issues/35). Purpose is ceiling, not realism.
 
 ### Claim C -- Onboard behaves like Linux (sufficiently, for particular use cases)
@@ -254,7 +261,7 @@ predict-then-confirm yet -- the flash is pending.*
   -> position must be sent (`EK3_SRC1_POSXY=6`); velocity is an optional add. *Status:* **Open, no evidence.**
 
 - **LC3 -- Failure reproduction -> mitigation transfer.** A failure seen (or that would be seen) onboard
-  -- the fail-confident IMU-fusion runaway (sibling E10/E12: 41.9 km, 1076 m/s), VIO divergence on
+  -- the fail-confident IMU-fusion runaway (`vio-quality-experiments.md` E10/E12: 41.9 km, 1076 m/s), VIO divergence on
   aggressive rotation, or the `260709` "Bad Vision Position" pre-arm -- reproduced in SITL, its mitigation
   validated in SITL, and confirmed to fly. *Status:* **Open, no evidence.**
 
@@ -334,7 +341,7 @@ that captured, together: the estimator **input** (`.feat`, [#78](https://github.
 the estimator **onboard output** (VINS pose, [#30](https://github.com/symmatree/coordinator/issues/30)), and
 `LOG_REPLAY=1`. We have never had all three. What we have: one `pos_log.txt` from a primitive manual log
 (no `.feat`); two `.feat`-captured flights (260705) with **no onboard pose**; one all-up flight (260709)
-with onboard pose that **diverged to ~Mm in seconds** (sibling E15) but **no `.feat`**. So no flight yet
+with onboard pose that **diverged to ~Mm in seconds** (`vio-quality-experiments.md` E15) but **no `.feat`**. So no flight yet
 lets us ask "does offboard replay of this flight's feat reproduce its onboard pose" -- the estimator's
 LA1. #78 closes the input side; the **next flight must enable onboard-pose capture on the same run** as
 `.feat` + `LOG_REPLAY=1`. Until then LA6/S11 stay Blocked, and the estimator-reproducibility questions
@@ -395,7 +402,7 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
 
 ## Cross-links
 
-- Sibling estimator tracker: `analysis/vio-quality-experiments.md` (T#/E#/X# ledger; X8 and X10 are the
+- Estimator tracker: `analysis/vio-quality-experiments.md` (T#/E#/X# ledger; X8 and X10 are the
   synthetic-simulator and EKF-gate scenarios referenced here).
 - `docs/vio-offline-replay.md` -- regenerating pose from a fixture (the input to S6/S10).
 - `docs/ardupilot-extnav-fusion.md` -- FC-side ExtNav fusion + covariance floors (`VISO_*_M_NSE`).
