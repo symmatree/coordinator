@@ -80,5 +80,5 @@ ssh.exe pi@coordinator.local.symmatree.com
 ## Related
 
 - [host-setup.md](host-setup.md) — base flash + Imager settings
-- Filesystem robustness against ungraceful power loss — coordinator #41
+- Filesystem robustness against ungraceful power loss — [power-loss-filesystem.md](power-loss-filesystem.md), coordinator #41
 - Time sync / RTC — coordinator #11
