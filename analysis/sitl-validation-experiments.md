@@ -172,6 +172,19 @@ Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, s
   (`INS_HNTCH_FREQ 58.8 Hz` at hover); wind estimate -- sim matches real given known inputs. *Regime:*
   convergent-predictable. *Status:* **Open theory**.
 
+- **LA6 -- All-up offline reconstruction (regenerated ExtNav -> Replay EKF).** Replay a flight's captured
+  `.feat` ([#78](https://github.com/symmatree/coordinator/issues/78)) through offboard VINS to
+  **regenerate** ExtNav, feed it via the router (`coordinator-mavlink`) into `Tools/Replay` of the same
+  flight's `LOG_REPLAY` log. This is the **join** of the two halves we have only run separately: S1/LA1
+  replays the *recorded* ExtNav (CONFIRMED ~1 um); LB1/S6 regenerates pose offline; LA6 substitutes the
+  regenerated ExtNav for the recorded one end-to-end -- the difference from LA1 is that ExtNav is
+  *re-estimated*, not read back. *Regime:* inherits the estimator's -- so at today's signal quality
+  (megameter divergence, sibling E15) the honest first target is **failure reproduction** (does the
+  offline all-up diverge the way the flight did -> LC3), **not** fidelity; fidelity is a target only once
+  an onboard run is bounded. *Anchor:* a flight captured with `.feat` **and** `LOG_REPLAY=1` **and**
+  onboard pose together -- which we do not yet have (see "the missing joint capture", below). *Status:*
+  **Blocked** on that joint capture.
+
 - **LA-X -- Excluded from Claim A (honesty box).** Hover throttle (`MOT_THST_HOVER` ~0.41-0.49 across
   credible runs; 0.149 in `1-notch` discarded as unconverged; it **hunts** with battery sag/mass/wind)
   and mag-cal offsets are **real-vehicle properties SITL cannot predict**. Use as coarse sanity bands /
@@ -269,6 +282,7 @@ on purpose -- the whole discipline is not to conflate them.
 | S8 | Reset-counter -> one clean `ResetPositionNE` | B.LB3 (mech) | mechanism | n/a (wiring) | not built | never live |
 | S9 | globalOpt GPS-anchored pose loop | B.LB5 / C.LC4 | -- | partial -- GPS in `.bin` | not built | never live |
 | S10 | IMU-fusion fail-confident runaway reproduced + mitigated | C.LC3 | -- | **yes** -- E10/E12 | not built | recorded only |
+| S11 | All-up: feat -> offboard VINS regen ExtNav -> router -> Replay EKF | A.LA6 / C.LC3 | inherits estimator | partial -- need joint capture | not built | never (no joint capture) |
 
 ---
 
@@ -315,6 +329,18 @@ no hardware:
   (2026-07-10):** Replay on `260709` shows 4.7 EKF == 4.6.3 EKF to **1 mm / 0.01 deg** for GPS-primary --
   the upgrade is neutral for the mainline regime (Prediction P1 above; upgrade tracked in #80).
 
+**The missing joint capture (why #78 was pulled ahead).** Anchoring the *estimator* half needs one flight
+that captured, together: the estimator **input** (`.feat`, [#78](https://github.com/symmatree/coordinator/issues/78)),
+the estimator **onboard output** (VINS pose, [#30](https://github.com/symmatree/coordinator/issues/30)), and
+`LOG_REPLAY=1`. We have never had all three. What we have: one `pos_log.txt` from a primitive manual log
+(no `.feat`); two `.feat`-captured flights (260705) with **no onboard pose**; one all-up flight (260709)
+with onboard pose that **diverged to ~Mm in seconds** (sibling E15) but **no `.feat`**. So no flight yet
+lets us ask "does offboard replay of this flight's feat reproduce its onboard pose" -- the estimator's
+LA1. #78 closes the input side; the **next flight must enable onboard-pose capture on the same run** as
+`.feat` + `LOG_REPLAY=1`. Until then LA6/S11 stay Blocked, and the estimator-reproducibility questions
+([VIO-quality methodology confounds](vio-quality-experiments.md#methodology-confounds)) stay directional
+at best.
+
 **Not yet extracted (needs the segmented-fingerprint tool):** oscillation frequency/amplitude for the
 autotune twitches (band-limited above the maneuver envelope); stable-hover attitude RMS. A naive whole-log
 FFT gives the maneuver/twitch-cadence envelope, not the closed-loop oscillation -- see the matchability
@@ -350,6 +376,20 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
   First proof the coordinator's output moves a real EKF -- a milestone even before the audits.
 - [ ] **Live-FC bench A/B (Claim A, no re-fly):** feed identical derived ExtNav into the real H7 and
   SITL, compare EKFs -- but **measure the delivery-timing skew** (serial vs UDP), do not assume it away.
+- [ ] **Joint-capture flight (the estimator anchor).** One flight capturing `.feat` (#78) + onboard VINS
+  pose (#30) + `LOG_REPLAY=1` together -- unblocks LA6/S11 and turns the estimator-reproducibility
+  questions ([VIO-quality methodology confounds](vio-quality-experiments.md#methodology-confounds)) from
+  directional-only into anchorable. De-risk now: it is enabling both captures on the same run, no new tooling.
+- [ ] **Cheap directional indicator (no new flight).** Run the two 260705 `.feat` fixtures through the
+  offline estimator on x86 vs arm64 (`num_threads=1`) and note only the coarse *diverge / stays-bounded*
+  agreement -- a directional check on the execution-config reproducibility questions
+  ([VIO-quality methodology confounds](vio-quality-experiments.md#methodology-confounds)), **not** a
+  settlement. Needs the amd64 estimator image ([#85](https://github.com/symmatree/coordinator/issues/85))
+  for a native (non-qemu) x86 leg.
+- [ ] **Matrix-build the router (`coordinator-mavlink`).** It sits *in* the all-up loop (regenerated pose
+  -> ExtNav -> FC) and is currently arm64-only, so an x86 all-up replay (LA6/S11) needs an amd64 router.
+  (The tracker / oak-still-capture / pod-camera are front-end only, **not** in the replay loop -> amd64
+  is dev-parity nice-to-have, not load-bearing for replay.)
 
 ---
 
