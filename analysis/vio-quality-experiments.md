@@ -44,6 +44,8 @@ real-time requirement. See fables `Drones/rekon10/canopy-ops.md` (ice-hole doctr
 - `containers/vio-estimator/offline_runner.py` (`vio-offline-runner`) — deterministic pose regen +
   provenance sidecar (`*.vinspose.polisher.json`, records fixture/config/source SHAs).
 - `analysis/vio-input-alignment.ipynb` — input side: OAK-D IMU vs FC IMU, vibration PSD, feature health.
+- `analysis/vio-online-offline-comparison.ipynb` — **online↔offline↔EKF**: does offline replay reproduce the flight's *own onboard* pose (`VISP`)? Emits `vio-online-offline-comparison.json`. New (260712, E16).
+- `analysis/image-sharpness-vs-motion.ipynb` — image-data quality (UC6/mapping side): var-of-Laplacian focus vs exposure / motion / EKF-velocity / VIBE, split by flight regime. Emits `image-sharpness-vs-motion.json`. The analytic toolkit (blur budget, rolling-shutter/vibration-jello line-straightness, autofocus checks) overlaps the house-model doc — reuse it there.
 - Upstream (pinned): `chobitsfan/VINS-Fusion@c525184`; `chobitsfan/oak_d_vins_cpp@378f40f`.
 - Seed calibration: `host/ansible/roles/coordinator/files/oak_d.yaml` (`imu: 1`, `estimate_extrinsic: 2`).
 - Offline global-solve direction: [#59](https://github.com/symmatree/coordinator/issues/59) (GTSAM batch factor graph).
@@ -98,6 +100,24 @@ which config (by sha256) produced each pose — the analysis records the `config
 > flight (GPS actually degraded RTK-fixed -> float -> DGPS -> 3D; feature-poor woods) and it **confirms
 > "likely worse"**: the live estimator diverged to megameter scale (E15). The caveat now has data behind
 > it, not just caution.
+
+> **★ UPDATE 2026-07-12 — the missing joint capture, and offline replay REPRODUCES the live estimator
+> (`260712-vio-flight-treecrash`).** This is the flight the "missing joint capture" was waiting for: the
+> `.feat` tee (#78) **and** the onboard pose (`VISP`) **and** `LOG_REPLAY=1`, all on one run — so we can
+> finally ask whether **offline replay reproduces what ran live**. It does, decisively: replaying the
+> flight's `.feat` through `vins_fusion_offline` reproduces the flight's own **online** VINS pose (`VISP`)
+> to **6 mm median / 42 mm RMSE, Umeyama scale 1.000** over the ~88 s pre-divergence window (rigid 180°
+> VINS→ExtNav frame flip, +100 ms router latency; gyro time-sync NCC 0.76). **E16.** This is the biggest
+> *methodology* result to date: it closes the central **"does offline represent live"** confound (below)
+> for a *bounded* flight — the offline E9–E12 conclusions can now be read as speaking to the live
+> estimator, not just an offline artifact.
+>
+> Two more from this flight. **The online pose was BOUNDED** this time — `VISP` stayed within ~50 m and
+> tracked the FC EKF to **0.36 m** ATE for 88 s before a velocity-runaway divergence — **not** the 260709
+> megameter blow-up (E15). So a live onboard pose *can* track for a window on this vehicle (**E17**); the
+> divergence is the familiar `imu:1` endgame. And it ended in a **tree crash** — recovery + power-loss
+> behaviour in `docs/power-loss-filesystem.md` and the crash writeup; **image-data quality** collapsed in
+> flight (E18), pulling in the house-model doc's blur/vibration toolkit.
 
 ---
 
@@ -155,6 +175,22 @@ are already marked disproven or reframed.
   over-claimed "vibration is not the cause"; the honest statement is *cause not isolated, either way*.
 - **Probes:** X8(c) synthetic vibration injection (breaking threshold vs measured spectrum) and X7 raw
   high-rate IMU — both owned under **T4/T5** (the shared IMU-path tooling), referenced here.
+- **Related (imagery side, cross-cutting) — E18 + the house-model toolkit.** Separately from the IMU,
+  motor vibration also **wrecks the color stills** (E18: in-flight sharpness collapses ~43×; VIBE is the
+  top correlate at **−0.81**, though confounded — exposure/velocity/rotation all rise at takeoff too).
+  Those are the 12 MP **color** stills, *not* the VINS input: the features run on the rectified 400p
+  **mono**, which is **not saved** (capturing it — global shutter, short exposure, no VCM — is a small
+  tracker change and the better SfM/quality target). The analytic tools already exist in the
+  **house-model experiments doc** (`fables/Datasets/experiments-house-model.md`): the **blur budget**
+  (shutter × speed × GSD → pixel blur), **rolling-shutter vs vibration-jello** line-straightness (LSD:
+  systematic shear = forward-flight RS; periodic waviness = vibration at prop-RPM/readout), autofocus
+  checks, `--cameras` post-crash calibration reuse. Hard-mounted / no gimbal / OAK-D ≠ DJI, so expect
+  different *answers* — but the **tools transfer**.
+  - [ ] **X14 — props-spinning, vehicle stationary (isolates vibration for BOTH the IMU and the imagery).**
+    The discriminator E18 lacked (no motors-on-ground frames) and the honest test T3 always needed: motors
+    up, no translation/rotation → vibration alone. Compare IMU spectrum + still sharpness + RS/jello
+    line-straightness vs at-rest and vs in-flight; also cap exposure to test the motion-blur half.
+    (Anticipated by #42's props-spinning note.)
 
 ### T4 / T5 — Cam↔IMU calibration/extrinsic wrong (T4) and/or BNO085 IMU data-path mismatch (T5)
 *The seed extrinsic is a rough guess refined online; the OAK-D IMU is fused/filtered, zero-at-rest,
@@ -299,6 +335,9 @@ above. New evidence is authored where it argues (under a theory); this table is 
 | **E13** | **Offline continuous timesync** (windowed angular-rate cross-correlation, VINS pose vs FC, flown log): global align **NCC 0.95**; per-40 s residual offset **std 16 ms, range 40 ms** over 4 min — a smooth **~160 ppm** clock-rate drift, no jitter/jumps | `vio_ekf_compare.align_time` (windowed) | +[#65](https://github.com/symmatree/coordinator/issues/65) timing tractable (TIMESYNC-disciplinable; PPS not needed for consistency) |
 | **E14** | **Handheld local vs global:** per-20 s sliding-window fit **median local ATE 0.12 m** (2–44 cm) vs **3.34 m** single global fit (~28×) — shape tracked throughout; the global number is a frame offset (a mis-estimated turn), not tracking failure | sliding-window fit (X12) | confirms the metric-inflation caveat; −"handheld vision-only is bad" |
 | **E15** | **First live onboard (260709, real under-canopy).** Live stereo pose fed to the FC **diverged catastrophically** -- `VISP` positions to **±1.3e6 m**, `VISV` to **±2.6e7 m/s**, sent with a **constant 0.2 m** covariance (fail-confident); `Rst`=0 (no reset-counter, #67). FC ran GPS-primary (`EK3_SRC1=GPS`); `VisOdom: not healthy` blocked arming ~10 min. GPS degraded RTK-fixed→3D; ~52 m vertical run, 10 m/s max climb. | FC `.bin` decode (`VISP`/`VISV`, #10) | live ≠ offline; real-canopy failure far worse than the ~1 m open proxy; **no `.feat` captured → cause not diagnosable in detail** (the tracker input tee, [#78](https://github.com/symmatree/coordinator/issues/78), now closes this for future flights) |
+| **E16** | **Offline replay reproduces the flight's own ONLINE pose.** 260712 `.feat` → `vins_fusion_offline` vs the flight's logged `VISP`: residual **6 mm median / 42 mm RMSE**, Umeyama **scale 1.000**, rigid **180°** frame, **+100 ms** latency, over the ~88 s pre-divergence window; gyro time-sync NCC 0.76 | `vio-online-offline-comparison.ipynb` (260712); provenance in `derived/vio-online-offline-comparison.json` | **RESOLVES "offline ≡ live"** (methodology confound) for a *bounded* flight — offline results represent the live estimator |
+| **E17** | **First BOUNDED onboard pose (260712).** Online `VISP` stayed within ~50 m and tracked the FC EKF to **0.36 m** ATE (scale 0.87) for ~88 s, then velocity-runaway divergence (`imu:1`); offline reproduces it exactly (E16) | FC `.bin` (`VISP`/`XKF1`) + offline regen | live *can* track a window (cf. E15 megameter); the divergence is the `imu:1` endgame (+T4/T5/T8) |
+| **E18** | **In-flight color stills unusable; vibration the top correlate.** var(Laplacian) median collapses **~43×** (4827 at-rest → 113 in-flight); **0/29** in-flight frames reach at-rest sharpness; exposure 1.2→6.1 ms; strongest correlate **VIBE −0.81** (then exposure −0.66, EKF-vel −0.53, gyro −0.42) — **but all covary at takeoff** (no motors-on-ground frames to separate them) | `image-sharpness-vs-motion.ipynb` (260712) | data-quality / UC6 imagery; +T3 (vibration) directionally; **not** the VINS input (the rectified *mono* is, and it is **not saved**) |
 
 ---
 
@@ -319,6 +358,11 @@ above. New evidence is authored where it argues (under a theory); this table is 
 5. **Drift over ice-hole-length legs looks acceptable on the proxy** (E11): ~tens of cm rms out to
    10–20 m, ~0.6 m by 40 m — within the `canopy-ops.md` mapping budget. **Optimistic floor** (GPS-good,
    open, not canopy; rigid-fit proxy, which a batch solve should match or beat).
+6. **Offline replay reproduces the LIVE estimator (E16, 260712) — the methodology anchor.** For a bounded
+   flight, offline `vins_fusion_offline` on the teed `.feat` matches the flight's own online `VISP` to
+   **6 mm / scale 1.000**. This is what lets the offline conclusions (E9–E12) speak to *live* behaviour,
+   not just an offline harness — the joint capture the whole program was gated on. Open: the *divergent*
+   (megameter) regime is not yet shown to replay faithfully (260709 had no `.feat`).
 
 **Operational consequence:** the plan that fits the evidence is **VIO = local stability** (hover +
 operator-commanded deltas), **operator = global navigation** (FPV via VTX), GPS at ice-hole endpoints,
@@ -346,8 +390,12 @@ Drift is tolerated (operator + post-hoc); jumps must be handled (they break even
   - *x86 ≡ arm64 offline for a given signal* — the coarse diverge/stays-bounded boolean is checkable
     **now** on the 260705 fixtures (needs the amd64 estimator image, #85); finer agreement is only
     meaningful once a run is bounded.
-  - *offline ≡ live on the same host* — gated on a joint capture (feat #78 + onboard pose #30 +
-    `LOG_REPLAY=1`), so we can compare re-estimation against the flight's own onboard pose.
+  - *offline ≡ live on the same host* — **RESOLVED for a bounded flight (E16, 260712).** The joint
+    capture (feat #78 + onboard `VISP` + `LOG_REPLAY`) is in hand, and offline replay reproduces the
+    flight's own online pose to **6 mm median / scale 1.000** — so offline results represent the live
+    estimator *where the live pose is bounded*. **Still open:** whether offline reproduces a live
+    *megameter divergence* (260709 had no `.feat`) — i.e. is the chaotic-divergence regime as faithful
+    as the tracking regime? (Threading/solve-cap/qemu diverge more the more chaotic the run.)
 - **Open:** **GPS-good open proxy ≠ canopy** (optimistic floor); **hover untested** (all flights moving);
   **metric inflation** by singular errors (check local-vs-global before trusting a global ATE); the
   **rigid-fit K-sweep** (E11) is a proxy — the batch solve (#59) is the real measurement; **cause of the
