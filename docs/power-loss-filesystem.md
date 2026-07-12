@@ -7,39 +7,62 @@ yet fully built.
 
 ## The design lives in three places
 
-- **The chosen pattern** — `facts/topics/power-unstable-pi.md` (private `facts` repo): a shared
-  resilient-setup pattern for power-unstable, often-offline Pis, with an explicit **rekon10 Coordinator
-  device profile**. Core idea = the container/pod model: **immutable read-only base + thin writable
-  overlay + persistent local data**.
-- **The tracking issue + coordinator-specific decisions** —
-  [#41](https://github.com/symmatree/coordinator/issues/41). See its pinned design comment for what we
-  simplified for the coordinator (SD not SSD; simple throwaway overlay, not the fancy conditional-reset
-  variant; graceful sync-at-disarm as the primary mechanism).
-- **The base recipe** — `symmatree/dotfiles-symm` (`ubuntu-zsh/` Ansible + the `rpi-console` profile):
-  the **master host bootstrap** the whole Pi fleet converges onto; the RO base *is* this recipe. The
-  first device onto the full pattern is the PocketTerm35 "pipboy", tracked in
-  [tiles #599](https://github.com/symmatree/tiles/issues/599).
+- **The shared pattern** — `facts/topics/power-unstable-pi.md` (private `facts` repo): a
+  resilient-setup pattern for power-unstable, often-offline Pis, with a **rekon10 Coordinator device
+  profile**. Core idea = shrink the corruptible surface, then defend it.
+- **The tracking issue + decisions** —
+  [#41](https://github.com/symmatree/coordinator/issues/41), the umbrella. See its **2026-07-12 design
+  update** for the chosen filesystem and the scope→issue index.
+- **The base recipe + image build** — `symmatree/dotfiles-symm` (`ubuntu-zsh/` Ansible): the master
+  host bootstrap the whole Pi fleet converges onto, and the intended home for the **image-build
+  pipeline** ([#96](https://github.com/symmatree/coordinator/issues/96)). First btrfs device is the
+  PocketTerm35 "pipboy" ([tiles #599](https://github.com/symmatree/tiles/issues/599)).
 
-## The approach in one glance
+## The chosen filesystem: btrfs subvolumes, no overlay
 
-| Layer | Backing | Coordinator contents |
-|-------|---------|----------------------|
-| **Base** (read-only, can't rot) | SD, robust FS | Pi OS Lite + Docker + **baked images** |
-| **Overlay** (simple throwaway) | SD | OS RW churn, container writable layers, `journald`, `ipc/` sockets, `state/` — install-but-doesn't-persist-unless-in-the-ansible-recipe |
-| **Persisted data** (survives reboot) | SD partition | `/var/lib/coordinator/{config,captures}` + the **operator home** (interactive scratch, the checkout) |
-| **NAS** | when connected only | never a boot dependency (offline in flight) |
+Not a RO-base + overlay (that was the earlier call — superseded 2026-07-12). Instead, btrfs with
+**granular per-subvolume ro/rw** — stronger protection than an overlay, with no ramdisk catching
+writes and no custom initramfs:
 
-The primary safety mechanism is **graceful sync at disarm**, not a fancy filesystem: if every disarm
-flushes + syncs, the only lossy events left are pulling power while armed or a brownout — where a
-perfect mapping mission isn't expected anyway.
+| Subvolume | Mount | Contents / why |
+|-----------|-------|----------------|
+| `@usr` (+ `/boot`) | **read-only** | the OS binaries/libraries — can't be written mid-cut, so can't corrupt. Remounts rw *live* for ansible maintenance (`remount,rw` → apt → `remount,ro`, no reboot). |
+| `@var` | rw | `journald`, Docker `data-root` (images survive reboot), spool — CoW crash-consistent + snapshottable. |
+| `@home` | rw | operator home (the checkout, interactive scratch that must survive a reboot). |
+| `@data` (`/var/lib/coordinator`) | rw | config + captures — the precious data. Disarm takes an **RO snapshot** of this (#88). |
+| `/tmp`, `/run` | tmpfs | normal, small — the *only* ramdisk. |
 
-## Open work (issues)
+Why btrfs over the overlay: tmpfs-upper overlay costs RAM we can't spare on the 512 MB Zero 2 W pods;
+disk-upper + conditional-reset needs a custom initramfs hook. Subvolumes give ro-where-it-matters +
+CoW crash-consistency + checksums (detect SD FTL rot ext4 serves silently) + snapshots, with only
+standard btrfs-root boot config. **Medium:** SD is fine *because* ro-`/usr` keeps write volume low;
+escape hatch if capture volume grows is an f2fs data partition or a USB SSD (btrfs is unambiguously
+good on the pipboy's NVMe).
 
-- #87 — Top pHAT: laptop-free graceful shutdown/reboot + power button + readiness indicator.
-- #88 — On DISARM: stop still capture, finalize + `fsync` capture writers, `sync` filesystem.
-- #89 — Power-loss-safe on-disk format for the in-flight `.feat` capture (#78/#83) + stills (#72).
-- #90 — Bake container images into the RO base with an easy update/rebake path.
-- #41 — the RO-base + overlay + persisted-data layout itself (this doc's parent).
+## The primary safety mechanism is graceful sync at disarm
+
+Not the filesystem — the discipline. If every disarm flushes + `sync`s (later: btrfs RO-snapshot of
+`@data`) **and signals done physically** (you're at the vehicle, no SSH), the only lossy events left
+are pulling power while armed or a brownout — where a perfect mapping mission isn't expected anyway.
+`coord shutdown` is ~an alias (a clean `poweroff` already unmounts + syncs); its value is being the
+pHAT button target + the safe-to-cut indicator hook.
+
+## Scope → issues
+
+| Aspect | Issue |
+|--------|-------|
+| FS/power-loss architecture (umbrella + decision) | [#41](https://github.com/symmatree/coordinator/issues/41) |
+| Repeatable btrfs image build, fleet-wide (rpi-image-gen) | [#96](https://github.com/symmatree/coordinator/issues/96) |
+| Laptop-free shutdown: pHAT button + poweroff + safe-to-cut indicator | [#87](https://github.com/symmatree/coordinator/issues/87) |
+| DISARM → stop still capture + fsync + `sync`/snapshot + physical done-signal | [#88](https://github.com/symmatree/coordinator/issues/88) |
+| Power-loss-safe capture format (`.feat` #83 + stills #72) | [#89](https://github.com/symmatree/coordinator/issues/89) |
+| Images present offline (pre-baked at build time / rw `@var`) | [#90](https://github.com/symmatree/coordinator/issues/90) |
+| Stack auto-starts capturing on boot (systemd oneshot) | [#97](https://github.com/symmatree/coordinator/issues/97) |
+| Sibling / first btrfs device (PocketTerm) | tiles #599 |
+
+**Near-term** (software, any RAM size, no reflash — lands on the current ext4 card *and* survives into
+the btrfs image unchanged): #87 + #88 + #89 + #97. **Next reflash:** the btrfs image (#96) carrying the
+layout above.
 
 ## Related
 
