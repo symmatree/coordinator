@@ -19,11 +19,15 @@ axis convention is needed. See coordinator #42.
 """
 
 import json
+import warnings
 
 import numpy as np
 import pandas as pd
 
 from ardupilot_log import parse_log
+
+# Finite-difference speed smoothing (samples) at the VINS pose rate (~11 Hz), ~0.4 s.
+SPEED_SMOOTH = 5
 
 
 # ---------------------------------------------------------------- loaders
@@ -41,7 +45,21 @@ def load_vio_pose(pose_csv, replay_speed=1.0):
     dt = np.diff(v["te"].values)
     dt[dt <= 0] = np.nan
     v["w"] = np.nan_to_num(np.concatenate([[0.0], 2 * np.arccos(dot) / dt]))
-    v["speed"] = np.linalg.norm(v[["vx", "vy", "vz"]].values, axis=1)
+    # Speed is derived from the POSITION track, never from vx/vy/vz. The offline
+    # vins_fusion_offline writes zero velocity; trusting that column makes `speed` zero,
+    # which defeats the motion/divergence windowing and yields plausible-but-wrong ATE
+    # (#101). Position is always populated and is the ground truth for motion here.
+    dp = np.linalg.norm(np.diff(v[["px", "py", "pz"]].values, axis=0), axis=1)
+    raw = np.nan_to_num(np.concatenate([[0.0], dp / dt]))  # dt already has <=0 -> nan
+    v["speed"] = np.convolve(raw, np.ones(SPEED_SMOOTH) / SPEED_SMOOTH, mode="same")
+    # If velocity is ever non-zero, do NOT silently use it -- warn so it is evaluated.
+    if {"vx", "vy", "vz"}.issubset(v.columns) and np.abs(v[["vx", "vy", "vz"]].values).max() > 0:
+        warnings.warn(
+            "VINS pose CSV has a non-zero velocity column; it is NOT used for windowing "
+            "(speed is derived from position). Evaluate the velocity explicitly before "
+            "trusting it (#101).",
+            stacklevel=2,
+        )
     return v
 
 
@@ -210,14 +228,20 @@ def _plot(v, fc, xkf, win, gt, vio_al, err, t0, t_div, run_name, metrics):
     a.set_xlabel("FC t_s (s)"); a.set_ylabel("|VINS-EKF| (m)")
     a.legend(fontsize=8); a.grid(alpha=0.3); a.set_title("position error over valid window")
 
-    # (1,1) idle period: VINS flat vs EKF/GPS settling (before onset)
+    # (1,1) idle period: VINS flat vs EKF/GPS settling (before onset). VINS emits no
+    # pose while dead-stationary (can't initialize), so idle can be empty -- guard it.
     a = ax[1, 1]
     idle = v[v["tfc"] < t0]
-    a.plot(idle["tfc"], idle["px"] - idle["px"].iloc[0], label="VINS pN", lw=0.8)
-    a.plot(idle["tfc"], idle["py"] - idle["py"].iloc[0], label="VINS pE", lw=0.8)
+    if len(idle):
+        a.plot(idle["tfc"], idle["px"] - idle["px"].iloc[0], label="VINS pN", lw=0.8)
+        a.plot(idle["tfc"], idle["py"] - idle["py"].iloc[0], label="VINS pE", lw=0.8)
     xki = xkf[xkf["t_s"] < t0]
-    a.plot(xki["t_s"], xki["PN"] - xki["PN"].iloc[0] if len(xki) else [], label="EKF PN", color="crimson", lw=0.8, alpha=0.7)
-    a.plot(xki["t_s"], xki["PE"] - xki["PE"].iloc[0] if len(xki) else [], label="EKF PE", color="darkred", lw=0.8, alpha=0.7)
+    if len(xki):
+        a.plot(xki["t_s"], xki["PN"] - xki["PN"].iloc[0], label="EKF PN", color="crimson", lw=0.8, alpha=0.7)
+        a.plot(xki["t_s"], xki["PE"] - xki["PE"].iloc[0], label="EKF PE", color="darkred", lw=0.8, alpha=0.7)
+    if not len(idle):
+        a.text(0.5, 0.5, "no idle VINS pose\n(no init while stationary)", ha="center",
+               va="center", transform=a.transAxes, fontsize=9, color="gray")
     a.set_xlabel("FC t_s (s)"); a.set_ylabel("pos - start (m)")
     a.legend(fontsize=8); a.grid(alpha=0.3); a.set_title("idle: VINS still vs GPS/EKF settling")
 
