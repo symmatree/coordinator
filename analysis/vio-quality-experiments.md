@@ -186,11 +186,14 @@ are already marked disproven or reframed.
   systematic shear = forward-flight RS; periodic waviness = vibration at prop-RPM/readout), autofocus
   checks, `--cameras` post-crash calibration reuse. Hard-mounted / no gimbal / OAK-D ≠ DJI, so expect
   different *answers* — but the **tools transfer**.
-  - [ ] **X14 — props-spinning, vehicle stationary (isolates vibration for BOTH the IMU and the imagery).**
-    The discriminator E18 lacked (no motors-on-ground frames) and the honest test T3 always needed: motors
-    up, no translation/rotation → vibration alone. Compare IMU spectrum + still sharpness + RS/jello
-    line-straightness vs at-rest and vs in-flight; also cap exposure to test the motion-blur half.
-    (Anticipated by #42's props-spinning note.)
+  - [ ] **X14 — stable hover (loaded-prop vibration with minimal camera motion; RTK truth).** The right
+    discriminator for BOTH the IMU (T3) and the imagery (E18): a hover has **loaded** props (real flight
+    vibration) but near-zero translation/rotation, so it separates **vibration/jello** (still present) from
+    **motion blur** (removed). Easy to get on a calm day with a good RTK lock. Compare IMU spectrum + still
+    sharpness + RS/jello line-straightness across **at-rest / hover / forward-flight**; cap exposure to
+    probe the motion-blur half. Bonus: it also fills the doc's **"hover untested"** gap (level-2 local
+    stability — see "What working means"). *(Props-spinning-on-the-ground is only a quick look — **unloaded
+    props vibrate differently** from thrusting ones, so it is not a faithful flight-vibration proxy.)*
 
 ### T4 / T5 — Cam↔IMU calibration/extrinsic wrong (T4) and/or BNO085 IMU data-path mismatch (T5)
 *The seed extrinsic is a rough guess refined online; the OAK-D IMU is fused/filtered, zero-at-rest,
