@@ -194,6 +194,16 @@ are already marked disproven or reframed.
     probe the motion-blur half. Bonus: it also fills the doc's **"hover untested"** gap (level-2 local
     stability — see "What working means"). *(Props-spinning-on-the-ground is only a quick look — **unloaded
     props vibrate differently** from thrusting ones, so it is not a faithful flight-vibration proxy.)*
+  - **Make it SPECTRAL, not scalar — the resonance question.** `VIBE` (E18's correlate) is broadband RMS;
+    it hides *which* frequency. The failure to fear is a **resonance** — a motor prop-pass line (or a
+    harmonic) exciting the camera **VCM/autofocus**, the mount, or **aliasing** a high-frequency line into
+    the IMU's fused band (→ T5's data-path concern). Find it by making the analysis spectral: OAK-D accel
+    **PSD / spectrogram** + the image **jello frequency** (from the line-straightness analysis), both
+    plotted **vs motor RPM** (`RCOU`/`ESC`) — a resonance is a peak that blows up at a particular RPM, or a
+    fixed structural peak the RPM sweeps through. A hover is *one* RPM operating point; to **find** the
+    resonance you want a **sweep** — in flight a slow throttle ramp (or a few steady throttle settings), or
+    on the bench a shaker **sine sweep** on the camera/mount. Sweep **slowly**: a high-Q mode needs many
+    cycles to build to its steady amplitude, so a fast sweep skips right over it.
 
 ### T4 / T5 — Cam↔IMU calibration/extrinsic wrong (T4) and/or BNO085 IMU data-path mismatch (T5)
 *The seed extrinsic is a rough guess refined online; the OAK-D IMU is fused/filtered, zero-at-rest,
