@@ -47,6 +47,22 @@ are pulling power while armed or a brownout — where a perfect mapping mission 
 `coord shutdown` is ~an alias (a clean `poweroff` already unmounts + syncs); its value is being the
 pHAT button target + the safe-to-cut indicator hook.
 
+## Worked example — 260712 tree-crash (first real drop during capture)
+
+An uncontrolled hard cut mid-flight (tree strike, Pi physically disconnected, **no graceful disarm**)
+gave us ground truth — [full writeup on #41](https://github.com/symmatree/coordinator/issues/41):
+
+- **ext4 + `fsck.repair` recovered fully clean, automatically** (journal replay + orphan cleanup, no
+  I/O / SD / ext4 errors, zero intervention). The root-corruption fear didn't materialize on a real
+  cut, which **de-fires the btrfs migration**: #96 stays valuable for its stronger guarantees +
+  fleet repeatability, not urgency.
+- **The append-only `.feat` lost exactly one 162-byte frame** of a 34,505-frame recording — the framed
+  format is the resilient pattern (#89). The 0-byte image tail was the OAK-D pipeline dying on impact,
+  **not** a cut artifact (the `.feat` kept appending past that instant, proving the FS was healthy).
+- **Crash survival rides on the on-disk format (#89), not the disarm-flush (#88)** — no disarm fires on
+  an uncontrolled loss. Remaining #89 work: verify torn-tail handling on `.feat`, make stills atomic.
+  New gap surfaced: persist the journal for forensics ([#100](https://github.com/symmatree/coordinator/issues/100)).
+
 ## Scope → issues
 
 | Aspect | Issue |
@@ -58,6 +74,7 @@ pHAT button target + the safe-to-cut indicator hook.
 | Power-loss-safe capture format (`.feat` #83 + stills #72) | [#89](https://github.com/symmatree/coordinator/issues/89) |
 | Images present offline (pre-baked at build time / rw `@var`) | [#90](https://github.com/symmatree/coordinator/issues/90) |
 | Stack auto-starts capturing on boot (systemd oneshot) | [#97](https://github.com/symmatree/coordinator/issues/97) |
+| Persist the journal for post-crash forensics | [#100](https://github.com/symmatree/coordinator/issues/100) |
 | Sibling / first btrfs device (PocketTerm) | tiles #599 |
 
 **Near-term** (software, any RAM size, no reflash — lands on the current ext4 card *and* survives into
