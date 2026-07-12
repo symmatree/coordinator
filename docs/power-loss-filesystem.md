@@ -53,15 +53,22 @@ An uncontrolled hard cut mid-flight (tree strike, Pi physically disconnected, **
 gave us ground truth — [full writeup on #41](https://github.com/symmatree/coordinator/issues/41):
 
 - **ext4 + `fsck.repair` recovered fully clean, automatically** (journal replay + orphan cleanup, no
-  I/O / SD / ext4 errors, zero intervention). The root-corruption fear didn't materialize on a real
-  cut, which **de-fires the btrfs migration**: #96 stays valuable for its stronger guarantees +
-  fleet repeatability, not urgency.
+  I/O / SD / ext4 errors, zero intervention). This is the **reward for planning** for power loss — not
+  a reason to stop: the btrfs subvolume migration (#96) stays the planned next step (stronger
+  guarantees + fleet repeatability), with ext4 + append-only as the working *interim* parachute. You
+  don't rely on the parachute for your commute — build btrfs deliberately off-vehicle, not live.
 - **The append-only `.feat` lost exactly one 162-byte frame** of a 34,505-frame recording — the framed
-  format is the resilient pattern (#89). The 0-byte image tail was the OAK-D pipeline dying on impact,
-  **not** a cut artifact (the `.feat` kept appending past that instant, proving the FS was healthy).
+  format is the resilient pattern (#89), and it kept appending healthily well after the image streams
+  stopped, which proves the coordinator FS was fine through the window.
+- **The 0-byte image files are not a coordinator-FS artifact, but their cause is unknown.** The image
+  streams stopped ~20 s before the cut; why is TBD — the camera may have lost power / been disconnected
+  before the Pi (power-loss ordering unknown), or a USB / X_LINK / pipeline dropout. The X_LINK we saw
+  was on the bench post-crash with the camera reassembled from pieces — **not** in-flight evidence; the
+  camera appears fine. Needs investigation, not attribution.
 - **Crash survival rides on the on-disk format (#89), not the disarm-flush (#88)** — no disarm fires on
-  an uncontrolled loss. Remaining #89 work: verify torn-tail handling on `.feat`, make stills atomic.
-  New gap surfaced: persist the journal for forensics ([#100](https://github.com/symmatree/coordinator/issues/100)).
+  an uncontrolled loss. Remaining #89 work: verify torn-tail handling on `.feat`, make stills atomic (a
+  latent risk this event did **not** demonstrate). New gap: persist the journal
+  ([#100](https://github.com/symmatree/coordinator/issues/100)).
 
 ## Scope → issues
 
