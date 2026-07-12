@@ -1,5 +1,23 @@
 # Offline VIO replay: regenerating VINS pose from a captured fixture
 
+> **Read first -- parts of this doc are stale (2026-07-12).** *Option B (x86_64 under
+> qemu-user)* below unpacks the arm64 image rootfs and emulates the binary. A **native
+> amd64 estimator image already exists** (the CI multi-arch manifest), and the intended
+> path is to run the estimator **image through containers** -- ideally an in-cluster
+> **k8s Job** (the sibling of the flight-analysis CronJob), not a rootfs unpack or
+> hand-wired sockets. The socket-free deterministic path is `vio-offline-runner`
+> (`containers/vio-estimator/offline_runner.py`); `containers/vio-estimator/test.sh` and
+> `analysis/tools/vio_param_sweep.py` drive it. The manual qemu procedure here is a
+> **fallback** for a host with no container runtime.
+>
+> Before following the manual steps, read:
+> - Issues **#85** (arm64-under-qemu vs the native amd64 image -- the staleness),
+>   **#35** (batch replay harness), **#42** (onboard capture), **#45** (`.feat` extension).
+> - [`analysis/README.md`](../analysis/README.md) (how `vio-offline-runner` and the k8s
+>   Job path actually work), [`analysis/sitl-validation-experiments.md`](../analysis/sitl-validation-experiments.md)
+>   (LA1 fidelity anchor ~1um ARM->x86, LA6 all-up reconstruction, LB1 timing caveat),
+>   [`analysis/vio-quality-experiments.md`](../analysis/vio-quality-experiments.md).
+
 Regenerate the `vins_fusion` pose trajectory for a flight **offline**, from a
 `vio-ipc-record` input fixture (`chobits_imu` + `chobits_features`), with no OAK-D
 and no Pi. This is the estimator half of the batch VIO harness (coordinator #35)
