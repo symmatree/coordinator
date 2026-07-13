@@ -304,6 +304,24 @@ int main(int argc, char **argv) {
         auto colorCam = pipeline.create<dai::node::ColorCamera>();
         colorCam->setBoardSocket(dai::CameraBoardSocket::CAM_A);  // RGB / center camera
         colorCam->setResolution(still_res);
+        // Still image-quality controls to fight in-flight motion blur (vio-quality E18: in flight the
+        // stills smeared -- auto-exposure ran to ~30 ms @ ISO 110, leaving ~4 stops of gain unused).
+        //  - OAK_STILL_MAX_EXPOSURE_US: cap the auto-exposure shutter so AE trades to ISO/gain instead
+        //    of a long exposure (accept some noise/underexposure for a sharp frame). 0 = no cap (auto).
+        //  - OAK_STILL_FOCUS: fix the lens (0-255 lens position, AF off) to stop autofocus hunting;
+        //    "auto" = leave AF on. Calibrate the value on the bench (sweep the position, pick the
+        //    var-of-Laplacian peak at flight distance -- analysis/image-sharpness-vs-motion tooling).
+        int max_exp_us = atoi(env_or("OAK_STILL_MAX_EXPOSURE_US", "0"));
+        if (max_exp_us > 0) {
+            colorCam->initialControl.setAutoExposureLimit((uint32_t)max_exp_us);
+            std::cout << "capture: still exposure capped at " << max_exp_us << " us (AE -> ISO/gain)\n";
+        }
+        std::string focus_s = env_or("OAK_STILL_FOCUS", "auto");
+        if (focus_s != "auto" && !focus_s.empty()) {
+            int lp = atoi(focus_s.c_str()); lp = lp < 0 ? 0 : (lp > 255 ? 255 : lp);
+            colorCam->initialControl.setManualFocus((uint8_t)lp);
+            std::cout << "capture: still fixed focus lensPos=" << lp << " (AF off)\n";
+        }
         auto xout_still = pipeline.create<dai::node::XLinkOut>();
         xout_still->setStreamName("still");
         colorCam->still.link(xout_still->input);
