@@ -175,17 +175,11 @@ are already marked disproven or reframed.
   over-claimed "vibration is not the cause"; the honest statement is *cause not isolated, either way*.
 - **Probes:** X8(c) synthetic vibration injection (breaking threshold vs measured spectrum) and X7 raw
   high-rate IMU — both owned under **T4/T5** (the shared IMU-path tooling), referenced here.
-- **Related (imagery side, cross-cutting) — E18 + the house-model toolkit.** Separately from the IMU,
-  motor vibration also **wrecks the color stills** (E18: in-flight sharpness collapses ~43×; VIBE is the
-  top correlate at **−0.81**, though confounded — exposure/velocity/rotation all rise at takeoff too).
-  Those are the 12 MP **color** stills, *not* the VINS input: the features run on the rectified 400p
-  **mono**, which is **not saved** (capturing it — global shutter, short exposure, no VCM — is a small
-  tracker change and the better SfM/quality target). The analytic tools already exist in the
-  **house-model experiments doc** (`fables/Datasets/experiments-house-model.md`): the **blur budget**
-  (shutter × speed × GSD → pixel blur), **rolling-shutter vs vibration-jello** line-straightness (LSD:
-  systematic shear = forward-flight RS; periodic waviness = vibration at prop-RPM/readout), autofocus
-  checks, `--cameras` post-crash calibration reuse. Hard-mounted / no gimbal / OAK-D ≠ DJI, so expect
-  different *answers* — but the **tools transfer**.
+- **Related — imagery side (see T9/T10).** Motor vibration also degrades the *imagery* (E18), recorded as
+  its own theories **T9** (motion blur) and **T10** (autofocus vs fixed focus) below — the color still is
+  the UC6/mapping product, not the VINS input (the rectified 400p mono the features run on is **not
+  saved**). The two probes that discriminate vibration for *both* the IMU (here) and the imagery (T9) live
+  here:
   - [ ] **X14 — stable hover (loaded-prop vibration with minimal camera motion; RTK truth).** The right
     discriminator for BOTH the IMU (T3) and the imagery (E18): a hover has **loaded** props (real flight
     vibration) but near-zero translation/rotation, so it separates **vibration/jello** (still present) from
@@ -320,6 +314,35 @@ wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
 > (Note: the `imu:1` global figures in E10 were only ever characterized globally, not held to this local
 > metric; their divergence magnitude is real — rotation preserves distance — but the mechanism was never
 > checked the same way.)
+
+---
+
+## Theories — imagery quality (UC6 / mapping side)
+
+*The color stills are the mapping product (UC6), **not** the VINS input — the rectified 400p mono the
+features run on is not saved. But it's the same vehicle, camera, and vibration, and the analytic tools are
+shared with the house-model experiments doc (`fables/Datasets/experiments-house-model.md`: blur budget,
+rolling-shutter-vs-vibration-jello line-straightness, autofocus checks, `--cameras` calibration reuse).
+Different vehicle (hard-mount, no gimbal, OAK-D ≠ DJI) → different **answers**, same tools.*
+
+### T9 — Motion blur (long exposure × airframe motion) is the dominant cause of unusable in-flight stills — **leading, confounded with vibration**
+*Auto-exposure ran to ~30 ms @ ISO 110 in flight (≈4 stops of gain unused), so any airframe rate/translation smears the frame during the exposure window.*
+- **For:** E18 — in-flight sharpness collapses ~43× (var-Laplacian median 4827→113); **0/29** in-flight frames reach at-rest sharpness; correlates exposure −0.66, EKF-vel −0.53, gyro −0.42; the streak/arc morphology is *directional* (motion during exposure), not uniform focus-soft.
+- **Against / not isolated:** **VIBE is the *strongest* correlate (−0.81)** and everything covaries at takeoff (no motors-on-ground frames), so motion-blur vs **vibration-jello** is *not separated*. A short exposure freezes **both**, so pulling the exposure lever does not discriminate them — the hover/spectral probes (X14, under T3) do.
+- **Status:** leading but **confounded, not isolated.** We are pulling the exposure lever now because it is cheap and helps regardless of which dominates — *not* because motion blur is confirmed to be the whole story.
+- **Probes:**
+  - [x] **X15 — cap the still exposure (deployed, PR #105).** `OAK_STILL_MAX_EXPOSURE_US` (5 ms default) caps the AE shutter → trades to ISO/gain, accepting some underexposure. Hardware-untested (OAK-D down); the next capture's sharpness re-scores it. Attacks the **exposure axis only** — residual motion at 5 ms and any vibration-jello remain (a status, not a disclaimer).
+  - [ ] **X18 — blur budget.** Compute the exposure that holds blur < N px at flight speed/GSD (house-model method) → set the cap from physics, not the 5 ms guess.
+  - [ ] **X14 — stable hover** (owned under T3) — the discriminator between motion blur and vibration-jello.
+
+### T10 — Autofocus is the wrong mode; a calibrated fixed focus is better — **proposed**
+*The OAK-D RGB has an autofocus VCM that can hunt or silently refocus; per the house-model doc, AF also tends to lock the highest-frequency signal (canopy twigs) over the useful subject.*
+- **For:** focus can change with or without a command (VCM); house-model confirmed AF-on-treetops leaves the useful subject soft; a fixed lens position is repeatable across flights.
+- **Against / caveat:** a *wrong* fixed position is worse than AF — needs a calibrated lens value first, so the knob defaults to `auto`.
+- **Status:** proposed; the knob ships (X16), the value is **uncalibrated** (default `auto`).
+- **Probes:**
+  - [x] **X16 — fixed-focus knob (PR #105).** `OAK_STILL_FOCUS` (0–255 lens position, AF off); default `auto`.
+  - [ ] **X17 — bench focus calibration.** Sweep `OAK_STILL_FOCUS` imaging a target at flight distance; score each with var-of-Laplacian (`image-sharpness-vs-motion` is the scorer); pick the peak → the fixed value. (House-model `--cameras` reuse is the ODM-side analogue for post-crash consistency.)
 
 ---
 
