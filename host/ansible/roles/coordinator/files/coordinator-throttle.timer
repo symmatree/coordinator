@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic Pi power/throttle forensics (undervoltage trail across a bounce)
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

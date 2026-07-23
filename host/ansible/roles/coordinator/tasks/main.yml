@@ -75,3 +75,9 @@
     - serial-getty@ttyAMA0.service
     - serial-getty@ttyS0.service
   failed_when: false
+
+# Auto-start capturing on boot (#97) + persistent journal / throttle forensics
+# (#100), so the coordinator behaves well across the routine power bounces of
+# the avionics 5 V rail.
+- name: Configure power-bounce resilience
+  ansible.builtin.include_tasks: power-resilience.yml
