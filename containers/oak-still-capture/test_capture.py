@@ -60,6 +60,17 @@ def main():
                 print(f"FAIL: sidecar[{k!r}] = {sidecar.get(k)!r} != {v!r}")
                 ok = False
 
+        # #89: durable writes are atomic -- the final JPEG + sidecar exist and no
+        # ".tmp" scratch file is left behind (a crash mid-write leaves the tmp, not a
+        # torn final file).
+        leftover = sorted(p.name for p in Path(td).glob("*.tmp"))
+        if leftover:
+            print(f"FAIL: durable write left temp files: {leftover}")
+            ok = False
+        if not jpeg.with_suffix(".json").exists():
+            print("FAIL: sidecar json not written")
+            ok = False
+
     print("RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

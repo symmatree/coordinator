@@ -40,7 +40,9 @@ RUN git clone --depth 1 --branch "${OAK_D_VINS_CPP_BRANCH}" https://github.com/c
 
 # Our overlay of feature_tracker.cpp: periodic disparity + RGB still capture (#72), plus the
 # UsbSpeed::HIGH change (was a sed). Kept byte-diffable vs the pinned upstream.
+# capture_writer.hpp (#89): power-loss-safe background writer, included by feature_tracker.cpp.
 COPY overlay/oak_d_vins_cpp/feature_tracker.cpp /src/oak_d_vins_cpp/feature_tracker.cpp
+COPY overlay/oak_d_vins_cpp/capture_writer.hpp /src/oak_d_vins_cpp/capture_writer.hpp
 
 RUN cd /src/oak_d_vins_cpp \
   && cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release -Ddepthai_DIR=/opt/depthai/lib/cmake/depthai \
