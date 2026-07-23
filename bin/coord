@@ -57,7 +57,8 @@ Usage: coord <command> [args]
 Commands:
   pull              Stop stack, pull images, start stack
   start             docker compose up -d
-  stop              docker compose down
+  stop              docker compose stop (containers remain; a boot unit re-ups them)
+  teardown          docker compose down (remove containers + networks)
   restart           docker compose restart [service]
   status            docker compose ps
   logs [service]    Follow logs (default: all services)
@@ -96,6 +97,13 @@ start)
 	compose up -d
 	;;
 stop)
+	# `stop`, not `down`: keep the containers so state/metadata survive and the
+	# boot unit (coordinator-stack.service) brings them straight back on a power
+	# bounce. Use `teardown` to actually remove them. (#97)
+	require_compose_file
+	compose stop
+	;;
+teardown)
 	require_compose_file
 	compose down
 	;;
