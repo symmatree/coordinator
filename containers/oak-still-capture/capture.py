@@ -57,6 +57,27 @@ def _env_float(name, default):
     return float(raw) if raw not in (None, "") else default
 
 
+def durable_write_bytes(path, data):
+    """Write `data` to `path` power-loss-safely (#89): write a temp file, fsync it,
+    atomically rename into place, then fsync the directory so the rename is durable.
+    A power cut leaves either the old file or the complete new one -- never the 0-byte
+    or half-written file that an un-fsynced `write_bytes` leaves in the page cache."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    dfd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
 def build_sidecar(node, seq, filename, wall, mono_ns, frame_meta):
     """Provenance sidecar for one still. `frame_meta` carries the device-side facts
     (None when unavailable). `sensor_timestamp_ns` is the device-clock capture time --
@@ -87,12 +108,15 @@ def write_frame(session_dir, node, seq, img_bgr, wall, mono_ns, frame_meta, qual
     ok, buf = cv2.imencode(".jpg", img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
     if not ok:
         raise RuntimeError(f"JPEG encode failed for seq {seq}")
-    jpeg_path.write_bytes(buf.tobytes())
     meta = dict(frame_meta)
     meta.setdefault("width", img_bgr.shape[1])
     meta.setdefault("height", img_bgr.shape[0])
     sidecar = build_sidecar(node, seq, jpeg_path.name, wall, mono_ns, meta)
-    (Path(session_dir) / f"{stem}.json").write_text(json.dumps(sidecar))
+    # #89: durable atomic writes -- at 0.5 Hz with no competing real-time work, a
+    # synchronous fsync per still is cheap, so no background writer is needed here
+    # (unlike the tracker's hot loop).
+    durable_write_bytes(jpeg_path, buf.tobytes())
+    durable_write_bytes(Path(session_dir) / f"{stem}.json", json.dumps(sidecar).encode())
     return jpeg_path
 
 

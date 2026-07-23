@@ -20,6 +20,9 @@
 #include <ctime>
 #include <cstdlib>  // #72: getenv/atof/atoi
 #include <cstdint>  // #78: uint16_t/uint32_t for the .feat frame header
+#include <memory>   // #89: unique_ptr for the capture writer
+
+#include "capture_writer.hpp"  // #89: power-loss-safe background writer for captures
 
 // Includes common necessary includes for development using depthai library
 #include "depthai/depthai.hpp"
@@ -130,10 +133,12 @@ static bool due(std::chrono::steady_clock::time_point& last, double hz) {
 }
 
 // Phase-1-compatible JSON sidecar (#73). exposure_us < 0 omits exposure/iso (disparity).
-static void write_sidecar(const std::string& base, const std::string& node, long seq,
-                          const std::string& file, const char* kind,
-                          std::chrono::system_clock::time_point wall, long long sensor_ns,
-                          int device_seq, int width, int height, long long exposure_us, int iso) {
+// #89: returns the JSON as a string so the background writer persists it durably
+// alongside the image (tmp -> fsync -> rename), instead of an un-fsynced fopen here.
+static std::string build_sidecar(const std::string& node, long seq,
+                                 const std::string& file, const char* kind,
+                                 std::chrono::system_clock::time_point wall, long long sensor_ns,
+                                 int device_seq, int width, int height, long long exposure_us, int iso) {
     std::time_t tt = std::chrono::system_clock::to_time_t(wall);
     long long us = std::chrono::duration_cast<std::chrono::microseconds>(
                        wall.time_since_epoch()).count() % 1000000;
@@ -144,16 +149,24 @@ static void write_sidecar(const std::string& base, const std::string& node, long
     snprintf(iso_s, sizeof(iso_s), "%s.%06lldZ", b, us);
     double wall_unix = std::chrono::duration<double>(wall.time_since_epoch()).count();
     long long mono_ns = ts_ns(std::chrono::steady_clock::now());
-    FILE* f = fopen((base + ".json").c_str(), "w");
-    if (!f) return;
-    fprintf(f, "{\"node\":\"%s\",\"seq\":%ld,\"file\":\"%s\",\"kind\":\"%s\","
-               "\"wall_clock_utc\":\"%s\",\"wall_clock_unix\":%.6f,\"monotonic_ns\":%lld,"
-               "\"sensor_timestamp_ns\":%lld,\"device_seq\":%d,\"width\":%d,\"height\":%d",
+    char buf[512];
+    int len = snprintf(buf, sizeof(buf),
+            "{\"node\":\"%s\",\"seq\":%ld,\"file\":\"%s\",\"kind\":\"%s\","
+            "\"wall_clock_utc\":\"%s\",\"wall_clock_unix\":%.6f,\"monotonic_ns\":%lld,"
+            "\"sensor_timestamp_ns\":%lld,\"device_seq\":%d,\"width\":%d,\"height\":%d",
             node.c_str(), seq, file.c_str(), kind, iso_s, wall_unix, mono_ns,
             sensor_ns, device_seq, width, height);
-    if (exposure_us >= 0) fprintf(f, ",\"exposure_us\":%lld,\"iso\":%d", exposure_us, iso);
-    fprintf(f, "}\n");
-    fclose(f);
+    // snprintf returns the would-be length; clamp so a long node name can't make us
+    // read past buf (it never approaches 512 B in practice).
+    size_t use = 0;
+    if (len > 0) use = (size_t)len < sizeof(buf) ? (size_t)len : sizeof(buf) - 1;
+    std::string out(buf, use);
+    if (exposure_us >= 0) {
+        snprintf(buf, sizeof(buf), ",\"exposure_us\":%lld,\"iso\":%d", exposure_us, iso);
+        out += buf;
+    }
+    out += "}\n";
+    return out;
 }
 
 // --- coordinator #78: tee the estimator's raw input datagrams (chobits_imu +
@@ -171,6 +184,13 @@ static constexpr uint16_t FEAT_SID_FEATURES = 1;  // input_replayer maps them by
 // the raw payload bytes -- byte-identical to what sendto() puts on the wire, so the replayer
 // re-sends vins its own bytes. Fields are written separately (not as a packed struct) to
 // avoid C struct padding; Pi/arm64 and x86 are both little-endian, matching Python's '<'.
+// #89: fdatasync the .feat on an interval so a power cut loses at most the last
+// FEAT_FSYNC_SEC of records, not the whole libc + page-cache window (the ~30 s tail
+// we lost on 260712). The stream is append-only, so a torn final record is benign --
+// input_replayer stops cleanly at a truncated tail.
+static constexpr double FEAT_FSYNC_SEC = 1.0;
+static std::chrono::steady_clock::time_point feat_last_sync = std::chrono::steady_clock::now();
+
 static void feat_tee(uint16_t socket_id, const void* payload, uint32_t length) {
     if (!feat_file) return;
     double t_mono = std::chrono::duration<double>(
@@ -182,6 +202,12 @@ static void feat_tee(uint16_t socket_id, const void* payload, uint32_t length) {
     fwrite(&socket_id, sizeof socket_id, 1, feat_file);
     fwrite(&length, sizeof length, 1, feat_file);
     if (length) fwrite(payload, 1, length, feat_file);
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now - feat_last_sync).count() >= FEAT_FSYNC_SEC) {
+        fflush(feat_file);
+        fdatasync(fileno(feat_file));
+        feat_last_sync = now;
+    }
 }
 
 int main(int argc, char **argv) {
@@ -362,6 +388,7 @@ int main(int argc, char **argv) {
     std::shared_ptr<dai::DataOutputQueue> still_queue;
     std::shared_ptr<dai::DataInputQueue> still_ctrl_queue;
     std::string session_dir;
+    std::unique_ptr<capture::Writer> writer;  // #89: durable off-hot-path image writes
     long disp_saved = 0, still_saved = 0;
     auto last_disp_save = std::chrono::steady_clock::now() - std::chrono::hours(1);
     auto last_still_trig = last_disp_save;
@@ -371,6 +398,7 @@ int main(int argc, char **argv) {
         char sess[24]; strftime(sess, sizeof(sess), "%Y%m%dT%H%M%SZ", &stv);
         session_dir = std::string(capture_dir) + "/" + node + "/" + sess;
         mkdir_p(session_dir);
+        writer.reset(new capture::Writer(session_dir, 4));  // #89
         still_queue = device.getOutputQueue("still", 2, false);
         still_ctrl_queue = device.getInputQueue("stillControl");
         std::cout << "capture: dir=" << session_dir << " disp_hz=" << disp_hz
@@ -439,11 +467,16 @@ int main(int argc, char **argv) {
                 std::string stem = make_stem(node, disp_saved, wall);
                 std::string base = session_dir + "/" + stem;
                 cv::Mat dm(CAM_H, CAM_W, CV_8UC1, disp_frame.data());  // 8-bit 640x400
-                if (cv::imwrite(base + ".png", dm)) {
-                    write_sidecar(base, node, disp_saved, stem + ".png", "disparity", wall,
-                                  ts_ns(disp_data->getTimestampDevice()), disp_seq,
-                                  CAM_W, CAM_H, -1, 0);
-                    ++disp_saved;
+                // #89: encode here (hot path, as before), hand the bytes to the durable
+                // background writer so the fsync/rename never stalls feature tracking.
+                capture::Job job;
+                if (cv::imencode(".png", dm, job.bytes)) {
+                    job.path = base + ".png";
+                    job.sidecar_path = base + ".json";
+                    job.sidecar = build_sidecar(node, disp_saved, stem + ".png", "disparity", wall,
+                                                ts_ns(disp_data->getTimestampDevice()), disp_seq,
+                                                CAM_W, CAM_H, -1, 0);
+                    if (writer->submit(std::move(job))) ++disp_saved;
                 }
             }
             //std::cout << "stereo " << disp_seq << " latency:" << std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - disp_data->getTimestamp()).count() << " ms\n";
@@ -491,14 +524,17 @@ int main(int argc, char **argv) {
             cv::Mat nv12(sh * 3 / 2, sw, CV_8UC1, still->getData().data());
             cv::Mat bgr;
             cv::cvtColor(nv12, bgr, cv::COLOR_YUV2BGR_NV12);
-            if (cv::imwrite(base + ".jpg", bgr, jp)) {
+            capture::Job job;  // #89: encode on the hot path, persist durably off it
+            if (cv::imencode(".jpg", bgr, job.bytes, jp)) {
                 long long exp_us = std::chrono::duration_cast<std::chrono::microseconds>(
                                        still->getExposureTime()).count();
-                write_sidecar(base, node, still_saved, stem + ".jpg", "still", wall,
-                              ts_ns(still->getTimestampDevice()), still->getSequenceNum(),
-                              still->getWidth(), still->getHeight(),
-                              exp_us > 0 ? exp_us : -1, still->getSensitivity());
-                ++still_saved;
+                job.path = base + ".jpg";
+                job.sidecar_path = base + ".json";
+                job.sidecar = build_sidecar(node, still_saved, stem + ".jpg", "still", wall,
+                                            ts_ns(still->getTimestampDevice()), still->getSequenceNum(),
+                                            still->getWidth(), still->getHeight(),
+                                            exp_us > 0 ? exp_us : -1, still->getSensitivity());
+                if (writer->submit(std::move(job))) ++still_saved;
             }
         }
 
@@ -645,7 +681,16 @@ int main(int argc, char **argv) {
     }
 
     close(ipc_sock);
-    if (feat_file) fclose(feat_file);  // #78: flush + close the input tee
+    if (feat_file) {  // #78/#89: final durable flush, then close the input tee
+        fflush(feat_file);
+        fdatasync(fileno(feat_file));
+        fclose(feat_file);
+    }
+    if (writer) {  // #89: drain queued image writes to disk before exiting
+        writer->stop();
+        std::cout << "capture: writer drained (" << writer->dropped()
+                  << " images dropped under backpressure)\n";
+    }
     printf("bye\n");
 
     return 0;

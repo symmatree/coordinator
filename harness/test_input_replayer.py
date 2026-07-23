@@ -53,6 +53,27 @@ def make_features(n, fts):
     return body
 
 
+def check_truncated_tail():
+    """#89: a fixture whose final record is torn -- tracker/recorder killed mid-write, or a
+    power cut before the last fdatasync -- must decode cleanly: every whole frame, the torn
+    tail dropped, no exception. The .feat tee relies on this (append-only + periodic fsync)."""
+    import tempfile as _tf
+    tmp = _tf.mkdtemp(prefix="input_replayer_trunc_")
+    fixture = os.path.join(tmp, "torn.feat")
+    frames = [(1000.0 + i * 0.01, 2000.0 + i, 0, make_imu(1000.0 + i * 0.01)) for i in range(5)]
+    write_fixture(fixture, frames, ["/x/chobits_imu"])
+    with open(fixture, "rb") as f:
+        full = f.read()
+    with open(fixture, "wb") as f:
+        f.write(full[:-10])  # chop 10 B off the last 56 B payload: header intact, payload torn
+    decoded = list(decode_frames(fixture))  # must not raise
+    if decoded == frames[:-1]:
+        print(f"  truncated tail: ok ({len(decoded)}/{len(frames)} frames, torn tail dropped)")
+        return True
+    print(f"  FAIL truncated tail: decoded {len(decoded)} frames, expected {len(frames) - 1}")
+    return False
+
+
 def _settle(received, expected, key=None, timeout=2.0):
     """Wait until the drained datagram count reaches `expected` (total, or for `key`)."""
     import time
@@ -69,6 +90,8 @@ def _settle(received, expected, key=None, timeout=2.0):
 
 def main():
     import socket as _socket
+
+    torn_ok = check_truncated_tail()
 
     tmp = tempfile.mkdtemp(prefix="input_replayer_test_")
     fixture = os.path.join(tmp, "synthetic.feat")
@@ -177,6 +200,7 @@ def main():
 
     for e in errs:
         print(f"  FAIL -- {e}")
+    ok = ok and torn_ok
     print("RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
