@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Log the Pi's power/throttle state to stdout (captured by the journal) for
+# post-power-bounce forensics (#100). The coordinator runs off the avionics 5 V
+# rail, so cold starts can brown out; paired with journald Storage=persistent,
+# a periodic run of this leaves a trail that survives the next bounce -- so you
+# can tell whether the coordinator itself sagged, not just the radio/VTX.
+#
+# Decodes `vcgencmd get_throttled`: the low nibble is live state, the 0x1xxxx
+# nibble is sticky ("occurred since boot").
+set -euo pipefail
+
+raw="$(vcgencmd get_throttled)" # e.g. throttled=0x50005
+hex="${raw#throttled=}"
+val=$((hex))
+
+flags=()
+((val & 0x1)) && flags+=("under-voltage-now")
+((val & 0x2)) && flags+=("arm-freq-capped-now")
+((val & 0x4)) && flags+=("throttled-now")
+((val & 0x8)) && flags+=("soft-temp-limit-now")
+((val & 0x10000)) && flags+=("under-voltage-occurred")
+((val & 0x20000)) && flags+=("arm-freq-capped-occurred")
+((val & 0x40000)) && flags+=("throttled-occurred")
+((val & 0x80000)) && flags+=("soft-temp-limit-occurred")
+
+if ((${#flags[@]})); then
+	echo "coord-throttle: ${hex} [${flags[*]}]"
+else
+	echo "coord-throttle: ${hex} [clean]"
+fi

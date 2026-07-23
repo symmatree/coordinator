@@ -1,0 +1,27 @@
+[Unit]
+# Auto-start the coordinator stack (capturing) on every boot, so a power bounce
+# returns to a known-good capturing state regardless of the last operator
+# command (#97). Note: `restart: unless-stopped` does NOT restart a container
+# that was explicitly stopped, so this unconditional `coord start` -- not the
+# restart policy -- is what guarantees come-up-capturing.
+#
+# To deliberately keep the stack down across a reboot, disable THIS unit
+# (`systemctl disable --now coordinator-stack.service`), not `coord stop`.
+Description=Rekon coordinator stack (auto-start capturing on boot)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+# Retry in case the Docker socket is not ready the instant docker.service is up.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Idempotent: `coord start` = `docker compose up -d` (flight profile via .env).
+ExecStart=/usr/local/bin/coord start
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,73 @@
+---
+# Power-bounce resilience for the coordinator. It runs off the avionics 5 V rail,
+# so every power-down is a yank and cold starts can brown out. These tasks make
+# the box (a) always come back capturing after a bounce (#97) and (b) leave a
+# forensic trail that survives the reboot (#100). See docs/power-loss-filesystem.md.
+
+# --- #97: always come up capturing, regardless of the last operator command ---
+- name: Install coordinator-stack boot unit (auto-start capturing)
+  ansible.builtin.copy:
+    src: coordinator-stack.service
+    dest: /etc/systemd/system/coordinator-stack.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable coordinator-stack on boot
+  ansible.builtin.systemd:
+    name: coordinator-stack.service
+    enabled: true
+    daemon_reload: true
+
+# --- #100: persist the journal so the post-bounce forensic trail survives reboot ---
+- name: Ensure persistent journal directory
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    mode: "2755"
+
+- name: Persist journald (bounded, to protect the SD card)
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/10-coordinator.conf
+    content: |
+      # Post-crash/bounce forensics (#100). Bounded so persistence does not
+      # grow SD write volume without limit.
+      [Journal]
+      Storage=persistent
+      SystemMaxUse=200M
+    mode: "0644"
+  notify: Restart journald
+
+# --- forensics: log Pi undervoltage/throttle state on a timer ---
+# vcgencmd is a Pi-hardware tool; install the timer only where it exists so we
+# never ship a unit that just errors every tick.
+- name: Detect vcgencmd (Pi power telemetry)
+  ansible.builtin.shell: command -v vcgencmd
+  register: vcgencmd_check
+  changed_when: false
+  failed_when: false
+
+- name: Install throttle forensics timer (only where vcgencmd exists)
+  when: vcgencmd_check.rc == 0
+  block:
+    - name: Install coord-throttle-log helper
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/bin/coord-throttle-log"
+        dest: /usr/local/bin/coord-throttle-log
+        mode: "0755"
+
+    - name: Install throttle service + timer units
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - coordinator-throttle.service
+        - coordinator-throttle.timer
+      notify: Reload systemd
+
+    - name: Enable throttle timer
+      ansible.builtin.systemd:
+        name: coordinator-throttle.timer
+        enabled: true
+        state: started
+        daemon_reload: true
