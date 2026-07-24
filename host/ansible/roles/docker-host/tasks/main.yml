@@ -66,14 +66,8 @@
     state: started
     enabled: true
 
-- name: Check if kernel, firmware, or modules need a reboot
-  ansible.builtin.stat:
-    path: /var/run/reboot-required
-  register: reboot_required
-
-- name: Reboot to apply pending kernel, firmware, or module updates
-  ansible.builtin.reboot:
-    msg: Rekon host bootstrap -- apply pending kernel/firmware updates
-    reboot_timeout: 600
-  when: reboot_required.stat.exists
-  register: host_reboot
+# No auto-reboot task here, on purpose. This bootstrap only ever runs locally on the
+# device (one_time.sh, connection=local), where ansible.builtin.reboot refuses to run
+# at all -- it would reboot the control node out from under the running play. A pending
+# reboot is surfaced to the operator instead: the site.yaml post-task and one_time.sh's
+# reboot-required exit both tell them to reboot and re-run. (#113)
