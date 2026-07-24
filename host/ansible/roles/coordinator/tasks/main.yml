@@ -95,19 +95,29 @@
     update_cache: true
     cache_valid_time: 3600
 
-# Front-panel bus enables (config.txt; reboot required):
-#  - SPI for the ILI9341 TFT (SPI0: GPIO7-11 + DC/RST/backlight).
-#  - audio=off to free PWM0 for the WS2812 status LEDs: their data line (GPIO12) is on
-#    PWM0, which the onboard analog audio (snd_bcm2835) otherwise claims, so the LEDs get
-#    no signal. The coordinator has no use for the 3.5mm analog jack (pHAT audio is the
-#    separate WM8960 I2S codec). audio=off here wins over the default dtparam=audio=on.
-- name: Enable SPI (TFT) and free PWM0 for the WS2812 LEDs (config.txt)
+# SPI for the front-panel ILI9341 TFT (SPI0: GPIO7-11 + DC/RST/backlight). Enables
+# /dev/spidev0.*; reboot required.
+- name: Enable SPI for the front-panel TFT (config.txt)
   ansible.builtin.blockinfile:
     path: /boot/firmware/config.txt
     marker: "# {mark} COORDINATOR SPI"
     block: |
       dtparam=spi=on
-      dtparam=audio=off
+  notify: Reboot required
+
+# Free PWM0 for the WS2812 status LEDs. Their data line (GPIO12) is on PWM0, which the
+# onboard audio driver (snd_bcm2835) claims -- so the LEDs get no signal while it is
+# loaded. The documented fix (rpi_ws281x / Adafruit NeoPixel-on-Pi) is to BLACKLIST the
+# module: dtparam=audio=off alone does NOT stop it loading on this OS (it comes in via
+# the HDMI/KMS audio path). The coordinator has no use for onboard audio -- the pHAT's
+# audio is the separate WM8960 I2S codec. Reboot required.
+- name: Blacklist onboard audio to free PWM0 for the WS2812 LEDs (#110)
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/snd-blacklist.conf
+    content: |
+      # coordinator #110: free PWM0 (GPIO12) for the WS2812 front-panel LEDs.
+      blacklist snd_bcm2835
+    mode: "0644"
   notify: Reboot required
 
 # Front-panel display + LED libraries: luma.oled (SH1106 panel, #110), luma.lcd
