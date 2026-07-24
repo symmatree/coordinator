@@ -238,8 +238,10 @@ int main(int argc, char **argv) {
     // #72: capture config (opt-in). Unset OAK_CAPTURE_DIR => no color cam, no disk writes.
     const char* capture_dir = getenv("OAK_CAPTURE_DIR");
     bool capture = capture_dir && *capture_dir;
+    // #32: if OAK_NODE_NAME is unset, key captures by the OAK-D MxId (stable per camera),
+    // resolved once the device opens below -- NOT the container hostname, which is an
+    // ephemeral docker id useless for calibration keying. Left empty here on purpose.
     std::string node = env_or("OAK_NODE_NAME", "");
-    if (node.empty()) { char hn[256]; gethostname(hn, sizeof(hn)); node = hn; }
     double disp_hz = atof(env_or("OAK_DISPARITY_HZ", "1.0"));
     double still_hz = atof(env_or("OAK_STILL_HZ", "0.2"));
     int jpeg_q = atoi(env_or("OAK_JPEG_QUALITY", "92"));
@@ -247,7 +249,7 @@ int main(int argc, char **argv) {
     auto still_res = dai::ColorCameraProperties::SensorResolution::THE_12_MP;
     if (res_key == "4k") still_res = dai::ColorCameraProperties::SensorResolution::THE_4_K;
     else if (res_key == "1080p") still_res = dai::ColorCameraProperties::SensorResolution::THE_1080_P;
-    if (capture) std::cout << "capture: enabled (node=" << node << ", res=" << res_key << ")\n";
+    if (capture) std::cout << "capture: enabled (res=" << res_key << ")\n";  // node logged after device init (#32)
 
     // Create pipeline
     dai::Pipeline pipeline;
@@ -362,6 +364,16 @@ int main(int argc, char **argv) {
     std::cout << "Usb speed: " << device.getUsbSpeed() << "\n";
     std::cout << "Device name: " << device.getDeviceName() << " Product name: " << device.getProductName() << "\n";
     if (device.getDeviceName() == "OAK-D") dev_type = OAK_D; else dev_type = OAK_D_PRO;
+
+    // #32: emit the OAK-D MxId (stable per-camera serial) for calibration keying, and use it
+    // as the capture node label when OAK_NODE_NAME is unset -- so captures group by *camera*,
+    // not by ephemeral container id. Falls back to hostname only if the MxId is unavailable.
+    std::string mxid = device.getMxId();
+    std::cout << "OAK-D MxId: " << mxid << "\n";
+    if (node.empty()) {
+        if (!mxid.empty()) node = mxid;
+        else { char hn[256]; gethostname(hn, sizeof(hn)); node = hn; }
+    }
 
     dai::CalibrationHandler calibData = device.readCalibration2();
     double f, cx, cy;
