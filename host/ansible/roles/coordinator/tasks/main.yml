@@ -95,6 +95,41 @@
     update_cache: true
     cache_valid_time: 3600
 
+# SPI for the front-panel TFT (ILI9341 on SPI0: GPIO7-11 + DC/RST/backlight). Enables
+# /dev/spidev0.*; reboot required.
+- name: Enable SPI for the front-panel TFT (config.txt)
+  ansible.builtin.blockinfile:
+    path: /boot/firmware/config.txt
+    marker: "# {mark} COORDINATOR SPI"
+    block: |
+      dtparam=spi=on
+  notify: Reboot required
+
+# Front-panel display + LED libraries: luma.oled (SH1106 panel, #110), luma.lcd
+# (ILI9341 TFT), rpi_ws281x (WS2812 status LEDs). build-essential/python3-dev are for
+# the rpi_ws281x native extension; the -dev libs let pip build Pillow (luma dep).
+- name: Front-panel display build deps (apt)
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-dev
+      - build-essential
+      - libjpeg-dev
+      - zlib1g-dev
+      - libfreetype6-dev
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Front-panel display Python libs (SH1106 + ILI9341 + WS2812)
+  ansible.builtin.pip:
+    name:
+      - luma.oled
+      - luma.lcd
+      - rpi_ws281x
+    extra_args: --break-system-packages
+    state: present
+
 # Auto-start capturing on boot (#97) + persistent journal / throttle forensics
 # (#100), so the coordinator behaves well across the routine power bounces of
 # the avionics 5 V rail.
