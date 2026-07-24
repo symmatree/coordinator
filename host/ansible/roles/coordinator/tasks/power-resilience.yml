@@ -19,22 +19,37 @@
     daemon_reload: true
 
 # --- #100: persist the journal so the post-bounce forensic trail survives reboot ---
-- name: Ensure persistent journal directory
+# Two gotchas, both found on-hardware (bench 2026-07-24), that the first cut missed:
+#  1. /etc/systemd/journald.conf.d does not exist by default here, and `copy` won't
+#     create a dest's parent dir -- ensure it first or the task fails.
+#  2. Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf
+#     forcing Storage=volatile (to spare the SD). Drop-ins merge in lexicographic order,
+#     so ours must sort AFTER 40- to win -- hence the 95- prefix. journald creates
+#     /var/log/journal itself once persistent wins, so we don't manage that dir.
+- name: Ensure journald drop-in directory exists
   ansible.builtin.file:
-    path: /var/log/journal
+    path: /etc/systemd/journald.conf.d
     state: directory
-    mode: "2755"
+    mode: "0755"
 
-- name: Persist journald (bounded, to protect the SD card)
+- name: Persist journald (bounded; 95- so it beats RPi OS's 40-rpi-volatile-storage.conf)
   ansible.builtin.copy:
-    dest: /etc/systemd/journald.conf.d/10-coordinator.conf
+    dest: /etc/systemd/journald.conf.d/95-coordinator.conf
     content: |
-      # Post-crash/bounce forensics (#100). Bounded so persistence does not
-      # grow SD write volume without limit.
+      # Post-crash/bounce forensics (#100). Bounded so persistence does not grow SD
+      # write volume without limit. 95- sorts after RPi OS's 40-rpi-volatile-storage.conf
+      # (Storage=volatile), so this wins the last-value merge.
       [Journal]
       Storage=persistent
       SystemMaxUse=200M
     mode: "0644"
+  notify: Restart journald
+
+# Drop the earlier 10- name if a prior deploy left it -- it lost to 40- and is dead now.
+- name: Remove superseded 10- journald drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d/10-coordinator.conf
+    state: absent
   notify: Restart journald
 
 # --- forensics: log Pi undervoltage/throttle state on a timer ---

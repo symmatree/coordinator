@@ -17,6 +17,7 @@
     daemon_reload: true
 
 - name: Restart journald
-  ansible.builtin.systemd:
-    name: systemd-journald
-    state: restarted
+  # Restart to pick up Storage=persistent, then flush /run -> /var/log/journal so the
+  # forensic trail is live immediately, not only after the next reboot (#100).
+  ansible.builtin.shell: systemctl restart systemd-journald && journalctl --flush
+  changed_when: true
