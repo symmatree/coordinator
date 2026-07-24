@@ -80,5 +80,18 @@ services:
     env_file:
       - .env
 
+  # #115: coordinator front-panel status OLED. Drives the SH1106 on the Pi's I2C
+  # (0x3C, /dev/i2c-1) -- a separate bus from the FC's compass. Reads the captures dir
+  # (read-only) to show capture activity. Runs whenever the coordinator is up.
+  sh1106-display:
+    image: ghcr.io/symmatree/coordinator-sh1106-display:${SH1106_DISPLAY_VERSION}
+    container_name: coordinator_sh1106_display
+    profiles: [tracker, bench, flight]
+    restart: unless-stopped
+    devices:
+      - /dev/i2c-1:/dev/i2c-1
+    volumes:
+      - ${COORDINATOR_CAPTURES_DIR}:/captures:ro
+
 x-dockge:
   urls: []

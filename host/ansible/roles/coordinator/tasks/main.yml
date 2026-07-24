@@ -57,14 +57,14 @@
     block: |
       enable_uart=1
       dtoverlay=disable-bt
-  notify: Reboot required for UART
+  notify: Reboot required
 
 - name: Free the primary UART from the serial console (cmdline.txt)
   ansible.builtin.replace:
     path: /boot/firmware/cmdline.txt
     regexp: '\s*console=(serial0|ttyAMA0|ttyS0),[0-9]+'
     replace: ''
-  notify: Reboot required for UART
+  notify: Reboot required
 
 - name: Disable serial-getty on the FC UART
   ansible.builtin.systemd:
@@ -75,6 +75,25 @@
     - serial-getty@ttyAMA0.service
     - serial-getty@ttyS0.service
   failed_when: false
+
+# On-board ARM I2C bus (i2c-1, GPIO2/3) for the coordinator front-panel display (#115,
+# #110) -- a SEPARATE bus from the FC's I2C (compass): the display lives on the
+# coordinator's own bus and can't repeat the contention that dropped the compass.
+# Enables /dev/i2c-1; reboot required.
+- name: Enable the ARM I2C bus for the front-panel display (config.txt)
+  ansible.builtin.blockinfile:
+    path: /boot/firmware/config.txt
+    marker: "# {mark} COORDINATOR I2C"
+    block: |
+      dtparam=i2c_arm=on
+  notify: Reboot required
+
+- name: Install i2c-tools (i2cdetect for display bring-up / debugging)
+  ansible.builtin.apt:
+    name: i2c-tools
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
 
 # Auto-start capturing on boot (#97) + persistent journal / throttle forensics
 # (#100), so the coordinator behaves well across the routine power bounces of
