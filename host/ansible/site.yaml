@@ -35,9 +35,7 @@
         msg: >-
           Host bootstrap finished (device_role={{ device_role }}).
           {% if reboot_required_final.stat.exists %}
-          Reboot still required (/var/run/reboot-required). Run ./host/one_time.sh {{ device_role }} again.
-          {% elif host_reboot is defined and host_reboot.changed %}
-          Reboot applied pending kernel/firmware updates. Run ./host/one_time.sh {{ device_role }} again if SSH dropped.
+          Reboot still required (/var/run/reboot-required). Reboot, then run ./host/one_time.sh {{ device_role }} again.
           {% else %}
           No pending kernel/firmware reboot. Use newgrp docker or re-login once if docker permission denied.
           {% endif %}
