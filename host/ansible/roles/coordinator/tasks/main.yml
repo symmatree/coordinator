@@ -57,14 +57,14 @@
     block: |
       enable_uart=1
       dtoverlay=disable-bt
-  notify: Reboot required for UART
+  notify: Reboot required
 
 - name: Free the primary UART from the serial console (cmdline.txt)
   ansible.builtin.replace:
     path: /boot/firmware/cmdline.txt
     regexp: '\s*console=(serial0|ttyAMA0|ttyS0),[0-9]+'
     replace: ''
-  notify: Reboot required for UART
+  notify: Reboot required
 
 - name: Disable serial-getty on the FC UART
   ansible.builtin.systemd:
@@ -86,7 +86,7 @@
     marker: "# {mark} COORDINATOR I2C"
     block: |
       dtparam=i2c_arm=on
-  notify: Reboot required for UART
+  notify: Reboot required
 
 - name: Install i2c-tools (i2cdetect for display / sensor bring-up)
   ansible.builtin.apt:
