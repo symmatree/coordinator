@@ -76,6 +76,25 @@
     - serial-getty@ttyS0.service
   failed_when: false
 
+# On-board ARM I2C bus (i2c-1, GPIO2/3) for the coordinator-driven front panel (#110)
+# and any I2C sensors. This is a SEPARATE bus from the FC's I2C (compass) -- driving the
+# display here is exactly what keeps it off the nav bus that a shared display dropped the
+# compass on. Enables /dev/i2c-1; reboot required.
+- name: Enable the ARM I2C bus for the front panel / sensors (config.txt)
+  ansible.builtin.blockinfile:
+    path: /boot/firmware/config.txt
+    marker: "# {mark} COORDINATOR I2C"
+    block: |
+      dtparam=i2c_arm=on
+  notify: Reboot required for UART
+
+- name: Install i2c-tools (i2cdetect for display / sensor bring-up)
+  ansible.builtin.apt:
+    name: i2c-tools
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 # Auto-start capturing on boot (#97) + persistent journal / throttle forensics
 # (#100), so the coordinator behaves well across the routine power bounces of
 # the avionics 5 V rail.
