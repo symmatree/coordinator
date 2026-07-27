@@ -391,16 +391,18 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
   First proof the coordinator's output moves a real EKF -- a milestone even before the audits.
 - [ ] **Live-FC bench A/B (Claim A, no re-fly):** feed identical derived ExtNav into the real H7 and
   SITL, compare EKFs -- but **measure the delivery-timing skew** (serial vs UDP), do not assume it away.
-- [x] **DONE (2026-07-12) -- joint-capture flight (`260712-crash`).** `.feat` (#78/#83) + onboard `VISP` +
-  `LOG_REPLAY=1` on one run; the estimator-reproducibility questions are now anchorable (E16: 6 mm median).
-  **Now actionable:** build the all-up regen -> router -> `Tools/Replay` chain (LA6/S11) on `260712`, and the
-  LC3 runaway-reproduction target on its post-88 s tail.
-- [ ] **Cheap directional indicator (no new flight).** Run the two 260705 `.feat` fixtures through the
-  offline estimator on x86 vs arm64 (`num_threads=1`) and note only the coarse *diverge / stays-bounded*
-  agreement -- a directional check on the execution-config reproducibility questions
-  ([VIO-quality methodology confounds](vio-quality-experiments.md#methodology-confounds)), **not** a
-  settlement. Needs the amd64 estimator image ([#85](https://github.com/symmatree/coordinator/issues/85))
-  for a native (non-qemu) x86 leg.
+- [ ] **Joint-capture flight (the estimator anchor).** One flight capturing `.feat` (#78) + onboard VINS
+  pose (#30) + `LOG_REPLAY=1` together -- unblocks LA6/S11 and turns the estimator-reproducibility
+  questions ([VIO-quality methodology confounds](vio-quality-experiments.md#methodology-confounds)) from
+  directional-only into anchorable. De-risk now: it is enabling both captures on the same run, no new tooling.
+- [x] **Cheap directional indicator (no new flight) -- DONE (E19, #85).** Ran the offline estimator
+  x86-native vs arm64-under-qemu (same image + config, `num_threads=1`) on the 260705 (bounded) and
+  260712 (`imu:1` divergent) fixtures. Result: the *diverge / stays-bounded* verdict is **arch-invariant**,
+  and where bounded the two agree to **sub-mm** (0.3 mm median, 2.3 mm max); they only split (to tens of m)
+  in the chaotic runaway tail. So x86 offline is a faithful stand-in for arm64 in the tracking regime.
+  Native is ~14x faster (no qemu). Detail in
+  [VIO-quality E19](vio-quality-experiments.md#methodology-confounds); native path per
+  [`docs/vio-offline-replay.md`](../docs/vio-offline-replay.md) Options B/C.
 - [ ] **Matrix-build the router (`coordinator-mavlink`).** It sits *in* the all-up loop (regenerated pose
   -> ExtNav -> FC) and is currently arm64-only, so an x86 all-up replay (LA6/S11) needs an amd64 router.
   (The tracker / oak-still-capture / pod-camera are front-end only, **not** in the replay loop -> amd64
