@@ -189,8 +189,12 @@ Status vocabulary: **Blocked** (missing an anchor), **Ready** (anchor in hand, s
   (megameter divergence, `vio-quality-experiments.md` E15) the honest first target is **failure reproduction** (does the
   offline all-up diverge the way the flight did -> LC3), **not** fidelity; fidelity is a target only once
   an onboard run is bounded. *Anchor:* a flight captured with `.feat` **and** `LOG_REPLAY=1` **and**
-  onboard pose together -- which we do not yet have (see "the missing joint capture", below). *Status:*
-  **Blocked** on that joint capture.
+  onboard pose together -- **`260712-crash` (2026-07-12) is that flight** (see "the joint capture", below).
+  *Status:* **Ready (2026-07-12)** -- anchor in hand; the all-up sim (regen ExtNav -> router -> `Tools/Replay`)
+  is **not yet built**. The estimator-reproducibility half is already **CONFIRMED** for the bounded window
+  (`vio-quality-experiments.md` E16: offline `.feat` replay reproduces the flight's onboard VISP to **6 mm
+  median / 42 mm RMSE, scale 1.000** over the first ~88 s); the post-88 s `imu:1` runaway tail is the LC3
+  failure-reproduction target. `260712` also carries `VISO_TYPE=1`, `EK3_SRC1_POSXY=3`, `LOG_REPLAY=1`.
 
 - **LA-X -- Excluded from Claim A (honesty box).** Hover throttle (`MOT_THST_HOVER` ~0.41-0.49 across
   credible runs; 0.149 in `1-notch` discarded as unconverged; it **hunts** with battery sag/mass/wind)
@@ -289,7 +293,7 @@ on purpose -- the whole discipline is not to conflate them.
 | S8 | Reset-counter -> one clean `ResetPositionNE` | B.LB3 (mech) | mechanism | n/a (wiring) | not built | never live |
 | S9 | globalOpt GPS-anchored pose loop | B.LB5 / C.LC4 | -- | partial -- GPS in `.bin` | not built | never live |
 | S10 | IMU-fusion fail-confident runaway reproduced + mitigated | C.LC3 | -- | **yes** -- E10/E12 | not built | recorded only |
-| S11 | All-up: feat -> offboard VINS regen ExtNav -> router -> Replay EKF | A.LA6 / C.LC3 | inherits estimator | partial -- need joint capture | not built | never (no joint capture) |
+| S11 | All-up: feat -> offboard VINS regen ExtNav -> router -> Replay EKF | A.LA6 / C.LC3 | inherits estimator | **yes** -- `260712` joint capture | not built | joint capture in hand (260712) |
 
 ---
 
@@ -317,9 +321,10 @@ no hardware:
   `VISO_POS_M_NSE`/`VISO_VEL_M_NSE` -- keep those floors **below** the honest 0.30/0.15 or they clobber
   it. Velocity-only is unsupported (must send position). `VISO_DELAY_MS` = measured VINS->FC latency;
   MAVLink2 required; 50 Hz ExtNav cap (`extNavIntervalMin_ms=20`).
-- **Bench host:** x86_64, 32 cores, ~26 TB free. ArduPilot cloned at `/home/jovyan/ardupilot`; build SITL
-  at the **`ArduPilot-4.7` branch (4.7.0-beta7)** -- the adopted target (below). `MAVProxy`/`empy`/`future`
-  still to install (runtime, then bake into the tiles image per `~/AGENTS.md`).
+- **Bench host:** x86_64, 32 cores, ~26 TB free. ArduPilot at `/home/jovyan/ardupilot` is now at **4.7.0**
+  (`1511f27194`, detached); **SITL and Replay are built** (`build/sitl/bin/arducopter`,
+  `build/sitl/tool/Replay`, 2026-07-09/10). Residual: bake `MAVProxy`/`empy`/`future` into the tiles image
+  per `~/AGENTS.md`.
 - **Firmware target -- adopt 4.7 (decision, #64).** The stable channel dead-ends at 4.6.3 (the
   `ArduPilot-4.6` branch is +1 commit, **zero** EKF/VIO changes); the live options are **4.7.0-beta7**
   (+71 EKF/VIO commits) and master (4.8-dev). 4.7 reworked our exact path -- notably `EKF3 uses the
@@ -336,17 +341,21 @@ no hardware:
   (2026-07-10):** Replay on `260709` shows 4.7 EKF == 4.6.3 EKF to **1 mm / 0.01 deg** for GPS-primary --
   the upgrade is neutral for the mainline regime (Prediction P1 above; upgrade tracked in #80).
 
-**The missing joint capture (why #78 was pulled ahead).** Anchoring the *estimator* half needs one flight
+**The joint capture -- landed 2026-07-12 (`260712-crash`).** Anchoring the *estimator* half needs one flight
 that captured, together: the estimator **input** (`.feat`, [#78](https://github.com/symmatree/coordinator/issues/78)),
-the estimator **onboard output** (VINS pose, [#30](https://github.com/symmatree/coordinator/issues/30)), and
-`LOG_REPLAY=1`. We have never had all three. What we have: one `pos_log.txt` from a primitive manual log
-(no `.feat`); two `.feat`-captured flights (260705) with **no onboard pose**; one all-up flight (260709)
-with onboard pose that **diverged to ~Mm in seconds** (`vio-quality-experiments.md` E15) but **no `.feat`**. So no flight yet
-lets us ask "does offboard replay of this flight's feat reproduce its onboard pose" -- the estimator's
-LA1. #78 closes the input side; the **next flight must enable onboard-pose capture on the same run** as
-`.feat` + `LOG_REPLAY=1`. Until then LA6/S11 stay Blocked, and the estimator-reproducibility questions
-([VIO-quality methodology confounds](vio-quality-experiments.md#methodology-confounds)) stay directional
-at best.
+the estimator **onboard output** (VINS pose, logged FC-side as `VISP`), and `LOG_REPLAY=1`. For a while we
+had none: one `pos_log.txt` from a primitive manual log (no `.feat`); two `.feat`-captured flights (260705)
+with **no onboard pose**; one all-up flight (260709) with onboard pose that **diverged to ~Mm in seconds**
+(`vio-quality-experiments.md` E15) but **no `.feat`** (the in-flight tee, #78, hadn't merged yet).
+**`260712-crash` closed the gap**: the tracker's `.feat` tee (#78/#83), the onboard `VISP` in the `.bin`, and
+`LOG_REPLAY=1` are all present on the one run (verified from the log). We can now ask "does offboard replay
+of this flight's `.feat` reproduce its onboard pose" -- and the answer, for the bounded first ~88 s, is
+**yes to 6 mm median / 42 mm RMSE, scale 1.000** (`vio-quality-experiments.md` E16). So LA6/S11 move from
+Blocked to Ready (the all-up regen -> router -> Replay chain is the remaining build), and the
+estimator-reproducibility questions ([VIO-quality methodology confounds](vio-quality-experiments.md#methodology-confounds))
+are now **anchorable**, not directional-only. The remaining forensic target is the post-88 s `imu:1` runaway
+(LC3 failure reproduction). Future joint captures come for free -- both captures now ride any flight with the
+estimator running (`.feat` continuous from boot, `LOG_REPLAY=1` in the recipe).
 
 **Not yet extracted (needs the segmented-fingerprint tool):** oscillation frequency/amplitude for the
 autotune twitches (band-limited above the maneuver envelope); stable-hover attitude RMS. A naive whole-log
@@ -357,15 +366,14 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
 
 ## Next steps (prioritized)
 
-- [ ] **Add `LOG_REPLAY=1` (with `LOG_DISARMED`) to the capture recipe.** One param; unblocks LA1 (the
-  Claim-A anchor) and S1/S10. De-risk-now: bank it into the [#42](https://github.com/symmatree/coordinator/issues/42)
-  / [#30](https://github.com/symmatree/coordinator/issues/30) capture steps regardless of anything else.
+- [x] **DONE (2026-07-09/07-12) -- `LOG_REPLAY=1` (with `LOG_DISARMED`) in the capture recipe.** Both
+  `260709` and `260712` flew `LOG_REPLAY=1`; LA1 confirmed and S1/S10 anchored.
 - [ ] **Build the segmented-fingerprint tool** (`analysis/`, beside `ardupilot_log.py`): per-`ATDE`
   twitch windows, band-limited spectra, `ATUN` response amplitudes, stable-hover RMS. Produces the
   LA2/LA3/LA4 real-side targets. **Fixes the targets before fitting the sim.**
-- [ ] **Stand up SITL** -- ArduPilot cloned at `/home/jovyan/ardupilot`; checkout the **`ArduPilot-4.7`
-  branch (4.7.0-beta7)** (the adopted target), `./waf configure --board sitl && ./waf copter`; install
-  `empy`/`MAVProxy`/`future` at runtime, then PR to tiles to bake them.
+- [x] **DONE (2026-07-09/10) -- SITL + Replay built.** ArduPilot at `/home/jovyan/ardupilot` is now at
+  **4.7.0** (`1511f27194`); `build/sitl/bin/arducopter` and `build/sitl/tool/Replay` are both built. (Bake
+  the runtime deps into the tiles image is the only residual.)
 - [ ] **Vehicle upgrade prep (#64):** generate a 4.6.3 -> 4.7 param diff (new/renamed/changed-default),
   fold in the `TFS20L` `RNGFND` setup (`RNGFND_TYPE=46`, I2C) so the on-vehicle flash is a known quantity.
 - [ ] **S2 retro-confirm (LA2/LC1):** predict the instability-onset gain in SITL, compare to the autotune
@@ -383,10 +391,10 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
   First proof the coordinator's output moves a real EKF -- a milestone even before the audits.
 - [ ] **Live-FC bench A/B (Claim A, no re-fly):** feed identical derived ExtNav into the real H7 and
   SITL, compare EKFs -- but **measure the delivery-timing skew** (serial vs UDP), do not assume it away.
-- [ ] **Joint-capture flight (the estimator anchor).** One flight capturing `.feat` (#78) + onboard VINS
-  pose (#30) + `LOG_REPLAY=1` together -- unblocks LA6/S11 and turns the estimator-reproducibility
-  questions ([VIO-quality methodology confounds](vio-quality-experiments.md#methodology-confounds)) from
-  directional-only into anchorable. De-risk now: it is enabling both captures on the same run, no new tooling.
+- [x] **DONE (2026-07-12) -- joint-capture flight (`260712-crash`).** `.feat` (#78/#83) + onboard `VISP` +
+  `LOG_REPLAY=1` on one run; the estimator-reproducibility questions are now anchorable (E16: 6 mm median).
+  **Now actionable:** build the all-up regen -> router -> `Tools/Replay` chain (LA6/S11) on `260712`, and the
+  LC3 runaway-reproduction target on its post-88 s tail.
 - [ ] **Cheap directional indicator (no new flight).** Run the two 260705 `.feat` fixtures through the
   offline estimator on x86 vs arm64 (`num_threads=1`) and note only the coarse *diverge / stays-bounded*
   agreement -- a directional check on the execution-config reproducibility questions
