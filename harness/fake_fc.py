@@ -84,7 +84,9 @@ AXIS_FLIP_TOL = 1e-4
 
 def check_att_pos_mocap(msg, q, pos, pos_nse=0.30):
     """Verify ATT_POS_MOCAP passes the quaternion, applies the (x,-y,-z) flip, and
-    carries the honest position covariance (diagonal = pos_nse**2 at index 0)."""
+    carries the honest position covariance. The FC (4.7) collapses the diagonal to
+    posErr = sqrt(cov[0]+cov[6]+cov[11]); the router spreads pos_nse**2 across the
+    three entries, so that FC-scalar == pos_nse (symmetric with check_vision_speed)."""
     ex, ey, ez = pos[0], -pos[1], -pos[2]
     errs = []
     if not (abs(msg.x - ex) < AXIS_FLIP_TOL and abs(msg.y - ey) < AXIS_FLIP_TOL
@@ -92,8 +94,9 @@ def check_att_pos_mocap(msg, q, pos, pos_nse=0.30):
         errs.append(f"position ({msg.x},{msg.y},{msg.z}) != expected ({ex},{ey},{ez})")
     if not all(abs(a - b) < AXIS_FLIP_TOL for a, b in zip(msg.q, q)):
         errs.append(f"quaternion {list(msg.q)} != expected {list(q)}")
-    if not abs(msg.covariance[0] - pos_nse * pos_nse) < 1e-4:
-        errs.append(f"position covariance[0] {msg.covariance[0]} != {pos_nse * pos_nse}")
+    fc_pos_err = math.sqrt(msg.covariance[0] + msg.covariance[6] + msg.covariance[11])
+    if not abs(fc_pos_err - pos_nse) < 1e-3:
+        errs.append(f"position covariance FC-scalar {fc_pos_err:.4f} != {pos_nse}")
     return errs
 
 
