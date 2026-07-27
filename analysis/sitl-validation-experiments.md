@@ -396,10 +396,11 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
   questions ([VIO-quality methodology confounds](vio-quality-experiments.md#methodology-confounds)) from
   directional-only into anchorable. De-risk now: it is enabling both captures on the same run, no new tooling.
 - [x] **Cheap directional indicator (no new flight) -- DONE (E19, #85).** Ran the offline estimator
-  x86-native vs arm64-under-qemu (same image + config, `num_threads=1`) on the 260705 (bounded) and
-  260712 (`imu:1` divergent) fixtures. Result: the *diverge / stays-bounded* verdict is **arch-invariant**,
-  and where bounded the two agree to **sub-mm** (0.3 mm median, 2.3 mm max); they only split (to tens of m)
-  in the chaotic runaway tail. So x86 offline is a faithful stand-in for arm64 in the tracking regime.
+  x86-native vs arm64-under-qemu (same stereo-only `imu:0` config, `num_threads=1`) on the 260705 (bounded)
+  and 260712 (crash) fixtures. Result: the *diverge / stays-bounded* verdict is **arch-invariant**, and
+  where bounded the two agree to **sub-mm** (0.3 mm median, 2.3 mm max); they only split (to tens of m)
+  once the stereo-only pose runs away at the aggressive/crash end. So x86 offline is a faithful stand-in
+  for arm64 in the tracking regime.
   Native is ~14x faster (no qemu). Detail in
   [VIO-quality E19](vio-quality-experiments.md#methodology-confounds); native path per
   [`docs/vio-offline-replay.md`](../docs/vio-offline-replay.md) Options B/C.
