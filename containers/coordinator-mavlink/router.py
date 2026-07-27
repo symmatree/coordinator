@@ -21,11 +21,21 @@ compute velocity from dPos/dt between consecutive pose datagrams -- the bridge
 owns this, and dPos/dt was validated against the FC EKF velocity to ~0.15 m/s 1sigma
 with a stationary (drift-free) error, so a fixed covariance is defensible (#62).
 
-We also send an honest per-sample covariance on both messages. The EKF uses it,
-floored by VISO_VEL_M_NSE / VISO_POS_M_NSE (NOT the EK3_*_M_NSE params) -- see
-docs/ardupilot-extnav-fusion.md. Omitting it (the old behaviour) let the FC floor
-the noise to 0.1, over-trusting the source. We do NO bridge-side signal filtering:
-dPos/dt spikes pass through for the FC innovation gate to reject.
+Covariance (verified against the ArduPilot Copter-4.7.0 tag):
+  * POSITION is a per-sample honest channel. The FC consumes ATT_POS_MOCAP.covariance:
+    posErr = sqrt(cov[0]+cov[6]+cov[11]) (GCS_Common.cpp:4134), floored at
+    VISO_POS_M_NSE, capped at 100 m (4.6.3 capped at 10 m), then used as the position
+    observation noise. This is the natural home for VIO's growing integrated
+    uncertainty. See position_covariance() for the /3 encoding the sqrt-collapse needs.
+  * VELOCITY covariance is IGNORED by the FC. handle_vision_speed_estimate forwards no
+    covariance; the MAV backend fuses at the FC param VISO_VEL_M_NSE
+    (writeExtNavVelData, AP_VisualOdom_MAV.cpp:79) -- confirmed by upstream PR #14516
+    ("I do not send covariance from mavlink msg"). So the velocity noise the EKF uses
+    is VISO_VEL_M_NSE, not anything we send. We still emit a covariance (logged,
+    harmless), but to change fused velocity noise set VISO_VEL_M_NSE on the FC to match
+    MAVLINK_VEL_NSE.
+We do NO bridge-side signal filtering: dPos/dt spikes pass through for the FC
+innovation gate to reject.
 
 Not yet done here: propagating the VINS reset counter (clean EKF position reset on
 each ice-hole re-init). The float[10] IPC datagram carries no reset counter and
@@ -62,7 +72,8 @@ DEFAULT_SOCKET = "/tmp/chobits_server"
 
 # Honest measurement noise sent to the FC (1sigma), overridable by env.
 #  * Velocity: 0.15 m/s -- MEASURED. dPos/dt tracks the FC EKF velocity to ~0.15 m/s
-#    1sigma (median 8 cm/s), stationary error -> fixed covariance (#62).
+#    1sigma (median 8 cm/s), stationary error -> fixed covariance (#62). The FC IGNORES
+#    the velocity covariance and fuses at VISO_VEL_M_NSE, so set that FC param to match.
 #  * Position: 0.30 m -- CONSERVATIVE PLACEHOLDER, not independently measured. Kept
 #    above the VISO_POS_M_NSE 0.2 m floor so it is the binding value, not the floor.
 #    Refine via SITL / flight tuning (#62 Part 2, #64).
@@ -78,10 +89,11 @@ MIN_DT = 1e-3
 def velocity_covariance(vel_nse):
     """9-element row-major 3x3 for VISION_SPEED_ESTIMATE.
 
-    The FC collapses this to a scalar velErr = sqrt(cov[0]+cov[4]+cov[8]) and uses
-    it as the per-axis velocity noise (GCS_Common.cpp:4167, docs/ardupilot-extnav-fusion.md).
-    So to make the FC's effective noise equal vel_nse, the three diagonal entries
-    must SUM to vel_nse**2 -- hence vel_nse**2 / 3 each, not vel_nse**2 each.
+    NOTE: ArduPilot (through Copter-4.7.0) does NOT consume this -- the FC fuses
+    velocity at VISO_VEL_M_NSE regardless (see module docstring). We fill it so that
+    IF a future FC reads it via the sqrt(cov[0]+cov[4]+cov[8]) collapse (the position
+    path's convention), the effective per-axis noise would equal vel_nse -- hence
+    vel_nse**2 / 3 on each diagonal, not vel_nse**2. Today it is advisory/logged only.
     """
     cov = [0.0] * 9
     cov[0] = cov[4] = cov[8] = (vel_nse * vel_nse) / 3.0
@@ -92,12 +104,23 @@ def position_covariance(pos_nse):
     """21-element row-major upper-triangle of the 6x6 pose covariance
     (states x,y,z,roll,pitch,yaw). Diagonal indices: x=0, y=6, z=11.
 
-    The FC derives posErr from this (GCS_Common.cpp:4148, floored at VISO_POS_M_NSE).
+    The FC collapses this to a scalar posErr = sqrt(cov[0]+cov[6]+cov[11])
+    (GCS_Common.cpp:4134, verified against the Copter-4.7.0 tag) and uses it as the
+    per-axis position observation noise, floored at VISO_POS_M_NSE and capped at
+    100 m. So to make the FC's effective per-axis noise equal pos_nse, the three
+    diagonal entries must SUM to pos_nse**2 -- hence pos_nse**2 / 3 each, the SAME
+    collapse the velocity path uses (velocity_covariance).
+
+    NOTE (4.6.3 -> 4.7 change): 4.6.3 used a dimensionally-broken
+    cbrtf(sq(cov[0])+sq(cov[6])+sq(cov[11])), under which pos_nse**2-per-axis landed
+    near pos_nse by luck; 4.7 fixed it to sqrt(sum-of-variances), under which the old
+    encoding yields sqrt(3)*pos_nse. See docs/ardupilot-extnav-fusion.md.
+
     We fill only the position variances; attitude entries stay 0 (mocap yaw is unused
     with EK3_SRC_YAW=compass).
     """
     cov = [0.0] * 21
-    cov[0] = cov[6] = cov[11] = pos_nse * pos_nse
+    cov[0] = cov[6] = cov[11] = (pos_nse * pos_nse) / 3.0
     return cov
 
 
