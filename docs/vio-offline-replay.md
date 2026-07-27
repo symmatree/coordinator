@@ -183,9 +183,10 @@ estimator directly. Performance is **near real time** (~17 poses/s vs ~20 featur
 `analysis/vio-quality-experiments.md`): for the deterministic offline binary on the same image,
 native-amd64 and arm64-under-qemu agree to **sub-mm on a bounded run** (0.3 mm median, 2.3 mm
 max position; 0.06° attitude over a 3.25 m trajectory). They only split once the stereo-only
-pose runs away at the aggressive/crash end of a run (the `vins-stereo-only` seed-calibration
-limit), staying within ~2 mm for the first ~75% before that ill-conditioned tail amplifies the FP
-difference to tens of metres — a region where neither arch is ground truth. So the
+pose runs away mid-flight (the `vins-stereo-only` seed-calibration limit -- on 260712 ~88 s after
+takeoff, well before the actual crash), staying within ~2 mm for the first ~75% before that
+ill-conditioned tail amplifies the FP difference to tens of metres — a region where neither arch
+is ground truth. So the
 diverge-vs-stays-bounded verdict is **arch-invariant**; for the #42 relative analysis the
 cross-arch difference is well inside the noise. Native is also ~**14× faster** than qemu (25 s vs
 343 s for a 300 s fixture). If you need production-exact numerics, use Option A (a real Pi) —

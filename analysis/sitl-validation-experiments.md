@@ -399,8 +399,8 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
   x86-native vs arm64-under-qemu (same stereo-only `imu:0` config, `num_threads=1`) on the 260705 (bounded)
   and 260712 (crash) fixtures. Result: the *diverge / stays-bounded* verdict is **arch-invariant**, and
   where bounded the two agree to **sub-mm** (0.3 mm median, 2.3 mm max); they only split (to tens of m)
-  once the stereo-only pose runs away at the aggressive/crash end. So x86 offline is a faithful stand-in
-  for arm64 in the tracking regime.
+  once the stereo-only pose runs away partway through the flight (on 260712 ~88 s after takeoff, ~100 s
+  before the actual crash). So x86 offline is a faithful stand-in for arm64 in the tracking regime.
   Native is ~14x faster (no qemu). Detail in
   [VIO-quality E19](vio-quality-experiments.md#methodology-confounds); native path per
   [`docs/vio-offline-replay.md`](../docs/vio-offline-replay.md) Options B/C.
