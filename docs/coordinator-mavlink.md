@@ -83,33 +83,52 @@ spike, so it is self-limiting.
 
 ## Covariance: honest, and floored not clobbered
 
-The EKF uses the **per-sample covariance in the MAVLink message** as the
-measurement noise -- for both velocity and position -- floored by `VISO_VEL_M_NSE`
-(0.1 m/s) / `VISO_POS_M_NSE` (0.2 m), **not** the `EK3_*_M_NSE` params (those are
-GPS-only). Omitting covariance (the old behaviour) let the FC floor the noise to
-0.1, over-trusting a drifting source. Full FC-side derivation:
-[ardupilot-extnav-fusion.md](ardupilot-extnav-fusion.md).
+The two channels are **asymmetric** -- verified against the Copter-4.7.0 tag:
+
+- **Position: per-sample, honest.** The FC consumes `ATT_POS_MOCAP.covariance`
+  (`posErr = sqrt(cov[0]+cov[6]+cov[11])`, `GCS_Common.cpp:4134`), floored at
+  `VISO_POS_M_NSE` (0.2 m) and capped at 100 m, and uses it as the position
+  observation noise -- **not** the `EK3_*_M_NSE` params (those are GPS-only). This is
+  a real per-sample channel and the natural home for VIO's growing integrated
+  uncertainty.
+- **Velocity: covariance IGNORED.** The FC does not read
+  `VISION_SPEED_ESTIMATE.covariance`; `handle_vision_speed_estimate` forwards no
+  covariance and the MAV backend fuses at the FC param `VISO_VEL_M_NSE`
+  (`writeExtNavVelData`, `AP_VisualOdom_MAV.cpp:79`), confirmed by upstream
+  [PR #14516](https://github.com/ardupilot/ardupilot/pull/14516) ("I do not send
+  covariance from mavlink msg"). So the velocity noise the EKF uses is
+  `VISO_VEL_M_NSE`, and to change it you set that FC param -- what the router sends is
+  advisory/logged only.
+
+Full FC-side derivation: [ardupilot-extnav-fusion.md](ardupilot-extnav-fusion.md).
 
 Two knobs, with honest provenance:
 
 | Env | Default | Provenance |
 |-----|---------|------------|
-| `MAVLINK_VEL_NSE` | 0.15 m/s | **Measured** (dPos/dt vs FC EKF velocity, stationary error) |
+| `MAVLINK_VEL_NSE` | 0.15 m/s | **Measured** (dPos/dt vs FC EKF velocity, stationary error). FC-ignored (see above) -- mirror it into `VISO_VEL_M_NSE` on the FC for it to take effect. |
 | `MAVLINK_POS_NSE` | 0.30 m | **Conservative placeholder** -- not independently measured; kept above the 0.2 m floor so it binds, pending SITL/flight tuning (#62 Part 2, #64) |
 
-Keep the `VISO_*_M_NSE` floors below these honest values or the floor clobbers them.
+Keep `VISO_POS_M_NSE` below `MAVLINK_POS_NSE` or the floor clobbers it.
 
-**Velocity encoding gotcha.** The FC collapses `VISION_SPEED_ESTIMATE.covariance`
-(9-element row-major 3x3) to a single scalar `sqrt(cov[0]+cov[4]+cov[8])` and uses
-it as the per-axis velocity noise. So to make the FC's effective noise equal
-`MAVLINK_VEL_NSE`, the router spreads the variance across the three diagonal
-entries as `sigma^2 / 3` each -- **not** `sigma^2` each (which would give the FC
-`sqrt(3)*sigma`).
+**Position encoding (the one the FC uses).** `ATT_POS_MOCAP.covariance` is the
+21-element row-major upper triangle of the 6x6 pose covariance (states
+x,y,z,roll,pitch,yaw). The router fills the position variances on the x/y/z diagonal
+(indices 0/6/11); attitude entries stay 0 (mocap yaw is unused with
+`EK3_SRC_YAW=compass`). The FC collapses the diagonal to `posErr =
+sqrt(cov[0]+cov[6]+cov[11])`, so to make the effective per-axis noise equal
+`MAVLINK_POS_NSE` the router puts `sigma^2 / 3` on each entry -- **not** `sigma^2`
+(which yields `sqrt(3)*sigma`).
 
-**Position encoding.** `ATT_POS_MOCAP.covariance` is the 21-element row-major upper
-triangle of the 6x6 pose covariance (states x,y,z,roll,pitch,yaw). The router fills
-the position variances on the x/y/z diagonal (indices 0/6/11); attitude entries stay
-0 (mocap yaw is unused with `EK3_SRC_YAW=compass`).
+> **4.6.3 -> 4.7 formula change.** 4.6.3 computed `posErr` as
+> `cbrtf(sq(cov[0])+sq(cov[6])+sq(cov[11]))` -- dimensionally broken (m^4/3), under
+> which the old `sigma^2`-per-axis encoding landed near `sigma` by luck. 4.7 fixed it
+> to `sqrt(sum-of-variances)`; under 4.7 the old encoding gives `sqrt(3)*sigma`, so
+> the `sigma^2 / 3` split above is required to hit the intended value.
+
+**Velocity encoding.** The router still fills `VISION_SPEED_ESTIMATE.covariance`
+(9-element 3x3, `sigma^2 / 3` per diagonal) on the same convention, but the FC
+ignores it (above) -- it is advisory/logged only until an FC that consumes it ships.
 
 ## Time sync
 

@@ -98,8 +98,11 @@ def main():
             if not (abs(apm.q[0] - 1.0) < 1e-4 and abs(apm.q[1]) < 1e-4):
                 print("  FAIL: quaternion not passed through")
                 ok = False
-            if not abs(apm.covariance[0] - 0.30**2) < 1e-4:
-                print(f"  FAIL: position covariance {apm.covariance[0]} != 0.30^2")
+            # FC (4.7) derives posErr = sqrt(cov[0]+cov[6]+cov[11]); the router
+            # spreads pos_nse**2 across the three diagonals so this scalar == pos_nse.
+            fc_pos_err = math.sqrt(apm.covariance[0] + apm.covariance[6] + apm.covariance[11])
+            if not abs(fc_pos_err - 0.30) < 1e-3:
+                print(f"  FAIL: position covariance FC-scalar {fc_pos_err} != 0.30")
                 ok = False
 
         if not vses:

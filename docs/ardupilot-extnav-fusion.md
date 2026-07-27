@@ -4,17 +4,20 @@ Reference for feeding VINS stereo VIO to the FC over MAVLink (`ATT_POS_MOCAP` +
 `VISION_SPEED_ESTIMATE`) for GPS-denied under-canopy legs (#42). Source analysis of
 `libraries/AP_NavEKF3/` + `libraries/AP_VisualOdom/`.
 
-> **Version note.** Analyzed against ArduPilot **master** (2026-07-08). The vehicle runs
-> **Copter-4.6.3** (`92b0cd78`); a local clone is at `scratchpad/ardupilot-4.6.3`. The param
-> behaviour and message paths are expected to match, but **verify the line numbers against
-> the 4.6.3 tag** before relying on them.
+> **Version note.** Originally analyzed against ArduPilot **master** (2026-07-08) with the
+> vehicle on **Copter-4.6.3**. Re-verified against the **Copter-4.7.0** (`1511f271`) tag
+> after the FC upgrade (coordinator #80); line numbers below are 4.7.0. Two things the
+> earlier master analysis got wrong are corrected inline: the FC does **not** consume the
+> velocity covariance, and the position `posErr` formula changed from a broken cbrt to
+> `sqrt` (4.6.3 -> 4.7). See the covariance section.
 
 ## TL;DR (the load-bearing findings)
 
-1. **The EKF uses the per-sample covariance you put in the MAVLink message** -- for both
-   velocity and position -- floored by `VISO_VEL_M_NSE` (0.1 m/s) / `VISO_POS_M_NSE` (0.2 m),
-   **not** the `EK3_*_M_NSE` params (those are GPS-only). Omitting covariance -> NaN -> floored
-   to the `VISO_*` value.
+1. **Position uses the per-sample covariance you put in `ATT_POS_MOCAP`** (floored by
+   `VISO_POS_M_NSE` 0.2 m, capped at 100 m), **not** the `EK3_*_M_NSE` params (those are
+   GPS-only). **Velocity does NOT** -- the FC ignores `VISION_SPEED_ESTIMATE.covariance` and
+   fuses at the `VISO_VEL_M_NSE` param regardless. So position is the only per-sample honest
+   channel; velocity noise is a fixed FC param.
 2. **Velocity-only ExtNav is unsupported** (issue #23485 open). You **must** send position to
    get an aiding lock; velocity alone leaves the filter in `AID_NONE` -> EKF position failsafe.
    Position + velocity together is supported and recommended.
@@ -45,29 +48,38 @@ fuse through `FuseVelPosNED` (`:762`) over `velPosObs[] = {velN,velE,velD,posN,p
 
 ## Where the measurement covariance comes from (the key finding)
 
-**ExtNav velocity** (`FuseVelPosNED`, `:827-831`):
-`R_OBS = sq(constrain(extNavVelDelayed.err, 0.05, 50))`. `err` traces to
-`GCS_Common.cpp:4167` `sqrt(VISION_SPEED_ESTIMATE.covariance[0]+[4]+[8])`, floored at
-`VISO_VEL_M_NSE` (default 0.1 m/s, `AP_VisualOdom.cpp:91`), clamped `[0.05,50]`. The GPS
-noise (`EK3_VELNE_M_NSE`/`EK3_VELD_M_NSE`) is the `else` branch (`:833-841`) and never runs for
-VIO.
+**ExtNav velocity** (`FuseVelPosNED`): `R_OBS[0]/[2] = sq(constrain(extNavVelDelayed.err, 0.05, 50))`
+(`PosVelFusion.cpp:732`, 4.7.0; the clamp was `[0.05, 5]` in 4.6.3). But `err` is **not** derived
+from the message: `handle_vision_speed_estimate` forwards no covariance and the MAV backend calls
+`writeExtNavVelData(vel, get_vel_noise(), ...)` (`AP_VisualOdom_MAV.cpp:79`), so
+`err == VISO_VEL_M_NSE` (0.1 m/s default). **`VISION_SPEED_ESTIMATE.covariance` is ignored**
+(confirmed by upstream [PR #14516](https://github.com/ardupilot/ardupilot/pull/14516): "I do not
+send covariance from mavlink msg"). The GPS noise (`EK3_VELNE_M_NSE`/`EK3_VELD_M_NSE`) is the
+`else` branch and never runs for VIO.
 
-**ExtNav position** (`:844-847`): `R_OBS = sq(constrain(extNavDataDelayed.posErr, 0.01, 100))`.
-`posErr` from `ATT_POS_MOCAP.covariance` (`GCS_Common.cpp:4148`), floored at `VISO_POS_M_NSE`
-(default 0.2 m). Vertical ExtNav noise from `posErr` too (`:1380`), **not** `EK3_ALT_M_NSE`.
+**ExtNav position** (`PosVelFusion.cpp:748`, 4.7.0):
+`R_OBS[3]/[4] = sq(constrain(posErr, 0.01, 100))` -- the clamp was `[0.01, 10]` in 4.6.3, and 4.7
+widening it 10x is what lets an honest *growing* posErr through. `posErr =
+sqrt(ATT_POS_MOCAP.covariance[0]+[6]+[11])` (`GCS_Common.cpp:4134`), then floored at
+`VISO_POS_M_NSE` (0.2 m) and capped at 100 in the backend (`AP_VisualOdom_MAV.cpp:42`).
+**Formula change:** 4.6.3 used `cbrtf(sq(cov[0])+sq(cov[6])+sq(cov[11]))` -- dimensionally broken
+(m^4/3); 4.7 is the `sqrt` above. A router sending `sigma^2` per diagonal gets `posErr ~= sigma`
+on 4.6.3 but `sqrt(3)*sigma` on 4.7, so send `sigma^2 / 3` per diagonal for `posErr == sigma`.
 
-**Bottom line:** send honest covariances and they drive the Kalman gain, provided
-`VISO_VEL_M_NSE`/`VISO_POS_M_NSE` are low enough not to clobber them (they are floors). The
-`EK3_*_M_NSE` params do not affect VIO.
+**Bottom line:** POSITION covariance drives the Kalman gain per sample (floored by
+`VISO_POS_M_NSE`, capped 100 m) -- the honest, per-sample channel. VELOCITY noise is the fixed
+`VISO_VEL_M_NSE` param regardless of what the message carries. The `EK3_*_M_NSE` params do not
+affect VIO.
 
-**As implemented (`coordinator-mavlink`, #62 Part 1):** the router now sends both covariances
-(previously omitted -> floored to 0.1, over-trusting). Velocity noise defaults to
-`MAVLINK_VEL_NSE=0.15` m/s (measured; dPos/dt vs FC EKF), position to `MAVLINK_POS_NSE=0.30` m
-(conservative placeholder, above the 0.2 floor, pending SITL/flight tuning). Because the FC
-collapses `VISION_SPEED_ESTIMATE.covariance` to `sqrt(cov[0]+cov[4]+cov[8])`, the router puts
-`σ²/3` on each velocity diagonal so the FC's effective noise equals `MAVLINK_VEL_NSE` (not
-`√3·` it). `ATT_POS_MOCAP.covariance` (row-major upper-triangle, states x,y,z,roll,pitch,yaw)
-carries the position variance on the x/y/z diagonal (indices 0/6/11).
+**As implemented (`coordinator-mavlink`, #62 Part 1 + the 4.7 fix):** the router sends a
+per-sample position covariance and a (currently FC-ignored) velocity covariance. Position
+defaults to `MAVLINK_POS_NSE=0.30` m (conservative placeholder, above the 0.2 floor, pending
+SITL/flight tuning); velocity to `MAVLINK_VEL_NSE=0.15` m/s (measured; dPos/dt vs FC EKF) -- but
+because the FC ignores the velocity covariance, that value must be mirrored into `VISO_VEL_M_NSE`
+on the FC to take effect. Both covariances put `sigma^2 / 3` on each diagonal so that under the
+FC's `sqrt(sum-of-variances)` collapse the effective per-axis noise equals the intended `sigma`
+(not `sqrt(3)*sigma`); `ATT_POS_MOCAP.covariance` (row-major upper-triangle, states
+x,y,z,roll,pitch,yaw) carries the position variances on indices 0/6/11.
 
 ## Velocity-only ExtNav: not supported standalone (#23485 OPEN)
 
