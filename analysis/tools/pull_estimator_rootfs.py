@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
-"""pull_estimator_rootfs -- daemonless pull of the arm64 coordinator-vio-estimator
-image into a flat rootfs, for running vins_fusion under qemu-user on an x86_64 host.
+"""pull_estimator_rootfs -- daemonless pull of a coordinator-vio-estimator image
+into a flat rootfs, for running vins_fusion off-vehicle on a host with no container runtime.
 
 No Docker/containerd needed: fetch an anonymous GHCR token, read the OCI image index,
-pick the linux/arm64 manifest, download each layer blob, and extract all layers into one
-directory. Then rehome absolute symlinks into the prefix (see --fix-symlinks) so
-qemu-user can resolve them.
+pick the manifest for the requested arch, download each layer blob, and extract all layers
+into one directory. Then rehome absolute symlinks into the prefix (see --fix-symlinks) so
+the loader (native or qemu-user) resolves them against the rootfs, not the host '/'.
 
-See docs/vio-offline-replay.md for the full run recipe.
+The estimator image is multi-arch (CI builds amd64 + arm64 into one manifest), so:
+  * on an x86_64 analysis box, `--arch amd64` gives a **native** rootfs -- run the binary
+    directly, no qemu (the fast default, coordinator #85);
+  * `--arch arm64` gives the Pi's production binary, run under qemu-aarch64-static as a
+    fallback / for a cross-arch fidelity check.
+--arch defaults to the host architecture. See docs/vio-offline-replay.md for the run recipe.
 
-    python3 pull_estimator_rootfs.py --out rootfs/          # pull + extract + fix symlinks
-    python3 pull_estimator_rootfs.py --fix-symlinks rootfs/ # only rehome symlinks (idempotent)
+    python3 pull_estimator_rootfs.py --out rootfs/               # host arch: pull+extract+fix
+    python3 pull_estimator_rootfs.py --arch arm64 --out rootfs/  # arm64 (for qemu on x86)
+    python3 pull_estimator_rootfs.py --fix-symlinks rootfs/      # only rehome symlinks (idempotent)
 """
 
 import argparse
 import io
 import json
 import os
+import platform
 import sys
 import tarfile
 import urllib.request
@@ -24,6 +31,16 @@ import urllib.request
 IMAGE = "symmatree/coordinator-vio-estimator"
 DEFAULT_TAG = "main"
 REGISTRY = "https://ghcr.io"
+
+# The arch names we accept on the CLI (== OCI manifest 'architecture' values). _HOST_ARCH
+# maps the host's uname machine (platform.machine()) to one of these, for the default.
+_ARCHES = ("amd64", "arm64")
+_HOST_ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+
+
+def host_arch():
+    """The OCI arch name matching this host, or None if we don't recognize it."""
+    return _HOST_ARCH.get(platform.machine())
 
 
 def _token():
@@ -36,7 +53,7 @@ def _get(url, tok, accept):
     return urllib.request.urlopen(req)
 
 
-def _arm64_manifest(tok, tag):
+def _pick_manifest(tok, tag, arch):
     idx = json.load(_get(
         f"{REGISTRY}/v2/{IMAGE}/manifests/{tag}", tok,
         "application/vnd.oci.image.index.v1+json,"
@@ -44,14 +61,15 @@ def _arm64_manifest(tok, tag):
     ))
     for m in idx.get("manifests", []):
         p = m.get("platform", {})
-        if p.get("os") == "linux" and p.get("architecture") == "arm64":
+        if p.get("os") == "linux" and p.get("architecture") == arch:
             return m["digest"]
-    sys.exit("pull_estimator_rootfs: no linux/arm64 manifest in the image index")
+    have = sorted({m.get("platform", {}).get("architecture") for m in idx.get("manifests", [])} - {None})
+    sys.exit(f"pull_estimator_rootfs: no linux/{arch} manifest in the image index (have: {', '.join(have) or 'none'})")
 
 
-def pull(out, tag):
+def pull(out, tag, arch):
     tok = _token()
-    dig = _arm64_manifest(tok, tag)
+    dig = _pick_manifest(tok, tag, arch)
     man = json.load(_get(
         f"{REGISTRY}/v2/{IMAGE}/manifests/{dig}", tok,
         "application/vnd.oci.image.manifest.v1+json,"
@@ -59,7 +77,7 @@ def pull(out, tag):
     ))
     layers = man["layers"]
     total = sum(l["size"] for l in layers)
-    print(f"pulling {len(layers)} layers ({total/1e6:.0f} MB) -> {out}")
+    print(f"pulling linux/{arch} {len(layers)} layers ({total/1e6:.0f} MB) -> {out}")
     os.makedirs(out, exist_ok=True)
     for i, l in enumerate(layers):
         print(f"  layer {i + 1}/{len(layers)} {l['digest'][:19]} {l['size']/1e6:.1f} MB", flush=True)
@@ -104,6 +122,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", help="rootfs output dir (pull + extract + fix symlinks)")
     ap.add_argument("--tag", default=DEFAULT_TAG, help="image tag (default: %(default)s)")
+    ap.add_argument("--arch", choices=sorted(_ARCHES), default=host_arch(),
+                    help="image arch to pull (default: host arch, %(default)s). "
+                         "amd64 runs natively on x86; arm64 needs qemu-aarch64-static.")
     ap.add_argument("--fix-symlinks", metavar="ROOTFS",
                     help="only rehome absolute symlinks in an existing rootfs, then exit")
     args = ap.parse_args()
@@ -113,7 +134,9 @@ def main():
         return
     if not args.out:
         ap.error("need --out DIR (or --fix-symlinks ROOTFS)")
-    pull(args.out, args.tag)
+    if not args.arch:
+        ap.error(f"unknown host arch {platform.machine()!r}; pass --arch {{{','.join(sorted(_ARCHES))}}}")
+    pull(args.out, args.tag, args.arch)
     fix_symlinks(args.out)
     binp = os.path.join(args.out, "opt/coordinator/bin/vins_fusion")
     print(f"{'OK' if os.path.exists(binp) else 'MISSING'}: {binp}")
