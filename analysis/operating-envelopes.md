@@ -149,6 +149,10 @@ The **true** residual feasibility floor is then narrow: enough photons for the V
 all*; wind low enough to hold it; and mission time to spend hovering. Above that floor it is an efficiency
 (speed / duration) choice, not a yes/no.
 
+*Sequencing caveat: hover-and-integrate is an **expansion** target, not a first step. It only earns
+attention once the easy-corner baseline (bright / calm / slow / open) is shown to hold — see "Start at the
+easiest corner" above. The reasoning here maps the destination; it does not license skipping to it.*
+
 ---
 
 ## The cross-coupling (the finding that makes this framing matter)
@@ -174,6 +178,13 @@ covers the mission, even if neither alone does.
 ---
 
 ## Method: measuring an envelope
+
+**Start at the easiest corner.** Before probing any boundary or chasing a clever operating point, confirm
+the capability works *at all* in its most favourable conditions — for VIO that is **bright, calm, slow,
+open** (max photons, min blur, min wind disturbance, GPS-good as a truth reference). That positive window is
+the anchor everything else expands *from*; reaching for hard or optimal corners (dark hovers, fast transit,
+canopy) before the easy-corner baseline is established is premature. Only once it holds there do the steps
+below — measure how far out it survives, then push the levers — mean anything.
 
 1. **Mine existing flights first.** Every logged flight is a trajectory through driver-space with a tier
    label at each instant (GPS status + accuracy; VIO feature count + divergence). Cheap samples — extract
