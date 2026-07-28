@@ -538,7 +538,7 @@ int main(int argc, char **argv) {
                     job.sidecar_path = base + ".json";
                     job.sidecar = build_sidecar(node, mono_saved, stem + ".png", "mono_rect_left", wall,
                                                 ts_ns(mono_data->getTimestampDevice()), mono_data->getSequenceNum(),
-                                                CAM_W, CAM_H, (long long)exp_us, mono_data->getSensitivityIso());
+                                                CAM_W, CAM_H, (long long)exp_us, mono_data->getSensitivity());
                     if (writer->submit(std::move(job))) ++mono_saved;
                 }
             }
