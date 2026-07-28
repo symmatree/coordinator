@@ -147,6 +147,29 @@ covers the mission, even if neither alone does.
 3. **Then push the controllable drivers** and re-measure — that is the "expand the envelope" phase, and its
    success metric is a *moved boundary*, not a better single number.
 
+### Positive-window mapping: the spatial grid
+
+The most directly useful envelope is often a **map of where a tier holds over the physical site**, because
+the operational lever is then just **routing** — fly (or deliver corrections) through the good cells and
+around the few bad ones. Concretely, for a fixed site:
+
+- **GPS/RTK by location.** Sample `GPS.Status` + `GPA.HAcc`/`VAcc` on a grid over the yard (from existing
+  flight tracks first — every pass already visits many cells — then a deliberate lawnmower/hover-grid to
+  fill gaps). Output: a heat-map of "best RTK tier sustained here," at a given time of day/season. The
+  operational payoff is immediate: **a mission can be routed to stay in the RTK-fixed/float cells and skip
+  the few large obstructions** (the specific trees/structures that shadow the mast).
+- **WiFi strength by location** — the enabling map for the WiFi-corrections lever. If we deliver RTCM over
+  WiFi to the coordinator (the §GNSS controllable driver), the reachable envelope is bounded by WiFi
+  coverage. Grid the RSSI/throughput over the site; the good-WiFi region ∩ the good-sky region is where
+  the **WiFi-fed RTK** envelope lives, and a route that avoids the few obstructions can keep *both* links
+  up. (Coordinator-side WiFi RSSI is cheap to log continuously alongside the capture streams.)
+
+The grid is the same three-step method applied on a **spatial** axis: mine existing tracks → grid-fill the
+gaps → then push a controllable (WiFi corrections, or time-of-day) and re-map the moved good-region. A
+positive window you can *route through* is worth more than a global average, and it composes with the
+cross-coupling above: even where GPS and VIO both fail, the **union** of their good-cells may still cover a
+routable path.
+
 Relation to the sibling ledgers: those hold the **theories and evidence** (why a capability behaves as it
 does); this doc holds the **operational envelopes** (where each level holds) built from the same evidence.
 An `E#` observation typically informs both — a theory *and* an envelope sample.
