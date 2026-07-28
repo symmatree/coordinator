@@ -130,7 +130,19 @@ done, its finding folded into the cited evidence). Read a theory to decide wheth
 worth firming up; ignore the ones you never need. Status is provisional by construction — several below
 are already marked disproven or reframed.
 
+**Each theory as an operational claim (2026-07-28).** A theory here is not merely *"X causes Y"* — it is a
+claim about **an observable metric**, the **region of driver-space that governs it**, and the **decision it
+informs**. Each carries a one-line **Claim —** *metric* (what we can measure) · *region* (the drivers /
+thresholds that dictate it) · *decision* (the task/resource choice it changes). This is the operational
+inverse of "how good can it get": we are mapping **where each performance level holds** so we can *choose
+tasks and resources* — the cross-capability version is `analysis/operating-envelopes.md` — not building a
+black-box failure predictor. The aim is an **interpretable** driver model (understand *why*), not a fitted
+one. (We didn't start this way on purpose: only with attempts in hand do you know what is easy — macro
+flight stability has been fine, so there is deliberately no shudder/jerk theory — and what is the real
+challenge worth a metric and a threshold.)
+
 ### T1 — Solver-iteration starvation under qemu — **DISPROVEN**
+> **Claim —** *metric:* offline ATE / divergence · *region:* solver iteration budget (6–32 iters) · *behaviour:* **flat / invariant** (X11) · *decision:* solver tuning is **not** a lever — spend no compute there.
 - **Against:** E9 — the deterministic offline harness runs Ceres to completion (no wall-clock cap),
   single-threaded, and reproduces the **same divergence**. Un-starving the solver changed nothing.
 - **Status:** **disproven as the cause.**
@@ -149,6 +161,7 @@ are already marked disproven or reframed.
     (does the 0.04 s cap bind live?).
 
 ### T7 — Our *replay* is the problem (I/O-timing artifact) — **DISPROVEN (as the cause)**
+> **Claim —** *metric:* divergence · *region:* replay pacing/timing in the deterministic harness · *behaviour:* **invariant** (E9) · *decision:* trust the offline harness for *config-independent* conclusions, but it is **silent** on real-time/threaded behaviour — don't read live behaviour from it.
 - **For (historical):** E5 (init `R0` moved with replay pace).
 - **Against:** E9 — a deterministic, timestamp-ordered feed still diverges **identically and reproducibly**.
 - **Status:** timing coupling was real in the old path, but removing it entirely leaves the divergence
@@ -166,6 +179,7 @@ are already marked disproven or reframed.
 
 ### T3 — Motor vibration corrupts the OAK-D IMU — **not isolated; do not credit**
 *The hard-mounted OAK-D IMU eats motor vibration, poisoning IMU preintegration.*
+> **Claim —** *metric:* `imu:1` pose-divergence onset · *region:* OAK-D vibration band-power (armed/hard-mounted vs isolated) · *behaviour:* hypothesised to tip into runaway above some level · *decision:* whether OAK-D **isolation** is a required resource. **Not isolated** — the low-vibration handheld run *also* runs away (E2), so vibration is not shown *necessary*; the loaded-hover probe (X14) is the discriminator.
 - **For:** E1 (OAK-D accel band-power >5 Hz ~400–500× higher armed vs handheld — the camera IMU *does* see vibration).
 - **Against:** E2 (the **handheld** run *also* fails on IMU-fusion) — **but** "motors off" is **not**
   "vibration-free": hand tremor, footfalls, and the walkaround itself inject IMU disturbance, so this
@@ -202,6 +216,7 @@ are already marked disproven or reframed.
 ### T4 / T5 — Cam↔IMU calibration/extrinsic wrong (T4) and/or BNO085 IMU data-path mismatch (T5)
 *The seed extrinsic is a rough guess refined online; the OAK-D IMU is fused/filtered, zero-at-rest,
 wrong noise model — either poisons the tightly-coupled fusion once accelerating.*
+> **Claim —** *metric:* `imu:1` divergence · *region:* the **IMU/extrinsic data path** (axis-remap, IMU product/rate/time-sync) — *not* the vision path (vision-only tracks, E10) · *decision:* any IMU fix belongs in the data path, not the estimator. **Which** sub-driver (extrinsic vs IMU-model vs time-sync) governs it is **not isolated**.
 - **For:** E3 (over-scale from takeoff; velocity won't zero at rest — bias/gravity/scale signature).
   E4 (gyro reads **exactly** 0.000 at rest — a fused/filtered BNO085 signature). **E10** — **vision-only
   (no IMU path at all) tracks the whole flight at ~1 m ATE, while IMU-fusion runs to 41.9 km.** So the
@@ -237,6 +252,7 @@ wrong noise model — either poisons the tightly-coupled fusion once acceleratin
     capture must record `.feat`.**
 
 ### T6 — Aggressive motion / feature geometry breaks tracking
+> **Claim —** *metric:* stereo-only local tracking (feature count → local ATE, divergence flag) · *region:* **feature count** — driven by scene texture + **available light** — and aggressive motion · *behaviour:* holds while features stay healthy (~30–44), breaks as they collapse (E7 handheld ~3; **E19 canopy ~≤4**) · *decision:* this **is** the live operational envelope for stereo-only (the `imu:0` deployed mode) — a scene/motion/light boundary, mapped in `operating-envelopes.md`. The dominant sub-driver on real canopy was **light** (E19), not motion.
 - **For:** E7 (handheld feature count collapses to ~3/frame during the barrel roll).
 - **Against:** E7 also shows the **armed** run diverges with healthy feature counts. And vision-only
   tracks the armed flight fine (E10), so features aren't the ceiling there.
@@ -276,6 +292,7 @@ hard-mounted, online-estimated extrinsic/time) into a pose **first**, corrupting
 the FC's central EKF — which already fuses a **good**, vibration-isolated, calibrated IMU. The worse
 copy is given authority, and a tightly-coupled estimator **trusts** it (a factor with a weight), so a
 wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
+> **Claim —** *metric:* pose-divergence magnitude · *region:* **IMU-given-authority** (`imu:1` vs `imu:0`) — a near-binary switch · *behaviour:* `imu:1` diverges **everywhere tested** (handheld / open / real canopy: km–Mm, E10/E15/#120), `imu:0` stays bounded (~tens of m) · *decision:* **SETTLED — IMU excluded** from the tightly-coupled path; reintroduce only as a weighted relative-velocity factor ([#59](https://github.com/symmatree/coordinator/issues/59)). The lone open sub-question is *why* `imu:1` fails (T3/T4/T5) — it only matters insofar as it decides whether isolation could ever bring `imu:1` back inside the envelope.
 - **For:** E10 (vision-only, which uses **no** IMU, tracks; IMU-fusion explodes). The "VINS-Mono needs
   both" assumption is **monocular** — mono is scale-blind, so IMU is its only scale source. **Stereo
   observes scale from the baseline directly**, so VINS-**Fusion** stereo-only is a first-class supported
@@ -327,16 +344,19 @@ Different vehicle (hard-mount, no gimbal, OAK-D ≠ DJI) → different **answers
 
 ### T9 — Motion blur (long exposure × airframe motion) is the dominant cause of unusable in-flight stills — **leading, confounded with vibration**
 *Auto-exposure ran to ~30 ms @ ISO 110 in flight (≈4 stops of gain unused), so any airframe rate/translation smears the frame during the exposure window.*
+> **Claim —** *metric:* sharpness (var-Laplacian), a proxy for mono feature-trackability · *region:* **blur-pixels** = airframe-motion × exposure-time (÷ GSD), plus vibration-jello · *behaviour:* sharpness collapses as blur-pixels grow (E18 ~43×) · *decision:* the levers are **cap exposure**, **fly slower**, **isolate**; *which* dominates (blur vs jello) decides which lever pays. The **blur-pixels** predictor is itself a testable model claim (X19) — the point is to *understand* the driver, not fit it.
 - **For:** E18 — in-flight sharpness collapses ~43× (var-Laplacian median 4827→113); **0/29** in-flight frames reach at-rest sharpness; correlates exposure −0.66, EKF-vel −0.53, gyro −0.42; the streak/arc morphology is *directional* (motion during exposure), not uniform focus-soft.
 - **Against / not isolated:** **VIBE is the *strongest* correlate (−0.81)** and everything covaries at takeoff (no motors-on-ground frames), so motion-blur vs **vibration-jello** is *not separated*. A short exposure freezes **both**, so pulling the exposure lever does not discriminate them — the hover/spectral probes (X14, under T3) do.
 - **Status:** leading but **confounded, not isolated.** We are pulling the exposure lever now because it is cheap and helps regardless of which dominates — *not* because motion blur is confirmed to be the whole story.
 - **Probes:**
   - [x] **X15 — cap the still exposure (deployed, PR #105).** `OAK_STILL_MAX_EXPOSURE_US` (5 ms default) caps the AE shutter → trades to ISO/gain, accepting some underexposure. Hardware-untested (OAK-D down); the next capture's sharpness re-scores it. Attacks the **exposure axis only** — residual motion at 5 ms and any vibration-jello remain (a status, not a disclaimer).
   - [ ] **X18 — blur budget.** Compute the exposure that holds blur < N px at flight speed/GSD (house-model method) → set the cap from physics, not the 5 ms guess.
+  - [ ] **X19 — driver-model selection: is *blur-pixels* the right predictor?** On the 260712 stills we already scored, fit sharpness against three candidate drivers: **(a)** exposure time alone, **(b)** airframe speed alone, **(c)** **blur-pixels** = speed × exposure ÷ GSD (image motion *during* the exposure window — the physically-motivated combination). If (c) explains sharpness materially better than (a) or (b) (compare R²/AIC; watch the takeoff covariance and the VIBE confound), the physical blur model is validated and the exposure cap follows from it (X18) rather than a guess. This is model *understanding* — an interpretable, physically-grounded driver — not a fitted black box, and it is the concrete instance of drawing the imagery/VIO envelope in a **velocity × exposure** space. Data already in hand (E18 sidecars: per-still exposure + interpolated EKF-velocity/gyro).
   - [ ] **X14 — stable hover** (owned under T3) — the discriminator between motion blur and vibration-jello.
 
 ### T10 — Autofocus is the wrong mode; a calibrated fixed focus is better — **proposed**
 *The OAK-D RGB has an autofocus VCM that can hunt or silently refocus; per the house-model doc, AF also tends to lock the highest-frequency signal (canopy twigs) over the useful subject.*
+> **Claim —** *metric:* sharpness / cross-flight focus repeatability · *region:* focus mode × subject distance (AF hunts or locks canopy twigs vs a fixed lens position set for flight distance) · *decision:* fixed **calibrated** focus vs auto — but a *wrong* fixed value is worse than AF, so it needs the bench calibration (X17) first and defaults to `auto`.
 - **For:** focus can change with or without a command (VCM); house-model confirmed AF-on-treetops leaves the useful subject soft; a fixed lens position is repeatable across flights.
 - **Against / caveat:** a *wrong* fixed position is worse than AF — needs a calibrated lens value first, so the knob defaults to `auto`.
 - **Status:** proposed; the knob ships (X16), the value is **uncalibrated** (default `auto`).
