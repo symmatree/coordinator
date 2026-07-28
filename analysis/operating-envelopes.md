@@ -22,7 +22,11 @@ For each **capability** we define:
    boundary** (so a flight log is a set of `(conditions → tier)` samples, not a vibe).
 2. **Driver axes** — the environmental / operational dimensions that determine which tier holds. Each axis
    is tagged **[fixed]** (a given we design around), **[operational]** (we choose it per flight: where,
-   when, how we fly), or **[controllable]** (an engineering lever we can change to move the boundary).
+   when, how we fly), or **[controllable]** (an engineering lever we can change to move the boundary). A
+   **second, orthogonal** read then asks what pushing an axis *buys*: **feasibility** (clears a floor —
+   makes something possible) vs **efficiency** (pays a cost — makes it faster/cheaper, not possible). See
+   "Velocity is an efficiency knob" under VIO — the distinction that turns much of the map from yes/no into
+   a cost surface.
 3. **Envelope** — the region of driver-space where each tier holds. Initially a hypothesis; filled in from
    evidence (existing flights are cheap samples; deliberate boundary-probing flights are the expensive
    ones, run only where a boundary matters).
@@ -110,6 +114,40 @@ which is a different, catastrophic ~866 km mode, #120. The IMU is out for good r
 **Open envelope questions:** at what blur-pixels / feature-density does tracking cross bounded→degraded→
 diverged? How much does the exposure cap move that boundary (needs the mono capture, #128, to measure the
 input)? Which parts of the flight site hold VIO at which times of day/year?
+
+### Velocity is an efficiency knob — and station-keeping is the light escape hatch
+
+Two refinements that change how this envelope reads (2026-07-28):
+
+**Blur is velocity-tied, so it is an *efficiency* driver, not a *feasibility* one.** Blur-pixels =
+velocity × exposure, and on a *planned* mission velocity is a **choice**. A blur-limited region is therefore
+not off-limits — it just costs speed: it converts to **mission duration** and a **dwell-fraction vs
+transit-time** split. You only pay the slow-speed price where VIO must carry (GPS-denied dwell); transit
+through GPS-good open stays fast. So match speed to where each capability holds — the spatial grid (above)
+*plus a speed profile*. This is a **second question, orthogonal** to fixed/operational/controllable: does
+pushing an axis change **feasibility** (clear a floor → make it possible) or only **efficiency** (pay a cost
+→ make it faster/cheaper)? Velocity/blur is efficiency — *within limits*: the floors are **wind** (a minimum
+airspeed to keep authority), **area/battery/time** budget (too slow never finishes), and, below everything,
+**light**.
+
+**Station-keeping is the escape hatch from the light floor.** "Too dark" is softer than it looks, because it
+splits into two imaging needs with different requirements:
+- **VIO** wants many short frames at tracking rate → genuinely photon-limited in the dark.
+- **The mapping still** wants brightness, which is just **integration time** — and a *held platform can
+  integrate as long as you like*. So **if the VIO can hold a hover in semi-dark, a long-exposure still
+  integrates to any brightness, motion-blur-free**, because the platform is stationary. The mapping-
+  brightness problem dissolves into a **station-keeping** requirement.
+
+And that remaining requirement — *hold a hover in semi-dark* — is a **lower bar than tracking motion in
+semi-dark**, and it lands in stereo VIO's **easiest** regime: near-stationary holds are the *stablest* part
+of the tracked trajectory (`vio-quality-experiments.md` E14 — tiny local error; only global *scale* goes
+unobserved with no translation, and station-keeping doesn't need scale). So the dark-scene operating concept
+is **hover-and-integrate**: hold position on degraded-but-adequate VIO, take long stills for the map — the
+concrete mechanism for the house-model "snowglobe" aspiration (bright reconstructions from dark scenes).
+
+The **true** residual feasibility floor is then narrow: enough photons for the VIO to hold the hover *at
+all*; wind low enough to hold it; and mission time to spend hovering. Above that floor it is an efficiency
+(speed / duration) choice, not a yes/no.
 
 ---
 
