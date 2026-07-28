@@ -42,20 +42,33 @@ real system rather than self-certifying on synthetic input. Structure generalize
 Each is a **directional sufficiency** claim -- "sufficient **for a purpose**", never "identical". The
 scenarios in the catalog are the **lemmas**; evidence fills the boxes under each.
 
+**Read each claim as an operational assertion** (2026-07-28; the *metric x region x decision* schema from
+`vio-quality-experiments.md`): *metric* -- the observable that shows silicon =~ vehicle; *region* -- the
+**matchability regime** (below) that says at what level a quantity can be matched *at all*; *decision* --
+what silicon result we are thereby licensed to carry to the vehicle. Two structures already in this doc
+**are** that schema: the **matchability regimes** section is the region axis, and the **status vocabulary**
+(Blocked / Ready / Open theory / Confirmed) is the **gap taxonomy** -- it already answers *why* a lemma
+isn't nailed down: **Blocked = needs an anchor/probe**, **Ready = needs the sim built**, **Open theory =
+the output is still ill-defined** (we don't yet know what "match" would even mean). So not every lemma can
+be pinned now, and that is fine -- the status names *which kind of gap* each has.
+
 - **Claim A -- Linux behaves like onboard (sufficiently).**
   SITL / Replay on x86 reproduces the real FC's EKF estimates, health, and closed-loop dynamics closely
   enough to trust a silicon result about the vehicle. *Direction: silicon -> license to conclude about
   the vehicle.* Anchored by matching **recorded** onboard behavior.
+  > **Claim --** *metric:* silicon-vs-recorded EKF state/health/dynamics error (LA1: ~1 um position on real logs) · *region:* closed-loop-deterministic quantities (point-matchable); chaotic ones ensemble-only · *decision:* license to carry a silicon **EKF / gate** result to the vehicle. **Anchored (LA1 confirmed, 260709+260712).**
 
 - **Claim B -- We can generate or derive realistic synthetic data.**
   The inputs we feed (recorded `.feat` replays, derived ExtNav with honest covariance, injected
   pathologies, a parameterized airframe model, idealized feature tracks) are faithful enough that
   conclusions drawn on them transfer. *Direction: constructed inputs -> valid conclusions.*
+  > **Claim --** *metric:* does a conclusion drawn on constructed input still hold on real input? · *region:* input-realism tier -- recorded > derived-honest > synthetic-pathology > idealized (lower tiers support **mechanism/wiring only**, the self-certification trap) · *decision:* which conclusions transfer vs which only test our own reading of the code.
 
 - **Claim C -- Onboard behaves like Linux (sufficiently, for particular use cases).**
   A thing **predicted or tuned in silicon** produces the predicted effect on the vehicle, for a named
   use case. *Direction: silicon prediction -> confirmed on hardware.* This is the payoff direction and
   today has **no evidence at all** (see the caveat).
+  > **Claim --** *metric:* a silicon **prediction** confirmed on hardware (fixed before the run, falsifiable) · *region:* the use case (U1-U5) at its required fidelity · *decision:* trust a silicon-tuned change on the vehicle. **Gap = needs-confirm:** P1 (4.7 upgrade neutral for GPS-primary) is the first prediction on the record; no confirming flight yet.
 
 Claims A and C are **not** the same statement run backwards. A licenses "silicon says X about the
 vehicle"; C licenses "we changed the vehicle based on silicon and it did what silicon predicted." A can
