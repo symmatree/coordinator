@@ -244,6 +244,16 @@ int main(int argc, char **argv) {
     std::string node = env_or("OAK_NODE_NAME", "");
     double disp_hz = atof(env_or("OAK_DISPARITY_HZ", "1.0"));
     double still_hz = atof(env_or("OAK_STILL_HZ", "0.2"));
+    // #125: capture the rectified-LEFT mono frame -- the exact image the feature tracker consumes --
+    // so an E19-style feature-starvation can be explained by what the camera actually saw (the color
+    // still is a different sensor; the mono VINS input was never saved). Host samples at OAK_MONO_HZ;
+    // 0 disables. One 400p grayscale stream is ~the disparity load already carried on this USB2 link.
+    double mono_hz = atof(env_or("OAK_MONO_HZ", "1.0"));
+    // #125: optional cap on the MONO auto-exposure shutter (us), so AE trades to gain instead of a long
+    // exposure that motion-blurs the global-shutter frame in low light (the woods-entry case, E19). This
+    // affects the VIO input itself, not just the capture. 0 = no cap (current behaviour). Distinct from
+    // OAK_STILL_MAX_EXPOSURE_US, which only caps the color-still (mapping) camera.
+    int mono_max_exp_us = atoi(env_or("OAK_MONO_MAX_EXPOSURE_US", "0"));
     int jpeg_q = atoi(env_or("OAK_JPEG_QUALITY", "92"));
     std::string res_key = env_or("OAK_STILL_RESOLUTION", "12mp");
     auto still_res = dai::ColorCameraProperties::SensorResolution::THE_12_MP;
@@ -279,6 +289,14 @@ int main(int argc, char **argv) {
     monoRight->setResolution(dai::MonoCameraProperties::SensorResolution::THE_400_P);
     monoRight->setCamera("right");
     monoRight->setFps(20);
+
+    // #125: optionally cap mono auto-exposure so AE trades a long (blurring) shutter for gain in low
+    // light. Applies to both eyes so the stereo pair stays matched. 0 => unchanged (auto, no cap).
+    if (mono_max_exp_us > 0) {
+        monoLeft->initialControl.setAutoExposureLimit((uint32_t)mono_max_exp_us);
+        monoRight->initialControl.setAutoExposureLimit((uint32_t)mono_max_exp_us);
+        std::cout << "mono AE capped at " << mono_max_exp_us << " us (AE -> gain)\n";
+    }
 
     featureTrackerLeft->initialConfig.setNumTargetFeatures(16*5);
     featureTrackerRight->initialConfig.setNumTargetFeatures(16*5);
@@ -329,6 +347,15 @@ int main(int argc, char **argv) {
     // host-side cv::imwrite (no on-device encoder: 12 MP exceeds the MJPEG encoder limits, and
     // host encode preserves exposure/ISO metadata). Triggered on cadence via stillControl.
     if (capture) {
+        // #125: tap the rectified-LEFT mono -- a fan-out from the SAME depth output the left feature
+        // tracker reads (depth->rectifiedLeft), so it is exactly the tracker's input, streamed only
+        // when capturing. Host samples at OAK_MONO_HZ below.
+        if (mono_hz > 0) {
+            auto xout_rect_left = pipeline.create<dai::node::XLinkOut>();
+            xout_rect_left->setStreamName("rectifiedLeft");
+            depth->rectifiedLeft.link(xout_rect_left->input);
+        }
+
         auto colorCam = pipeline.create<dai::node::ColorCamera>();
         colorCam->setBoardSocket(dai::CameraBoardSocket::CAM_A);  // RGB / center camera
         colorCam->setResolution(still_res);
@@ -399,11 +426,13 @@ int main(int argc, char **argv) {
     // #72: capture session dir + still queues (only when capturing)
     std::shared_ptr<dai::DataOutputQueue> still_queue;
     std::shared_ptr<dai::DataInputQueue> still_ctrl_queue;
+    std::shared_ptr<dai::DataOutputQueue> mono_queue;  // #125: rectified-left frames
     std::string session_dir;
     std::unique_ptr<capture::Writer> writer;  // #89: durable off-hot-path image writes
-    long disp_saved = 0, still_saved = 0;
+    long disp_saved = 0, still_saved = 0, mono_saved = 0;  // #125: mono_saved
     auto last_disp_save = std::chrono::steady_clock::now() - std::chrono::hours(1);
     auto last_still_trig = last_disp_save;
+    auto last_mono_save = last_disp_save;  // #125
     if (capture) {
         std::time_t st = std::time(nullptr);
         struct tm stv; gmtime_r(&st, &stv);
@@ -413,8 +442,9 @@ int main(int argc, char **argv) {
         writer.reset(new capture::Writer(session_dir, 4));  // #89
         still_queue = device.getOutputQueue("still", 2, false);
         still_ctrl_queue = device.getInputQueue("stillControl");
+        if (mono_hz > 0) mono_queue = device.getOutputQueue("rectifiedLeft", 1, false);  // #125
         std::cout << "capture: dir=" << session_dir << " disp_hz=" << disp_hz
-                  << " still_hz=" << still_hz << " jpeg_q=" << jpeg_q << "\n";
+                  << " still_hz=" << still_hz << " mono_hz=" << mono_hz << " jpeg_q=" << jpeg_q << "\n";
 
         // #78: open the .feat input tee + write its manifest (matches vio-ipc-record v1).
         std::string feat_path = session_dir + "/" + node + "_" + sess + ".feat";
@@ -492,6 +522,26 @@ int main(int argc, char **argv) {
                 }
             }
             //std::cout << "stereo " << disp_seq << " latency:" << std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - disp_data->getTimestamp()).count() << " ms\n";
+        } else if (q_name == "rectifiedLeft") {  // #125: the tracker's actual left input frame
+            auto mono_data = mono_queue->get<dai::ImgFrame>();
+            if (capture && mono_hz > 0 && due(last_mono_save, mono_hz)) {
+                auto wall = std::chrono::system_clock::now();
+                std::string stem = make_stem(node, mono_saved, wall);
+                std::string base = session_dir + "/" + stem;
+                auto mono_bytes = mono_data->getData();
+                cv::Mat mm(CAM_H, CAM_W, CV_8UC1, mono_bytes.data());  // 8-bit 640x400 grayscale
+                capture::Job job;
+                if (cv::imencode(".png", mm, job.bytes)) {
+                    long exp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                        mono_data->getExposureTime()).count();  // 0 if the rectified frame carries no metadata
+                    job.path = base + ".png";
+                    job.sidecar_path = base + ".json";
+                    job.sidecar = build_sidecar(node, mono_saved, stem + ".png", "mono_rect_left", wall,
+                                                ts_ns(mono_data->getTimestampDevice()), mono_data->getSequenceNum(),
+                                                CAM_W, CAM_H, (long long)exp_us, mono_data->getSensitivityIso());
+                    if (writer->submit(std::move(job))) ++mono_saved;
+                }
+            }
         } else if (q_name == "imu") {
             auto imuData = imuQueue->get<dai::IMUData>();
             auto imuPackets = imuData->packets;
