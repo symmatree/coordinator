@@ -10,7 +10,7 @@
 # Cross-build (slow; QEMU):
 #   docker buildx build --platform linux/arm64 -t coordinator-pod-camera:local containers/pod-camera
 
-ARG BASE_IMAGE=debian:bookworm-slim
+ARG BASE_IMAGE=debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 FROM ${BASE_IMAGE}
 
 ARG DEBIAN_FRONTEND=noninteractive

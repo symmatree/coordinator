@@ -9,7 +9,7 @@
 # Cross-build (slow; QEMU):
 #   docker buildx build --platform linux/arm64 -t coordinator-sh1106-display:local containers/sh1106-display
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 ARG DEBIAN_FRONTEND=noninteractive
 
