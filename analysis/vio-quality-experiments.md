@@ -88,6 +88,25 @@ was" is a measurement, not a verdict. Two axes matter, and a pose can pass one w
 5. **GPS-equivalent** — precise enough to run **under the trees** as primary nav. **The actual designed
    target** (everything above is a step toward it, not a substitute).
 
+**"Post-alignment error < X" is a lab metric, not "works" — a separate gate stands between them.** Every
+ATE in this doc is measured *after* an offline **Umeyama fit** that absorbs rotation, scale, and
+translation, so it reports **trajectory shape** and is deliberately **blind to the frame/scale/extrinsic
+error a real FC would be stuck with**. Operational readiness for interactive flight is the different, harder
+claim — **flip `EK3_SRC` to VIO and keep flying** — and it additionally needs (none of which the aligned
+metric can see):
+- **VisOdom healthy** — the FC's ExtNav health check must accept the *live* stream. Today it constantly
+  reports *"VisOdom not healthy"* (it blocked arming ~10 min on 260709); this gates arming regardless of
+  post-hoc pose quality. Covariance/rate/delay + a sane pose (health signal: #124).
+- **Calibrated VIO↔FC extrinsics** — the OAK-D→FC body transform (`VISO_POS_*` / orientation) is **not
+  calibrated**, so the *raw* pose the FC would consume is in the wrong frame *even when the post-aligned
+  trajectory is excellent*. The Umeyama fit silently corrects exactly this, which is why the aligned ATE
+  can look great while the vehicle would still fly into things.
+- **Real-time, un-aligned** — the FC gets the raw pose live; there is no offline fit to rescue the frame.
+
+So a good post-alignment ATE is **necessary but not sufficient**. A full "works" criterion (tiers 3+) must
+fold in this operational chain; until then, quote *"post-alignment error < X,"* not *"works."* (Extrinsic
+calibration is currently untracked — worth an issue.)
+
 **Near-term measurement, before any map exists:** assess **max actual deviation from EKF/GPS** (eventually
 from post-hoc SfM-aligned truth, given a good data-collection story) over a flight → the clearance a path
 would have needed to avoid a strike. Feeding a *confident absolute pose* to the FC for autonomous traverse
