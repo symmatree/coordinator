@@ -34,6 +34,21 @@ chronologically, then a short human slug. The directory name is the **stable hum
 flight; nothing downstream should parse meaning out of the FC log filename (see the `1980-` note
 under Deviations).
 
+## The invariant: capture is immutable, derived is separate
+
+The load-bearing rule, and the reason for the source/derived split: **preserve "what the FC and
+the cameras actually saw," byte-for-byte, forever** -- and keep everything we *recompute* out of
+that space, even when it has the same shape as a capture. Concretely:
+
+- **`captures/` and the FC `.bin` are append-only source of truth.** Automation reads them and
+  **never writes into them.** A regenerated pose has the same shape as an online pose but is a
+  *recomputation*; it must not land beside (or overwrite) the captured input.
+- **Everything derived lives under `derived/`**, is freely overwritten as the derivation changes,
+  and carries provenance (what produced it, from which inputs + config). Losing a derived file is
+  cheap (rerun); losing a capture is not.
+- Compat is **bounded**, not forever: prefer to **migrate or archive** legacy-format flights over
+  teaching every tool to read every historical shape (see Archiving).
+
 ## Canonical tree
 
 ```
@@ -43,54 +58,62 @@ under Deviations).
   manifest.json                     # flight-level index: sessions + artifact paths + key facts
   polisher.json                     # flight-level provenance sidecar (flight-analysis run)
 
-  captures/                         # SOURCE: OAK-D capture sessions (0..n; keyed by device + time)
+  captures/                         # SOURCE (immutable): OAK-D capture sessions (0..n)
     <MxId>/                         #   OAK-D serial / MxId (coordinator #32)
       <session>/                    #   ISO-basic UTC session stamp, e.g. 20260712T132731Z
         <MxId>_<session>.feat            # estimator input record (IMU + features)
         <MxId>_<session>.feat.json       # capture metadata sidecar
-        <MxId>_<session>.vinspose.csv         # DERIVED pose (1:1 regen of THIS .feat)
-        <MxId>_<session>.vinspose.polisher.json
-        frames/                          # per-frame records for this session
-          <MxId>_<seq>_<ts>.json           #   always: per-frame telemetry/feature record
-          <MxId>_<seq>_<ts>.{png,jpg}      #   optional: stills (#72), when still-capture ran
+        stills/                          # per-type media subdirs, each file's JSON beside it
+          <MxId>_<seq>_<ts>.jpg          #   (#72 RGB stills)
+          <MxId>_<seq>_<ts>.json
+        disparity/                       # e.g. depth/disparity frames + their JSON
+          ...
+        features/                        # per-frame feature/telemetry records
+          <MxId>_<seq>_<ts>.json
+      # NO derived files here -- the regenerated pose does NOT live in captures/
 
-  derived/                          # DERIVED: flight-level analysis products (combine sources)
-    flight-analysis-<logstem>.ipynb # executed FC-log notebook + PDF (see Deviations: currently root)
+  derived/                          # DERIVED (regenerable, provenance-stamped) -- everything we recompute
+    pose/
+      <MxId>_<session>.vinspose.csv       # offline regen of that session's .feat (deployed config)
+      <MxId>_<session>.vinspose.polisher.json
+    reconstructions/<label>/              # config-variant regens (sweeps, imu on/off, offline sims)
+      <MxId>_<session>.vinspose.csv       #   each with its own provenance
+    flight-analysis-<logstem>.ipynb       # executed FC-log notebook + PDF (see Deviations: currently root)
     flight-analysis-<logstem>.pdf
-    vio-quality.json                # VINS-vs-EKF score (per session; see Path resolution)
-    vio-online-offline-comparison.json
+    vio-quality.json                      # VINS-vs-EKF score
     image-sharpness-vs-motion.json
-    *.png / *.mp4                   # figures produced by the above
+    *.png / *.mp4                         # figures
 ```
 
 Two rules make this navigable:
 
-1. **Sources are immutable and live at fixed places.** The `.bin` at the flight root; every
-   OAK-D capture under `captures/<MxId>/<session>/`. A flight may have **zero or many** capture
-   sessions (bench record, in-flight tee #78, multiple OAK-D power cycles).
-2. **A derived product lives with what it derives from.** The per-session **pose** is a
-   deterministic 1:1 regeneration of *one* `.feat`, so it sits **next to that `.feat`** at
-   `<feat-path-without-ext>.vinspose.csv`. Everything else (analysis that *combines* sources --
-   pose vs EKF, sharpness vs motion, the FC-log notebook) is flight-level and lives in
-   `derived/`.
+1. **Sources are immutable and live at fixed places.** The `.bin` at the flight root; every OAK-D
+   capture under `captures/<MxId>/<session>/`, media split by type with each file's JSON beside it.
+   A flight may have **zero or many** capture sessions (bench record, in-flight tee #78; multiple
+   only if the OAK-D/tracker restarts mid-session -- rare/hypothetical today).
+2. **Nothing derived lives in the capture area.** The regenerated pose is *derived* -- a
+   recomputation of a session's `.feat` -- so it lives under `derived/pose/` (deployed config) or
+   `derived/reconstructions/<label>/` (config variants), keyed by session, **never** beside the
+   `.feat`. Same for every analysis product. The path is still computable (from the session id),
+   so consumers resolve it directly.
 
 ## What the automation produces
 
 | Producer | Trigger | Reads | Writes (path) |
 |----------|---------|-------|---------------|
-| **vio-tracker** tee (#78) | in-flight, on the vehicle | live OAK-D | `captures/<MxId>/<session>/<MxId>_<session>.feat` (+ `.feat.json`, `frames/*.json`) |
-| **oak-still-capture** (#72) | in-flight / bench | OAK-D RGB | `captures/<MxId>/<session>/frames/<MxId>_<seq>_<ts>.{png,jpg}` (+ `.json`) |
+| **vio-tracker** tee (#78) | in-flight, on the vehicle | live OAK-D | `captures/<MxId>/<session>/<MxId>_<session>.feat` (+ `.feat.json`, `features/*.json`) |
+| **oak-still-capture** (#72) | in-flight / bench | OAK-D RGB | `captures/<MxId>/<session>/stills/<MxId>_<seq>_<ts>.jpg` (+ `.json`) |
 | `bin/vio-ipc-record` (bench) | manual bench | estimator sockets | a capture session (same `captures/...` shape) |
 | **flight-analysis** CronJob (tiles) | nightly 04:00 UTC | `<fc-log>.bin` | `flight-analysis-<logstem>.{ipynb,pdf}`, `manifest.json`, `polisher.json` |
-| **vio-offline** CronJob (tiles) | nightly 05:00 UTC | each `*.feat` | `<feat>.vinspose.csv` + `<feat>.vinspose.polisher.json` (next to the `.feat`) |
+| **vio-offline** CronJob (tiles) | nightly 05:00 UTC | each `*.feat` | canonical: `derived/pose/<session>.vinspose.csv` + sidecar. **Current: next to the `.feat` -- a deviation (writes derived into `captures/`).** |
 | `analysis/vio-quality.ipynb` | manual / after cron | pose CSV + `.bin` + `manifest.json` | `derived/vio-quality.json` (+ figures) |
 | `analysis/vio-online-offline-comparison.ipynb` | manual | pose CSV + `VISP` from `.bin` | `derived/vio-online-offline-comparison.json` (+ figures) |
-| `analysis/image-sharpness-vs-motion.ipynb` | manual | `frames/` stills + `.bin` | `derived/image-sharpness-vs-motion.json` (+ figures) |
-| `analysis/tools/vio_param_sweep.py` | manual (bench, docker) | a `.feat` + `.bin` | `<feat>.<param>-sweep.json` (next to the `.feat`) |
+| `analysis/image-sharpness-vs-motion.ipynb` | manual | `stills/` + `.bin` | `derived/image-sharpness-vs-motion.json` (+ figures) |
+| `analysis/tools/vio_param_sweep.py` | manual (bench, docker) | a `.feat` + `.bin` | canonical: `derived/reconstructions/<param>/...`. **Current: `<feat>.<param>-sweep.json` next to the `.feat` -- deviation.** |
 
 **Provenance sidecars** (RO-Crate-ish field names, coordinator #40):
-- `<feat>.vinspose.polisher.json` -- per pose: estimator source SHA, `vins_fusion` commit, fixture
-  + config sha256, pose-row count. Freshness (skip-if-unchanged) is keyed on these.
+- `derived/pose/<session>.vinspose.polisher.json` -- per pose: estimator source SHA, `vins_fusion`
+  commit, fixture + config sha256, pose-row count. Freshness (skip-if-unchanged) is keyed on these.
 - `polisher.json` -- per flight-analysis run: notebook SHA, `.bin` sha256, output shas.
 - `manifest.json` -- the flight-analysis notebook's own self-description: input file, parameters,
   and key flight facts (duration, armed time, GPS status, vibe, EKF errors). Consumed by
@@ -98,17 +121,18 @@ Two rules make this navigable:
 
 ## Path resolution -- how a consumer finds an artifact (no globbing)
 
-The rule that started this doc: **do not `glob` for a file whose path is computable.** A
-consumer that has a capture-session directory can construct every artifact path within it
-directly -- the pose is `<session-dir>/<MxId>_<session>.vinspose.csv`, full stop. What a consumer
-needs first is the **list of sessions**, and the `captures/` tree *is* that index: its levels are
-defined (`captures/<MxId>/<session>/`), so enumerating the session directories is a structured,
-predictable walk -- not a fragile `glob("*.vinspose.csv")` over the whole flight dir.
+The rule that started this doc: **do not `glob` for a file whose path is computable.** What a
+consumer needs first is the **list of sessions**, and the `captures/` tree *is* that index: its
+levels are defined (`captures/<MxId>/<session>/`), so enumerating the session directories is a
+structured, predictable walk -- not a fragile `glob("*.vinspose.csv")` over the whole flight dir.
 
 So the canonical resolution is:
 
 1. list `captures/*/*/` -> the flight's capture sessions (0..n);
-2. for each, the `.feat`, pose, and `frames/` are at computed names within that directory.
+2. for a session, its **capture** artifacts are at computed names *inside* that session dir
+   (`<session>.feat`, `stills/`, ...), and its **derived** pose is at a computed name *under
+   `derived/`* (`derived/pose/<session>.vinspose.csv`, or `derived/reconstructions/<label>/...`
+   for a variant). Source and derived are separate trees, both addressed by the session id.
 
 A flight has **0..n** sessions, so the current `vio-quality` assumption -- `glob("*.vinspose.csv")`
 in the flight root, assert exactly one -- is wrong two ways: it finds *zero* when the pose is under
@@ -124,12 +148,17 @@ flight-analysis `manifest.json` describes the `.bin` analysis, not the captures 
 Ordered roughly by how much they bite. None are urgent (all NAS data is regenerable), but each is
 a place the layout is not yet canonical.
 
-1. **`vio-quality` globs and asserts one pose per flight.** `pose_csvs = sorted(D.glob("*.vinspose.csv")); assert len==1`
-   with `D = <fc-log>.bin`'s parent. This finds the flat 260705 pose but **zero** for 260712
-   (pose is under `captures/`), and would break on any multi-session flight. *Fix:* enumerate the
-   `captures/*/*/` sessions and read each pose at its computed path (per Path resolution), drop the
-   "exactly one" assumption. (This is the trigger for this doc; the fix is structured resolution,
-   **not** teaching the tool to `rglob` an inconsistent tree.)
+1. **Derived pose is written into the capture area, and consumers glob for it** (two coupled
+   defects; highest value). *(a) Writer:* `vio-offline-runner` writes `<feat>.vinspose.csv` **next
+   to the `.feat`** -- inside `captures/` (or the flight root for flat flights) -- and overwrites
+   it in place on regen. That drops *derived* data into the *immutable capture* tree, breaking the
+   invariant above (nothing captured is lost -- the `.feat` is read-only -- but the capture area
+   stops being pristine, and the filename doesn't even mark online-vs-offline). *(b) Reader:*
+   `vio-quality` then `glob("*.vinspose.csv")`s the flight root and asserts exactly one -- which
+   finds the flat 260705 pose but **zero** for 260712 (pose is under `captures/`), and can't
+   represent config variants. *Fix:* writer -> `derived/pose/<session>.vinspose.csv` (variants
+   under `derived/reconstructions/<label>/`); reader resolves that path per session (structured,
+   **not** `rglob`), drop "exactly one".
 2. **Bench captures dump per-frame files flat in the flight root.** `260724-bench-atrest/` has
    575 `.json` + 481 `.png` + 92 `.jpg` + the `.feat` all at the flight root, instead of under
    `captures/<MxId>/<session>/frames/`. *Fix:* the bench recorder should write the same
@@ -167,6 +196,22 @@ a place the layout is not yet canonical.
     flight-analysis's `manifest.json`, or a small indexer) to make resolution a lookup -- but this
     only pays off once **#2** lands and *every* capture (bench included) is actually under
     `captures/`; until then the flat 260705/260724 `.feat`s have no session dir to enumerate.
+
+## Archiving and format compat
+
+Compat is **bounded on purpose.** Rather than teach every tool to read every historical capture
+shape forever, prefer to **migrate** a flight to the canonical layout, or **archive** it out of the
+active tree (e.g. `flights/<platform>/_archive/<flight>/`) so the automation only ever sees
+canonical flights. Early flights are the ones most likely to be in odd formats -- and, notably, the
+ones we were most precious about because they were *firsts* (first autotune, first VIO). That
+caution has largely served its purpose: with a working regime, revertible params, and a post-flight
+analysis model that confirms behavior, **most flights are cheap to re-fly** -- and soon literally
+re-flyable from waypoints instead of stick inputs. So the bias should be **make new data cheap, not
+hoard old data**: keep captures we genuinely can't reproduce, archive the rest, and don't let
+backward-compat debt accumulate in the active tree. (The place offline replay earns its keep is the
+opposite direction -- not re-flying to get data we could recapture, but **silicon leverage**:
+hyperparameter sweeps that would otherwise need one flight per grid point, where you tune to a
+predicted optimum and fly only a few points to confirm the local slope.)
 
 ## NAS housekeeping (ignore, don't process)
 
