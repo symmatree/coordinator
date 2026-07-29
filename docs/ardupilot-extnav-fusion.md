@@ -105,8 +105,19 @@ So velocity naturally rides out isolated VIO spikes; position needs `EK3_GLITCH_
 
 ## Recommended params + VINS re-init handling
 
-- Enable: **`VISO_TYPE=1`** (MAV). Tune `VISO_POS_M_NSE`, `VISO_VEL_M_NSE` (the covariance
-  floors), and **`VISO_DELAY_MS`** = true VINS->FC latency (default 10 ms; measure ours).
+- Enable: `VISO_TYPE` non-zero. Tune `VISO_POS_M_NSE`, `VISO_VEL_M_NSE` (the covariance
+  floors), and **`VISO_DELAY_MS`** = true VINS->FC latency (10 ms is the ArduPilot *default*, not
+  a measured value; ours is ~100 ms per E16 -- set it from the pipeline latency).
+- **Backend choice: `VISO_TYPE=1` (MAV) vs `2` (IntelT265) -- the yaw-alignment split.** Both
+  consume the same `VISION_POSITION_ESTIMATE`, but only the **IntelT265** backend yaw-aligns the
+  sensor frame to the vehicle AHRS heading (`align_yaw_to_ahrs` -> `_yaw_trim`, auto on the first
+  pose; re-trigger via RC aux `VISODOM_ALIGN=80`) and rotates position/velocity into it. The
+  **MAV** backend does **not** rotate at all, and the FC's GPS-anchor (`align_position_to_ahrs`)
+  is translation-only. Our stereo-only VINS has no heading reference (its world-frame yaw is
+  arbitrary per init), so a static `VISO_ORIENT` cannot fix it -- **`VISO_TYPE=2` is the candidate
+  fix**. SITL confirms the mechanism (`VISO_TYPE=2` logs `VisOdom: yaw shifted ... deg`, type 1
+  logs nothing); *whether* it aligns correctly on our real (init-relative, IMU-less) attitude is
+  unconfirmed. See `analysis/vio-quality-experiments.md` (orientation note) + `harness/sitl_extnav/`.
 - Sources: `EK3_SRCn_POSXY=6` (ExtNav) required; add `VELXY=6` when a real velocity exists;
   `POSZ`, `YAW` per environment. `EK3_POS_I_GATE`/`EK3_VEL_I_GATE`/`EK3_GLITCH_RAD` are the
   consistency/reset knobs (shared across sources).
