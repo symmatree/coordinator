@@ -19,7 +19,7 @@ The `apm_wiki` branch builds the `vins_estimator` subproject as **plain CMake**:
 |--------|-----------|---------|
 | `/tmp/chobits_imu` | tracker -> estimator (bind here) | IMU packets |
 | `/tmp/chobits_features` | tracker -> estimator (bind here) | feature bundles |
-| `/tmp/chobits_server` | estimator -> consumer | `float[10]`: quat(w,x,y,z) + pos(x,y,z) + vel(x,y,z) |
+| `/tmp/chobits_server` | estimator -> consumer | `float[12]` (contract v2): quat(w,x,y,z) + pos(x,y,z) + vel(x,y,z) + reset_counter + feature_count (was `float[10]`; appended fields, length-detected) |
 
 All under the shared `${COORDINATOR_IPC_DIR}:/tmp` mount. (`vins_fusion` also offers an opt-in UDP debug feed on port 8800: send it a datagram and it streams odometry back to the sender.)
 

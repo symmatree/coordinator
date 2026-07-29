@@ -12,6 +12,15 @@
 
 extern bool gogogo;
 
+// coordinator overlay: monotonic re-init counter for the pose IPC datagram
+// (contract v2). Bumped on each failure-triggered clearState() below -- the
+// re-inits that produce a datum discontinuity -- so the router can forward it as
+// VISION_POSITION_ESTIMATE.reset_counter and the FC does a clean ResetPositionNE
+// instead of fighting the jump as a glitch (coordinator #67). NOT bumped on the
+// initial clearState (the first pose is reset_counter=0). Read by pubOdometry
+// (visualization.cpp) and main_offline.cpp; survives clearState (file scope).
+int chobits_reset_counter = 0;
+
 Estimator::Estimator(): f_manager{Rs}
 {
     ROS_INFO("init begins");
@@ -516,6 +525,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         {
             ROS_WARN("failure detection!");
             failure_occur = 1;
+            chobits_reset_counter++;  // datum discontinuity -> reset counter (#67)
             clearState();
             setParameter();
             ROS_WARN("system reboot!");

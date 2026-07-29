@@ -28,7 +28,7 @@ Ordering is not enforced: the tracker tolerates an absent listener (drops packet
 
 ## Verify pose output
 
-`vins_fusion` sends a `float[10]` per estimate to the Unix socket `/tmp/chobits_server` (on the host: `${COORDINATOR_IPC_DIR}/chobits_server`, i.e. `/var/lib/coordinator/ipc/chobits_server`): `quat(w,x,y,z)` + `pos(x,y,z)` + `vel(x,y,z)`. Tap it from the host with **`vio-pose-tap`** (installed at `/usr/local/bin/vio-pose-tap`): it binds the socket, stamps each datagram on receipt (the wire format carries no timestamp), and prints and/or appends CSV. Move the rig and watch position/attitude change:
+`vins_fusion` sends one pose datagram per estimate to the Unix socket `/tmp/chobits_server` (on the host: `${COORDINATOR_IPC_DIR}/chobits_server`, i.e. `/var/lib/coordinator/ipc/chobits_server`): contract v2 `float[12]` = `quat(w,x,y,z)` + `pos(x,y,z)` + `vel(x,y,z)` + `reset_counter` + `feature_count` (was `float[10]`; the two health fields are appended and length-detected). Tap it from the host with **`vio-pose-tap`** (installed at `/usr/local/bin/vio-pose-tap`): it binds the socket, stamps each datagram on receipt (the wire format carries no timestamp), and prints and/or appends CSV. Move the rig and watch position/attitude change:
 
 ```bash
 vio-pose-tap                      # print live to the terminal

@@ -6,7 +6,8 @@ Stands in for the real FC at the far end of the router. The router already speak
 serial or pty is needed -- the fake FC is just a MAVLink UDP endpoint (``udpin:``).
 
 It plays the FC's side of the visual-odometry link:
-  * receives ATT_POS_MOCAP / VISION_SPEED_ESTIMATE and exposes them for assertion,
+  * receives VISION_POSITION_ESTIMATE / VISION_SPEED_ESTIMATE and exposes them for
+    assertion (position carries the reset_counter, #67),
   * runs the TIMESYNC handshake as the *initiator* (FC sends tc1==0, expects a
     reply with tc1!=0 and ts1 echoed) -- the router replies to exactly this,
   * emits HEARTBEAT so a real router/FC would consider the link alive.
@@ -82,21 +83,28 @@ class FakeFC:
 AXIS_FLIP_TOL = 1e-4
 
 
-def check_att_pos_mocap(msg, q, pos, pos_nse=0.30):
-    """Verify ATT_POS_MOCAP passes the quaternion, applies the (x,-y,-z) flip, and
-    carries the honest position covariance. The FC (4.7) collapses the diagonal to
-    posErr = sqrt(cov[0]+cov[6]+cov[11]); the router spreads pos_nse**2 across the
-    three entries, so that FC-scalar == pos_nse (symmetric with check_vision_speed)."""
+def check_vision_position_estimate(msg, pos, reset_counter=0, pos_err=None, pos_err_min=None):
+    """Verify VISION_POSITION_ESTIMATE: the (x,-y,-z) position flip, the
+    reset_counter the router forwarded (#67), and the honest position covariance.
+
+    The FC (4.7) collapses the diagonal to posErr = sqrt(cov[0]+cov[6]+cov[11]);
+    the router spreads posErr**2 across the three entries. Covariance now GROWS
+    with distance travelled, so ``pos_err`` asserts an exact value where it is
+    known (a fresh anchor/reset) and ``pos_err_min`` asserts a floor otherwise.
+    Attitude is euler and fusion-inert here (EK3_SRC_YAW=compass) -- not asserted.
+    """
     ex, ey, ez = pos[0], -pos[1], -pos[2]
     errs = []
     if not (abs(msg.x - ex) < AXIS_FLIP_TOL and abs(msg.y - ey) < AXIS_FLIP_TOL
             and abs(msg.z - ez) < AXIS_FLIP_TOL):
         errs.append(f"position ({msg.x},{msg.y},{msg.z}) != expected ({ex},{ey},{ez})")
-    if not all(abs(a - b) < AXIS_FLIP_TOL for a, b in zip(msg.q, q)):
-        errs.append(f"quaternion {list(msg.q)} != expected {list(q)}")
+    if msg.reset_counter != reset_counter:
+        errs.append(f"reset_counter {msg.reset_counter} != expected {reset_counter}")
     fc_pos_err = math.sqrt(msg.covariance[0] + msg.covariance[6] + msg.covariance[11])
-    if not abs(fc_pos_err - pos_nse) < 1e-3:
-        errs.append(f"position covariance FC-scalar {fc_pos_err:.4f} != {pos_nse}")
+    if pos_err is not None and abs(fc_pos_err - pos_err) > 1e-3:
+        errs.append(f"position covariance FC-scalar {fc_pos_err:.4f} != {pos_err}")
+    if pos_err_min is not None and fc_pos_err < pos_err_min - 1e-3:
+        errs.append(f"position covariance FC-scalar {fc_pos_err:.4f} < floor {pos_err_min}")
     return errs
 
 
@@ -140,8 +148,9 @@ def main():
             if m is None:
                 continue
             t = m.get_type()
-            if t == "ATT_POS_MOCAP":
-                print(f"ATT_POS_MOCAP q={list(m.q)} pos=({m.x:+.3f},{m.y:+.3f},{m.z:+.3f})")
+            if t == "VISION_POSITION_ESTIMATE":
+                print(f"VISION_POSITION_ESTIMATE pos=({m.x:+.3f},{m.y:+.3f},{m.z:+.3f}) "
+                      f"rst={m.reset_counter} cov0={m.covariance[0]:.4f}")
             elif t == "VISION_SPEED_ESTIMATE":
                 print(f"VISION_SPEED_ESTIMATE vel=({m.x:+.3f},{m.y:+.3f},{m.z:+.3f})")
             elif t == "TIMESYNC":

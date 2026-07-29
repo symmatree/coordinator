@@ -33,6 +33,11 @@
 int pub_sock = 0;
 struct sockaddr_in pub_addr;
 
+// Defined in the (shadowed) estimator.cpp; the offline CSV mirrors the online
+// datagram's contract-v2 health fields so a regenerated pose replays through the
+// router identically to a live one (reset counter #67 + covariance input).
+extern int chobits_reset_counter;
+
 // The estimator lib references this "keep running" flag (defined in the stock main.cpp).
 // Offline we run to completion regardless; just satisfy the link with it set true.
 bool gogogo = true;
@@ -107,7 +112,7 @@ int main(int argc, char **argv) {
     std::stable_sort(frames.begin(), frames.end(),
                      [](const Frame &a, const Frame &b) { return a.t_mono < b.t_mono; });
 
-    fprintf(out, "t,qw,qx,qy,qz,px,py,pz,vx,vy,vz\n");
+    fprintf(out, "t,qw,qx,qy,qz,px,py,pz,vx,vy,vz,reset_counter,feature_count\n");
 
     // Copy each payload into an 8-byte-aligned buffer before reading doubles (frame
     // offsets are unaligned; misaligned double reads are UB on arm64).
@@ -143,9 +148,10 @@ int main(int argc, char **argv) {
                 Eigen::Quaterniond q(estimator.Rs[WINDOW_SIZE]);
                 const Eigen::Vector3d &P = estimator.Ps[WINDOW_SIZE];
                 const Eigen::Vector3d &V = estimator.Vs[WINDOW_SIZE];
-                fprintf(out, "%.6f,%.7f,%.7f,%.7f,%.7f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                fprintf(out, "%.6f,%.7f,%.7f,%.7f,%.7f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d\n",
                         estimator.Headers[WINDOW_SIZE], q.w(), q.x(), q.y(), q.z(),
-                        P.x(), P.y(), P.z(), V.x(), V.y(), V.z());
+                        P.x(), P.y(), P.z(), V.x(), V.y(), V.z(),
+                        chobits_reset_counter, estimator.f_manager.last_track_num);
             }
         }
     }
