@@ -158,6 +158,16 @@ def compare(pose_csv, fc_bin, run_name="run", replay_speed=1.0,
     pre = v.iloc[:dv + 1] if dv >= 10 else v
     lag, ncc = align_time(pre["te"].values, pre["w"].values, fc["imu0"]["t_s"].values, fc["imu0"]["w"].values)
     v["tfc"] = v["te"] + lag
+    return _compare_core(v, fc, lag, ncc, "gyro_xcorr", run_name, vel_diverge,
+                         fit_seconds, with_scale, make_plot)
+
+
+def _compare_core(v, fc, lag, ncc, align_source, run_name="run", vel_diverge=6.0,
+                  fit_seconds=None, with_scale=True, make_plot=True):
+    """Shared comparison core. `v` already carries `tfc` (FC-time), `px/py/pz`, `speed`.
+    find_window -> Umeyama-fit VINS->EKF NED over the valid window -> ATE/scale metrics.
+    `align_source` records how `tfc` was obtained (gyro cross-correlation vs the exact
+    VISP FC clock) so the sidecar is self-describing."""
     t0, t_div, reason = find_window(v, fc, lag, vel_diverge=vel_diverge)
 
     xkf = fc["xkf"]
@@ -180,7 +190,8 @@ def compare(pose_csv, fc_bin, run_name="run", replay_speed=1.0,
     track_s = float(within.max() - t0) if len(within) else 0.0
 
     metrics = dict(
-        run=run_name, align_lag_s=round(lag, 2), align_ncc=round(ncc, 3),
+        run=run_name, align_source=align_source,
+        align_lag_s=round(lag, 2), align_ncc=round(ncc, 3),
         window_fc_s=[round(t0, 1), round(float(t_div), 1)], window_reason=reason,
         n_samples=int(len(win)), umeyama_scale=round(float(c), 3),
         ate_rmse_m=round(float(np.sqrt((err ** 2).mean())), 3) if len(err) else None,
@@ -192,6 +203,43 @@ def compare(pose_csv, fc_bin, run_name="run", replay_speed=1.0,
     if make_plot:
         _plot(v, fc, xkf, win, gt, vio_al, err, t0, t_div, run_name, metrics)
     return metrics
+
+
+def load_visp_pose(fc_bin):
+    """Load the ONBOARD VINS pose (`VISP`) straight from the FC .bin as a pose frame in
+    FC time. The FC logs each VISP sample against its own clock (`TimeUS`), so this pose
+    is *already on the EKF clock* -- no cross-correlation needed (unlike an offline-regen
+    CSV, whose coordinator clock is unrelated to the 1980-dated FC wall clock). Speed is
+    position-derived for windowing, as in load_vio_pose. Returns None if there is no VISP."""
+    F, _, _ = parse_log(fc_bin, ["VISP"])
+    vp = F.get("VISP")
+    if vp is None or len(vp) < 10:
+        return None
+    v = pd.DataFrame(dict(te=vp["TimeUS"].values / 1e6,
+                          px=vp["PX"].values, py=vp["PY"].values, pz=vp["PZ"].values))
+    dt = np.diff(v["te"].values)
+    dt[dt <= 0] = np.nan
+    dp = np.linalg.norm(np.diff(v[["px", "py", "pz"]].values, axis=0), axis=1)
+    raw = np.nan_to_num(np.concatenate([[0.0], dp / dt]))
+    v["speed"] = np.convolve(raw, np.ones(SPEED_SMOOTH) / SPEED_SMOOTH, mode="same")
+    return v
+
+
+def compare_visp(fc_bin, run_name="run", vel_diverge=6.0, fit_seconds=None,
+                 with_scale=True, make_plot=True):
+    """Compare the ONBOARD `VISP` directly to the EKF -- the robust path for a
+    VIO-in-the-loop flight. VISP is logged in FC time, so there is no time-alignment
+    guesswork: `compare()` cross-correlates angular motion to find the offset, which is
+    unreliable on a tame, low-rotation flight (weak NCC). Here alignment is exact
+    (align_ncc=1.0, align_source='visp_fc_clock'); same window / Umeyama / metrics."""
+    v = load_visp_pose(fc_bin)
+    if v is None:
+        raise ValueError("no VISP in this .bin; use compare() with an offline-regen CSV")
+    fc = load_fc(fc_bin)
+    v["tfc"] = v["te"]  # already FC time -- exact
+    return _compare_core(v, fc, lag=0.0, ncc=1.0, align_source="visp_fc_clock",
+                         run_name=run_name, vel_diverge=vel_diverge, fit_seconds=fit_seconds,
+                         with_scale=with_scale, make_plot=make_plot)
 
 
 def _plot(v, fc, xkf, win, gt, vio_al, err, t0, t_div, run_name, metrics):
@@ -251,6 +299,13 @@ def _plot(v, fc, xkf, win, gt, vio_al, err, t0, t_div, run_name, metrics):
 
 if __name__ == "__main__":
     import sys
-    m = compare(sys.argv[1], sys.argv[2], run_name=sys.argv[3] if len(sys.argv) > 3 else "run",
-                replay_speed=float(sys.argv[4]) if len(sys.argv) > 4 else 1.0, make_plot=False)
+    args = sys.argv[1:]
+    if args and args[0] == "--visp":
+        # compare the onboard VISP directly to the EKF (no offline-regen CSV needed):
+        #   vio_ekf_compare.py --visp <fc.bin> [run_name]
+        m = compare_visp(args[1], run_name=args[2] if len(args) > 2 else "run", make_plot=False)
+    else:
+        #   vio_ekf_compare.py <pose.csv> <fc.bin> [run_name] [replay_speed]
+        m = compare(args[0], args[1], run_name=args[2] if len(args) > 2 else "run",
+                    replay_speed=float(args[3]) if len(args) > 3 else 1.0, make_plot=False)
     print(json.dumps(m, indent=2))
