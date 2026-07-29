@@ -104,8 +104,10 @@ metric can see):
 - **Real-time, un-aligned** — the FC gets the raw pose live; there is no offline fit to rescue the frame.
 
 So a good post-alignment ATE is **necessary but not sufficient**. A full "works" criterion (tiers 3+) must
-fold in this operational chain; until then, quote *"post-alignment error < X,"* not *"works."* (Extrinsic
-calibration is currently untracked — worth an issue.)
+fold in this operational chain; until then, quote *"post-alignment error < X,"* not *"works."* This gate is
+tracked as a **task** in [#138](https://github.com/symmatree/coordinator/issues/138) (lever arm / orientation
+/ delay / VisOdom-health, and its interaction with 4.7's GPS-anchored VisualOdom, #80/#65) — verified state:
+`VISO_POS_X/Y/Z = 0`, `VISO_ORIENT = 0`, `VISO_DELAY_MS = 10` (vs ~100 ms measured).
 
 **Near-term measurement, before any map exists:** assess **max actual deviation from EKF/GPS** (eventually
 from post-hoc SfM-aligned truth, given a good data-collection story) over a flight → the clearance a path
