@@ -61,20 +61,19 @@ two channels below.
      reflash image ([#90](https://github.com/symmatree/coordinator/issues/90)) is cheap and
      incremental.
 
-## Deploy mechanics: the changes queued (not yet built)
+## Deploy mechanics (built -- #48)
 
-- **Copy -> symlink** ([#48](https://github.com/symmatree/coordinator/issues/48)). Today
-  `host/ansible/roles/coord-stack` does `ansible.builtin.copy` of the whole `stacks/<name>/`
-  dir into `/opt/stacks/<name>/` -- two copies of the same bytes, a sync ceremony between
-  them, and hand-edits silently reverted. Replace with a symlink
+- **Copy -> symlink.** `host/ansible/roles/coord-stack` used to `ansible.builtin.copy` the whole
+  `stacks/<name>/` dir into `/opt/stacks/<name>/` -- two copies of the same bytes, a sync
+  ceremony between them, and hand-edits silently reverted. It now **symlinks**
   `/opt/stacks/<name> -> <checkout>/stacks/<name>`, so `git pull` is the deploy and deployed
-  `.env` == repo `.env` by construction. `coord`'s `/opt/stacks/*/compose.yaml` glob still
-  resolves through it.
-- **Split `dist-upgrade` out of `one_time.sh`.** Today a config deploy drags a full
-  `apt-get dist-upgrade` (network + possible reboot) in front of the playbook. In the
-  appliance model the **OS version is a property of the image**, upgraded by a deliberate
-  rebuild/reflash -- not a side effect of pushing a compose tweak. A field deploy should be
-  config-only.
+  `.env` == repo `.env` by construction. `coord`'s `/opt/stacks/*/compose.yaml` glob resolves
+  through it. (A stale copied dir from a pre-symlink deploy is removed once, on the next run.)
+- **`dist-upgrade` split out of `one_time.sh`.** A config deploy used to drag a full
+  `apt-get dist-upgrade` (network + possible reboot) in front of the playbook. `one_time.sh` is
+  now **config-only**; the OS upgrade moved to a deliberate **`host/os_upgrade.sh`**. In the
+  appliance model the OS version is normally a property of the image (#96), upgraded by reflash;
+  `os_upgrade.sh` is the in-place alternative. A field config deploy no longer touches the OS.
 
 ## Boot without a network
 
@@ -158,9 +157,9 @@ Dockge itself does not.
 | Runtime change is a MAVLink channel, not a config file | **decided** (build is its own track) |
 | Dockge dropped | **decided** |
 | btrfs subvolume substrate ([#41](https://github.com/symmatree/coordinator/issues/41)/[#96](https://github.com/symmatree/coordinator/issues/96)) | decided; **not built** (only the pipboy NVMe layout exists in `dotfiles-symm/pi-storage`) |
-| Copy -> symlink deploy ([#48](https://github.com/symmatree/coordinator/issues/48)) | decided; **not built** |
-| Split `dist-upgrade` out of `one_time.sh` | decided; **not built** |
-| Pin base (immutable ref, `pin-base-digests.sh`) + shared `vio-base` (layer-cache fix) | base pins + `vio-tracker-base` **built** (#146); tracker rewire pending |
+| Copy -> symlink deploy ([#48](https://github.com/symmatree/coordinator/issues/48)) | **built** |
+| Split `dist-upgrade` out of `one_time.sh` (`host/os_upgrade.sh`) | **built** |
+| Pin base (immutable ref, `pin-base-digests.sh`) + shared `vio-tracker-base` (layer-cache fix, [#145](https://github.com/symmatree/coordinator/issues/145)) | **built** (#146 pins/base, #147 pin script, #148 tracker rewire) |
 | Baked images / boot-without-network ([#90](https://github.com/symmatree/coordinator/issues/90)) | decided; **not built** (auto-start [#97](https://github.com/symmatree/coordinator/issues/97) is done) |
 
 ## Related

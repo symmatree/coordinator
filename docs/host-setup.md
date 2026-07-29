@@ -13,7 +13,7 @@ Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansi
 | GitHub clone | Repo is **public**; HTTPS clone needs no `gh auth login` |
 | Standalone `docker pull` | **Optional diagnostic only** -- `coord pull` already pulls the image; skip unless debugging registry/network |
 | Install path | Clone repo on Pi, run `host/one_time.sh` (wired with `device_role=coordinator` + `sync_repo=true`) |
-| Reboot | Ansible reboots when `/var/run/reboot-required` is set (kernel, firmware, or modules after `dist-upgrade`) -- **not** for docker group membership |
+| Reboot | Ansible reboots when `/var/run/reboot-required` is set (a kernel/firmware/module it installed, or after `os_upgrade.sh`) -- **not** for docker group membership. `one_time.sh` no longer `dist-upgrade`s ([#48](https://github.com/symmatree/coordinator/issues/48)) |
 | Repeat until stable | Run `./host/one_time.sh` again after each reboot until it exits without triggering one |
 | Deployer alternative | Run Ansible from a laptop against the Pi inventory instead of installing Ansible on the Pi -- lighter if local bootstrap becomes painful (not needed yet) |
 
@@ -101,11 +101,11 @@ From the repo root (or from `host/` -- the script resolves its own directory):
 
 What it does:
 
-1. `apt update`, `dist-upgrade`, install `ansible` and minimal deps (same shape as [dotfiles `one_time.sh`](https://github.com/symmatree/dotfiles-symm/blob/main/ubuntu-zsh/one_time.sh)).
-2. Ansible: Docker CE + Compose plugin, `/opt/stacks/coordinator`, `/var/lib/coordinator/{config,ipc}`, sync stack + `coord` CLI from this checkout.
-3. If `dist-upgrade` left `/var/run/reboot-required` set (new kernel, firmware, or modules), Ansible **reboots and waits** for the host to return.
+1. `apt update`, install `ansible` and minimal deps. **Config-only** -- no `dist-upgrade`; for an in-place OS upgrade run `./host/os_upgrade.sh` deliberately ([#48](https://github.com/symmatree/coordinator/issues/48)).
+2. Ansible: Docker CE + Compose plugin, **symlink** `/opt/stacks/coordinator` to this checkout, `/var/lib/coordinator/{config,ipc}`, install `coord` CLI.
+3. If Ansible installed a new kernel, firmware, or module that set `/var/run/reboot-required`, it **reboots and waits** for the host to return.
 
-**Repeat until stable:** run `./host/one_time.sh` again after any reboot until the script prints `one_time: complete (coordinator, no pending kernel/firmware reboot).` Fresh images often need one cycle; idempotent re-runs should not reboot again.
+**Repeat until stable:** run `./host/one_time.sh` again after any reboot until the script prints `one_time: complete (coordinator, no pending kernel/firmware reboot).` Fresh images often need one cycle; idempotent re-runs should not reboot again. (A fresh flash you also want current can get one `./host/os_upgrade.sh` pass first; routine config deploys skip it.)
 
 If bootstrap fails on architecture, the playbook requires **aarch64** (64-bit Pi OS).
 

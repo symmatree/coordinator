@@ -13,7 +13,7 @@ After clone on the device:
 ./host/one_time.sh pod          # pod (Pi Zero 2 W)
 ```
 
-That installs Ansible, runs [ansible/site.yaml](ansible/site.yaml) with `sync_repo=true` and the chosen `device_role`, and reboots when kernel/firmware updates require it. Repeat until the script completes without rebooting.
+That installs Ansible and runs [ansible/site.yaml](ansible/site.yaml) with `sync_repo=true` and the chosen `device_role` to converge config. It is a **config-only** deploy -- it does **not** `dist-upgrade` the OS (run [os_upgrade.sh](os_upgrade.sh) for that; [#48](https://github.com/symmatree/coordinator/issues/48)). Ansible still reboots if a kernel/firmware/module change it installs requires it; repeat until the script completes without rebooting.
 
 Then bench: coordinator tracker [docs/bench-tracker.md](../docs/bench-tracker.md); pod phases [docs/pi-zero-bringup.md](../docs/pi-zero-bringup.md).
 
@@ -24,7 +24,7 @@ Then bench: coordinator tracker [docs/bench-tracker.md](../docs/bench-tracker.md
 | Role | Scope |
 |------|-------|
 | `docker-host` | **Shared** -- Docker Engine + Compose plugin, docker group, service, kernel/firmware reboot loop |
-| `coord-stack` | **Shared** -- `/opt/stacks/<name>`, state dirs, sync stack + `coord` from checkout |
+| `coord-stack` | **Shared** -- symlinks `/opt/stacks/<name>` to the checkout (`git pull` is the deploy, [#48](https://github.com/symmatree/coordinator/issues/48)), state dirs, installs `coord` |
 | `coordinator` | OAK-D udev rules; coordinator stack (`/var/lib/coordinator/{config,ipc}`) |
 | `pod` | pod stack (`/var/lib/pod/{config,captures}`); Phase 3 adds `dwc2`/`g_ether` + PPS overlays |
 
@@ -39,4 +39,4 @@ GHCR images are public; `docker login ghcr.io` is not required for `coord pull`.
 
 Not in these roles yet: chrony/PPS, USB gadget `br0` (see [docs/architecture.md](../docs/architecture.md) and [docs/pi-zero-bringup.md](../docs/pi-zero-bringup.md)). Dockge was considered and **dropped** (see [docs/deployment-model.md](../docs/deployment-model.md)).
 
-The stack-file **copy** this role does today is slated to become a symlink so `git pull` is the deploy (drift fix, [#48](https://github.com/symmatree/coordinator/issues/48)); the appliance deploy & config model is in [docs/deployment-model.md](../docs/deployment-model.md).
+`/opt/stacks/<name>` is a **symlink** to the checkout's `stacks/<name>`, so `git pull` is the deploy -- no copy, no drift, deployed `.env` == repo `.env` by construction ([#48](https://github.com/symmatree/coordinator/issues/48)). The appliance deploy & config model is in [docs/deployment-model.md](../docs/deployment-model.md).
