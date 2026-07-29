@@ -41,10 +41,10 @@ cd coordinator
 
 `one_time.sh pod` runs the shared bootstrap with `device_role=pod`:
 
-1. apt update / dist-upgrade, install Ansible + minimal deps.
+1. apt update, install Ansible + minimal deps. Config-only -- no `dist-upgrade` (run `./host/os_upgrade.sh` for that, [#48](https://github.com/symmatree/coordinator/issues/48)).
 2. `docker-host` role: Docker CE + Compose plugin, docker group, enable Docker.
-3. `pod` role: pod state dirs (`/opt/stacks/pod`, `/var/lib/pod/{config,captures}`), sync `stacks/pod/` + `coord` from the checkout.
-4. Reboot if `dist-upgrade` left `/var/run/reboot-required` set; **re-run until it exits clean** (same loop as the Coordinator).
+3. `pod` role: pod state dirs (`/var/lib/pod/{config,captures}`), **symlink** `/opt/stacks/pod` to the checkout's `stacks/pod/`, install `coord`.
+4. Reboot if Ansible installed a kernel/firmware/module that set `/var/run/reboot-required`; **re-run until it exits clean** (same loop as the Coordinator).
 
 The camera overlays, `dwc2`/`g_ether`, and `pps-gpio` are **not** applied here -- they land in Phase 3.
 

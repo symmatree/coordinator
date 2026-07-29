@@ -1,14 +1,8 @@
 ---
-# Shared stack installer used by both device roles. Creates the stack dir under
-# /opt/stacks/<name> (the /opt/stacks convention), the device state dirs, and -- when
-# sync_repo is true -- syncs the stack files and the shared coord CLI from the
-# checkout. Caller sets coord_stack_name, coord_state_root, coord_state_subdirs.
-
-- name: Create stack dir for {{ coord_stack_name }}
-  ansible.builtin.file:
-    path: "/opt/stacks/{{ coord_stack_name }}"
-    state: directory
-    mode: "0755"
+# Shared stack installer used by both device roles. Creates the device state dirs and, when
+# sync_repo is true, **symlinks** /opt/stacks/<name> to the checkout so `git pull` is the
+# deploy (no copy, no drift -- #48), and installs the shared coord CLI. Caller sets
+# coord_stack_name, coord_state_root, coord_state_subdirs. repo_root is the checkout root.
 
 - name: Create {{ coord_stack_name }} state directories
   ansible.builtin.file:
@@ -17,11 +11,39 @@
     mode: "0755"
   loop: "{{ coord_state_subdirs }}"
 
-- name: Sync {{ coord_stack_name }} stack files from checkout
-  ansible.builtin.copy:
-    src: "{{ repo_root }}/stacks/{{ coord_stack_name }}/"
-    dest: "/opt/stacks/{{ coord_stack_name }}/"
-    mode: preserve
+- name: Ensure the /opt/stacks root exists
+  ansible.builtin.file:
+    path: /opt/stacks
+    state: directory
+    mode: "0755"
+
+# Deploy = symlink, not copy. The old copy silently reverted on-box edits and let deployed
+# state diverge from the repo (#48). A symlink makes `git pull` the deploy: the deployed
+# compose/.env IS the repo's, by construction, and coord's /opt/stacks/*/compose.yaml glob
+# resolves through it. `file: state=link` will not replace a non-empty directory, so a stale
+# copied dir from a pre-symlink deploy is removed first.
+- name: Stat the stack path ({{ coord_stack_name }})
+  ansible.builtin.stat:
+    path: "/opt/stacks/{{ coord_stack_name }}"
+  register: coord_stack_path
+  when: sync_repo | bool
+
+- name: Remove a stale copied stack directory ({{ coord_stack_name }})
+  ansible.builtin.file:
+    path: "/opt/stacks/{{ coord_stack_name }}"
+    state: absent
+  when:
+    - sync_repo | bool
+    - coord_stack_path.stat.exists | default(false)
+    - coord_stack_path.stat.isdir | default(false)
+    - not (coord_stack_path.stat.islnk | default(false))
+
+- name: Symlink /opt/stacks/{{ coord_stack_name }} to the checkout
+  ansible.builtin.file:
+    path: "/opt/stacks/{{ coord_stack_name }}"
+    src: "{{ repo_root }}/stacks/{{ coord_stack_name }}"
+    state: link
+    force: true
   when: sync_repo | bool
 
 - name: Install coord CLI

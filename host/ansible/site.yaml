@@ -15,7 +15,7 @@
   vars:
     device_role: coordinator
     sync_repo: false
-    repo_root: "{{ playbook_dir }}/../.."
+    repo_root: "{{ playbook_dir | dirname | dirname }}"
     docker_users:
       - "{{ lookup('env', 'USER') }}"
   roles:

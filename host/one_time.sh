@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# One-time Rekon host bootstrap: apt packages, then the shared Ansible playbook.
-# Run from a coordinator checkout after flash + first boot.
+# One-time Rekon host bootstrap: install Ansible + minimal deps, then run the shared playbook
+# to converge config. Run from a coordinator checkout after flash + first boot.
 #   ./host/one_time.sh              # coordinator (Pi 4B), default
 #   ./host/one_time.sh coordinator  # same, explicit
 #   ./host/one_time.sh pod          # pod (Pi Zero 2 W)
-# Repeat until the script completes without a kernel/firmware reboot.
+# This is a CONFIG deploy -- it does NOT `apt dist-upgrade` (that dragged a full OS upgrade +
+# reboot into every deploy). The OS version is a property of the flashed image (#96); to move
+# it forward in place, run ./host/os_upgrade.sh deliberately (#48). Ansible may still reboot for
+# a kernel/firmware/module change it installs -- repeat until this completes without a reboot.
 # Docs: docs/host-setup.md (coordinator), docs/pi-zero-host-setup.md (pod).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -20,7 +23,6 @@ coordinator | pod) ;;
 esac
 
 sudo apt-get update &&
-	sudo apt-get dist-upgrade -y &&
 	DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
 		--no-install-recommends \
 		ansible \
