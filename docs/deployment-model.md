@@ -120,17 +120,18 @@ baking / [#96](https://github.com/symmatree/coordinator/issues/96) image build):
    PR when a base moved) -- a self-hosted "shared pin" with no third-party app. This also
    resolves the freshness tension: instead of a daily cache-bust to force `apt-get` to re-run,
    apt re-runs when the **base pin bumps** -- fresh *and* reproducible, on a cadence you control.
-2. **Factor the heavy stable content into a versioned base image** -- a `coordinator-vio-base`
-   (pinned debian + runtime apt deps + `/opt/depthai`, ~118 MB) built only when *its* inputs
-   change, pinned by digest, `FROM`'d by tracker/estimator. Then the big layers are pulled
-   **once ever**; an app rebuild changes only the small binary layer, and baking becomes
-   trivial. Highest leverage.
+2. **Factor the heavy stable content into pinned base images**, built on their own cadence and
+   consumed by digest, so an app change rebuilds only its small layer. Realized as **two** bases:
+   `coordinator-vio-tracker-base` (Debian + toolchain + built depthai; tracker builder) and
+   `coordinator-vio-runtime-base` (the ~140 MB OpenCV runtime; both VIO runtime stages, so the Pi
+   pulls OpenCV once for both). Highest leverage. Full per-image detail:
+   [containers/README.md](../containers/README.md).
 3. **Reproducible-build hardening** (`SOURCE_DATE_EPOCH`, an apt snapshot mirror, pinned
    package versions) -- only if 1 + 2 leave residual churn.
 
-Moving the 90 MB depthai blob out to a mount would also stop it re-downloading, but the
-pinned base image gets the same "pull once" benefit without coupling the container's runtime
-to host filesystem layout -- so prefer the base image over a mount.
+Moving a blob out to a mount would also stop it re-downloading, but the pinned base image gets
+the same "pull once" benefit without coupling the container's runtime to host filesystem layout
+-- so prefer the base image over a mount.
 
 ## Dockge: dropped
 
