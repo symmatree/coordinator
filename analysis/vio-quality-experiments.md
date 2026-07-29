@@ -52,16 +52,47 @@ real-time requirement. See fables `Drones/rekon10/canopy-ops.md` (ice-hole doctr
 
 ---
 
-## What "working" means (levels, reframed for the fallback use case)
+## What "working" means — two fitness axes, not one Boolean (sharpened 2026-07-29)
 
-1. **Non-diverging local pose** — doesn't run away; bounded drift over a leg. *Vision-only: yes. IMU-fusion: no (runs to km).*
-2. **Locally stable enough to hover + hop 10s of m**, with jumps small/rejectable. *Vision-only: promising on GPS-good proxy; hover untested.*
-3. **Fail-safe health signal** — the estimator (or the FC) can tell it's lost and hold/land, rather than confidently commanding into an obstacle. *Not built.*
-4. **Post-hoc metric reconstruction** for mapping (offline, GPS-anchored). *Direction: [#59](https://github.com/symmatree/coordinator/issues/59).*
+**"Runaway" is not a state; it is the bottom of an accuracy spectrum** — and where a pose sits on that
+spectrum decides fitness *for a named purpose*, never in the abstract. "Sub-metre, it broadly knew where it
+was" is a measurement, not a verdict. Two axes matter, and a pose can pass one while failing the other:
 
-Global metric accuracy in real time (feeding a confident absolute pose to the FC for autonomous
-traverse) is **explicitly not** the near-term goal — the evidence says that's the regime where this
-setup fails worst, and the operator (FPV) + post-hoc reconstruction cover it instead.
+- **A — Local health (interactive fitness).** With a human closing the loop on **direct observation /
+  VTX**, absolute pose barely matters; **local consistency** does — low drift and few discontinuities over
+  the seconds between corrections. Metric: **sliding-window local ATE + reset/jump rate** (E14 method),
+  *not* global ATE. *Hybrid tier:* a pose that drifts **slowly and locally** (bounded rate, no jumps) can
+  **hold a hover** despite large accumulated error — which buys either **waiting for the operator** to come
+  on the loop, or a **graceful landing**. "Hover-capable" is a distinct tier below "globally accurate," and
+  it needs a trustworthy health signal ([#124](https://github.com/symmatree/coordinator/issues/124)) to
+  trigger the hold.
+- **B — Accumulated error (autonomous-mapping fitness).** With no human, fitness is a **clearance
+  corridor**: how far the path could stray before striking an obstacle on either side — the **max
+  deviation** from truth, which **grows with distance/time** (one mis-estimated turn offsets everything
+  downstream, no loop closure to recover — E14), so the corridor **widens with penetration depth**. The
+  **ice-hole doctrine is the mitigation** (fables `canopy-ops.md`): a periodic GPS re-anchor (or a clean
+  VINS reset, [#67](https://github.com/symmatree/coordinator/issues/67)) **bounds** the accumulated error,
+  resetting the corridor at each hole instead of letting it grow without limit. Feasibility here =
+  achievable **mission length** and **max penetration depth** for a given corridor budget.
+
+**Tiers (worst → best; each fit for strictly more):**
+0. **Runaway** — worse than a random walk; fit for neither purpose. (`imu:1`, all regimes.)
+1. **Non-diverging / better-than-noise** — bounded, tracks the shape; rules out (0) but clears nothing
+   operational yet. (`imu:0`; the 260728 baseline sits here — ~1 m global over a 31 m out-and-back, two
+   recovered resets, a landing drift.)
+2. **Hover-capable** — slow bounded local drift, jumps rare/rejectable → hold for the operator or land
+   gracefully (axis-A hybrid). *Needs the health signal (#124) to be actionable.*
+3. **Interactive-usable** — local health good enough to hand-fly a corridor on VTX.
+4. **Corridor-usable (autonomous)** — accumulated-error corridor known and small enough to fly a mapping
+   grid strike-free, with ice-hole resets bounding it.
+5. **GPS-equivalent** — precise enough to run **under the trees** as primary nav. **The actual designed
+   target** (everything above is a step toward it, not a substitute).
+
+**Near-term measurement, before any map exists:** assess **max actual deviation from EKF/GPS** (eventually
+from post-hoc SfM-aligned truth, given a good data-collection story) over a flight → the clearance a path
+would have needed to avoid a strike. Feeding a *confident absolute pose* to the FC for autonomous traverse
+stays **explicitly out of scope until tier 5** — the operator (FPV) + post-hoc reconstruction cover it
+meanwhile.
 
 ---
 
