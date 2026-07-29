@@ -160,7 +160,7 @@ Dockge itself does not.
 | btrfs subvolume substrate ([#41](https://github.com/symmatree/coordinator/issues/41)/[#96](https://github.com/symmatree/coordinator/issues/96)) | decided; **not built** (only the pipboy NVMe layout exists in `dotfiles-symm/pi-storage`) |
 | Copy -> symlink deploy ([#48](https://github.com/symmatree/coordinator/issues/48)) | **built** |
 | Split `dist-upgrade` out of `one_time.sh` (`host/os_upgrade.sh`) | **built** |
-| Pin base (immutable ref, `pin-base-digests.sh`) + shared `vio-tracker-base` (layer-cache fix, [#145](https://github.com/symmatree/coordinator/issues/145)) | **built** (#146 pins/base, #147 pin script, #148 tracker rewire) |
+| Pin bases + `vio-tracker-base` (depthai) + `vio-runtime-base` (OpenCV) -- layer-cache fix ([#145](https://github.com/symmatree/coordinator/issues/145)) | **built** (#146 pins, #147 pin script, #148 tracker build-base, #151 runtime base + both VIO images rewired onto it) |
 | Baked images / boot-without-network ([#90](https://github.com/symmatree/coordinator/issues/90)) | decided; **not built** (auto-start [#97](https://github.com/symmatree/coordinator/issues/97) is done) |
 
 ## Related
