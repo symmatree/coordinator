@@ -22,7 +22,7 @@ Under the **same `OAK_CAPTURE_DIR` gate and session dir**, the overlay also **te
 
 ## Dockerfile
 
-Multi-stage build: compile depthai-core and `feature_tracker` in a builder image; runtime image is `debian:bookworm-slim` with OpenCV and depthai libs copied in. Target platform is **linux/arm64** (Pi 4B hub).
+Multi-stage build: the builder is [`coordinator-vio-tracker-base`](../vio-tracker-base/) (pinned by digest -- Debian + toolchain + a prebuilt depthai-core at `/opt/depthai`), which compiles `feature_tracker` with our overlay; the runtime image is `debian:bookworm-slim` with OpenCV and the depthai libs copied in. depthai lives in the base so an app change re-pulls only the small `feature_tracker` layer, not the ~90 MB depthai layer ([#145](https://github.com/symmatree/coordinator/issues/145)). Target platform is **linux/arm64** (Pi 4B hub).
 
 ## Local build
 
