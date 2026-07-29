@@ -1,0 +1,45 @@
+name: update-base-digests
+# Self-hosted "shared pin" for the layer-cache fix (#145) -- no Renovate app. Runs
+# containers/pin-base-digests.sh (which uses `docker buildx imagetools`) to bump the pinned
+# base-image digests to each tag's current digest, and opens a PR if anything moved. Trigger
+# manually any time, or let the monthly schedule sweep the fleet.
+#
+# Note: PRs opened with the default GITHUB_TOKEN do not themselves trigger the build-* workflows
+# (GitHub's loop guard). That's fine here -- the digest bump is reviewed, and merging to main
+# (a push touching containers/**) fires the image rebuilds. Kick a build manually on the PR if you
+# want pre-merge CI, or swap in a PAT later.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 6 1 * *"   # 06:00 UTC on the 1st of each month
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refresh base-image digest pins
+        run: ./containers/pin-base-digests.sh
+
+      - name: Open a PR if any digest moved
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then
+            echo "base-image digests already current -- nothing to do."
+            exit 0
+          fi
+          branch="chore/base-digests-${{ github.run_id }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore: refresh base-image digest pins"
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore: refresh base-image digest pins" \
+            --body "Automated by \`.github/workflows/update-base-digests.yaml\` via \`containers/pin-base-digests.sh\`. A base image's tag moved to a new digest; review and merge to rebuild the images against it."

@@ -8,9 +8,9 @@
 # of /opt/depthai stays a stable, already-present layer.
 #
 # arm64 only: depthai is used only by the tracker, which is a Pi 4B (arm64) payload -- no amd64.
-# Rebuilt only when this directory changes: a Renovate base-digest bump, the apt dep list, or the
-# depthai pin in upstream.lock. Consumed by digest downstream, so a rebuild is a deliberate,
-# Renovate-managed pin bump in vio-tracker -- never an implicit move.
+# Rebuilt only when this directory changes: a base-digest bump (containers/pin-base-digests.sh),
+# the apt dep list, or the depthai pin in upstream.lock. Consumed by digest downstream, so a
+# rebuild is a deliberate, reviewed pin bump in vio-tracker -- never an implicit move.
 #
 # Local build (arm64 box, or QEMU):
 #   docker build -t coordinator-vio-tracker-base:local containers/vio-tracker-base
