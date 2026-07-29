@@ -1,0 +1,7 @@
+# Pinned upstream source for coordinator-vio-tracker-base image builds.
+# depthai-core is built into /opt/depthai here (moved out of vio-tracker so the ~90 MB
+# depthai layer is built once and pulled once; see issue #145). Regenerate the SHA after an
+# intentional tag bump. vio-tracker itself keeps only its own oak_d_vins_cpp pin.
+
+DEPTHAI_CORE_TAG=v2.25.0
+DEPTHAI_CORE_SHA=d150f133e0f4843372a3cbfd3ae7bc779ba059a5
