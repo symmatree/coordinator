@@ -51,4 +51,4 @@ Runbook: [docs/bench-tracker.md](docs/bench-tracker.md).
 ## Status
 
 - **Shipped:** compose stack, `coord` CLI, architecture docs, `vio-tracker` Dockerfile + GHCR workflow, host Ansible bootstrap.
-- **Next:** prove OAK-D on bench Pi; `vio-estimator` image; coordinator MAVLink router; Dockge + chrony/`br0` on host.
+- **Next:** prove OAK-D on bench Pi; `vio-estimator` image; coordinator MAVLink router; chrony/`br0` on host. (Dockge dropped -- see [docs/deployment-model.md](docs/deployment-model.md).)

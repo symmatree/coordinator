@@ -24,6 +24,3 @@ services:
       - /run/udev:/run/udev:ro
     env_file:
       - .env
-
-x-dockge:
-  urls: []

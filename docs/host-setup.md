@@ -152,9 +152,10 @@ Full checklist and failure modes: [bench-tracker.md](bench-tracker.md).
 
 ## Out of scope (separate issues)
 
-- Dockge install and stack registration
 - chrony + PPS overlay and config
 - USB gadget `br0` + dnsmasq for Pi Zeros
 - `vio-estimator`, `coordinator-mavlink` images and profiles
+
+(Dockge install/registration was previously listed here; it has been **dropped** -- see [deployment-model.md](deployment-model.md).)
 
 See [architecture.md](architecture.md) and coordinator issue #5 on GitHub.

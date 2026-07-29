@@ -87,8 +87,8 @@ the same device.
 reports its own readiness** -- not a passive pipe that fails silently or reveals problems only in
 flight. **On host vs container:** the supervisor is intended to be a **container**, not a host process --
 the Top pHAT is device-passthrough (I2C `0x71` + SPI TFT, the same pattern the OAK-D USB and FC serial
-already use) and lifecycle control (pull/restart siblings) is the Docker-socket pattern **Dockge**
-already uses; host dependencies stay limited to what genuinely needs low-level hardware (PPS), per the
+already use) and lifecycle control (pull/restart siblings) is the standard Docker-socket pattern;
+host dependencies stay limited to what genuinely needs low-level hardware (PPS), per the
 minimize-host-deps goal. Only host reboot is truly host-coupled (a minimal privileged call or tiny helper
 -- and the Top pHAT even has a hardware power-off switch). The remaining design details (transport for
 operator intent, the health/readiness model, display/button mapping, and how "mode + reboot" fires
@@ -106,7 +106,7 @@ safely) are the next conversation.
 | chrony + PPS discipline | **host** | GPIO `/dev/pps0`, `SYS_TIME` |
 | USB gadget `br0` + DHCP | **host** | Dynamic `usb*` interfaces; not a Docker bridge problem |
 | WiFi AP / station / off | **host** (or D-Bus-mounted utility container later) | NetworkManager integration |
-| Docker Engine, Dockge | **host** | Generic runtime |
+| Docker Engine | **host** | Generic runtime |
 
 **PPS status (2026-07-06): not fitted.** No PPS hardware is wired anywhere yet -- not on the
 Coordinator, not on the Pi Zeros, and no GPS PPS line. The `chrony + PPS` row above is the
@@ -118,11 +118,10 @@ be assumed PPS-aligned. See also the no-RTC note in [coordinator-network.md](coo
 
 | Path | Contents |
 |------|----------|
-| `/opt/stacks/coordinator/` | `compose.yaml`, `.env` |
+| `/opt/stacks/coordinator/` | `compose.yaml`, `.env` (git-authoritative; deploy is a symlink to the checkout, not a copy -- see [deployment-model.md](deployment-model.md), [#48](https://github.com/symmatree/coordinator/issues/48)) |
 | `/var/lib/coordinator/config/` | VIO config (`oak_d.yaml`, etc.) mounted read-only |
 | `/var/lib/coordinator/ipc/` | Shared Unix socket dir bind-mounted as `/tmp` in vision + mavlink containers |
 | `/var/lib/coordinator/state/` | Runtime state (reserved; image logs, etc.) |
-| `/opt/dockge/` | Dockge UI (upstream; shared across stacks) |
 
 ## Container layout (current plan)
 
