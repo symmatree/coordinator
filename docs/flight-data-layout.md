@@ -105,7 +105,7 @@ Two rules make this navigable:
 | **oak-still-capture** (#72) | in-flight / bench | OAK-D RGB | `captures/<MxId>/<session>/stills/<MxId>_<seq>_<ts>.jpg` (+ `.json`) |
 | `bin/vio-ipc-record` (bench) | manual bench | estimator sockets | a capture session (same `captures/...` shape) |
 | **flight-analysis** CronJob (tiles) | nightly 04:00 UTC | `<fc-log>.bin` | `flight-analysis-<logstem>.{ipynb,pdf}`, `manifest.json`, `polisher.json` |
-| **vio-offline** CronJob (tiles) | nightly 05:00 UTC | each `*.feat` | canonical: `derived/pose/<session>.vinspose.csv` + sidecar. **Current: next to the `.feat` -- a deviation (writes derived into `captures/`).** |
+| **vio-offline** CronJob (tiles) | on-demand (manual `create job --from`; #139) | each `*.feat` | `derived/pose/<stem>.vinspose.csv` + sidecar (#139) |
 | `analysis/vio-quality.ipynb` | manual / after cron | pose CSV + `.bin` + `manifest.json` | `derived/vio-quality.json` (+ figures) |
 | `analysis/vio-online-offline-comparison.ipynb` | manual | pose CSV + `VISP` from `.bin` | `derived/vio-online-offline-comparison.json` (+ figures) |
 | `analysis/image-sharpness-vs-motion.ipynb` | manual | `stills/` + `.bin` | `derived/image-sharpness-vs-motion.json` (+ figures) |
@@ -148,17 +148,14 @@ flight-analysis `manifest.json` describes the `.bin` analysis, not the captures 
 Ordered roughly by how much they bite. None are urgent (all NAS data is regenerable), but each is
 a place the layout is not yet canonical.
 
-1. **Derived pose is written into the capture area, and consumers glob for it** (two coupled
-   defects; highest value). *(a) Writer:* `vio-offline-runner` writes `<feat>.vinspose.csv` **next
-   to the `.feat`** -- inside `captures/` (or the flight root for flat flights) -- and overwrites
-   it in place on regen. That drops *derived* data into the *immutable capture* tree, breaking the
-   invariant above (nothing captured is lost -- the `.feat` is read-only -- but the capture area
-   stops being pristine, and the filename doesn't even mark online-vs-offline). *(b) Reader:*
-   `vio-quality` then `glob("*.vinspose.csv")`s the flight root and asserts exactly one -- which
-   finds the flat 260705 pose but **zero** for 260712 (pose is under `captures/`), and can't
-   represent config variants. *Fix:* writer -> `derived/pose/<session>.vinspose.csv` (variants
-   under `derived/reconstructions/<label>/`); reader resolves that path per session (structured,
-   **not** `rglob`), drop "exactly one".
+1. **Derived pose is written into the capture area, and consumers glob for it** (#139; highest
+   value). *(a) Writer -- FIXED:* `vio-offline-runner` now writes `derived/pose/<stem>.vinspose.csv`,
+   not beside the `.feat`. *(b) Reader -- pending:* `vio-quality` still `glob("*.vinspose.csv")`s
+   the flight root and asserts exactly one -- which finds the flat 260705 pose but **zero** for
+   260712, and can't represent config variants. Resolve `derived/pose/` per session (structured,
+   **not** `rglob`), or drop the offline-CSV path entirely as the notebook goes onboard-`VISP`-direct
+   (`vio_ekf_compare.compare_visp_to_ekf`). *(c) Migration -- pending:* move existing poses from
+   old locations into `derived/pose/`; variants belong under `derived/reconstructions/<label>/`.
 2. **Bench captures dump per-frame files flat in the flight root.** `260724-bench-atrest/` has
    575 `.json` + 481 `.png` + 92 `.jpg` + the `.feat` all at the flight root, instead of under
    `captures/<MxId>/<session>/frames/`. *Fix:* the bench recorder should write the same

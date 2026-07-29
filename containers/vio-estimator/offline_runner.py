@@ -3,15 +3,16 @@
 
 For each ``*.feat`` fixture under ``$FLIGHTS_DIR`` (default ``/mnt/flights``), runs
 ``vins_fusion_offline`` to regenerate the estimator pose *deterministically* and writes
-``<stem>.vinspose.csv`` next to the fixture, plus a ``<stem>.vinspose.polisher.json``
-provenance sidecar. Fixtures whose sidecar is already up to date -- same estimator source
-SHA and same fixture + config hashes -- are skipped.
+``<flight>/derived/pose/<stem>.vinspose.csv`` plus a ``.vinspose.polisher.json`` provenance
+sidecar. Fixtures whose sidecar is already up to date -- same estimator source SHA and same
+fixture + config hashes -- are skipped.
 
-This is the estimator-image analogue of the tiles flight-analysis ``runner.py``: the pose
-regen needs the C++ binary (so it runs here, in the estimator image), while the human/agent
-analysis notebook consumes this CSV in the jupyter image. Outputs are derived data on the
-NAS alongside their source fixtures -- not source-controlled. Provenance uses RO-Crate-ish
-field names without the JSON-LD context, matching flight-analysis (coordinator #40).
+The pose is **derived** data and goes under ``derived/`` -- NOT beside the ``.feat`` in the
+capture tree, which is immutable source of truth (see docs/flight-data-layout.md). This is the
+estimator-image analogue of the tiles flight-analysis ``runner.py``: the pose regen needs the
+C++ binary (so it runs here, in the estimator image), consumed on-demand by the analysis tools
+in the jupyter image. Provenance uses RO-Crate-ish field names without the JSON-LD context,
+matching flight-analysis (coordinator #40).
 
 Determinism is a property of the binary (MULTIPLE_THREAD=0, single-threaded Ceres, no
 wall-clock solver cap; see overlay/.../main_offline.cpp): the same source SHA + same inputs
@@ -62,16 +63,35 @@ def is_fresh(sidecar: Path, feat_sha: str, cfg_sha: str) -> bool:
         return False
 
 
+def pose_dir_for(feat_path: Path) -> Path:
+    """Where the DERIVED pose for a fixture belongs: ``<flight>/derived/pose/``.
+
+    The ``.feat`` is immutable capture; the regenerated pose is *derived* and must not land
+    beside it in the capture tree (see docs/flight-data-layout.md -- capture is immutable,
+    derived is separate). The flight dir is ``<FLIGHTS_DIR>/<platform>/<flight>``; for an
+    ad-hoc fixture outside FLIGHTS_DIR (e.g. the smoke test) fall back to the fixture's own
+    directory so a bare local invocation still works."""
+    try:
+        parts = feat_path.resolve().relative_to(FLIGHTS_DIR.resolve()).parts
+    except ValueError:
+        parts = ()
+    flight_dir = FLIGHTS_DIR.joinpath(*parts[:2]) if len(parts) >= 2 else feat_path.parent
+    return flight_dir / "derived" / "pose"
+
+
 def process(feat_path: Path) -> None:
     stem = feat_path.stem.replace(" ", "-")
-    out_csv = feat_path.parent / f"{stem}.vinspose.csv"
-    sidecar = feat_path.parent / f"{stem}.vinspose.polisher.json"
+    out_dir = pose_dir_for(feat_path)
+    out_csv = out_dir / f"{stem}.vinspose.csv"
+    sidecar = out_dir / f"{stem}.vinspose.polisher.json"
 
     feat_sha = sha256_file(feat_path)
     cfg_sha = sha256_file(CONFIG)
     if is_fresh(sidecar, feat_sha, cfg_sha):
         print(f"  skip (fresh): {feat_path.name}", flush=True)
         return
+
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"  run: {feat_path.name}", flush=True)
     start = datetime.now(timezone.utc).isoformat()
