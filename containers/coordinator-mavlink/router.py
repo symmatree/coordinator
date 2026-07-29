@@ -1,55 +1,73 @@
 #!/usr/bin/env python3
 """coordinator-mavlink router (MVP).
 
-Reads vins_fusion pose from the AF_UNIX dgram socket /tmp/chobits_server
-(float[10]: quat w,x,y,z + pos x,y,z + vel x,y,z) and forwards it to the flight
-controller over UART as MAVLink2, using the documented-working message set from
-the ArduPilot OAK-D wiki / chobitsfan mavlink-udp-proxy (apm_wiki):
+Reads vins_fusion pose from the AF_UNIX dgram socket /tmp/chobits_server and
+forwards it to the flight controller over UART as MAVLink2.
 
-    ATT_POS_MOCAP          quaternion as-is, position (x, -y, -z)
-    VISION_SPEED_ESTIMATE  velocity (x, -y, -z)
-
-The (x, -y, -z) flip is the ENU/FLU -> NED/FRD convention from the reference.
-The router also replies to FC TIMESYNC requests so the link is a cooperative
-time-sync endpoint.
-
-Velocity + covariance (coordinator #62 Part 1)
+IPC pose contract (versioned, length-detected)
 ----------------------------------------------
-The estimator's velocity field (vx,vy,vz in the datagram) is IDENTICALLY ZERO in
-the recommended stereo-only config, so forwarding it is useless. Instead we
-compute velocity from dPos/dt between consecutive pose datagrams -- the bridge
-owns this, and dPos/dt was validated against the FC EKF velocity to ~0.15 m/s 1sigma
-with a stationary (drift-free) error, so a fixed covariance is defensible (#62).
+  * v1 (40 bytes, float[10]): quat w,x,y,z + pos x,y,z + vel x,y,z.
+  * v2 (48 bytes, float[12]): v1 + reset_counter + feature_count (appended, so a
+    v1 reader still finds quat/pos/vel at the same offsets). Emitted by the
+    coordinator estimator overlay (pubOdometry / main_offline.cpp). See
+    docs/vio-integration.md and docs/coordinator-mavlink.md.
+The two v2 health fields are the joint contract that lets us (a) forward a clean
+EKF position reset and (b) send an honest, growing position covariance:
+  * reset_counter -- bumped by the estimator on each failure re-init (a datum
+    jump). Forwarded as VISION_POSITION_ESTIMATE.reset_counter so the FC does a
+    clean ResetPositionNE instead of fighting the jump as a glitch (#67). This is
+    why position moved off ATT_POS_MOCAP (which hard-codes reset_counter=0 at
+    GCS_Common.cpp:4139) onto VISION_POSITION_ESTIMATE (which carries the field).
+  * feature_count -- features tracked into the newest frame; the raw health
+    signal available to the covariance model (currently a wired-but-disabled
+    hook, POS_FEAT_K=0 -- the feature-count->covariance link is unproven, #124).
+
+Messages sent per pose (MAVLink2):
+    VISION_POSITION_ESTIMATE  position (x,-y,-z), euler attitude, position
+                              covariance, reset_counter
+    VISION_SPEED_ESTIMATE     dPos/dt velocity (x,-y,-z), velocity covariance
+
+The (x,-y,-z) flip is the ENU/FLU -> NED/FRD convention from the chobits
+reference. The router also replies to FC TIMESYNC requests so the link is a
+cooperative time-sync endpoint.
+
+Attitude note: VISION_POSITION_ESTIMATE carries euler roll/pitch/yaw. We convert
+the estimator quaternion directly (no NED frame correction). This is fusion-inert
+under our config (EK3_SRC_YAW=compass -> VIO yaw unused; roll/pitch come from the
+FC IMU). If VIO yaw is ever enabled, the correct NED attitude must be derived here.
+
+Velocity + covariance
+---------------------
+The estimator's velocity field is IDENTICALLY ZERO in stereo-only, so we compute
+velocity from dPos/dt between consecutive poses -- validated vs the FC EKF to
+~0.15 m/s 1sigma with a stationary (drift-free) error, so a fixed covariance is
+defensible (#62).
 
 Covariance (verified against the ArduPilot Copter-4.7.0 tag):
-  * POSITION is a per-sample honest channel. The FC consumes ATT_POS_MOCAP.covariance:
-    posErr = sqrt(cov[0]+cov[6]+cov[11]) (GCS_Common.cpp:4134), floored at
-    VISO_POS_M_NSE, capped at 100 m (4.6.3 capped at 10 m), then used as the position
-    observation noise. This is the natural home for VIO's growing integrated
-    uncertainty. See position_covariance() for the /3 encoding the sqrt-collapse needs.
-  * VELOCITY covariance is IGNORED by the FC. handle_vision_speed_estimate forwards no
-    covariance; the MAV backend fuses at the FC param VISO_VEL_M_NSE
-    (writeExtNavVelData, AP_VisualOdom_MAV.cpp:79) -- confirmed by upstream PR #14516
-    ("I do not send covariance from mavlink msg"). So the velocity noise the EKF uses
-    is VISO_VEL_M_NSE, not anything we send. We still emit a covariance (logged,
-    harmless), but to change fused velocity noise set VISO_VEL_M_NSE on the FC to match
-    MAVLINK_VEL_NSE.
-We do NO bridge-side signal filtering: dPos/dt spikes pass through for the FC
-innovation gate to reject.
-
-Not yet done here: propagating the VINS reset counter (clean EKF position reset on
-each ice-hole re-init). The float[10] IPC datagram carries no reset counter and
-ATT_POS_MOCAP has no reset_counter field -- both need upstream changes, so it stays
-a follow-up (docs/ardupilot-extnav-fusion.md).
-
-This is a FAITHFUL MINIMAL PORT of the proven reference, not a redesign. It
-intentionally DROPS the reference's SET_GPS_GLOBAL_ORIGIN (hardcoded foreign
-coordinates -- wrong for us; flying GPS-primary the FC already has an origin) and
-its planner/LAND command path. The SYSTEM_TIME->chrony feed, in-flight pose
-logging (#30), and a GPS-denied origin handshake are deliberate follow-ups.
+  * POSITION is a per-sample honest channel. The FC consumes the message
+    covariance: posErr = sqrt(cov[0]+cov[6]+cov[11]) (GCS_Common.cpp:4134),
+    floored at VISO_POS_M_NSE, capped at 100 m, then used as the position
+    observation noise. VIO position uncertainty GROWS with distance travelled
+    since the last anchor/reset (stereo VO drifts ~1-3% of path length, E11), so
+    we send a growing posErr = base + drift_k * path_len, zeroed on each reset.
+    4.7's clamp widening (10 m -> 100 m) is what makes this expressible. See
+    position_covariance() for the /3 encoding the sqrt-collapse needs.
+  * VELOCITY covariance is IGNORED by the FC. handle_vision_speed_estimate
+    forwards no covariance; the MAV backend fuses at the FC param VISO_VEL_M_NSE
+    (writeExtNavVelData, AP_VisualOdom_MAV.cpp:79) -- confirmed by upstream PR
+    #14516 ("I do not send covariance from mavlink msg"). So the velocity noise
+    the EKF uses is VISO_VEL_M_NSE, not anything we send. We still emit a
+    covariance (logged, harmless); to change fused velocity noise set
+    VISO_VEL_M_NSE on the FC to match MAVLINK_VEL_NSE.
+We do NO bridge-side signal filtering of ordinary spikes -- the FC innovation
+gate rejects them. The one exception is a known reset: on the sample where
+reset_counter bumps we suppress the (spurious) dPos/dt velocity and do not count
+the datum jump as travelled distance, because the reset_counter already tells the
+FC to reset cleanly.
 """
 
 import argparse
+import math
 import os
 import select
 import socket
@@ -65,8 +83,13 @@ os.environ.setdefault("MAVLINK20", "1")
 
 from pymavlink import mavutil  # noqa: E402
 
-POSE_FMT = "<10f"
-POSE_SIZE = struct.calcsize(POSE_FMT)  # 40
+# Versioned pose contract: v1 = float[10] (40 B), v2 = float[12] (48 B). We read
+# whichever arrives (length-detected); v1 poses get reset_counter=0, no feature
+# health. The two extra floats are appended, so the first 10 are identical.
+POSE_FMT_V1 = "<10f"
+POSE_FMT_V2 = "<12f"
+POSE_SIZE_V1 = struct.calcsize(POSE_FMT_V1)  # 40
+POSE_SIZE_V2 = struct.calcsize(POSE_FMT_V2)  # 48
 # Inside the container ${COORDINATOR_IPC_DIR} is mounted at /tmp.
 DEFAULT_SOCKET = "/tmp/chobits_server"
 
@@ -74,11 +97,22 @@ DEFAULT_SOCKET = "/tmp/chobits_server"
 #  * Velocity: 0.15 m/s -- MEASURED. dPos/dt tracks the FC EKF velocity to ~0.15 m/s
 #    1sigma (median 8 cm/s), stationary error -> fixed covariance (#62). The FC IGNORES
 #    the velocity covariance and fuses at VISO_VEL_M_NSE, so set that FC param to match.
-#  * Position: 0.30 m -- CONSERVATIVE PLACEHOLDER, not independently measured. Kept
-#    above the VISO_POS_M_NSE 0.2 m floor so it is the binding value, not the floor.
-#    Refine via SITL / flight tuning (#62 Part 2, #64).
+#  * Position: a GROWING model, posErr = base + drift_k * path_len (metres travelled
+#    since the last reset/anchor), capped. base 0.30 m is a conservative floor above
+#    VISO_POS_M_NSE (0.2); drift_k 0.02 (~2%/m) seeds from the E11 drift-vs-distance
+#    K-sweep -- refine both from flight residuals (#62 Part 2, #64).
 DEFAULT_VEL_NSE = float(os.environ.get("MAVLINK_VEL_NSE", "0.15"))
-DEFAULT_POS_NSE = float(os.environ.get("MAVLINK_POS_NSE", "0.30"))
+# MAVLINK_POS_NSE kept as a back-compat alias for the base term.
+DEFAULT_POS_NSE_BASE = float(
+    os.environ.get("MAVLINK_POS_NSE_BASE", os.environ.get("MAVLINK_POS_NSE", "0.30"))
+)
+DEFAULT_POS_DRIFT_K = float(os.environ.get("MAVLINK_POS_DRIFT_K", "0.02"))
+DEFAULT_POS_NSE_MAX = float(os.environ.get("MAVLINK_POS_NSE_MAX", "100.0"))
+# Feature-starvation covariance inflation: DISABLED by default (0). The causal
+# link feature-count -> position error is unproven (features surviving RANSAC may
+# be robust, #124); this is a hook to be set from the observed residual
+# distribution, not asserted now. When >0: posErr += k / max(feature_count, 1).
+DEFAULT_POS_FEAT_K = float(os.environ.get("MAVLINK_POS_FEAT_K", "0.0"))
 
 # Below this dt (s) between poses, dPos/dt amplifies position noise into a bogus
 # velocity (duplicate/too-close samples) -- skip velocity for that sample. This is
@@ -124,6 +158,19 @@ def position_covariance(pos_nse):
     return cov
 
 
+def quat_to_euler(w, x, y, z):
+    """Quaternion (w,x,y,z) -> (roll, pitch, yaw) in radians, aerospace ZYX.
+
+    Fusion-inert under our config (EK3_SRC_YAW=compass) -- carried on
+    VISION_POSITION_ESTIMATE for completeness. Not NED-frame-corrected; see the
+    module docstring before enabling VIO yaw.
+    """
+    roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    pitch = math.asin(max(-1.0, min(1.0, 2.0 * (w * y - z * x))))
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return roll, pitch, yaw
+
+
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--device", default=os.environ.get("MAVLINK_DEVICE", "/dev/serial0"))
@@ -144,8 +191,14 @@ def parse_args():
     )
     ap.add_argument("--vel-nse", type=float, default=DEFAULT_VEL_NSE,
                     help="velocity 1sigma sent to the FC (m/s)")
-    ap.add_argument("--pos-nse", type=float, default=DEFAULT_POS_NSE,
-                    help="position 1sigma sent to the FC (m)")
+    ap.add_argument("--pos-nse-base", type=float, default=DEFAULT_POS_NSE_BASE,
+                    help="position 1sigma at a fresh anchor/reset (m)")
+    ap.add_argument("--pos-drift-k", type=float, default=DEFAULT_POS_DRIFT_K,
+                    help="position 1sigma growth per metre travelled since reset")
+    ap.add_argument("--pos-nse-max", type=float, default=DEFAULT_POS_NSE_MAX,
+                    help="cap on position 1sigma (m); FC honours up to 100")
+    ap.add_argument("--pos-feat-k", type=float, default=DEFAULT_POS_FEAT_K,
+                    help="feature-starvation inflation gain (0 = disabled)")
     return ap.parse_args()
 
 
@@ -170,41 +223,78 @@ def main():
     print(
         f"coordinator-mavlink: {args.socket} -> {args.device}@{args.baud} "
         f"(sysid {args.source_system}, comp {args.source_component}) "
-        f"vel_nse={args.vel_nse} pos_nse={args.pos_nse}",
+        f"vel_nse={args.vel_nse} pos_nse_base={args.pos_nse_base} "
+        f"pos_drift_k={args.pos_drift_k}",
         file=sys.stderr,
         flush=True,
     )
 
     vel_cov = velocity_covariance(args.vel_nse)
-    pos_cov = position_covariance(args.pos_nse)
     serial_fd = mav.port.fileno()
 
     # Previous pose for dPos/dt velocity: (px, py, pz, monotonic_ts). The estimator's
     # own velocity field is ignored (zero in stereo-only); we derive it here.
     prev = None
+    # Growing-covariance state: path length travelled since the last reset/anchor,
+    # and the reset_counter of the current anchor epoch.
+    path_len = 0.0
+    last_reset = None
 
     while True:
         readable, _, _ = select.select([usock, serial_fd], [], [], 1.0)
 
         if usock in readable:
             data = usock.recv(256)
-            if len(data) >= POSE_SIZE:
-                qw, qx, qy, qz, px, py, pz, _vx, _vy, _vz = struct.unpack(POSE_FMT, data[:POSE_SIZE])
-                usec = int(time.time() * 1e6)
-                now = time.monotonic()
-                mav.mav.att_pos_mocap_send(usec, [qw, qx, qy, qz], px, -py, -pz, pos_cov)
+            if len(data) >= POSE_SIZE_V2:
+                (qw, qx, qy, qz, px, py, pz, _vx, _vy, _vz,
+                 reset_f, feat_f) = struct.unpack(POSE_FMT_V2, data[:POSE_SIZE_V2])
+                reset_counter = int(reset_f)
+                feature_count = int(feat_f)
+            elif len(data) >= POSE_SIZE_V1:
+                qw, qx, qy, qz, px, py, pz, _vx, _vy, _vz = struct.unpack(
+                    POSE_FMT_V1, data[:POSE_SIZE_V1])
+                reset_counter = 0       # v1: no counter -> never resets
+                feature_count = -1      # v1: unknown
+            else:
+                continue
 
-                # Velocity = dPos/dt in the estimator frame, then the same (x,-y,-z)
-                # flip as position. Skip the first sample and any dt too small to
-                # differentiate safely.
-                if prev is not None:
-                    dt = now - prev[3]
-                    if dt >= MIN_DT:
-                        vx = (px - prev[0]) / dt
-                        vy = (py - prev[1]) / dt
-                        vz = (pz - prev[2]) / dt
-                        mav.mav.vision_speed_estimate_send(usec, vx, -vy, -vz, vel_cov)
-                prev = (px, py, pz, now)
+            usec = int(time.time() * 1e6)
+            now = time.monotonic()
+
+            # Reset handling: a bumped counter is a datum discontinuity, not travel.
+            is_reset = last_reset is not None and reset_counter != last_reset
+            if is_reset:
+                path_len = 0.0
+            last_reset = reset_counter
+
+            # Accumulate real distance travelled since the anchor (not the jump).
+            if prev is not None and not is_reset:
+                path_len += math.sqrt(
+                    (px - prev[0]) ** 2 + (py - prev[1]) ** 2 + (pz - prev[2]) ** 2)
+
+            # Honest, growing position uncertainty; optional feature inflation (off
+            # by default). Capped to what the FC honours (100 m on 4.7).
+            pos_err = args.pos_nse_base + args.pos_drift_k * path_len
+            if args.pos_feat_k > 0 and feature_count >= 0:
+                pos_err += args.pos_feat_k / max(feature_count, 1)
+            pos_err = min(pos_err, args.pos_nse_max)
+            pos_cov = position_covariance(pos_err)
+
+            roll, pitch, yaw = quat_to_euler(qw, qx, qy, qz)
+            mav.mav.vision_position_estimate_send(
+                usec, px, -py, -pz, roll, pitch, yaw,
+                covariance=pos_cov, reset_counter=reset_counter & 0xFF)
+
+            # Velocity = dPos/dt, same (x,-y,-z) flip. Skip the first sample, any dt
+            # too small to differentiate, and reset samples (the jump is not motion).
+            if prev is not None and not is_reset:
+                dt = now - prev[3]
+                if dt >= MIN_DT:
+                    vx = (px - prev[0]) / dt
+                    vy = (py - prev[1]) / dt
+                    vz = (pz - prev[2]) / dt
+                    mav.mav.vision_speed_estimate_send(usec, vx, -vy, -vz, vel_cov)
+            prev = (px, py, pz, now)
 
         if serial_fd in readable:
             # Drain whatever arrived; reply to FC TIMESYNC requests (tc1 == 0).

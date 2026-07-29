@@ -7,11 +7,13 @@ recording, this *sends* ``float[10]`` pose datagrams TO it, so the real
 (fake or real) FC. It is the "recorded replay" input source for the router half
 of the batch VIO harness (coordinator #35).
 
-    wire format: 10 little-endian float32 (40 bytes) -- quat(w,x,y,z) pos(x,y,z) vel(x,y,z)
+    wire format: contract v1 = float[10] (40 B, quat/pos/vel) or v2 = float[12]
+    (48 B, + reset_counter + feature_count). We send whichever the CSV carries, so
+    a v2 capture replays reset/health through the router unchanged.
 
 Input formats (auto-detected):
-  * vio-pose-tap CSV     -- header ``t_unix,t_mono,qw,...,vz``; paced by ``t_mono``
-  * vio-pose-tap console -- ``q=(w,x,y,z) p=(x,y,z) v=(x,y,z)`` lines (no timestamps)
+  * vio-pose-tap CSV     -- header ``t_unix,t_mono,qw,...,vz[,reset_counter,feature_count]``
+  * vio-pose-tap console -- ``q=(w,x,y,z) p=(x,y,z) v=(x,y,z)`` lines (v1 only, no timestamps)
 
 Pacing: honor the CSV timestamps (scaled by ``--speed``) when present, else send
 at ``--rate`` Hz. ``--fast`` sends with no delay at all (bulk / batch mode).
@@ -27,8 +29,8 @@ import struct
 import sys
 import time
 
-POSE_FMT = "<10f"
-POSE_SZ = struct.calcsize(POSE_FMT)  # 40
+POSE_FMT_V1 = "<10f"  # 40 B
+POSE_FMT_V2 = "<12f"  # 48 B (+ reset_counter, feature_count)
 DEFAULT_SOCKET = os.path.join(
     os.environ.get("COORDINATOR_IPC_DIR", "/var/lib/coordinator/ipc"), "chobits_server"
 )
@@ -40,7 +42,11 @@ _CONSOLE_RE = re.compile(
 
 
 def read_poses(path):
-    """Yield (t_mono_or_None, (10 floats)) from a CSV or console pose log."""
+    """Yield (t_mono_or_None, vals) from a CSV or console pose log.
+
+    vals is a 10-float (v1) or 12-float (v2, with reset_counter + feature_count)
+    tuple, matching what the CSV carries -- send_pose packs it accordingly.
+    """
     with open(path) as fh:
         for line in fh:
             line = line.strip()
@@ -48,7 +54,7 @@ def read_poses(path):
                 continue
             if line.startswith("t_unix"):  # CSV header
                 continue
-            if line.startswith("q=("):  # console format, no timestamp
+            if line.startswith("q=("):  # console format, no timestamp (v1 only)
                 m = _CONSOLE_RE.search(line)
                 if not m:
                     continue
@@ -58,15 +64,17 @@ def read_poses(path):
                 continue
             if "," in line and line[0].isdigit():  # CSV data row
                 parts = line.split(",")
-                if len(parts) >= 12:
-                    t_mono = float(parts[1])
-                    yield t_mono, tuple(float(v) for v in parts[2:12])
+                if len(parts) >= 14:  # v2: + reset_counter, feature_count
+                    yield float(parts[1]), tuple(float(v) for v in parts[2:14])
+                elif len(parts) >= 12:  # v1
+                    yield float(parts[1]), tuple(float(v) for v in parts[2:12])
             # anything else (e.g. the "listening on ..." banner) is skipped
 
 
 def send_pose(sock, target, vals):
-    """Send one 10-float pose tuple as a datagram to the target socket path."""
-    sock.sendto(struct.pack(POSE_FMT, *vals), target)
+    """Send a pose tuple as a datagram. 12 floats -> contract v2, else v1."""
+    fmt = POSE_FMT_V2 if len(vals) >= 12 else POSE_FMT_V1
+    sock.sendto(struct.pack(fmt, *vals[: struct.calcsize(fmt) // 4]), target)
 
 
 def main():

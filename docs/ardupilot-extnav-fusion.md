@@ -110,16 +110,16 @@ So velocity naturally rides out isolated VIO spikes; position needs `EK3_GLITCH_
 - Sources: `EK3_SRCn_POSXY=6` (ExtNav) required; add `VELXY=6` when a real velocity exists;
   `POSZ`, `YAW` per environment. `EK3_POS_I_GATE`/`EK3_VEL_I_GATE`/`EK3_GLITCH_RAD` are the
   consistency/reset knobs (shared across sources).
-- **Reset counter:** propagate the VINS reset counter -> `posReset` ->
-  `ResetPositionNE` (`PosVelFusion.cpp:651-658`). A VINS re-init (each ice-hole leg) then
-  triggers a **clean** EKF position reset instead of being fought as a glitch. The current
-  `coordinator-mavlink` router does **not** send it yet -- and it needs two upstream changes,
-  not just a router tweak: (1) the `float[10]` `chobits_server` datagram carries no reset
-  counter, so the estimator/tap must plumb it through; (2) **`ATT_POS_MOCAP` has no
-  `reset_counter` field** in the MAVLink dialect (pymavlink 2.4.49) -- only
-  `VISION_POSITION_ESTIMATE` does, so position-reset propagation means switching that message
-  (`VISION_SPEED_ESTIMATE` does carry `reset_counter`, but that resets velocity, not position).
-  A worthwhile follow-up for the interrupted-GPS model.
+- **Reset counter -- now propagated (contract v2, #67):** the VINS reset counter ->
+  `posReset` -> `ResetPositionNE` (`PosVelFusion.cpp:651-658`), so a VINS re-init (each
+  ice-hole leg) triggers a **clean** EKF position reset instead of being fought as a glitch.
+  This took the two upstream changes it always needed, both now done: (1) the `chobits_server`
+  datagram was widened `float[10]` -> `float[12]` to carry a `reset_counter` the estimator
+  bumps on each failure re-init; (2) because **`ATT_POS_MOCAP` has no `reset_counter` field**
+  in the MAVLink dialect (pymavlink 2.4.49) -- only `VISION_POSITION_ESTIMATE` does
+  (`VISION_SPEED_ESTIMATE` carries `reset_counter`, but that resets velocity, not position) --
+  the router moved position onto `VISION_POSITION_ESTIMATE`. Router/harness verified; FC-side
+  reset behaviour still to be validated in SITL (#64/#68).
 - Constants (not params): `extNavVelVarAccScale=0.05` (`AP_NavEKF3.h:497`),
   `extNavIntervalMin_ms=20` (50 Hz cap, `:523`).
 

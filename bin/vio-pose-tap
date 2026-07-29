@@ -5,9 +5,13 @@ vins_fusion (VINS-Fusion apm_wiki) sends one datagram per estimate to the AF_UNI
 dgram socket /tmp/chobits_server (on the host: ${COORDINATOR_IPC_DIR}/chobits_server,
 default /var/lib/coordinator/ipc/chobits_server):
 
-    10 little-endian float32 (40 bytes): quat(w,x,y,z) pos(x,y,z) vel(x,y,z)
+    v1 -- 10 little-endian float32 (40 bytes): quat(w,x,y,z) pos(x,y,z) vel(x,y,z)
+    v2 -- 12 float32 (48 bytes): v1 + reset_counter + feature_count (contract v2)
 
-The wire format carries NO timestamp, so this tool stamps each datagram on receipt
+Either arrives; v2 is length-detected. The CSV always carries the v2 columns --
+a v1 datagram records reset_counter=0, feature_count=-1 (unknown) -- so the schema
+is stable across an estimator upgrade. The wire format carries NO timestamp, so
+this tool stamps each datagram on receipt
 with two host clocks:
     t_unix  CLOCK_REALTIME  -- wall clock; coarsely correlatable to FC/GPS time
     t_mono  CLOCK_MONOTONIC -- no steps; drift-immune sample intervals (motion-fit)
@@ -26,12 +30,14 @@ import struct
 import sys
 import time
 
-POSE_FMT = "<10f"
-POSE_SZ = struct.calcsize(POSE_FMT)  # 40
+POSE_FMT_V1 = "<10f"
+POSE_FMT_V2 = "<12f"
+POSE_SZ_V1 = struct.calcsize(POSE_FMT_V1)  # 40
+POSE_SZ_V2 = struct.calcsize(POSE_FMT_V2)  # 48
 DEFAULT_SOCKET = os.path.join(
     os.environ.get("COORDINATOR_IPC_DIR", "/var/lib/coordinator/ipc"), "chobits_server"
 )
-COLUMNS = "t_unix,t_mono,qw,qx,qy,qz,px,py,pz,vx,vy,vz"
+COLUMNS = "t_unix,t_mono,qw,qx,qy,qz,px,py,pz,vx,vy,vz,reset_counter,feature_count"
 
 
 def main():
@@ -89,16 +95,25 @@ def main():
             break
         t_unix = time.time()
         t_mono = time.monotonic()
-        if len(data) < POSE_SZ:
+        if len(data) >= POSE_SZ_V2:
+            vals = struct.unpack(POSE_FMT_V2, data[:POSE_SZ_V2])
+            reset_counter, feature_count = int(vals[10]), int(vals[11])
+        elif len(data) >= POSE_SZ_V1:
+            vals = struct.unpack(POSE_FMT_V1, data[:POSE_SZ_V1])
+            reset_counter, feature_count = 0, -1  # v1: no health fields
+        else:
             continue
-        vals = struct.unpack(POSE_FMT, data[:POSE_SZ])
+        pose10 = vals[:10]
         if out is not None:
-            out.write(f"{t_unix:.6f},{t_mono:.6f}," + ",".join(f"{v:.6f}" for v in vals) + "\n")
+            out.write(f"{t_unix:.6f},{t_mono:.6f},"
+                      + ",".join(f"{v:.6f}" for v in pose10)
+                      + f",{reset_counter},{feature_count}\n")
         if not args.quiet:
-            qw, qx, qy, qz, px, py, pz, vx, vy, vz = vals
+            qw, qx, qy, qz, px, py, pz, vx, vy, vz = pose10
             print(
                 f"{t_unix:.3f} q=({qw:+.3f},{qx:+.3f},{qy:+.3f},{qz:+.3f}) "
-                f"p=({px:+.2f},{py:+.2f},{pz:+.2f}) v=({vx:+.2f},{vy:+.2f},{vz:+.2f})"
+                f"p=({px:+.2f},{py:+.2f},{pz:+.2f}) v=({vx:+.2f},{vy:+.2f},{vz:+.2f}) "
+                f"rst={reset_counter} feat={feature_count}"
             )
         count += 1
 

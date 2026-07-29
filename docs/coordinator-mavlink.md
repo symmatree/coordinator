@@ -36,11 +36,22 @@ proxy, and this doc is the design of record.
 
 ## What it does
 
-Reads `float[10]` pose datagrams from the AF_UNIX socket `/tmp/chobits_server`
-(quat `w,x,y,z` + pos `x,y,z` + vel `x,y,z`, the `vins_fusion` output contract) and,
-per pose, sends the FC over UART as MAVLink2:
+Reads pose datagrams from the AF_UNIX socket `/tmp/chobits_server`, length-detected
+across two contract versions (the `vins_fusion` output contract):
 
-- `ATT_POS_MOCAP` -- quaternion as-is, position `(x, -y, -z)`, position covariance.
+- **v1** `float[10]`: quat `w,x,y,z` + pos `x,y,z` + vel `x,y,z`.
+- **v2** `float[12]`: v1 + `reset_counter` + `feature_count` (appended, so a v1 reader
+  still finds quat/pos/vel at the same offsets). Emitted by the coordinator estimator
+  overlay (`pubOdometry` / `main_offline.cpp`).
+
+Per pose it sends the FC over UART as MAVLink2:
+
+- `VISION_POSITION_ESTIMATE` -- position `(x, -y, -z)`, euler attitude, **growing**
+  position covariance, and the `reset_counter`. Position moved here from
+  `ATT_POS_MOCAP` (which hard-codes `reset_counter=0` at `GCS_Common.cpp:4139`) so a
+  VINS re-init drives a clean EKF `ResetPositionNE` instead of being fought as a
+  glitch (#67). Attitude is euler and fusion-inert under our config
+  (`EK3_SRC_YAW=compass`); see the frame note.
 - `VISION_SPEED_ESTIMATE` -- dPos/dt velocity `(x, -y, -z)`, velocity covariance.
 
 It also answers FC `TIMESYNC` requests, so the link is a cooperative time-sync
@@ -85,12 +96,17 @@ spike, so it is self-limiting.
 
 The two channels are **asymmetric** -- verified against the Copter-4.7.0 tag:
 
-- **Position: per-sample, honest.** The FC consumes `ATT_POS_MOCAP.covariance`
-  (`posErr = sqrt(cov[0]+cov[6]+cov[11])`, `GCS_Common.cpp:4134`), floored at
-  `VISO_POS_M_NSE` (0.2 m) and capped at 100 m, and uses it as the position
-  observation noise -- **not** the `EK3_*_M_NSE` params (those are GPS-only). This is
-  a real per-sample channel and the natural home for VIO's growing integrated
-  uncertainty.
+- **Position: per-sample, honest, and now GROWING.** The FC consumes
+  `VISION_POSITION_ESTIMATE.covariance` (`posErr = sqrt(cov[0]+cov[6]+cov[11])`,
+  `GCS_Common.cpp:4134`), floored at `VISO_POS_M_NSE` (0.2 m) and capped at 100 m,
+  and uses it as the position observation noise -- **not** the `EK3_*_M_NSE` params
+  (those are GPS-only). VIO's integrated position uncertainty grows without bound
+  under canopy, so the router sends `posErr = base + drift_k * path_len` (metres
+  travelled since the last reset/anchor), zeroed on each `reset_counter` bump. 4.7's
+  clamp widening (10 m -> 100 m) is what lets this honest growth reach the EKF
+  instead of saturating. Per-sample health input `feature_count` is available but its
+  covariance term is off by default (`MAVLINK_POS_FEAT_K=0`) -- the
+  feature-count->error link is unproven (#124).
 - **Velocity: covariance IGNORED.** The FC does not read
   `VISION_SPEED_ESTIMATE.covariance`; `handle_vision_speed_estimate` forwards no
   covariance and the MAV backend fuses at the FC param `VISO_VEL_M_NSE`
@@ -107,18 +123,21 @@ Two knobs, with honest provenance:
 | Env | Default | Provenance |
 |-----|---------|------------|
 | `MAVLINK_VEL_NSE` | 0.15 m/s | **Measured** (dPos/dt vs FC EKF velocity, stationary error). FC-ignored (see above) -- mirror it into `VISO_VEL_M_NSE` on the FC for it to take effect. |
-| `MAVLINK_POS_NSE` | 0.30 m | **Conservative placeholder** -- not independently measured; kept above the 0.2 m floor so it binds, pending SITL/flight tuning (#62 Part 2, #64) |
+| `MAVLINK_POS_NSE_BASE` | 0.30 m | Position 1sigma at a fresh anchor/reset -- conservative placeholder, above the 0.2 m floor so it binds. (`MAVLINK_POS_NSE` is accepted as a back-compat alias.) |
+| `MAVLINK_POS_DRIFT_K` | 0.02 | Position 1sigma growth per metre travelled since reset (~2%); seeded from the E11 drift-vs-distance K-sweep -- refine from flight residuals (#62 Part 2, #64). |
+| `MAVLINK_POS_NSE_MAX` | 100.0 m | Cap on position 1sigma; the FC honours up to 100 m on 4.7. |
+| `MAVLINK_POS_FEAT_K` | 0.0 | Feature-starvation inflation gain; **disabled** by default (causal link unproven, #124). When >0: `posErr += k / max(feature_count, 1)`. |
 
-Keep `VISO_POS_M_NSE` below `MAVLINK_POS_NSE` or the floor clobbers it.
+Keep `VISO_POS_M_NSE` below `MAVLINK_POS_NSE_BASE` or the floor clobbers the base.
 
-**Position encoding (the one the FC uses).** `ATT_POS_MOCAP.covariance` is the
-21-element row-major upper triangle of the 6x6 pose covariance (states
-x,y,z,roll,pitch,yaw). The router fills the position variances on the x/y/z diagonal
-(indices 0/6/11); attitude entries stay 0 (mocap yaw is unused with
-`EK3_SRC_YAW=compass`). The FC collapses the diagonal to `posErr =
-sqrt(cov[0]+cov[6]+cov[11])`, so to make the effective per-axis noise equal
-`MAVLINK_POS_NSE` the router puts `sigma^2 / 3` on each entry -- **not** `sigma^2`
-(which yields `sqrt(3)*sigma`).
+**Position encoding (the one the FC uses).** `VISION_POSITION_ESTIMATE.covariance`
+is the 21-element row-major upper triangle of the 6x6 pose covariance (states
+x,y,z,roll,pitch,yaw) -- same layout as `ATT_POS_MOCAP`. The router fills the
+position variances on the x/y/z diagonal (indices 0/6/11); attitude entries stay 0
+(VIO yaw is unused with `EK3_SRC_YAW=compass`). The FC collapses the diagonal to
+`posErr = sqrt(cov[0]+cov[6]+cov[11])`, so to make the effective per-axis noise equal
+the modelled `posErr` (`base + drift_k * path_len`) the router puts `posErr^2 / 3` on
+each entry -- **not** `posErr^2` (which yields `sqrt(3)*posErr`).
 
 > **4.6.3 -> 4.7 formula change.** 4.6.3 computed `posErr` as
 > `cbrtf(sq(cov[0])+sq(cov[6])+sq(cov[11]))` -- dimensionally broken (m^4/3), under
@@ -139,15 +158,15 @@ GPS-anchored co-estimation in #65) is future work.
 
 ## Not done here -- deliberate follow-ups
 
-- **VINS reset-counter propagation.** A VINS re-init (each ice-hole leg) should
-  trigger a *clean* EKF position reset (`posReset -> ResetPositionNE`) instead of
-  being fought as a glitch. Two upstream changes are needed, so it is out of scope
-  for a router-only change: (1) the `float[10]` datagram carries no reset counter,
-  so the estimator/tap must plumb it through; (2) **`ATT_POS_MOCAP` has no
-  `reset_counter` field** in the dialect -- position-reset propagation means moving
-  to `VISION_POSITION_ESTIMATE` (`VISION_SPEED_ESTIMATE` carries `reset_counter`,
-  but that resets velocity, not position). Detail in
-  [ardupilot-extnav-fusion.md](ardupilot-extnav-fusion.md).
+- **VINS reset-counter propagation -- DONE (contract v2, #67).** A VINS re-init now
+  bumps `reset_counter` in the estimator (`chobits_reset_counter`, on the failure
+  re-init), the datagram carries it (v2), and the router forwards it on
+  `VISION_POSITION_ESTIMATE` -> clean EKF `posReset -> ResetPositionNE` instead of a
+  fought glitch. This required the two upstream changes noted before: widening the
+  IPC datagram (`float[10]` -> `float[12]`) and moving position off `ATT_POS_MOCAP`
+  (which hard-codes `reset_counter=0`) onto `VISION_POSITION_ESTIMATE`. The reset also
+  zeroes the growing-covariance path accumulator and suppresses the spurious jump
+  velocity. Behaviour under the FC EKF is still to be validated in SITL (#64/#68).
 - **GPS-anchored co-estimation feed** (#65): fuse GPS on our side (port `globalOpt`)
   and hand the FC a non-drifting, pre-anchored pose, so intermittent RTK "bubbles"
   bound VINS drift. Needs the shared-clock work above.
@@ -164,7 +183,10 @@ GPS-anchored co-estimation in #65) is future work.
 | `MAVLINK_SRC_SYSTEM` / `--source-system` | 1 | MAVLink source system id |
 | `MAVLINK_SRC_COMPONENT` / `--source-component` | `MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY` | MAVLink source component |
 | `MAVLINK_VEL_NSE` / `--vel-nse` | 0.15 | velocity 1sigma sent to FC (m/s) |
-| `MAVLINK_POS_NSE` / `--pos-nse` | 0.30 | position 1sigma sent to FC (m) |
+| `MAVLINK_POS_NSE_BASE` / `--pos-nse-base` | 0.30 | position 1sigma at a fresh anchor/reset (m); `MAVLINK_POS_NSE` is a back-compat alias |
+| `MAVLINK_POS_DRIFT_K` / `--pos-drift-k` | 0.02 | position 1sigma growth per metre travelled since reset |
+| `MAVLINK_POS_NSE_MAX` / `--pos-nse-max` | 100.0 | cap on position 1sigma (m) |
+| `MAVLINK_POS_FEAT_K` / `--pos-feat-k` | 0.0 | feature-starvation inflation gain (0 = off) |
 
 `MAVLINK20=1` is set in-process before the `pymavlink` import (pinned 2.4.49) --
 required to expose the covariance/reset_counter extension fields *and* to put v2

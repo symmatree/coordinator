@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Isolation test for router.py -- proves the proxy in isolation (no FC needed).
 
-Spawns router.py with its serial pointed at a pty, feeds two known poses into the
-unix socket, and asserts the emitted bytes decode to ATT_POS_MOCAP +
-VISION_SPEED_ESTIMATE with the right values -- the (x, -y, -z) axis flip, the
-dPos/dt velocity (computed by the router, #62), and the honest covariances -- and
+Spawns router.py with its serial pointed at a pty, feeds three known v2 poses into
+the unix socket (two in one reset epoch, one that bumps the reset counter), and
+asserts the emitted bytes decode to VISION_POSITION_ESTIMATE + VISION_SPEED_ESTIMATE
+with the right values -- the (x, -y, -z) axis flip, the dPos/dt velocity (computed
+by the router, #62), the growing position covariance zeroed at the reset, the
+forwarded reset_counter (#67), and velocity suppressed on the reset sample -- and
 that the router replies to a TIMESYNC request. Run directly (needs pymavlink):
 
     python3 test_router.py
@@ -67,52 +69,71 @@ def main():
             print("FAIL: router never bound the socket")
             return 1
 
-        # Two poses a known interval apart: the router derives velocity from the
-        # position delta / dt, so a single pose emits no VISION_SPEED_ESTIMATE.
-        # Estimator velocity field is set nonzero to prove it is IGNORED (zero in
-        # stereo-only anyway) -- the reported velocity must be dPos/dt, not it.
+        # Three poses: p1,p2 share a reset epoch; p3 bumps reset_counter. The router
+        # derives velocity from dPos/dt (p1 emits none), grows the position
+        # covariance with distance travelled, and on the reset forwards the new
+        # counter, zeroes the covariance to base, and suppresses the jump velocity.
+        # The estimator velocity field is nonzero to prove it is IGNORED (zero in
+        # stereo-only anyway); feature_count is carried (v2) but unused by default.
         usock_tx = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         dt = 0.2
+        base, drift_k = 0.30, 0.02  # router DEFAULT_POS_NSE_BASE / DEFAULT_POS_DRIFT_K
         p1 = (7.0, 2.0, 3.0)
         p2 = (7.2, 2.4, 2.4)  # dPos = (+0.2, +0.4, -0.6) -> raw vel (1.0, 2.0, -3.0)
+        p3 = (9.0, 9.0, 9.0)  # datum jump at the reset -- distance NOT counted
         exp_v = tuple((b - a) / dt for a, b in zip(p1, p2))
-        usock_tx.sendto(struct.pack("<10f", 1.0, 0, 0, 0, *p1, 9.0, 9.0, 9.0), sockpath)
+        exp_err_p2 = base + drift_k * math.dist(p1, p2)  # covariance grew this far
+
+        def pk(pos, rst, feat):  # v2 datagram: <12f> quat, pos, junk-vel, rst, feat
+            return struct.pack("<12f", 1.0, 0, 0, 0, *pos, 9.0, 9.0, 9.0, rst, feat)
+
+        usock_tx.sendto(pk(p1, 0, 40), sockpath)
         time.sleep(dt)
-        usock_tx.sendto(struct.pack("<10f", 1.0, 0, 0, 0, *p2, 9.0, 9.0, 9.0), sockpath)
+        usock_tx.sendto(pk(p2, 0, 38), sockpath)
+        time.sleep(dt)
+        usock_tx.sendto(pk(p3, 1, 6), sockpath)
 
         msgs = decode(read_for(master_fd, 1.0))
-        apms = [m for m in msgs if m.get_type() == "ATT_POS_MOCAP"]
+        vpes = [m for m in msgs if m.get_type() == "VISION_POSITION_ESTIMATE"]
         vses = [m for m in msgs if m.get_type() == "VISION_SPEED_ESTIMATE"]
-        print("emitted:", sorted({m.get_type() for m in msgs}), f"({len(apms)} APM, {len(vses)} VSE)")
+        print("emitted:", sorted({m.get_type() for m in msgs}), f"({len(vpes)} VPE, {len(vses)} VSE)")
         ok = True
 
-        if not apms:
-            print("FAIL: no ATT_POS_MOCAP")
+        def fc_scalar(m, idx):
+            return math.sqrt(m.covariance[idx[0]] + m.covariance[idx[1]] + m.covariance[idx[2]])
+
+        if len(vpes) < 3:
+            print(f"FAIL: expected 3 VISION_POSITION_ESTIMATE, got {len(vpes)}")
             ok = False
         else:
-            apm = apms[-1]  # last pose = p2
-            print(f"  ATT_POS_MOCAP q={list(apm.q)} pos=({apm.x},{apm.y},{apm.z}) cov0={apm.covariance[0]}")
-            if not (abs(apm.x - p2[0]) < 1e-4 and abs(apm.y + p2[1]) < 1e-4 and abs(apm.z + p2[2]) < 1e-4):
-                print(f"  FAIL: position axis flip wrong (expected {p2[0]},{-p2[1]},{-p2[2]})")
+            vp1, vp2, vp3 = vpes[0], vpes[1], vpes[2]
+            perr = [fc_scalar(m, (0, 6, 11)) for m in (vp1, vp2, vp3)]
+            print(f"  VPE posErr p1={perr[0]:.3f} p2={perr[1]:.3f} p3={perr[2]:.3f}; "
+                  f"reset_counter p2={vp2.reset_counter} p3={vp3.reset_counter}")
+            if not (abs(vp2.x - p2[0]) < 1e-4 and abs(vp2.y + p2[1]) < 1e-4 and abs(vp2.z + p2[2]) < 1e-4):
+                print(f"  FAIL: p2 position axis flip wrong (expected {p2[0]},{-p2[1]},{-p2[2]})")
                 ok = False
-            if not (abs(apm.q[0] - 1.0) < 1e-4 and abs(apm.q[1]) < 1e-4):
-                print("  FAIL: quaternion not passed through")
+            if abs(perr[0] - base) > 1e-3:
+                print(f"  FAIL: p1 posErr {perr[0]:.4f} != base {base} (fresh anchor)")
                 ok = False
-            # FC (4.7) derives posErr = sqrt(cov[0]+cov[6]+cov[11]); the router
-            # spreads pos_nse**2 across the three diagonals so this scalar == pos_nse.
-            fc_pos_err = math.sqrt(apm.covariance[0] + apm.covariance[6] + apm.covariance[11])
-            if not abs(fc_pos_err - 0.30) < 1e-3:
-                print(f"  FAIL: position covariance FC-scalar {fc_pos_err} != 0.30")
+            if abs(perr[1] - exp_err_p2) > 1e-3:
+                print(f"  FAIL: p2 posErr {perr[1]:.4f} != grown {exp_err_p2:.4f}")
+                ok = False
+            if vp3.reset_counter != 1:
+                print(f"  FAIL: p3 reset_counter {vp3.reset_counter} != 1 (not forwarded)")
+                ok = False
+            if abs(perr[2] - base) > 1e-3:
+                print(f"  FAIL: p3 posErr {perr[2]:.4f} != base {base} (not zeroed on reset)")
                 ok = False
 
-        if not vses:
-            print("FAIL: no VISION_SPEED_ESTIMATE (dPos/dt velocity not emitted)")
+        # Exactly one VSE: p2's dPos/dt (p1 has no prior; p3 is a reset -> suppressed).
+        if len(vses) != 1:
+            print(f"FAIL: expected exactly 1 VISION_SPEED_ESTIMATE (p2 only), got {len(vses)}")
             ok = False
         else:
-            vse = vses[-1]
-            # Expected sent velocity: raw dPos/dt with the (x,-y,-z) flip.
-            ex, ey, ez = exp_v[0], -exp_v[1], -exp_v[2]
-            fc_err = math.sqrt(vse.covariance[0] + vse.covariance[4] + vse.covariance[8])
+            vse = vses[0]
+            ex, ey, ez = exp_v[0], -exp_v[1], -exp_v[2]  # dPos/dt with the (x,-y,-z) flip
+            fc_err = fc_scalar(vse, (0, 4, 8))
             print(f"  VISION_SPEED_ESTIMATE vel=({vse.x:.3f},{vse.y:.3f},{vse.z:.3f}) "
                   f"expected~({ex:.3f},{ey:.3f},{ez:.3f}) fc_err={fc_err:.3f}")
             # 20% band absorbs dt jitter (router times receipt with monotonic()).

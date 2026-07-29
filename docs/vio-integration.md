@@ -24,7 +24,7 @@ All paths are under `/tmp`. Containers share them by bind-mounting `${COORDINATO
 | `/tmp/chobits_imu` | tracker -> estimator | IMU packets (7 doubles: time + acc/gyro) |
 | `/tmp/chobits_features` | tracker -> estimator | Feature bundles (count + up to ~118 features x 13 doubles) |
 | `/tmp/chobits_2222` | tracker bind address | Local bind for tracker outbound dgrams |
-| `/tmp/chobits_server` | estimator -> mavlink | 10 floats: attitude + position + velocity |
+| `/tmp/chobits_server` | estimator -> mavlink | 12 floats (contract v2): attitude + position + velocity + reset_counter + feature_count (was 10; appended, length-detected) |
 
 Sources: [oak_d_vins_cpp `feature_tracker.cpp`](https://github.com/chobitsfan/oak_d_vins_cpp/blob/apm_wiki/feature_tracker.cpp), [mavlink-udp-proxy `my_mavlink_udp.cpp`](https://github.com/chobitsfan/mavlink-udp-proxy/blob/apm_wiki/my_mavlink_udp.cpp).
 
