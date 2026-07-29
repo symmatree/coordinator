@@ -111,17 +111,16 @@ vio-estimator, oak-still-capture, etc. -- so it hits the whole fleet.
 **Fix ladder** (each step also serves [#90](https://github.com/symmatree/coordinator/issues/90)
 baking / [#96](https://github.com/symmatree/coordinator/issues/96) image build):
 
-1. **Pin the base to an immutable reference, Renovate-managed.** A bare rolling tag does
-   **not** fix this -- `debian:bookworm-slim` *is* rolling, which is the bug. What pins the
-   cache is either the digest or an immutable dated tag. The idiom that keeps human
-   visibility is `FROM debian:bookworm-slim@sha256:...` (readable tag **and** immutable
-   digest) in every stage of every Dockerfile; Renovate's `docker` manager bumps the
-   tag+digest pair in bulk across the fleet, so a base bump is a **deliberate, reviewable**
-   PR, not an implicit move. (Equivalently, pin Debian's dated `bookworm-YYYYMMDD-slim` tag
-   and let Renovate bump the date.) This also resolves the freshness tension: instead of a
-   daily cache-bust to force `apt-get` to re-run, apt re-runs when the **base pin bumps** --
-   fresh *and* reproducible, with the cadence and visibility owned by Renovate. (Renovate is
-   not yet configured here; enabling its docker manager is part of this step.)
+1. **Pin the base to an immutable reference.** A bare rolling tag does **not** fix this --
+   `debian:bookworm-slim` *is* rolling, which is the bug. What pins the cache is either the
+   digest or an immutable dated tag. The idiom that keeps human visibility is
+   `FROM debian:bookworm-slim@sha256:...` (readable tag **and** immutable digest) in every
+   stage of every Dockerfile, so a base bump is a **deliberate, reviewable** commit, not an
+   implicit move. The pins are kept fresh in bulk by **`containers/pin-base-digests.sh`** (run
+   by hand, or on a schedule via `.github/workflows/update-base-digests.yaml`, which opens a
+   PR when a base moved) -- a self-hosted "shared pin" with no third-party app. This also
+   resolves the freshness tension: instead of a daily cache-bust to force `apt-get` to re-run,
+   apt re-runs when the **base pin bumps** -- fresh *and* reproducible, on a cadence you control.
 2. **Factor the heavy stable content into a versioned base image** -- a `coordinator-vio-base`
    (pinned debian + runtime apt deps + `/opt/depthai`, ~118 MB) built only when *its* inputs
    change, pinned by digest, `FROM`'d by tracker/estimator. Then the big layers are pulled
@@ -161,7 +160,7 @@ Dockge itself does not.
 | btrfs subvolume substrate ([#41](https://github.com/symmatree/coordinator/issues/41)/[#96](https://github.com/symmatree/coordinator/issues/96)) | decided; **not built** (only the pipboy NVMe layout exists in `dotfiles-symm/pi-storage`) |
 | Copy -> symlink deploy ([#48](https://github.com/symmatree/coordinator/issues/48)) | decided; **not built** |
 | Split `dist-upgrade` out of `one_time.sh` | decided; **not built** |
-| Pin base (immutable ref, Renovate-managed) + shared `vio-base` (layer-cache fix) | decided; **not built** |
+| Pin base (immutable ref, `pin-base-digests.sh`) + shared `vio-base` (layer-cache fix) | base pins + `vio-tracker-base` **built** (#146); tracker rewire pending |
 | Baked images / boot-without-network ([#90](https://github.com/symmatree/coordinator/issues/90)) | decided; **not built** (auto-start [#97](https://github.com/symmatree/coordinator/issues/97) is done) |
 
 ## Related

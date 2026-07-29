@@ -13,7 +13,7 @@ only `feature_tracker.cpp` changed (measured; see #145).
 
 This image carries that heavy, rarely-changing content once:
 
-- `debian:bookworm-slim` **pinned by digest** (Renovate-managed),
+- `debian:bookworm-slim` **pinned by digest** (refreshed by `containers/pin-base-digests.sh`),
 - the build toolchain + OpenCV dev libs + depthai's build deps,
 - a built **depthai-core at `/opt/depthai`** (pinned via `upstream.lock`).
 
@@ -23,9 +23,9 @@ already-present layer.
 
 ## Cadence
 
-Rebuilds only when this directory changes: a Renovate base-digest bump, the apt dep list, or the
-depthai pin in `upstream.lock`. Each rebuild is a **deliberate, reviewable** event that Renovate
-turns into a `FROM ...@sha256:` bump in `vio-tracker` -- never an implicit move.
+Rebuilds only when this directory changes: a base-digest bump (`containers/pin-base-digests.sh`),
+the apt dep list, or the depthai pin in `upstream.lock`. Each rebuild is a **deliberate, reviewable**
+event that becomes a `FROM ...@sha256:` bump in `vio-tracker` -- never an implicit move.
 
 ## Scope
 
