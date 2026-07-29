@@ -1,6 +1,6 @@
 ---
 # Shared stack installer used by both device roles. Creates the stack dir under
-# /opt/stacks/<name> (Dockge convention), the device state dirs, and -- when
+# /opt/stacks/<name> (the /opt/stacks convention), the device state dirs, and -- when
 # sync_repo is true -- syncs the stack files and the shared coord CLI from the
 # checkout. Caller sets coord_stack_name, coord_state_root, coord_state_subdirs.
 

@@ -14,7 +14,7 @@ The pod and the Coordinator are two devices that **must collaborate** (USB gadge
 | `host/ansible/roles/docker-host` | Docker engine, group, state dirs, reboot loop -- identical on Pi 4B and Pi Zero. |
 | `host/ansible/roles/chrony` | Same role, two modes: Coordinator = **server + PPS** ([#11](https://github.com/symmatree/coordinator/issues/11)); Zero = **client + its own PPS wire**. |
 | `host/one_time.sh [coordinator\|pod]` | One bootstrap entrypoint, role arg selects device. |
-| Dockge `/opt/stacks/*` | Both stacks register with the same UI ([#13](https://github.com/symmatree/coordinator/issues/13)). |
+| `/opt/stacks/*` convention | Both devices lay their one stack under `/opt/stacks/<name>`; `coord` resolves the sole stack. (Web UI dropped -- see [deployment-model.md](deployment-model.md).) |
 
 Device-specific code stays small and isolated: `roles/coordinator` (OAK-D udev + vio stack), `roles/pod` (`dwc2`/`g_ether` + `pps-gpio` overlays + camera stack), `containers/pod-camera/`, `stacks/pod/`.
 
@@ -36,13 +36,13 @@ containers/
   pod-camera/                  pod capture image (arm64)
 stacks/
   coordinator/                 existing
-  pod/                         pod stack -> Dockge sees both
+  pod/                         pod stack (sibling of coordinator/)
 docs/
   pi-zero-bringup.md           this file
   pi-zero-host-setup.md        Phase 1 image-install runbook
 ```
 
-There is intentionally **no** nested `pizero/{host,containers,stacks}` mirror of the top level -- that false parallel is awkward to maintain. Dockge already expects multiple stacks under `/opt/stacks/`, so two stack dirs is the native shape.
+There is intentionally **no** nested `pizero/{host,containers,stacks}` mirror of the top level -- that false parallel is awkward to maintain. The `/opt/stacks/<name>` convention already expects one stack dir per device, so two sibling stack dirs is the native shape.
 
 ## Can a Pi Zero 2 W run Docker for this? Yes -- try it.
 
@@ -113,7 +113,7 @@ These are the seams where pod and Coordinator work must align; each is owned by 
 | USB gadget reachability | [#24](https://github.com/symmatree/coordinator/issues/24) | [#12](https://github.com/symmatree/coordinator/issues/12) | subnet, DHCP vs static, per-pod hostname/address |
 | Time | [#24](https://github.com/symmatree/coordinator/issues/24) | [#11](https://github.com/symmatree/coordinator/issues/11) | NTP server address, PPS GPIO pin, shared epoch |
 | Control + status | [#25](https://github.com/symmatree/coordinator/issues/25) | [#10](https://github.com/symmatree/coordinator/issues/10) | start/stop + status wire format and transport |
-| Stack UI | all | [#13](https://github.com/symmatree/coordinator/issues/13) | Dockge `/opt/stacks/*` registration |
+| Stack layout | all | -- | `/opt/stacks/<name>` convention; `coord` CLI (no web UI -- [#13](https://github.com/symmatree/coordinator/issues/13) Dockge dropped) |
 
 ## Related docs
 

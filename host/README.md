@@ -37,4 +37,6 @@ ansible-playbook host/ansible/site.yaml -e device_role=pod -e sync_repo=true
 
 GHCR images are public; `docker login ghcr.io` is not required for `coord pull`.
 
-Not in these roles yet: Dockge, chrony/PPS, USB gadget `br0` (see [docs/architecture.md](../docs/architecture.md) and [docs/pi-zero-bringup.md](../docs/pi-zero-bringup.md)).
+Not in these roles yet: chrony/PPS, USB gadget `br0` (see [docs/architecture.md](../docs/architecture.md) and [docs/pi-zero-bringup.md](../docs/pi-zero-bringup.md)). Dockge was considered and **dropped** (see [docs/deployment-model.md](../docs/deployment-model.md)).
+
+The stack-file **copy** this role does today is slated to become a symlink so `git pull` is the deploy (drift fix, [#48](https://github.com/symmatree/coordinator/issues/48)); the appliance deploy & config model is in [docs/deployment-model.md](../docs/deployment-model.md).

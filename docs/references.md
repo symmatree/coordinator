@@ -20,9 +20,9 @@ Coordinator IPC and binary plan: [vio-integration.md](vio-integration.md).
 
 ## Operator-pattern influence (generic tooling)
 
-Private notes on a v2 edge stack using Docker + Dockge + `/opt/stacks/` + compose CLI: [openmower-os-stack.md](https://github.com/symmatree/fables/blob/main/fables/OpenMower/openmower-os-stack.md). Coordinator reimplements that **shape** with its own naming and Rekon payload; no shared codebase.
+Private notes on a v2 edge stack using Docker + Dockge + `/opt/stacks/` + compose CLI: [openmower-os-stack.md](https://github.com/symmatree/fables/blob/main/fables/OpenMower/openmower-os-stack.md). Coordinator borrows the `/opt/stacks/` + compose **shape** with its own naming and Rekon payload; no shared codebase. It does **not** adopt Dockge -- that maps to neither runtime control nor drift-free deploy on a flight appliance (see [deployment-model.md](deployment-model.md) and [#13](https://github.com/symmatree/coordinator/issues/13)); OpenMower interop stays a separate future decision.
 
 ## Upstream tools (unbranded)
 
-- [Dockge](https://github.com/louislam/dockge) -- compose stack UI
+- [Dockge](https://github.com/louislam/dockge) -- compose stack UI (evaluated, **dropped** for the coordinator -- see [deployment-model.md](deployment-model.md))
 - [Docker Engine](https://docs.docker.com/engine/) + [Compose](https://docs.docker.com/compose/)

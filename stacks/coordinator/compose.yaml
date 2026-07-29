@@ -92,6 +92,3 @@ services:
       - /dev/i2c-1:/dev/i2c-1
     volumes:
       - ${COORDINATOR_CAPTURES_DIR}:/captures:ro
-
-x-dockge:
-  urls: []
