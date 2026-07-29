@@ -64,9 +64,7 @@ The rule of thumb: **factor a base only for content that is both heavy and share
 rebuild** (the C++ depthai build; the OpenCV runtime). Small images, or ones on a self-contained
 dependency path (pip wheels), just pin Debian -- a base would be carrying cost for no pull saving.
 
-> Status: `vio-tracker`/`vio-estimator` consuming `vio-runtime-base` lands in the follow-up to the
-> PR that introduces this base (see [#145](https://github.com/symmatree/coordinator/issues/145));
-> `../docs/deployment-model.md` tracks built-vs-pending.
+Both VIO images consume `vio-runtime-base` by digest as of [#145](https://github.com/symmatree/coordinator/issues/145).
 
 ## Adding or changing an image
 

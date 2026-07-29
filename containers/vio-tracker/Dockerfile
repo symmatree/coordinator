@@ -33,20 +33,15 @@ RUN cd /src/oak_d_vins_cpp \
   && cmake --build build --parallel "$(nproc)" \
   && install -D build/feature_tracker /opt/coordinator/bin/feature_tracker
 
-FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:9c6114f4724cf348e9536dd4c2d48f1ff560bf7a1f3fd817f1f9a556687704fa
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# OpenCV runtime + ca-certificates/dumb-init/libgomp1/libstdc++6 come from the runtime base
+# (shared with the estimator, pulled once). Only the tracker-specific extras are added here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    dumb-init \
     libglib2.0-0 \
-    libgomp1 \
-    libopencv-calib3d406 \
-    libopencv-core406 \
     libopencv-imgcodecs406 \
-    libopencv-imgproc406 \
-    libstdc++6 \
     libusb-1.0-0 \
     udev \
   && rm -rf /var/lib/apt/lists/*

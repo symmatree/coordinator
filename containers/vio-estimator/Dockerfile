@@ -50,22 +50,16 @@ RUN cd VINS-Fusion \
   # deterministic offline harness, built only when the overlay provides it (main_offline.cpp)
   && if [ -f build/vins_fusion_offline ]; then install -D build/vins_fusion_offline /opt/coordinator/bin/vins_fusion_offline; fi
 
-FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:9c6114f4724cf348e9536dd4c2d48f1ff560bf7a1f3fd817f1f9a556687704fa
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# libceres3 pulls its own runtime deps (glog, suitesparse, lapack, tbb...). python3 (not
-# -minimal, which omits json/hashlib) is only for offline_runner.py's provenance sidecar;
-# the flight binary itself needs none of it.
+# OpenCV runtime + ca-certificates/dumb-init/libgomp1/libstdc++6 come from the runtime base
+# (shared with the tracker). Estimator extras only: libceres3 (pulls glog/suitesparse/lapack/tbb),
+# and python3 (not -minimal -- offline_runner.py's provenance sidecar needs json/hashlib; the
+# flight binary needs none of it).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    dumb-init \
     libceres3 \
-    libgomp1 \
-    libopencv-calib3d406 \
-    libopencv-core406 \
-    libopencv-imgproc406 \
-    libstdc++6 \
     python3 \
   && rm -rf /var/lib/apt/lists/*
 
