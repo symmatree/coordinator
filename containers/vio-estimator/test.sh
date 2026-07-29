@@ -118,9 +118,10 @@ done
 if ! python3 - "$WORK/a" "$WORK/b" <<'PY'; then
 import csv, hashlib, json, math, sys
 a, b = sys.argv[1], sys.argv[2]
-csv_a, side_a = f"{a}/smoke.vinspose.csv", f"{a}/smoke.vinspose.polisher.json"
+# pose is derived -> written under derived/pose/, not beside the .feat (flight-data-layout.md)
+csv_a, side_a = f"{a}/derived/pose/smoke.vinspose.csv", f"{a}/derived/pose/smoke.vinspose.polisher.json"
 def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
-ha, hb = sha(csv_a), sha(f"{b}/smoke.vinspose.csv")
+ha, hb = sha(csv_a), sha(f"{b}/derived/pose/smoke.vinspose.csv")
 assert ha == hb, f"non-deterministic: pose CSVs differ ({ha[:12]} != {hb[:12]})"
 rows = list(csv.DictReader(open(csv_a)))
 assert len(rows) >= 10, f"only {len(rows)} poses"
