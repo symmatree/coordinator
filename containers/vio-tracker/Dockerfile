@@ -1,38 +1,21 @@
-# coordinator-vio-tracker: chobitsfan feature_tracker + depthai-core (arm64 / Pi 4B).
+# coordinator-vio-tracker: chobitsfan feature_tracker (arm64 / Pi 4B).
 #
-# Local build on the Pi:
+# The heavy, rarely-changing foundation -- Debian base, C++ toolchain, OpenCV dev libs, and a
+# built depthai-core at /opt/depthai -- lives in coordinator-vio-tracker-base (pinned by digest;
+# see containers/vio-tracker-base + #145). So this image only clones + builds oak_d_vins_cpp with
+# our overlay: an app change re-pulls the small feature_tracker layer, not the ~90 MB depthai layer.
+#
+# Local build on the Pi (pulls the base from GHCR):
 #   docker build -t coordinator-vio-tracker:local containers/vio-tracker
-#
 # Cross-build (slow; uses QEMU):
 #   docker buildx build --platform linux/arm64 -t coordinator-vio-tracker:local containers/vio-tracker
 
-FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS builder
+FROM ghcr.io/symmatree/coordinator-vio-tracker-base:main@sha256:763da8d87a04f66711931da044370eb09a8f954fe94ed6a816665d0ccd001929 AS builder
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG DEPTHAI_CORE_TAG=v2.25.0
-ARG DEPTHAI_CORE_SHA
 ARG OAK_D_VINS_CPP_BRANCH=apm_wiki
 ARG OAK_D_VINS_CPP_SHA
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    cmake \
-    git \
-    libopencv-dev \
-    libudev-dev \
-    libusb-1.0-0-dev \
-    pkg-config \
-  && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /src
-
-RUN git clone --depth 1 --branch "${DEPTHAI_CORE_TAG}" https://github.com/luxonis/depthai-core.git \
-  && cd depthai-core \
-  && if [ -n "${DEPTHAI_CORE_SHA}" ]; then git fetch --depth 1 origin "${DEPTHAI_CORE_SHA}" && git checkout "${DEPTHAI_CORE_SHA}"; fi \
-  && git submodule update --init --recursive \
-  && cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/depthai \
-  && cmake --build build --parallel "$(nproc)" --target install
 
 RUN git clone --depth 1 --branch "${OAK_D_VINS_CPP_BRANCH}" https://github.com/chobitsfan/oak_d_vins_cpp.git \
   && cd oak_d_vins_cpp \
@@ -44,6 +27,7 @@ RUN git clone --depth 1 --branch "${OAK_D_VINS_CPP_BRANCH}" https://github.com/c
 COPY overlay/oak_d_vins_cpp/feature_tracker.cpp /src/oak_d_vins_cpp/feature_tracker.cpp
 COPY overlay/oak_d_vins_cpp/capture_writer.hpp /src/oak_d_vins_cpp/capture_writer.hpp
 
+# depthai is preinstalled at /opt/depthai by the base image.
 RUN cd /src/oak_d_vins_cpp \
   && cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release -Ddepthai_DIR=/opt/depthai/lib/cmake/depthai \
   && cmake --build build --parallel "$(nproc)" \
@@ -67,6 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     udev \
   && rm -rf /var/lib/apt/lists/*
 
+# /opt/depthai comes from the base (the builder's FROM); the runtime links against it.
 COPY --from=builder /opt/depthai /opt/depthai
 COPY --from=builder /opt/coordinator/bin/feature_tracker /opt/coordinator/bin/feature_tracker
 COPY entrypoint.sh /opt/coordinator/entrypoint.sh
