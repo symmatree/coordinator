@@ -24,13 +24,20 @@ Not a RO-base + overlay (that was the earlier call — superseded 2026-07-12). I
 **granular per-subvolume ro/rw** — stronger protection than an overlay, with no ramdisk catching
 writes and no custom initramfs:
 
-| Subvolume | Mount | Contents / why |
-|-----------|-------|----------------|
-| `@usr` (+ `/boot`) | **read-only** | the OS binaries/libraries — can't be written mid-cut, so can't corrupt. Remounts rw *live* for ansible maintenance (`remount,rw` → apt → `remount,ro`, no reboot). |
-| `@var` | rw | `journald`, Docker `data-root` (images survive reboot), spool — CoW crash-consistent + snapshottable. |
-| `@home` | rw | operator home (the checkout, interactive scratch that must survive a reboot). |
-| `@data` (`/var/lib/coordinator`) | rw | config + captures — the precious data. Disarm takes an **RO snapshot** of this (#88). |
+All subvolumes `noatime`; the filesystem is `mkfs.btrfs -m single` (single metadata, no DUP — SD write-amplification). One btrfs FS → one UUID; the `subvol=` mount option differentiates the mounts (in `/etc/fstab`).
+
+| Subvolume | Mount (option) | Contents / why |
+|-----------|----------------|----------------|
+| `@` | `/` (`compress=zstd`) | root. |
+| `@usr` | `/usr` (**`ro`**) | the OS binaries/libraries — can't be written mid-cut, so can't corrupt. **Mount-option `ro`** (not the btrfs ro *property*), so `remount,rw` → apt → `remount,ro` works live for ansible maintenance, no reboot. |
+| `@var` | `/var` (`compress=zstd`) | `journald`, Docker `data-root` (images survive reboot; `/var/lib/docker` is `chattr +C` / nodatacow — CoW-on-CoW footgun for overlay2), spool. |
+| `@home` | `/home` (`compress=zstd`) | operator home (the checkout, interactive scratch that must survive a reboot). |
+| `@data` | `/var/lib/coordinator` (`compress=zstd`) | config + captures — the precious data; **nests under `/var`** (mount after `@var`). Disarm takes an **RO snapshot** of this (#88). |
+| `@snapshots` | `/.snapshots` | snapshot store (incl. the disarm RO-snapshots). |
+| FAT | `/boot/firmware` (**`ro`**) | firmware; `remount,rw` for kernel/eeprom updates. |
 | `/tmp`, `/run` | tmpfs | normal, small — the *only* ramdisk. |
+
+Boot config is **standard, no custom initramfs hook**: `cmdline.txt` carries `rootfstype=btrfs rootflags=subvol=@`, and the stock Pi initramfs already has the btrfs module.
 
 Why btrfs over the overlay: tmpfs-upper overlay costs RAM we can't spare on the 512 MB Zero 2 W pods;
 disk-upper + conditional-reset needs a custom initramfs hook. Subvolumes give ro-where-it-matters +
@@ -38,6 +45,30 @@ CoW crash-consistency + checksums (detect SD FTL rot ext4 serves silently) + sna
 standard btrfs-root boot config. **Medium:** SD is fine *because* ro-`/usr` keeps write volume low;
 escape hatch if capture volume grows is an f2fs data partition or a USB SSD (btrfs is unambiguously
 good on the pipboy's NVMe).
+
+## How it's built: mmdebstrap-in-CI (in `dotfiles-symm`)
+
+A custom subvolume layout can't come from a stock flash, and the Foundation's declarative
+`rpi-image-gen` can't express it either — a 2026-07-30 spike found it does a **single** btrfs root
+(+ `-m single`) natively but has **no subvolume support** (its genimage step populates the top-level
+subvolume; the generated fstab is hardcoded `defaults`). So the image build is **mmdebstrap-in-CI**
+(#96): build an arm64 Debian rootfs, then an assembly step
+(`dotfiles-symm/pi-image/assemble-btrfs.sh`) lays it into the subvolumes above and writes the
+`fstab` + `cmdline`, then genimage packages the `.img`. Repeatable, per-role, in CI.
+
+**De-risk status (2026-07-30): the assembly is verified; one gate remains.** The subvolume
+assembly was built and tested against a real btrfs kernel — all six subvolumes assemble, mount per
+the fstab, the split is exclusive, and `remount,rw /usr` works. The subvolume logic is only ~30
+lines of straightforward bash over a plain rootfs copy (cheap — this is why subvolumes were kept
+rather than dropping to a single-subvolume btrfs). The **one thing still unproven** is that a Pi
+actually **boots** from a btrfs-subvolume root on the stock initramfs (mounts `subvol=@` and pivots)
+— the gate, testable off flight-hardware by building a real `.img` and booting it under
+`qemu-system-aarch64` (RPi firmware) or on a **spare** SD card (the ext4 card stays as instant
+rollback). Everything else (the mmdebstrap rootfs, genimage packaging) is hardware-free.
+
+(Gotcha found in the spike: btrfs `compress` is a **per-superblock** option, not per-mount, so
+`@usr` inherits `@`'s `compress` regardless of its fstab line — harmless. `ro`/`noatime`/`nodev`
+*are* true per-mount VFS flags, which is why the `ro`-`/usr` mount behaves as intended.)
 
 ## The primary safety mechanism is graceful sync at disarm
 
@@ -78,7 +109,7 @@ gave us ground truth — [full writeup on #41](https://github.com/symmatree/coor
 | Aspect | Issue |
 |--------|-------|
 | FS/power-loss architecture (umbrella + decision) | [#41](https://github.com/symmatree/coordinator/issues/41) |
-| Repeatable btrfs image build, fleet-wide (rpi-image-gen) | [#96](https://github.com/symmatree/coordinator/issues/96) |
+| Repeatable btrfs image build, fleet-wide (**mmdebstrap-in-CI** in `dotfiles-symm`; `rpi-image-gen` can't do subvolumes) | [#96](https://github.com/symmatree/coordinator/issues/96) |
 | Laptop-free shutdown: pHAT button + poweroff + safe-to-cut indicator | [#87](https://github.com/symmatree/coordinator/issues/87) |
 | DISARM → stop still capture + fsync + `sync`/snapshot + physical done-signal | [#88](https://github.com/symmatree/coordinator/issues/88) |
 | Power-loss-safe capture format (`.feat` #83 + stills #72) | [#89](https://github.com/symmatree/coordinator/issues/89) |
