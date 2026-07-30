@@ -1,0 +1,22 @@
+{
+  "type1": {
+    "viso_type": 1,
+    "backend": "MAV",
+    "ahrs_yaw_deg": -12.4,
+    "sensor_yaw_deg": 90.0,
+    "ekf_disp_bearing_deg": null,
+    "ekf_disp_m": null,
+    "align_statustext": []
+  },
+  "type2": {
+    "viso_type": 2,
+    "backend": "IntelT265",
+    "ahrs_yaw_deg": -12.4,
+    "sensor_yaw_deg": 90.0,
+    "ekf_disp_bearing_deg": null,
+    "ekf_disp_m": null,
+    "align_statustext": [
+      "VisOdom: yaw shifted 273 to 3 deg"
+    ]
+  }
+}

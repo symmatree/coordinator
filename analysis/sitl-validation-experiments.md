@@ -34,6 +34,15 @@ real system rather than self-certifying on synthetic input. Structure generalize
 > **Original caveat (pre-2026-07-09), kept as the baseline this flight moved off:** we had **never observed
 > live onboard VIO/EKF behavior** (`vio-quality-experiments.md`; commit `33cb9f9`) -- every observation was offline replay,
 > so Claim C had zero evidence and Claim A could only anchor on recorded logs.
+>
+> **UPDATE 2026-07-30 -- the SITL ExtNav bench is built; the sim/offline cells are largely filled; the investigation is near resolution.** The ExtNav-into-SITL path is settled and working (`harness/sitl_extnav/`, [#153](https://github.com/symmatree/coordinator/pull/153)): **not** the `SIM_VICON` rig (the open question in the old next-steps) but the **real `coordinator-mavlink` router feeding `VISION_POSITION_ESTIMATE` over a SITL MAVLink serial** -- `EK3_SRC1_POSXY=6`, GPS off, `SET_GPS_GLOBAL_ORIGIN` for the datum, `--speedup 1` (SITL exits if a GCS connects under speedup). On that bench:
+> - **S6 CONFIRMED (sim):** the router's output moves a real EKF3 -- injected ExtNav is fused and `LOCAL_POSITION_NED` tracks it (`probe_extnav.py`). The "does coordinator output move an EKF" milestone is met (sim only; never live).
+> - **S8 CONFIRMED (sim):** reset-counter -> **one clean `ResetPositionNE`** (settles 0.052 s) vs the fought glitch when withheld (EKF still 2.1 m short of a 3 m datum jump at t+12 s) -- #67 mechanism demonstrated end-to-end through the merged router ([#149](https://github.com/symmatree/coordinator/pull/149)/#153).
+> - **Yaw-align mechanism characterized ([#154](https://github.com/symmatree/coordinator/pull/154)):** stereo-only VINS has **no heading reference**, so its world-frame yaw is arbitrary per init (`vio_orientation.py`: +11.5 deg on 260728, non-cardinal) -- a static `VISO_ORIENT` cannot fix it, and the FC's GPS-anchor (`align_position_to_ahrs`) is **translation-only**. The yaw-align that rotates the VIO frame onto AHRS lives **only in the IntelT265 backend** (`VISO_TYPE=2`), not the MAV backend (`=1`) we run; SITL shows `=2` emits `VisOdom: yaw shifted ... deg`, `=1` nothing. This is a **mechanism (Claim B)** result -- correctness on our real IMU-less attitude is a **Claim-C flight**.
+> - **Counterfactual-via-Replay: prerequisites confirmed, and a load-bearing matchability limit found.** `REPH`/`REVH` (5052/5051 on 260728) are present, so `Tools/Replay --parm EK3_SRC1_POSXY=6` yields the **VIO-primary counterfactual on real data** (the "next" LA1 flagged, below). **But Replay feeds `REPH` straight to `ekf3.writeExtNavData`, bypassing the VisualOdom backend -- so `VISO_TYPE` is inert in Replay.** Replay gives the *unaligned* (`=1`) arm faithfully; the *aligned* (`=2`) arm needs the backend -> SITL-live (sim-IMU confound) or a flight. **New matchability entry: the yaw-align is NOT Replay-validatable.**
+> - **New real-side failure fingerprint ([#156](https://github.com/symmatree/coordinator/issues/156)):** VIO **output stalls 1-4 s in flight, ~every 5 s** (260728: 47 gaps >1 s, 6 >3 s in the armed window; corroborated by the FC's own 300 ms `VisOdom: not healthy`). A continuity failure that blocks VIO-as-position **regardless of accuracy or frame** -- and an LC3 target.
+>
+> **Net:** SITL is validated as an instrument (Claim A, LA1) and the ExtNav bench + sim-side mechanisms (S6, S8, yaw-align) are done in silicon. The remaining opens are **Claim-C hardware confirmations** -- flip to VIO in-frame ([#155](https://github.com/symmatree/coordinator/issues/155)), the output gaps (#156), parallel counterfactual logging ([#160](https://github.com/symmatree/coordinator/issues/160)) -- which are execution tracked in issues, not open sim investigations. The map has largely done its job.
 
 ---
 
@@ -300,13 +309,15 @@ on purpose -- the whole discipline is not to conflate them.
 | S3 | Hold a stable hover; compare attitude RMS | A.LA3 | convergent/qual | partial -- extract from `ATT` | not built | flew |
 | S4 | Reproduce an oscillation band (autotune twitch) | A.LA4 | chaotic/ensemble | partial -- needs segmented spectra | not built | flew |
 | S5 | Notch tracks RPM at hover (58.8 Hz) | A.LA5 | convergent-pred | **yes** -- `INS_HNTCH` + RCOU | not built | flew |
-| S6 | Feed derived ExtNav (pose + honest cov) into EKF3; does it fuse? | B.LB2 | -- | **yes** -- tracked pose + #66 | not built | never live |
+| S6 | Feed ExtNav into EKF3 via the real router; does it fuse? | B.LB2 | -- | **yes** -- tracked pose + #66 | **CONFIRMED (sim)** -- router->SITL, EKF fuses, `LOCAL_POSITION_NED` tracks (`sitl_extnav`, #153) | never live |
 | S7a | Velocity spike (29 m/s) rides out `EK3_VEL_I_GATE` -- confirm the by-design single-sample drop holds | B.LB3 / C.LC2 | mechanism | **yes** -- E12 | not built | never live |
 | S7b | Position jump (1-2 m): `EK3_GLITCH_RAD` snap-vs-hold -- **the real audit surface** | B.LB3 / C.LC2 | synthetic->mech | **yes** -- E12 | not built | never live |
-| S8 | Reset-counter -> one clean `ResetPositionNE` | B.LB3 (mech) | mechanism | n/a (wiring) | not built | never live |
+| S8 | Reset-counter -> one clean `ResetPositionNE` | B.LB3 (mech) | mechanism | n/a (wiring) | **CONFIRMED (sim)** -- clean reset 0.052 s vs fought glitch (#153) | never live |
 | S9 | globalOpt GPS-anchored pose loop | B.LB5 / C.LC4 | -- | partial -- GPS in `.bin` | not built | never live |
 | S10 | IMU-fusion fail-confident runaway reproduced + mitigated | C.LC3 | -- | **yes** -- E10/E12 | not built | recorded only |
 | S11 | All-up: feat -> offboard VINS regen ExtNav -> router -> Replay EKF | A.LA6 / C.LC3 | inherits estimator | **yes** -- `260712` joint capture | not built | joint capture in hand (260712) |
+| S12 | `VISO_TYPE=2` (IntelT265) yaw-aligns the ExtNav frame to AHRS; `=1` (MAV) does not | B (mech) -> C | mechanism | **yes** -- 260728 `VISP` (+11.5 deg unaligned) | **mechanism CONFIRMED (sim, #154)**; **NOT Replay-testable** (backend bypassed) | never live |
+| S13 | VIO-primary counterfactual: force `EK3_SRC=ExtNav` on a real `LOG_REPLAY` flight | A.LA1 extension | closed-loop | **yes** -- `REPH`/`REVH` on 260728 (5052/5051) | **Ready** (prereqs confirmed; unaligned arm only) | recorded only |
 
 ---
 
@@ -391,17 +402,20 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
   fold in the `TFS20L` `RNGFND` setup (`RNGFND_TYPE=46`, I2C) so the on-vehicle flash is a known quantity.
 - [ ] **S2 retro-confirm (LA2/LC1):** predict the instability-onset gain in SITL, compare to the autotune
   boundary. Zero new flights. First real predict-then-confirm.
-- [ ] **Verify the ExtNav injection mechanism:** evaluate SITL's built-in simulated-Vicon/ExtNav rig
-  (`SIM_VICON_*`, `SIM_VICON_TMASK`) **first** -- it is the existing ExtNav-into-SITL path; the open
-  question is whether it can carry *our recorded* pose vs only sim truth. Fallback: can recorded ExtNav
-  ride alongside replayed sensors via stock `Tools/Replay`, or must it be live SITL? Decides whether the
-  strongest real-data ExtNav test (S6+S1 combined) is constructible.
-- [ ] **S6 plumbing (cheaper than it looks):** the router already speaks `udpout` to `fake_fc.py` and
-  that seam is CI-tested (`test_router_stack.py` / `stack-smoke.yaml`), so SITL is a **drop-in real FC at
-  the same endpoint** -- the work is SITL config + EKF observation, not new router plumbing. Config per
-  LC2 / data inventory (`VISO_TYPE=1`, `EK3_SRC1_POSXY=6`, `VISO_*_M_NSE` floors below 0.30/0.15,
-  `VISO_DELAY_MS`, MAVLink2). Confirm EKF3 actually fuses (watch `XKF*` innovations, `EKF_STATUS_REPORT`).
-  First proof the coordinator's output moves a real EKF -- a milestone even before the audits.
+- [x] **DONE (2026-07-30) -- ExtNav injection mechanism resolved.** Not `SIM_VICON`: the real
+  `coordinator-mavlink` router feeds `VISION_POSITION_ESTIMATE` over a SITL MAVLink serial (`--serial5`),
+  `EK3_SRC1_POSXY=6`, GPS off, `SET_GPS_GLOBAL_ORIGIN` datum, `--speedup 1`. `harness/sitl_extnav/` (#153).
+- [x] **DONE (2026-07-30) -- S6 confirmed (sim).** The router's output moves a real EKF3: injected ExtNav
+  fuses, `LOCAL_POSITION_NED` tracks (`probe_extnav.py`, #153). The coordinator-output-moves-an-EKF
+  milestone is met; S8 (clean reset) confirmed on the same bench.
+- [ ] **Run the S13 VIO-primary counterfactual (offline, no flight).** `Tools/Replay --parm
+  EK3_SRC1_POSXY=6` on 260728 (`REPH`/`REVH` present) -> the VIO-driven EKF on real IMU+VIO; score vs the
+  GPS-driven `XKF1` (truth). Expect **fail** (unaligned frame + #156 gaps -> "don't fly") -- the faithful
+  "don't fly" baseline. NB `VISO_TYPE` is inert in Replay (S12), so this is the **unaligned** arm only.
+- [ ] **VISO_TYPE=2 flight (Claim-C, the align payoff).** The aligned arm can't be replayed (S12); it needs
+  the backend on real data -> a `VISO_TYPE=2` flight (GPS-primary, VIO logged; #155), or a SITL-live
+  approximation (real VIO feed, sim-IMU confound). Predict: `=2` lands `VISP`->GPS rotation ~0 (vs +11.5
+  deg at `=1`), no post-hoc fit.
 - [ ] **Live-FC bench A/B (Claim A, no re-fly):** feed identical derived ExtNav into the real H7 and
   SITL, compare EKFs -- but **measure the delivery-timing skew** (serial vs UDP), do not assume it away.
 - [ ] **Joint-capture flight (the estimator anchor).** One flight capturing `.feat` (#78) + onboard VINS

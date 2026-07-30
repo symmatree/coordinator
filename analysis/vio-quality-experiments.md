@@ -104,11 +104,31 @@ metric can see):
   can look great while the vehicle would still fly into things.
 - **Real-time, un-aligned** — the FC gets the raw pose live; there is no offline fit to rescue the frame.
 
+**Orientation is not a static `VISO_ORIENT` — it needs the T265 backend (2026-07-29).** Chasing the
+"orientation" piece from the logs turned up a sharper story. Stereo-only VINS has **no heading
+reference**, so its world-frame yaw is pinned *arbitrarily at each init* (`vins-stereo-only.md`): on the
+one clean flight (260728) the VISP→NED horizontal rotation is **+11.5°** (non-cardinal; the divergent
+260712 differs) — so a *fixed* `VISO_ORIENT` cannot correct a per-flight-varying datum. And the FC's
+GPS-anchor (`align_position_to_ahrs`) is **translation-only** (verified in 4.7 source — updates
+`_pos_correction`, never rotates). The yaw-alignment that *does* rotate the VIO frame onto the AHRS
+heading lives **only in the IntelT265 backend** (`VISO_TYPE=2`, auto-aligns on the first pose via
+`_align_yaw`), **not** the MAV backend (`VISO_TYPE=1`) we run — though both consume the same
+`VISION_POSITION_ESTIMATE`. **SITL mechanism check** (`harness/sitl_extnav/orchestrate_yaw.py`): fed a
+yaw-offset pose, `VISO_TYPE=2` emits `VisOdom: yaw shifted 273 to 3 deg` (the FC rotating the frame to
+AHRS) while `VISO_TYPE=1` emits nothing — direct evidence of the backend difference. **Not settled** (a
+neat check, not a verdict): the *position-level* consequence wasn't traced — SITL's lockstep died after
+the VISO_TYPE-change reboot in-sandbox — and the align landed at ~3° vs a measured AHRS ~−12°, so
+*whether it aligns correctly* (VINS attitude quality, init-relative roll/pitch, align-trigger timing) is
+open. Candidate fix on the table: **`VISO_TYPE 1 → 2`**, to be confirmed on a real-frame flight.
+
 So a good post-alignment ATE is **necessary but not sufficient**. A full "works" criterion (tiers 3+) must
 fold in this operational chain; until then, quote *"post-alignment error < X,"* not *"works."* This gate is
 tracked as a **task** in [#138](https://github.com/symmatree/coordinator/issues/138) (lever arm / orientation
 / delay / VisOdom-health, and its interaction with 4.7's GPS-anchored VisualOdom, #80/#65) — verified state:
-`VISO_POS_X/Y/Z = 0`, `VISO_ORIENT = 0`, `VISO_DELAY_MS = 10` (vs ~100 ms measured).
+`VISO_POS_X/Y/Z = 0`, `VISO_ORIENT = 0`, `VISO_DELAY_MS = 10`. Two of these are now better understood
+(see the orientation note above and E16): **orientation** is not a static `VISO_ORIENT` at all — the
+candidate is `VISO_TYPE 1 → 2` (T265 backend yaw-align); and `VISO_DELAY_MS = 10` is just the ArduPilot
+default, vs ~100 ms measured (E16) — set it from the pipeline latency, not defended harder than the default was.
 
 **Near-term measurement, before any map exists:** assess **max actual deviation from EKF/GPS** (eventually
 from post-hoc SfM-aligned truth, given a good data-collection story) over a flight → the clearance a path
