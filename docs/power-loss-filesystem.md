@@ -70,6 +70,22 @@ rollback). Everything else (the mmdebstrap rootfs, genimage packaging) is hardwa
 `@usr` inherits `@`'s `compress` regardless of its fstab line — harmless. `ro`/`noatime`/`nodev`
 *are* true per-mount VFS flags, which is why the `ro`-`/usr` mount behaves as intended.)
 
+### Built images (where they are, how they were made)
+
+The first flashable image was built via the **convert** path (fastest to a testable image; the
+mmdebstrap from-scratch build stays the reproducible follow-on): take the **official Raspberry Pi
+OS Lite (Bookworm, arm64, pinned 2025-05-13)** and re-lay its rootfs into the subvolume layout
+above, keeping the vendor boot stack known-good.
+
+- **Built by:** `symmatree/dotfiles-symm`, `pi-image/build-image.sh` + the `build-pi-image` GitHub
+  Actions workflow (arm64 runner -- needs a btrfs kernel + native arm64 chroot; can't run on the
+  x86/no-btrfs notebook). PR [dotfiles-symm#21](https://github.com/symmatree/dotfiles-symm/pull/21).
+- **Local path:** `datasets/images/coordinator-pi-<YYYYMMDD>.img.xz` on the NAS (a CI build
+  artifact -- **regenerable, not source-controlled**; rebuild via the workflow).
+- **Status:** builds end-to-end; the btrfs-subvol **boot is unproven** -- the qemu `-M virt`
+  smoke-test can't settle it (the RPi downstream kernel doesn't init virtio on that synthetic
+  platform), so the real gate is a **spare SD card** on hardware, ext4 card kept as rollback.
+
 ## The primary safety mechanism is graceful sync at disarm
 
 Not the filesystem — the discipline. If every disarm flushes + `sync`s (later: btrfs RO-snapshot of
