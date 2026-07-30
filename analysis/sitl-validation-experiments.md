@@ -317,7 +317,7 @@ on purpose -- the whole discipline is not to conflate them.
 | S10 | IMU-fusion fail-confident runaway reproduced + mitigated | C.LC3 | -- | **yes** -- E10/E12 | not built | recorded only |
 | S11 | All-up: feat -> offboard VINS regen ExtNav -> router -> Replay EKF | A.LA6 / C.LC3 | inherits estimator | **yes** -- `260712` joint capture | not built | joint capture in hand (260712) |
 | S12 | `VISO_TYPE=2` (IntelT265) yaw-aligns the ExtNav frame to AHRS; `=1` (MAV) does not | B (mech) -> C | mechanism | **yes** -- 260728 `VISP` (+11.5 deg unaligned) | **mechanism CONFIRMED (sim, #154)**; **NOT Replay-testable** (backend bypassed) | never live |
-| S13 | VIO-primary counterfactual: force `EK3_SRC=ExtNav` on a real `LOG_REPLAY` flight | A.LA1 extension | closed-loop | **yes** -- `REPH`/`REVH` on 260728 (5052/5051) | **PARTIAL / gotcha (2026-07-30):** `--parm EK3_SRC1_POSXY=6` applied but the re-run `XKF1` came out **0.000 m == GPS** (GPS still drove; source did not redirect -- cause open). The answer via the direct proxy instead: **raw `VISP` vs GPS = 11 m median / 36 m max** -> unaligned VIO would be tens of m off = **don't fly** (confirms the "fail" arm). Aligned arm still needs the backend (S12, flight). | recorded only |
+| S13 | VIO-primary counterfactual: force `EK3_SRC=ExtNav` on a real `LOG_REPLAY` flight | A.LA1 extension | closed-loop | **yes** -- `REPH`/`REVH` on 260728 (5052/5051) | **CONFIRMED (sim, 2026-07-30):** `Tools/Replay --parm EK3_SRC1_POSXY/VELXY=6` re-ran the EKF VIO-driven -- logged at **core index +100** (`XKF1 C=100/101`; C=0/1 are the passthrough of the original GPS solution -- reading those was my initial mis-diagnosis). **EKF-on-unaligned-VIO vs GPS = 12.7 m median / 41 m max**, extent distorted (N 27 vs 17 m) -- ~as bad as raw `VISP` (11/36), **marginally worse**: the EKF does NOT rescue a systematic frame error. Mode-1 fails at the EKF level = don't fly. Aligned (mode-2) arm still needs the backend (S12, flight). | recorded only |
 
 ---
 
@@ -408,13 +408,17 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
 - [x] **DONE (2026-07-30) -- S6 confirmed (sim).** The router's output moves a real EKF3: injected ExtNav
   fuses, `LOCAL_POSITION_NED` tracks (`probe_extnav.py`, #153). The coordinator-output-moves-an-EKF
   milestone is met; S8 (clean reset) confirmed on the same bench.
-- [~] **S13 VIO-primary counterfactual -- RAN 2026-07-30, partial (`analysis/s13_counterfactual/`).**
-  Direct proxy answer: raw `VISP` vs GPS = **11 m median / 36 m max** -> unaligned VIO fails by tens of m
-  ("don't fly"), confirming the fail arm. **Open gotcha:** `Tools/Replay --parm EK3_SRC1_POSXY=6` applied
-  the param but the re-run `XKF1` came out **identical to GPS** (source did not redirect the fusion) --
-  investigate before trusting Replay for a live VIO-driven EKF (candidates: replayed RC/source-select
-  events re-choose GPS; ExtNav not accepted in the DAL replay path; or the re-run EKF is logged separately
-  from the passthrough). The faithful VIO-driven-EKF-in-Replay is **not yet achieved**.
+- [x] **DONE (2026-07-30) -- S13 VIO-primary counterfactual works via Replay (`analysis/s13_counterfactual/`).**
+  `Tools/Replay --parm EK3_SRC1_POSXY=6 --parm EK3_SRC1_VELXY=6` re-runs the EKF VIO-driven; **read the
+  re-run at `XKF1 C=100/101`** (`DAL_CORE` offsets the replay cores by +100, `AP_DAL.cpp:286`; `C=0/1` are
+  the passthrough of the original -- reading those was my mis-diagnosis, since corrected). Result:
+  **EKF-on-unaligned-VIO vs GPS = 12.7 m median / 41 m max**, extent distorted (N 27 vs 17 m) -- ~as bad as
+  raw `VISP` (11/36), marginally worse. **The EKF does not rescue a systematic frame error**, so mode-1
+  fails at the EKF level. (Recipe verified in source: `--parm` redirects `SRC1_POSXY->EXTNAV`, GPS excluded
+  via `readyToUseGPS`, ExtNav fed from REPH; assumes no mid-flight source-set switch and `SRC_PER_CORE` off.)
+- [ ] **S13 aligned arm (mode-2) -- needs the backend, i.e. a flight.** Replay can't apply the `VISO_TYPE=2`
+  yaw-align (S12: it feeds REPH straight to the EKF, bypassing the VisualOdom backend). Predict: with the
+  frame aligned, EKF-on-VIO drops from ~13 m to the local-ATE regime (E21 ~0.17 m + the #156 gap excursions).
 - [ ] **VISO_TYPE=2 flight (Claim-C, the align payoff).** The aligned arm can't be replayed (S12); it needs
   the backend on real data -> a `VISO_TYPE=2` flight (GPS-primary, VIO logged; #155), or a SITL-live
   approximation (real VIO feed, sim-IMU confound). Predict: `=2` lands `VISP`->GPS rotation ~0 (vs +11.5
