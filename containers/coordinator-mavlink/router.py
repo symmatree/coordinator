@@ -202,6 +202,17 @@ def parse_args():
     return ap.parse_args()
 
 
+def write_arm_file(path, armed):
+    """#88: publish FC arm state to a small shared file the capturers read.
+
+    Atomic (write temp + rename) so a reader never sees a torn value; "1"/"0".
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("1\n" if armed else "0\n")
+    os.replace(tmp, path)
+
+
 def main():
     args = parse_args()
 
@@ -239,6 +250,13 @@ def main():
     # and the reset_counter of the current anchor epoch.
     path_len = 0.0
     last_reset = None
+
+    # #88: FC arm state -> shared file. vio-tracker gates image capture on this; and we
+    # sync() the filesystem at disarm so the flight's captures are durable through the
+    # power cut that usually follows. Path shared via OAK_ARM_FILE (both containers read it).
+    arm_file = os.environ.get("OAK_ARM_FILE", "/tmp/fc_armed")
+    armed = False
+    write_arm_file(arm_file, armed)
 
     while True:
         readable, _, _ = select.select([usock, serial_fd], [], [], 1.0)
@@ -304,6 +322,19 @@ def main():
                     break
                 if msg.get_type() == "TIMESYNC" and msg.tc1 == 0:
                     mav.mav.timesync_send(int(time.time() * 1e9), msg.ts1)
+                elif (msg.get_type() == "HEARTBEAT"
+                      and msg.type != mavutil.mavlink.MAV_TYPE_GCS):
+                    # #88: FC arm/disarm -> shared file; sync() the FS at disarm so the
+                    # flight's captures survive the power cut that usually follows.
+                    now_armed = bool(
+                        msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+                    if now_armed != armed:
+                        armed = now_armed
+                        write_arm_file(arm_file, armed)
+                        print(f"coordinator-mavlink: FC {'ARMED' if armed else 'DISARMED'}",
+                              file=sys.stderr, flush=True)
+                        if not armed:
+                            os.sync()  # flush captured data to disk at disarm
 
 
 if __name__ == "__main__":
