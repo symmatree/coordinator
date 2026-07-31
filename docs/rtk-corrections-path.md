@@ -1,10 +1,14 @@
 # RTK corrections delivery path (base station -> NTRIP -> ELRS -> F9P)
 
 How RTCM3 corrections get from the ground base station to the rover's ZED-F9P, the
-rates involved, and the one failure mode that has bitten us repeatedly: the ELRS TX
-backpack silently anchoring its MAVLink stream to the wrong ground station.
+rates involved, and the leading theory for the failure that keeps recurring (RTK
+never coming up): the ELRS TX backpack anchoring its MAVLink stream to the wrong
+ground station.
 
-This is the single source of truth for the correction path. The physical ground
+The path, workloads, and rates below are documented state. The failure-cause is a
+**leading theory, not a confirmed diagnosis** -- it is consistent with the two cases
+we have and with a firmware read, but has not been caught in the act; see the caveats
+in that section. This is the reference for the correction path. The physical ground
 kit (radio, backpack, IPs, ELRS profiles) is inventoried in fables
 `Drones/rekon10/ground-station.md`; the FC-side RTK/serial wiring in
 `Drones/rekon10/ardupilot.md`; the under-canopy operational doctrine ("RTCM must
@@ -54,18 +58,20 @@ Endpoints: caster `ntrip.tiles.symmatree.com:2101/ATTIC`, Mission Planner TCP
   mavproxy replies to the backpack's `:14555`. (This reply is what anchors the
   backpack -- see below.)
 
-## Failure mode: the backpack anchors to the wrong GCS
+## Leading theory: the backpack anchors to the wrong GCS
 
-**Symptom.** Rover never reaches RTK; GPS Status stalls at 3D/DGPS, RTK LED never
-lights, and mavproxy shows only `no link` for the whole flight -- it received zero
-MAVLink from the vehicle. Everything upstream (base, caster, mavproxy NTRIP client)
-is healthy. Occurrences: [#99](https://github.com/symmatree/coordinator/issues/99)
-(2026-07-12), tiles #664 (2026-07-30, first no-laptop flight; closed -> tracked in #99),
-and the field notes in fables `flight-platform-build-log.md` (Flights 1 and later).
+**Symptom (observed).** Rover never reaches RTK; GPS Status stalls at 3D/DGPS, RTK
+LED never lights, and mavproxy shows only `no link` for the whole flight -- it
+received zero MAVLink from the vehicle. Everything upstream (base, caster, mavproxy
+NTRIP client) verified healthy. Occurrences:
+[#99](https://github.com/symmatree/coordinator/issues/99) (2026-07-12), tiles #664
+(2026-07-30, first no-laptop flight; closed -> tracked in #99), and the field notes in
+fables `flight-platform-build-log.md` (Flights 1 and later).
 
-**Mechanism (confirmed from firmware).** ExpressLRS/Backpack
+**Candidate mechanism, read from the firmware source.** ExpressLRS/Backpack
 [`lib/WIFI/devWIFI.cpp`](https://github.com/ExpressLRS/Backpack/blob/master/lib/WIFI/devWIFI.cpp)
-(local clone: `~/expresslrs-backpack`):
+on the **master** branch (local clone `~/expresslrs-backpack`, HEAD `7c0e3b2`) --
+**not yet confirmed to match our deployed backpack firmware, Rev 1.5.5**:
 
 - On boot `gcsIPSet = false`, so the backpack **broadcasts** MAVLink to the subnet
   (`WiFi.broadcastIP()` in STA mode) on the send port -- discovery.
@@ -82,20 +88,39 @@ instantly and can win. If a stray GCS wins, the backpack unicasts to *it* for th
 entire session; mavproxy is starved, nothing looks broken (the backpack **is**
 connected -- just to the wrong host), and no RTCM reaches the FC.
 
-This resolves the two competing field hypotheses that were recorded separately
+If it holds, this would unify the two competing field hypotheses recorded separately
 (`flight-platform-build-log.md`): "Mission Planner beat mavproxy to the connection"
-vs. "a *radio* power-cycle fixed it, so it's the ELRS uplink stalling, not GCS
-contention." They are the same thing. A radio/backpack power-cycle is precisely how
-you recover **from** the stolen lock -- it clears `gcsIPSet` and re-runs the race --
-so "power-cycle fixed it" was never evidence against contention. It is also why the
-recovery looks stochastic ("sometimes N power-cycles"): each reboot just re-rolls the
-race; a too-short cycle that never drops WiFi leaves `gcsIPSet` set.
+and "a *radio* power-cycle fixed it, so it's the ELRS uplink stalling, not GCS
+contention." Under this mechanism they are the same thing -- a radio/backpack
+power-cycle clears `gcsIPSet` and re-runs the race, so "power-cycle fixed it" would
+not be evidence against contention, and the stochastic recovery ("sometimes N
+power-cycles") is just re-rolling the race. This was already the standing field theory
+before the firmware read; the code makes it more plausible, it does not confirm it.
 
-## Diagnosing it (the backpack is healthy -- ask it directly)
+### What would confirm it (not yet in hand)
 
-The backpack is not failing, so **its own status endpoint is up and will name the
-offender.** `GET http://boxer-txbp.local.symmatree.com/mavlink` (route
-`server.on("/mavlink", ...)`, `WebMAVLinkHandler`) returns:
+The two cases are *consistent* with this theory but do not prove it, and none of the
+following has been observed on our system:
+
+- No GCS caught red-handed -- `ip.gcs` pointing at a non-acebase host during a failure
+  is the missing direct evidence.
+- The `/mavlink` endpoint (below) has not been confirmed to resolve or return `ip.gcs`
+  on our unit / firmware 1.5.5 -- it is read from the master source only.
+- The cloned source is **master**, not verified equal to deployed 1.5.5.
+- The predicted recovery (down the offender -> power-cycle -> mavproxy wins) has not
+  been run as a deliberate predict-then-confirm.
+
+Until one of those lands this is the leading theory, not a diagnosis. Current thinking
+concentrates here; new evidence should update this section.
+
+## Diagnosing it next time (ask the backpack directly)
+
+Under this theory the backpack is not failing -- it is talking to the wrong GCS -- so
+its own status endpoint should name that GCS, without any packet capture. In the
+master source, `GET http://boxer-txbp.local.symmatree.com/mavlink` (route
+`server.on("/mavlink", ...)`, `WebMAVLinkHandler`) returns the following. **This
+endpoint has not been hit on our unit; the shape is from-source, not observed, and is
+the first thing to check next time it fails:**
 
 ```json
 { "enabled": true,
@@ -105,20 +130,21 @@ offender.** `GET http://boxer-txbp.local.symmatree.com/mavlink` (route
   "protocol": "UDP" }
 ```
 
-- `ip.gcs` **is the offender** -- the GCS it anchored to. If it is not acebase's
-  address, that host stole the link. `"IP UNSET"` means it hasn't latched yet.
+- `ip.gcs` would be the offender -- the GCS it anchored to. If it is not acebase's
+  address, that host has the link. `"IP UNSET"` means it hasn't latched yet.
 - `counters` are the live traffic rates: incrementing `packets_up/down` confirm it is
   streaming happily (to whoever `ip.gcs` is); `drops_down`/`overflows_down` would flag
   a genuine link-capacity problem instead.
 
 ## Recovery
 
-The backpack's target is learned, not settable -- the firmware (above) latches to
-whoever answers the discovery broadcast first and holds that lock until it reboots.
-So recovery is: read `/mavlink`, note `ip.gcs`; if it isn't acebase, take that host
-off the link, then power-cycle the backpack so it re-broadcasts and mavproxy can win
-the fresh race. A power-cycle without removing the other GCS just re-rolls the same
-race, which is why it has sometimes taken more than one.
+If the mechanism above is right, recovery follows from it (and running it is also how
+you'd confirm the theory). In the source the target is learned, not settable -- the
+firmware latches to whoever answers the discovery broadcast first and holds that lock
+until it reboots. So: read `/mavlink`, note `ip.gcs`; if it isn't acebase, take that
+host off the link, then power-cycle the backpack so it re-broadcasts and mavproxy can
+win the fresh race. A power-cycle without removing the other GCS just re-rolls the
+same race, which would explain why it has sometimes taken more than one.
 
 Because the lock can't be pinned in firmware, keeping it from recurring is a network
 question -- whether an auto-connecting GCS can reach the backpack's subnet at all --
