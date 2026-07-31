@@ -104,6 +104,20 @@ static const char* env_or(const char* name, const char* dflt) {
     return (v && *v) ? v : dflt;
 }
 
+// #88: arm-gate image capture. coordinator-mavlink writes the FC arm state ("1"/"0")
+// to a small shared file (both containers mount the IPC dir at /tmp), and we only save
+// images (disparity / mono / stills) while armed -- so bench + idle time does not burn
+// SD space and lifetime on pictures of the desk. The .feat (IMU + features) is NOT gated:
+// the FC starts its EKF before arm, so a replayable fixture needs the pre-arm stream. No
+// file / unreadable => DISARMED (default: do not capture images).
+static bool read_armed(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    int c = fgetc(f);
+    fclose(f);
+    return c == '1';
+}
+
 // <node>_<seq:08>_<YYYYmmddTHHMMSS_ffffffZ> -- matches the phase-1 still writer (#73).
 static std::string make_stem(const std::string& node, long seq,
                              std::chrono::system_clock::time_point wall) {
@@ -433,6 +447,11 @@ int main(int argc, char **argv) {
     auto last_disp_save = std::chrono::steady_clock::now() - std::chrono::hours(1);
     auto last_still_trig = last_disp_save;
     auto last_mono_save = last_disp_save;  // #125
+    // #88: arm-gating. armed starts false (no images until the FC arms); refreshed a few
+    // times/sec from coordinator-mavlink's shared arm file. .feat is unaffected.
+    std::string arm_file = env_or("OAK_ARM_FILE", "/tmp/fc_armed");
+    bool armed = false;
+    auto last_arm_check = last_disp_save;
     if (capture) {
         std::time_t st = std::time(nullptr);
         struct tm stv; gmtime_r(&st, &stv);
@@ -485,6 +504,17 @@ int main(int argc, char **argv) {
     while(gogogo) {
         auto q_name = device.getQueueEvent();
 
+        // #88: refresh FC arm state ~4 Hz (cheap file read); log transitions. Gates the
+        // image writes below; the .feat tee (IMU + features) is deliberately never gated.
+        if (capture && due(last_arm_check, 4.0)) {
+            bool now_armed = read_armed(arm_file);
+            if (now_armed != armed) {
+                armed = now_armed;
+                std::cout << "capture: FC " << (armed ? "ARMED -- images ON" : "DISARMED -- images OFF")
+                          << " (feat/imu unaffected)\n";
+            }
+        }
+
         if (q_name == "trackedFeaturesLeft") {
             auto data = outputFeaturesLeftQueue->get<dai::TrackedFeatures>();
             l_features = data->trackedFeatures;
@@ -504,7 +534,7 @@ int main(int argc, char **argv) {
             auto disp_data = disp_queue->get<dai::ImgFrame>();
             disp_seq = disp_data->getSequenceNum();
             disp_frame = disp_data->getData();
-            if (capture && disp_hz > 0 && due(last_disp_save, disp_hz)) {  // #72: save disparity
+            if (capture && armed && disp_hz > 0 && due(last_disp_save, disp_hz)) {  // #72 save disparity, #88 arm-gated
                 auto wall = std::chrono::system_clock::now();
                 std::string stem = make_stem(node, disp_saved, wall);
                 std::string base = session_dir + "/" + stem;
@@ -524,7 +554,7 @@ int main(int argc, char **argv) {
             //std::cout << "stereo " << disp_seq << " latency:" << std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - disp_data->getTimestamp()).count() << " ms\n";
         } else if (q_name == "rectifiedLeft") {  // #125: the tracker's actual left input frame
             auto mono_data = mono_queue->get<dai::ImgFrame>();
-            if (capture && mono_hz > 0 && due(last_mono_save, mono_hz)) {
+            if (capture && armed && mono_hz > 0 && due(last_mono_save, mono_hz)) {  // #88 arm-gated
                 auto wall = std::chrono::system_clock::now();
                 std::string stem = make_stem(node, mono_saved, wall);
                 std::string base = session_dir + "/" + stem;
@@ -601,7 +631,7 @@ int main(int argc, char **argv) {
         }
 
         // #72: trigger the next still on cadence (device returns it on the "still" queue).
-        if (capture && still_hz > 0 && due(last_still_trig, still_hz)) {
+        if (capture && armed && still_hz > 0 && due(last_still_trig, still_hz)) {  // #88 arm-gated
             dai::CameraControl ctrl;
             ctrl.setCaptureStill(true);
             still_ctrl_queue->send(ctrl);
