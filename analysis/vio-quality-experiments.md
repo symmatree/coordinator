@@ -137,8 +137,10 @@ not the module center**: `oak_d.yaml` has `body_T_cam0 = identity` and `body_T_c
 cameras share X and Z and differ only in the horizontal baseline, so **only `VISO_POS_Y` is affected** — the
 left imager sits ~37.5 mm (half the ~75 mm seed baseline) off module-center laterally. **Sign resolved:** both
 imagers face forward, unrotated, so camera-right = vehicle-right and `cam0` (left) is on the vehicle's **left**
-→ **`VISO_POS_Y = -0.0375`** (−Y in FRD). (`VISO_POS_X/Z` unaffected; the seed baseline is itself ~10% off,
-#138, so the exact magnitude wants a real stereo cal — but the sign and ~scale are settled.)
+→ **`VISO_POS_Y = -0.0375`** (−Y in FRD). (`VISO_POS_X/Z` unaffected. The 37.5 mm rides on the machined
+~75 mm baseline — physically fixed to sub-mm, not a drifting quantity — so this value is solid. The separate
+~10% recovered-*scale* error (E17, one post-hoc flight) is an intrinsics/rectification question, **not** a
+baseline error, and does not touch this lever arm.)
 
 **Near-term measurement, before any map exists:** assess **max actual deviation from EKF/GPS** (eventually
 from post-hoc SfM-aligned truth, given a good data-collection story) over a flight → the clearance a path
