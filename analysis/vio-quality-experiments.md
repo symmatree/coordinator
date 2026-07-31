@@ -130,6 +130,16 @@ tracked as a **task** in [#138](https://github.com/symmatree/coordinator/issues/
 candidate is `VISO_TYPE 1 → 2` (T265 backend yaw-align); and `VISO_DELAY_MS = 10` is just the ArduPilot
 default, vs ~100 ms measured (E16) — set it from the pipeline latency, not defended harder than the default was.
 
+**Lever arm measured 2026-07-31, with a frame subtlety on Y (unresolved sign, for #138).** Physical setup:
+the OAK-D **module center** is ~72 mm forward, ~116 mm above the FC, on centerline → `VISO_POS = (0.072, 0,
+-0.116)` in body FRD (+X fwd, +Y right, +Z down). **But VINS reports pose in the `cam0` = left-imager frame,
+not the module center**: `oak_d.yaml` has `body_T_cam0 = identity` and `body_T_cam1 = +0.075 X`. The two mono
+cameras share X and Z and differ only in the horizontal baseline, so **only `VISO_POS_Y` is affected** — the
+left imager sits ~37.5 mm (half the ~75 mm seed baseline) off module-center laterally. The **sign** depends on
+the OAK-D's mounted orientation (a physical check, not derivable from the config). Left at `Y = 0` for now:
+37.5 mm is well inside the uncalibrated-baseline error (the seed baseline is itself ~10% off, E-scale), so the
+Y offset belongs to the #138 extrinsic cal, not a guess bolted on now. (`VISO_POS_X/Z` are unaffected by this.)
+
 **Near-term measurement, before any map exists:** assess **max actual deviation from EKF/GPS** (eventually
 from post-hoc SfM-aligned truth, given a good data-collection story) over a flight → the clearance a path
 would have needed to avoid a strike. Feeding a *confident absolute pose* to the FC for autonomous traverse
