@@ -14,8 +14,12 @@
 # baseline, not the IMU (vins-stereo-only.md). The IMU-noise block and g_norm
 # below are therefore UNUSED; kept for reference / if IMU is ever re-enabled.
 #
-# SEED VALUES -- not a measured calibration; the baseline especially wants a real
-# stereo cal (the recovered scale sits ~10% off, consistent with baseline error).
+# SEED VALUES -- not a full measured calibration. The ~75 mm baseline is the OAK-D's
+# machined-aluminum spec: physically fixed to sub-mm, it does NOT drift. The recovered
+# scale sits ~10% off on ONE post-hoc stereo flight (E17) -- but scale = f*B, so that
+# error is far more likely in the intrinsics / factory rectification (or the single-flight
+# measurement itself) than in the physical baseline. A real stereo cal would settle it;
+# do not assume the baseline is the culprit.
 # vins_fusion reads ONLY these fields (see vins_estimator parameters.cpp). Camera
 # intrinsics live in feature_tracker -- features arrive already normalized, so
 # there is no cam0_calib/image_width here.
