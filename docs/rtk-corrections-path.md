@@ -111,28 +111,18 @@ offender.** `GET http://boxer-txbp.local.symmatree.com/mavlink` (route
   streaming happily (to whoever `ip.gcs` is); `drops_down`/`overflows_down` would flag
   a genuine link-capacity problem instead.
 
-A packet capture on `acebase` is a weaker second choice and only during a **power-cycle
-window**: the pre-latch broadcast reaches acebase (same broadcast domain), so
-`tcpdump -ni any udp port 14550` can show broadcast-arrives -> mavproxy-responds ->
-then goes silent (someone else latched) vs. no-broadcast-at-all (backpack not
-associated). Steady-state it shows nothing, because once latched elsewhere the stream
-is unicast away from acebase -- which is exactly why a starved-mavproxy log looks
-"silent." Prefer the `/mavlink` endpoint.
+## Recovery
 
-## Recovery and fix
+The backpack's target is learned, not settable -- the firmware (above) latches to
+whoever answers the discovery broadcast first and holds that lock until it reboots.
+So recovery is: read `/mavlink`, note `ip.gcs`; if it isn't acebase, take that host
+off the link, then power-cycle the backpack so it re-broadcasts and mavproxy can win
+the fresh race. A power-cycle without removing the other GCS just re-rolls the same
+race, which is why it has sometimes taken more than one.
 
-- **Recover a flight now:** read `/mavlink`, note `ip.gcs`, **down that offender**,
-  **then power-cycle the backpack**. Downing the offender alone does *not* hand the
-  link back this session (`gcsIPSet` never resets); the power-cycle re-runs the race
-  and, with the offender gone, mavproxy wins.
-- **Durable fix:** the backpack's target is *learned, not settable* -- the firmware
-  exposes no way to pin it to acebase. So kill the race at the network layer: put the
-  backpack on a segment where mavproxy is the **only** host that can answer it (AP
-  client isolation / dedicated SSID or VLAN), or guarantee no auto-connecting GCS ever
-  shares that network. Trying to "win" a shared-LAN race is not a fix.
-- **Pre-flight check:** `curl http://boxer-txbp.local.symmatree.com/mavlink` and
-  confirm `ip.gcs` is acebase (or `IP UNSET` then watch it latch to acebase), rather
-  than discovering DGPS-only in the air.
+Because the lock can't be pinned in firmware, keeping it from recurring is a network
+question -- whether an auto-connecting GCS can reach the backpack's subnet at all --
+and it is open: it depends on the site network and hasn't been chosen or tested.
 
 ## Related
 
