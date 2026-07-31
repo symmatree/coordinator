@@ -87,9 +87,10 @@ def pull(out, tag, arch):
             if os.path.basename(m.name).startswith(".wh."):  # OCI whiteout; flat merge is fine here
                 continue
             try:
-                # trusted first-party image; filter='tar' keeps device/setuid handling
-                # sane while still allowing the paths/links a rootfs needs (py>=3.12).
-                tf.extract(m, out, numeric_owner=True, filter="tar")
+                # "fully_trusted": the OCI image is ours + trusted, and its /etc/alternatives
+                # symlinks point outside the member dir, which py3.12's "tar"/"data" filters
+                # reject with OutsideDestinationError. Rehomed afterward by _fix_symlinks.
+                tf.extract(m, out, numeric_owner=True, filter="fully_trusted")
             except (PermissionError, OSError):
                 pass
 
