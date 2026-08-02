@@ -34,9 +34,11 @@ export, never pinned here. Deliberate tuning (e.g. autotune results) *is* pinned
 export. The fragments are what we apply to the FC; the export is what came back off it, so
 a mismatch means a fragment edit wasn't applied, or the FC drifted from the fragments.
 
-It runs in CI as a merge gate (`.github/workflows/ardupilot-verify.yaml`), not a commit
-hook -- a fresh re-export won't match until you reconcile the fragments, and you must be
-able to commit and push it first. Run it by hand while reconciling: `python3 ardupilot/verify.py`.
+It runs in CI (`.github/workflows/ardupilot-verify.yaml`) but only reports -- it is
+**not** a required/blocking check. A config change is a PR that edits a fragment, which
+you then apply to the FC and re-export; the fragment legitimately sits ahead of the
+export (red) between merge and apply, so blocking on green would be backwards. Red just
+means "not yet applied." Run it by hand while reconciling: `python3 ardupilot/verify.py`.
 
 ## Changing a parameter
 

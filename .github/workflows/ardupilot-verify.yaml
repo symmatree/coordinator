@@ -1,9 +1,13 @@
 name: ardupilot-verify
-# Merge gate for the rekon10 param decomposition (ardupilot/verify.py): the input
-# fragments must round-trip against the ground-truth FC export, and every deliberate
-# override must be pinned. This is a PR check, NOT a pre-commit/local hook -- so a raw
-# FC re-export (which won't round-trip until the fragments are reconciled) can still be
-# committed and pushed; the gate just has to be green before the PR merges.
+# Informational round-trip check for the rekon10 param decomposition
+# (ardupilot/verify.py): do the fragment values match the ground-truth FC export?
+#
+# Runs on PRs and reports pass/fail, but is intentionally NOT a required/blocking check.
+# The workflow is: a config change is a PR that edits a fragment, which is then applied
+# to the FC and re-exported. So a fragment legitimately sits *ahead* of the export
+# (red) between merge and apply -- blocking on green would force you to apply before
+# merging (check out the unmerged branch, load it, export, push), which is backwards.
+# Red here just means "not yet applied/reconciled," not "don't merge."
 on:
   push:
     branches: [main]
