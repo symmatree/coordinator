@@ -74,27 +74,31 @@ input files as `provenance: <sha> <date>` and `[source]` pointers. Defaults were
 extracted from ArduPilot source at tag `Copter-4.7.0` (the hosted parameter metadata
 carries no default field); calibration-vs-config split is in `overrides.csv`.
 
-## Known discrepancies (carry these -- do not silently "fix")
+## Where docs lag the config (source of truth: export > commits/flight-notes >
+## fresh build/electrical logs & coordinator bugs > older prose docs)
 
-The committed export is newer than several prose docs, so the docs lag in places.
-The export is authoritative for values **except** the first item, which is a genuine
-unresolved conflict:
+The FC export is the authoritative record of values, and the fresh flight notes,
+commits, `flight-platform.md`/`electrical-debugging.md`, and coordinator issues track
+the *reasons*. The older prose in `ardupilot.md` lags in several places -- where it
+disagrees with the export it is the doc that is stale, not a conflict to resolve. A
+follow-up fables PR corrects `ardupilot.md`. The lagging items:
 
-1. **`RELAY4_DEFAULT` = 0 in the export, but `ardupilot.md` says it must be 1.**
-   `0` is documented (and cleanly isolated) as breaking the ELRS link at boot. The
-   doc even claims "the FC is at 1", which contradicts this export. Last touched
-   `1->0` by `d41a75d 2026-07-26`. **Needs an operator decision + re-export** --
-   confirm the live FC value; do not blind-apply. Flagged loudly in
-   `60-rc-modes-relay.param`.
+1. **`RELAY4_DEFAULT` = 0 is correct.** `ardupilot.md` says "must be 1" because a
+   VTX-cold boot used to force the ELRS RX into WiFi/web-flash. That was **fixed in
+   hardware on 2026-07-27** (RX VCC moved 5V -> 4V5, isolating it from the 5V boot
+   transient); a `=0` boot now links cleanly, scope-verified (G1 RESOLVED in
+   `claude-transcripts/2026-07-27-120208-electrical/electrical-debugging.md`). The
+   `ardupilot.md` "must be 1" note predates the fix and is being corrected.
 2. `INS_HNTCH_ENABLE` = **1** (export) vs `0` (ardupilot.md ESC section) -- notch is on.
 3. `VISO_TYPE` = **2** (export) vs `0` "pre-VIO" (docs/ardupilot-vio.md).
 4. `EK3_SRC_OPTIONS` = **8** SRC_PER_CORE (export) vs `1` (ardupilot.md).
-5. `BATT_FS_LOW_ACT` = **1** Land (export) vs warn-only in ardupilot.md prose.
-6. `COMPASS_ORIENT` = **6** flagged historical M100-era; re-confirm from outdoor cal.
+5. `BATT_FS_LOW_ACT` = **1** Land (export, correct under canopy) vs warn-only prose.
+6. `COMPASS_ORIENT` = **6** carried as historical M100-era; worth re-confirming from an
+   outdoor cal on the F9P, but not blocking.
 7. Firmware is **4.7.0** (git `ea7afee 2026-07-27`), though the `ardupilot.md` header
    still says 4.6.3.
 
-Items 2-5 are just stale narrative (the export is right); item 1 is a real conflict.
+All of these are the older prose lagging the current export; none is an open conflict.
 
 ## Relationship to fables
 

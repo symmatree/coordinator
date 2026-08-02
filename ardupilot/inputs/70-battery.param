@@ -21,11 +21,9 @@ BATT_LOW_MAH,0
 BATT_CRT_MAH,250
 BATT_LOW_TIMER,0
 #
-# Failsafe ACTIONS. NOTE/DISCREPANCY: ardupilot.md prose describes LOW as warn-only
-#   (BATT_FS_LOW_ACT=0), but the export has 1 = Land on BOTH low and critical. Land
-#   is the safe action under canopy (RTL is not), so Land-on-low may be intentional
-#   and the doc stale -- but confirm which you want. Recorded as the export value.
-#   [ardupilot.md "Failsafe actions"]
+# Failsafe ACTIONS: Land on BOTH low and critical (1). Land is the correct action
+#   under canopy (RTL's climb-then-home is not). ardupilot.md prose still describes
+#   LOW as warn-only (=0); that is older -- the export is current.
 BATT_FS_LOW_ACT,1
 BATT_FS_CRT_ACT,1
 #

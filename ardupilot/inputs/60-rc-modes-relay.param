@@ -28,17 +28,16 @@ RC9_OPTION,36
 # === VTX relay (Lucid HD VTX 9/12V BEC on GPIO 83) ===
 RELAY4_FUNCTION,1
 #
-# !!! WARNING -- RELAY4_DEFAULT CONFLICT (needs an operator decision) !!!
-# The committed export has RELAY4_DEFAULT=0. ardupilot.md documents at length that
-# 0 is a KNOWN-BAD value: it breaks the ELRS link at boot (the Matek R24-TD drops
-# into WiFi/web-config within seconds), cleanly isolated as the only variable
-# between failing and working boots. The doc says the FC "is at 1" -- but this
-# export says 0, and no later export reverted it. Provenance: last touched
-# 1->0 by d41a75d 2026-07-26 ("disable VTX by default now that it doesn't kill the
-# radio") -- which contradicts the doc's finding. So the export and the doc
-# genuinely disagree; DO NOT blind-apply this line. Confirm on the FC whether it is
-# actually 0 (bad) or 1 (intended) and re-export, then correct this value.
-# [ardupilot.md "RELAY4_DEFAULT must be 1"; provenance d41a75d]
+# RELAY4_DEFAULT=0 -- VTX cold at boot (the bench-heat-friendly state originally
+#   wanted). CORRECT and current. There was an earlier ELRS-boot failure (a
+#   VTX-cold boot forced the Matek R24-TD into WiFi/web-flash), but it was FIXED IN
+#   HARDWARE on 2026-07-27: the ELRS RX VCC was moved from the 5V rail to 4V5,
+#   isolating the RX from the 5V-coupled boot transient. A =0 boot now links
+#   cleanly and respects the VTX switch -- verified with a scope on the bench (G1
+#   RESOLVED). So the "=1 must stay 1" note in fables ardupilot.md is STALE (it
+#   predates the rail fix) and is being corrected there.
+#   [claude-transcripts/2026-07-27-120208-electrical/electrical-debugging.md "G1
+#   RESOLVED"; flight-platform.md rail table]  provenance: d41a75d 2026-07-26 (1->0)
 RELAY4_DEFAULT,0
 #
 # RELAY2/RELAY3 (pins 81/82) also come up energized at boot -- left alone.
