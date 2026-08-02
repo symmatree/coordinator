@@ -1,4 +1,6 @@
 name: ardupilot-verify
+# DO NOT make this a required/blocking check -- it must stay informational (see why below).
+#
 # Informational round-trip check for the rekon10 param decomposition
 # (ardupilot/verify.py): do the fragment values match the ground-truth FC export?
 #
