@@ -1,41 +1,33 @@
 # 50 -- ESC / motor outputs / harmonic notch
 #
-# See ardupilot.md "ESC (AM32, Lucid 4in1)" and the tuning log. AM32 4in1 ESC,
-# DShot + BLHeli passthrough, ESC-telemetry-driven notch.
-# (Motor spin/thrust tuning lives in 80-tuning; MOT_BAT_* in 70-battery.)
+# AM32 4in1 ESC, DShot + BLHeli passthrough, ESC-telemetry-driven notch.
+# See flight-platform.md (ESC) and ardupilot.md (tuning log).
 #
-# === Motor output protocol ===
-# 6 = DShot600. Required for AM32 BLHeli passthrough (normal PWM breaks it) and
-#   drives the ESCs on EVERY armed flight, not just passthrough sessions. DShot300
-#   is the conservative fallback.  provenance: ac57658 2026-04-25; [ardupilot.md]
+# --- ESC telemetry link (SERIAL8, FC-ESC ribbon) ---
+# Proto 16 = ESC telemetry: feeds motor RPM to the notch and volts/amps to BATT_MONITOR=9.
+SERIAL8_PROTOCOL,16
+SERIAL8_BAUD,115
+#
+# --- Motor output ---
+# DShot600. Required for AM32 passthrough and drives the ESCs on every armed flight.
 MOT_PWM_TYPE,6
-#
-# Passthrough gate. NOTE: passthrough needs BOTH DShot (MOT_PWM_TYPE) AND this
-#   flag; the flag alone does not give DShot.  provenance: 9541509 2026-07-27
+# Passthrough gate (needs both this and DShot).
 SERVO_BLH_AUTO,1
-#
-# Left at defaults but LOAD-BEARING -- documented, not pinned:
-#   SERVO_BLH_POLES=14  -- motor pole count; feeds eRPM->RPM for telemetry AND the
-#     notch. Wrong poles skew both. Matches the AM32 "14 poles".
-#   SERVO_BLH_BDMASK=0  -- bi-directional-DShot RPM OFF; RPM comes from the SERIAL8
-#     UART instead. Do not enable both without a reason.  [ardupilot.md ESC choices]
-#
-# === Motor mapping (remap) ===
-# SERVO1..4 -> Motor1/Motor3/Motor4/Motor2. GOTCHA: this remap ALSO changes which
-#   physical ESC you address in the AM32 configurator (you reach it through FC
-#   passthrough), so AM32 follows ArduPilot numbering, not the ESC silkscreen.
-#   provenance: 8d0f52a 2026-04-25; [ardupilot.md NOTE]
+# Motor pole count -- a physical property of the Helion 3110 motors. Pinned even though
+#   it matches the current default, so a default change can't silently mis-scale eRPM.
+SERVO_BLH_POLES,14
+# RPM comes from the SERIAL8 UART, not bi-directional DShot.
+SERVO_BLH_BDMASK,0
+# Motor mapping SERVO1..4 -> Motor1/3/4/2. This remap also reorders which ESC the AM32
+#   configurator reaches through FC passthrough.
 SERVO1_FUNCTION,33
 SERVO2_FUNCTION,35
 SERVO3_FUNCTION,36
 SERVO4_FUNCTION,34
 #
-# === Harmonic notch (INS) ===
-# ESC-telemetry-driven (MODE=3) notch on the motor fundamental. Depends on SERIAL8
-#   RPM telemetry (see 20-serial) and SERVO_BLH_POLES. Tuned post-hover; 1st
-#   harmonic only. See ardupilot.md "Tuning" for the notch flights.
-#   NOTE: ardupilot.md ESC section still says INS_HNTCH_ENABLE=0 -- stale; export is 1.
-#   provenance: enable f908820/8d0f52a; final shape 16dfc7f..f908820 (2026-06)
+# --- Harmonic notch (ESC-RPM driven) ---
+# 1st-harmonic notch on the motor fundamental; MODE 3 = ESC telemetry. Depends on the
+#   SERIAL8 RPM feed and SERVO_BLH_POLES. Tuned post-hover (see ardupilot.md).
 INS_HNTCH_ENABLE,1
 INS_HNTCH_MODE,3
 INS_HNTCH_FREQ,58.8
@@ -43,20 +35,10 @@ INS_HNTCH_BW,22
 INS_HNTCH_HMNCS,1
 INS_HNTCH_REF,1
 INS_HNTCH_OPTS,6
-# Only the primary notch is used (INS_HNTCH_ATT and _FM_RAT sit at defaults):
 INS_HNTC2_ENABLE,0
 INS_HNTC3_ENABLE,0
-#
-# === INS sampling / filtering support ===
-# INS_FAST_SAMPLE (bitmask of fast-sampled IMUs; board default 3, we use 5) and
-#   INS_GYRO_FILTER=42 support the notch + loop rate.  provenance: 8d0f52a, 16dfc7f
+# INS sampling / filtering supporting the notch.
 INS_FAST_SAMPLE,5
 INS_GYRO_FILTER,42
-# All IMUs enabled (TBS Lucid H7 has 3; default mask is 7).
 INS_ENABLE_MASK,127
-# Gyro rate to loop rate (0). Deliberately set (1->0, 8d0f52a); default unconfirmed.
 INS_GYRO_RATE,0
-#
-# Left at defaults but LOAD-BEARING -- documented, not pinned:
-#   SCHED_LOOP_RATE=400 -- main loop; the notch updates at this rate.
-#   INS_ACCEL_FILTER=20 -- net back at default after the May-31 filter experiments.

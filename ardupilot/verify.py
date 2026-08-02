@@ -30,18 +30,17 @@ OVERRIDES = os.path.join(HERE, "overrides.csv")
 # state that happens to differ from the code default but is not configuration.
 KNOWN_EXCLUDED = {"FORMAT_VERSION", "MIS_TOTAL"}
 
-# Params pinned in an input file that equal the 4.7.0 default (so they are absent
-# from overrides.csv), kept deliberately so a subsystem file reads self-contained:
-# frame type identity; "2nd/3rd notch explicitly off"; disabled battery thresholds;
-# the wired serial protocols that happen to match board default; and a few whose
-# default the SITL 4.7.0 dump confirmed equals the export (FS_OPTIONS, INS_GYRO_RATE,
-# AUTOTUNE_AGGR/MIN_D). The former UNKNOWN set (ATC_ANG_*_P, FRAME_CLASS, LOG_BITMASK,
-# BATT_CAPACITY) is now resolved as a real override via SITL and lives in overrides.csv.
+# Params pinned in a fragment that currently equal the 4.7.0 default (so they are
+# absent from overrides.csv) but are pinned on purpose:
+#   - physical / wiring facts that won't move if ArduPilot's default does: the motor
+#     pole count, the RPM source, and which device sits on which serial protocol;
+#   - load-bearing fusion / notch / config values we rely on holding at this number.
 INTENTIONAL_AT_DEFAULT = {
-    "FRAME_TYPE", "INS_HNTC2_ENABLE", "INS_HNTC3_ENABLE", "MOT_THST_EXPO",
-    "SERIAL2_PROTOCOL", "SERIAL3_PROTOCOL", "SERIAL4_PROTOCOL",
-    "BATT_ESC_MASK", "BATT_LOW_MAH", "FS_OPTIONS", "INS_GYRO_RATE",
-    "AUTOTUNE_AGGR", "AUTOTUNE_MIN_D",
+    "FRAME_TYPE", "SERIAL2_PROTOCOL", "SERIAL3_PROTOCOL", "SERIAL4_PROTOCOL",
+    "SERIAL8_PROTOCOL", "SERVO_BLH_POLES", "SERVO_BLH_BDMASK",
+    "EK3_ALT_M_NSE", "VISO_POS_M_NSE", "VISO_VEL_M_NSE", "VISO_YAW_M_NSE",
+    "INS_HNTC2_ENABLE", "INS_HNTC3_ENABLE", "INS_GYRO_RATE", "MOT_THST_EXPO",
+    "FS_OPTIONS", "BATT_ESC_MASK", "BATT_LOW_MAH",
 }
 
 

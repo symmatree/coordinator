@@ -50,10 +50,6 @@ ATC_ANGLE_MAX,45
 ATC_THR_MIX_MAX,0.9
 # Autotune unbound (0) after the tune converged.  provenance: dc198ce 2026-06-17
 AUTOTUNE_AXES,0
-# Autotune aggressiveness / min-D -- the converged-tune anchors used by the SITL
-#   bifurcation-threshold work (LA2).  [analysis/sitl-validation-experiments.md]
-AUTOTUNE_AGGR,0.075
-AUTOTUNE_MIN_D,0.0005
 #
 # Vertical rate limits (m/s) for the "vertical bounce" climb test.
 #   provenance: d024d6a 2026-06-13

@@ -23,9 +23,15 @@ The fragments pin the deliberate **configuration and tuning** for this airframe 
 the 172 `config`-kind overrides (minus the two pure-runtime values `FORMAT_VERSION`
 and `MIS_TOTAL`), including things produced by a procedure we want to lock in and
 reproduce, like the autotune PID/rate results and the one-time-set radio and mode
-config. A few params that sit at the 4.7.0 default but are load-bearing
-(`EK3_ALT_M_NSE`, `VISO_VEL_M_NSE`, `SERVO_BLH_POLES`) are documented inline in the
-relevant fragment so the interaction is visible, rather than pinned.
+config. Some params are pinned even though they currently equal the 4.7.0 default:
+physical/wiring facts that won't move if ArduPilot's default does (`SERVO_BLH_POLES`,
+which device is on which serial), and load-bearing fusion/notch values we rely on
+holding (`EK3_ALT_M_NSE`, the `VISO_*_M_NSE` terms). `verify.py` tracks that allowlist
+so nothing at-default is pinned by accident.
+
+Fragments are grouped by **device/subsystem**, not by param-name prefix -- e.g. the
+F9P Rover Lite's serial, GNSS, and onboard compass are together in `20-gps-compass`,
+not scattered across a serial file and a compass file.
 
 **Not asserted** -- the 52 `calibration/identity` values, which live only in the
 ground-truth export. These are per-unit state that the FC or a calibration procedure
@@ -44,9 +50,9 @@ sensor/runtime state you must re-derive, vs a configuration/tuning choice for th
 Fragments, in apply order:
 
 ```
-10-frame              20-serial            30-compass-gps       40-ekf-vio
-50-esc-motors-notch   60-rc-modes-relay    62-radio-cal         70-battery
-72-failsafe-fence     80-tuning            90-logging-notify-misc
+10-frame          20-gps-compass    40-ekf-vio    50-esc-motors-notch
+60-rc-modes-relay 62-radio-cal      70-battery    72-failsafe-fence
+80-tuning         90-logging-notify-misc
 ```
 
 ## Verifying

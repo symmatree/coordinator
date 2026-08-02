@@ -36,6 +36,14 @@ MAV1_EXTRA1,1
 MAV1_EXTRA2,1
 MAV1_EXTRA3,1
 #
+# --- Unused serial ports ---
+# SERIAL7 disabled (the abandoned F9P-move port); SERIAL9 (OTG) unused, baud raised.
+#   SERIAL0 (USB console) is at board default and omitted.
+SERIAL7_PROTOCOL,-1
+SERIAL7_BAUD,115
+SERIAL9_PROTOCOL,2
+SERIAL9_BAUD,460
+#
 # --- Board misc ---
 # RTC timezone offset +240 min (EDT). Safety-switch mask.
 BRD_RTC_TZ_MIN,240

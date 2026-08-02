@@ -1,45 +1,41 @@
-# 60 -- RC aux functions, flight modes, VTX relay
+# 60 -- RC aux, flight modes, arming, VTX relay + radio/VTX serial links
 #
-# FC parameters only. The RadioMaster/EdgeTX mix table, switch->channel mapping,
-# and the arm-gate live in ground-station.md and config/MODELS/model01.yml -- not
-# duplicated here.  (RC10 = EKF source toggle is in 40-ekf-vio.)
+# FC parameters only; the EdgeTX mix/switch table is in ground-station.md + model01.yml.
 #
-# === Flight modes (on CH6 / SB) ===
-# Loiter / AltHold across the switch. AltHold (2) is the preferred degraded-VIO
-#   fallback over Loiter.  [ardupilot.md; canopy-ops.md]
+# --- Radio + VTX serial links ---
+# SERIAL6 = Matek ELRS R24-TD, proto 2 = MAVLink2 (control + telem + RTCM uplink); 460800
+#   to match the ELRS link.
+SERIAL6_PROTOCOL,2
+SERIAL6_BAUD,460
+# SERIAL3 = Walksnail VTX MSP DisplayPort (TX3/RX3, data only; VTX power is on RELAY4 below).
+SERIAL3_PROTOCOL,42
+SERIAL3_BAUD,115
+#
+# --- Flight modes (CH6 / SB) ---
+# Loiter / AltHold; AltHold is the preferred degraded-VIO fallback. FLTMODE6 is unbound.
 FLTMODE_CH,6
 FLTMODE1,5
 FLTMODE4,2
-# FLTMODE6 is currently 0 (unbound) -- was Sport(13), unbound with autotune mode on
-#   2026-06-19 (86bd967). Left at default 0; noted, not pinned.
 #
-# === Aux switches ===
-# CH5 = arm/disarm on the L3 latch (153).  [ground-station.md]
+# --- Aux switches ---
+# CH5 = arm/disarm on the L3 latch.
 RC5_OPTION,153
-# CH7/SD = LAND, deliberately NOT RTL: under canopy, RTL's climb-then-go-home is
-#   actively dangerous.  provenance: 86bd967 (unbind autotune); [ardupilot.md]
+# CH7/SD = LAND, deliberately not RTL (climb-then-home is dangerous under canopy).
 RC7_OPTION,18
-# CH8 = lost-vehicle buzzer while SF is held (30).
+# CH8 = lost-vehicle buzzer while SF held; CH9 = VTX relay (below).
 RC8_OPTION,30
-# CH9/SA = Relay4 (VTX BEC) when disarmed (36); the arm gate forces it high (VTX
-#   on) while armed.  [ground-station.md]
 RC9_OPTION,36
 #
-# === VTX relay (Lucid HD VTX 9/12V BEC on GPIO 83) ===
+# --- Arming ---
+# Rudder arm/disarm off -- arming is on the CH5 latch, so a rudder gesture must not arm.
+#   provenance: dc198ce 2026-06-17
+ARMING_RUDDER,0
+#
+# --- VTX relay (Lucid HD VTX 9/12V BEC on GPIO 83, controlled by CH9) ---
 RELAY4_FUNCTION,1
-#
-# RELAY4_DEFAULT=0 -- VTX cold at boot (the bench-heat-friendly state originally
-#   wanted). CORRECT and current. There was an earlier ELRS-boot failure (a
-#   VTX-cold boot forced the Matek R24-TD into WiFi/web-flash), but it was FIXED IN
-#   HARDWARE on 2026-07-27: the ELRS RX VCC was moved from the 5V rail to 4V5,
-#   isolating the RX from the 5V-coupled boot transient. A =0 boot now links
-#   cleanly and respects the VTX switch -- verified with a scope on the bench (G1
-#   RESOLVED). So the "=1 must stay 1" note in fables ardupilot.md is STALE (it
-#   predates the rail fix) and is being corrected there.
-#   [claude-transcripts/2026-07-27-120208-electrical/electrical-debugging.md "G1
-#   RESOLVED"; flight-platform.md rail table]  provenance: d41a75d 2026-07-26 (1->0)
+# RELAY4_DEFAULT=0 = VTX cold at boot (bench-friendly). The old ELRS-cold-boot failure
+#   was fixed 2026-07-27 by moving the RX to the 4V5 rail; a =0 boot now links cleanly.
+#   See flight-platform.md.  provenance: d41a75d 2026-07-26
 RELAY4_DEFAULT,0
-#
-# RELAY2/RELAY3 (pins 81/82) also come up energized at boot -- left alone.
 RELAY2_FUNCTION,1
 RELAY3_FUNCTION,1

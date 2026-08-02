@@ -1,88 +1,48 @@
-# 40 -- EKF3 source sets and VIO / ExtNav
+# 40 -- VIO / ExtNav and EKF3 source sets
 #
-# This is the heart of the GPS-vs-VIO integration. Read alongside:
-#   docs/ardupilot-extnav-fusion.md, docs/ardupilot-vio.md, ardupilot.md
-#   "EKF3 source mixing", and coordinator issues #138 (extrinsics), #155
-#   (VISO_TYPE=2), #160 (SRC_PER_CORE), #67/#68 (glitch/reset).
+# The GPS-vs-VIO integration. SRC1 is GPS (the flown lane); VIO/ExtNav is a
+# selectable source set. Mechanism and the load-bearing fusion details:
+# docs/ardupilot-extnav-fusion.md, docs/ardupilot-vio.md.
 #
-# The vehicle FLIES GPS-primary. VIO has, to date, only ever gated arming
-# ("VisOdom not healthy"); it is not a control source in flight. See
-# vio-quality-active-not-broken.
+# --- Companion link (SERIAL4 -> coordinator Pi 4B) ---
+# Proto 2 = MAVLink2 (required for ExtNav ingest). 1.5 Mbaud is the working VIO rate.
+#   provenance: 04b2592, bcd7c65 2026-07-08
+SERIAL4_PROTOCOL,2
+SERIAL4_BAUD,1500
 #
-# === EKF source SETS ===
-# Three selectable source sets; RC10 (below) switches the ACTIVE set at runtime.
-#
-# SRC1 = GPS lane, THE lane actually flown. All at ArduPilot defaults, so not
-#   pinned here, but for the record: POSXY=3(GPS) VELXY=3 POSZ=1(Baro) VELZ=3
-#   YAW=1(Compass). POSZ is a hard mutex (one height source/tick, auto-falls-back
-#   to Baro).  [ardupilot.md "Altitude position"]
-#
-# SRC2 = VIO / ExtNav lane, POSITION-ONLY. VELXY/VELZ are left 0 (default):
-#   velocity-only ExtNav is unsupported upstream (#23485), so position is sent and
-#   velocity is only an optional add.  provenance: 76b10d2, bcd7c65 2026-07-08
+# --- EKF3 source sets ---
+# SRC1 = GPS (all at default: POSXY/VEL=GPS, POSZ=Baro, YAW=compass) -- not pinned.
+# SRC2 = VIO/ExtNav, position-only (velocity-only ExtNav is unsupported upstream).
 EK3_SRC2_POSXY,6
 EK3_SRC2_YAW,1
-#
-# SRC3 = a copy of the GPS lane, so the 3-pos switch has GPS on both ends and VIO
-#   only in the middle.  provenance: 76b10d2 2026-07-08
+# SRC3 = a copy of the GPS lane, so the switch has GPS on both ends, VIO in the middle.
 EK3_SRC3_POSXY,3
 EK3_SRC3_VELXY,3
 EK3_SRC3_VELZ,3
 EK3_SRC3_YAW,1
-#
-# EK3_SRC_OPTIONS bit 3 (SRC_PER_CORE, value 8): each EKF core runs a DIFFERENT
-#   source set. With EK3_IMU_MASK=3 (2 cores, default), core0=SRC1(GPS,
-#   authoritative) and core1=SRC2(VIO) -- so the VIO-driven EKF is computed and
-#   LOGGED every flight with zero control authority (the #160 counterfactual).
-#   Bit 0 (FUSE_ALL_VELOCITIES) is intentionally OFF here (it was 1, reverted to 0
-#   during the 4.7 upgrade).  provenance: ca8cd23 2026-07-31; [issue #160]
-#   NOTE: ardupilot.md still says EK3_SRC_OPTIONS=1 -- stale; the export is 8.
-EK3_SRC_OPTIONS,8
-#
-# Runtime GPS<->VIO toggle on SC/CH10 (option 90 = EKF Source Set). Distinct from
-#   SRC_PER_CORE above: this switches the ACTIVE set for all cores; SRC_PER_CORE
-#   is passive per-core logging.  provenance: 76b10d2 2026-07-08; [ground-station.md]
-#   (Lives here, not in 60-rc-modes, because its whole meaning is EKF sourcing.)
+# Runtime source-set select on SC/CH10.
 RC10_OPTION,90
-#
-# === EKF gating / noise ===
-# Gate GPS vertical velocity (and GPS altitude if POSZ ever -> GPS) when reported
-#   vertical accuracy is worse than 0.15 m.  provenance: dc198ce 2026-06-17
+# SRC_OPTIONS bit 3 (=8, SRC_PER_CORE): core 0 runs SRC1/GPS, core 1 runs SRC2/VIO,
+#   so the VIO EKF lane is computed and logged next to the GPS lane (bit 0 off).
+EK3_SRC_OPTIONS,8
+# Reject GPS vertical velocity when reported vertical accuracy > 0.15 m.
 EK3_GPS_VACC_MAX,0.15
+# Baro altitude noise, widened to absorb the measured hover propwash offset (~1.2 m).
+EK3_ALT_M_NSE,2
 #
-# Left at defaults but LOAD-BEARING -- documented, not pinned:
-#   EK3_ALT_M_NSE=2.0  -- absorbs the measured baro propwash offset (~1.2 m high in
-#     hover, tracks throttle) while POSZ=Baro.  [ardupilot.md propwash section]
-#   EK3_GLITCH_RAD=25  -- the ONLY real knob for the measured 1-2 m single-sample
-#     VIO position jumps; past sq(rad) the filter snaps/ResetPosition. Velocity has
-#     no glitch radius (spikes just fail EK3_VEL_I_GATE and are dropped by design).
-#   EK3_{POS,VEL,HGT}_I_GATE=500 (5 sigma) -- shared GPS/ExtNav jump rejection; the
-#     designated mechanism, per "don't build a bespoke filter first" (#68).
-#   EK3_IMU_MASK=3 -- 2 cores, REQUIRED for the SRC_PER_CORE split above.
-#
-# === VISO (VISION_POSITION_ESTIMATE ingest tuning) ===
-# Backend: 2 = IntelT265, NOT 1 (plain MAVLink). Only the T265 backend yaw-aligns
-#   the VIO frame onto AHRS -- stereo-only VINS has no heading reference (yaw is
-#   arbitrary per init). Correctness on the real IMU-less attitude is still a
-#   flight-test item (#155); NOT replay-validatable (Replay bypasses the backend).
-#   provenance: ca8cd23 2026-07-31; [docs/ardupilot-extnav-fusion.md; #155]
-#   NOTE: docs/ardupilot-vio.md still calls the export "pre-VIO, VISO_TYPE=0" -- stale.
+# --- VISION_POSITION_ESTIMATE ingest (VISO) ---
+# Backend 2 = IntelT265: yaw-aligns the VIO frame onto AHRS (stereo VINS has no heading ref).
 VISO_TYPE,2
-#
-# Measured VINS->FC transport latency ~100 ms (E16), not the 10 ms default.
-#   provenance: ca8cd23 2026-07-31; [docs/ardupilot-extnav-fusion.md]
+# Measured VINS->FC transport latency ~100 ms (not the 10 ms default).
 VISO_DELAY_MS,100
-#
-# OAK-D -> FC lever arm, metres FRD (#138).  provenance: ca8cd23 2026-07-31
-#   Y is special: VINS reports in the cam0 (left-imager) frame, so Y carries a
-#   half-baseline offset (~ -37.5 mm, cam0 on the vehicle left). Coupled to the
-#   camera extrinsics (oak_d.yaml), not a free FC knob.  [#138; VISO_POS_Y note]
+# OAK-D -> FC lever arm, metres FRD. Y carries a half-baseline offset (VINS reports in
+#   the cam0/left-imager frame). Coupled to the camera extrinsics (oak_d.yaml).
 VISO_POS_X,0.072
 VISO_POS_Y,-0.0375
 VISO_POS_Z,-0.116
-#
-# Left at defaults but LOAD-BEARING -- documented, not pinned:
-#   VISO_POS_M_NSE=0.2 -- FLOORS the per-sample position covariance from the message.
-#   VISO_VEL_M_NSE=0.1 -- velocity IGNORES the message covariance entirely and fuses
-#     at this fixed value, so the router's vel covariance only matters if mirrored
-#     here. EK3_*_M_NSE do NOT affect VIO.  [docs/ardupilot-extnav-fusion.md key finding]
+# Fusion noise. Position covariance is floored by POS_M_NSE; VIO velocity ignores the
+#   message covariance and fuses at VEL_M_NSE (so a router vel covariance only takes
+#   effect if mirrored here).
+VISO_POS_M_NSE,0.2
+VISO_VEL_M_NSE,0.1
+VISO_YAW_M_NSE,0.2
