@@ -30,23 +30,18 @@ OVERRIDES = os.path.join(HERE, "overrides.csv")
 # state that happens to differ from the code default but is not configuration.
 KNOWN_EXCLUDED = {"FORMAT_VERSION", "MIS_TOTAL"}
 
-# Params pinned in an input file that equal (or are unresolved against) the
-# 4.7.0 default, so they are absent from overrides.csv. Pinned deliberately, for
-# one of two reasons:
-#   (a) default UNKNOWN in the extraction but the value is clearly set/tuned --
-#       e.g. ATC_ANG_*_P are autotune results (~16-20 vs the 4.5 floor); their
-#       constructor default was not statically resolvable. Real overrides.
-#   (b) at-default but documentary -- pinned so a subsystem file is self-contained
-#       (frame identity; "2nd/3rd notch explicitly off"; disabled battery
-#       thresholds; the wired serial protocols that happen to match board default).
+# Params pinned in an input file that equal the 4.7.0 default (so they are absent
+# from overrides.csv), kept deliberately so a subsystem file reads self-contained:
+# frame type identity; "2nd/3rd notch explicitly off"; disabled battery thresholds;
+# the wired serial protocols that happen to match board default; and a few whose
+# default the SITL 4.7.0 dump confirmed equals the export (FS_OPTIONS, INS_GYRO_RATE,
+# AUTOTUNE_AGGR/MIN_D). The former UNKNOWN set (ATC_ANG_*_P, FRAME_CLASS, LOG_BITMASK,
+# BATT_CAPACITY) is now resolved as a real override via SITL and lives in overrides.csv.
 INTENTIONAL_AT_DEFAULT = {
-    # (a) UNKNOWN-default, value is set/tuned:
-    "ATC_ANG_PIT_P", "ATC_ANG_RLL_P", "ATC_ANG_YAW_P", "AUTOTUNE_AGGR",
-    "AUTOTUNE_MIN_D", "BATT_CAPACITY", "FS_OPTIONS", "LOG_BITMASK",
-    "FRAME_CLASS", "FRAME_TYPE", "INS_GYRO_RATE",
-    # (b) at-default, kept for a self-contained subsystem file:
-    "BATT_ESC_MASK", "BATT_LOW_MAH", "INS_HNTC2_ENABLE", "INS_HNTC3_ENABLE",
-    "MOT_THST_EXPO", "SERIAL2_PROTOCOL", "SERIAL3_PROTOCOL", "SERIAL4_PROTOCOL",
+    "FRAME_TYPE", "INS_HNTC2_ENABLE", "INS_HNTC3_ENABLE", "MOT_THST_EXPO",
+    "SERIAL2_PROTOCOL", "SERIAL3_PROTOCOL", "SERIAL4_PROTOCOL",
+    "BATT_ESC_MASK", "BATT_LOW_MAH", "FS_OPTIONS", "INS_GYRO_RATE",
+    "AUTOTUNE_AGGR", "AUTOTUNE_MIN_D",
 }
 
 

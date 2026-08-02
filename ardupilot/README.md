@@ -16,12 +16,13 @@ firmware **ArduCopter 4.7.0**.
 |------|------------|
 | `rekon10-methodi.param` | **Ground truth.** The last full parameter dump exported from the FC (Mission Planner *Write Params* -> *Save to File*). 1293 params, every one including untouched defaults. Do not hand-edit -- replace it wholesale with a fresh export. |
 | `inputs/*.param` | **Decomposition.** The values we *rely on*, split by subsystem, one commented `.param` per group, overrides only. This is the "methodical configurator" idea with a coarser, more readable grouping. |
-| `overrides.csv` | Every param that differs from the ArduCopter 4.7.0 default (`key,export,default,kind,default_source`), 218 rows. `kind=config` (166) vs `calibration/identity` (52). Reference data + input to `verify.py`. |
+| `overrides.csv` | Every param that differs from the ArduCopter 4.7.0 default (`key,export,default,kind,default_source`), 224 rows. `kind=config` (172) vs `calibration/identity` (52). Reference data + input to `verify.py`. |
 | `verify.py` | Checks the decomposition against the ground truth (see below). |
+| `gen_defaults_sitl.py` | Boots ArduCopter SITL bare and dumps the running firmware's code-defaults -- the authoritative source for any default a static source-scan can't resolve. Used to close the classification (see Provenance). |
 
 ### What the input files cover, and what they don't
 
-`inputs/` pins the **166 `config`-kind overrides** (deliberate configuration) minus
+`inputs/` pins the **172 `config`-kind overrides** (deliberate configuration) minus
 2 runtime values (`FORMAT_VERSION`, `MIS_TOTAL`), plus a handful of load-bearing
 params kept for context even though they sit at the default (frame identity, "2nd/3rd
 notch off", the wired serial protocols). A few params that ArduPilot *learns* or that
@@ -60,8 +61,10 @@ export.
 ### Refreshing after a new FC export
 
 1. Export from the FC, replace `rekon10-methodi.param`.
-2. Regenerate `overrides.csv` against 4.7.0 defaults (or the new firmware's) -- see the
-   provenance note below; the extraction method is recorded there.
+2. Regenerate the defaults baseline for the new firmware: `python3 ardupilot/gen_defaults_sitl.py`
+   (boots SITL built at the matching tag; confirm the version it prints), then diff the
+   export against it to rebuild `overrides.csv`. Board-gated params come from the board
+   hwdef, not SITL -- see the provenance note below.
 3. `python3 ardupilot/verify.py` and reconcile any round-trip mismatch (a value you
    changed on the FC) or coverage gap (a new deliberate override) into the input files.
 
@@ -73,6 +76,16 @@ coordinator issues, and past session transcripts. Provenance appears inline in t
 input files as `provenance: <sha> <date>` and `[source]` pointers. Defaults were
 extracted from ArduPilot source at tag `Copter-4.7.0` (the hosted parameter metadata
 carries no default field); calibration-vs-config split is in `overrides.csv`.
+
+The static source-scan left 40 params UNKNOWN (default behind an unresolvable macro,
+a `DEFAULT_POINTER` constructor, or a board/`#if` branch). Those were **fully resolved
+by running SITL at 4.7.0** (`gen_defaults_sitl.py`, firmware confirmed `4.7.0`) plus,
+for the handful compiled out of SITL, reading the source macro directly: **34 turned
+out to equal the export (defaults), 6 are real overrides** (`FRAME_CLASS`, `LOG_BITMASK`,
+`ATC_ANG_{RLL,PIT,YAW}_P`, `BATT_CAPACITY`) -- all 6 were already pinned in the fragments,
+so nothing was missed. No params remain UNKNOWN. (Confirmations of note: `EK3_ALT_M_NSE=2`
+and every `EK3_*_NSE` are exactly default, i.e. they do not affect VIO fusion -- only the
+`VISO_*_M_NSE` terms do; and `AUTOTUNE_AGGR`/`MIN_D` are defaults, not tuned.)
 
 ## Where docs lag the config (source of truth: export > commits/flight-notes >
 ## fresh build/electrical logs & coordinator bugs > older prose docs)
