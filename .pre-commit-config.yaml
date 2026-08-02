@@ -1,10 +1,10 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 
-# Byte-faithful build artifacts: the ESC firmware hex (compiled) and its patch
-# (trailing whitespace can be load-bearing) must not be whitespace/EOL-normalized,
-# same rationale as the vendored `overlay/` files.
-exclude: "^firmware/esc/.*\\.(hex|patch)$"
+# Byte-faithful build artifacts: compiled firmware (hex/bin) and vendored patches
+# (trailing whitespace can be load-bearing -- a trimmed .patch stops applying) must
+# not be whitespace/EOL-normalized, same rationale as the vendored `overlay/` files.
+exclude: "^firmware/.*\\.(hex|patch|bin)$"
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
