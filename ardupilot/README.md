@@ -12,7 +12,7 @@ The FC export is authoritative for values; the fables `Drones/rekon10/*.md` docs
 | Path | What it is |
 |------|------------|
 | `rekon10-methodi.param` | **Ground truth** -- the last full parameter dump exported from the FC (Mission Planner *Write Params* -> *Save to File*). Do not hand-edit; replace wholesale with a fresh export. |
-| `inputs/*.param` | **Decomposition** -- the config we maintain, split by device/subsystem, one commented `.param` per group. Inspired by the ArduPilot Methodic Configurator; apply in filename (numeric-prefix) order. |
+| `inputs/*.param` | **Decomposition** -- the config we maintain, one commented `.param` per device/subsystem, named for what it holds. Inspired by the ArduPilot Methodic Configurator. |
 | `overrides.csv` | Classification of every non-default param (config vs the FC's own calibration/identity state); input to `verify.py`'s coverage check. |
 | `verify.py` | Verifies the decomposition against the ground truth (see [Verifying](#verifying)). |
 | `gen_defaults_sitl.py` | Dumps the running firmware's code-defaults from SITL, for reclassifying against a new firmware. |

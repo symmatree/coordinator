@@ -16,10 +16,9 @@ SERIAL3_BAUD,115
 OSD_TYPE2,5
 OSD1_ENABLE,1
 #
-# --- Power (Lucid VTX 9/12V BEC on RELAY4 / GPIO 83, switched by CH9) ---
+# --- Power (Lucid VTX 9/12V BEC on RELAY4 / GPIO 83) ---
 RELAY4_FUNCTION,1
+# CH9 (SA) toggles Relay4 (aux option 36 = Relay4 on/off).
 RC9_OPTION,36
-# RELAY4_DEFAULT=0 = VTX cold at boot (bench-friendly). The old ELRS-cold-boot failure
-#   was fixed 2026-07-27 by moving the RX to the 4V5 rail; a =0 boot now links cleanly.
-#   See flight-platform.md.  provenance: d41a75d 2026-07-26
+# VTX cold at boot (bench-friendly).  provenance: d41a75d 2026-07-26
 RELAY4_DEFAULT,0
