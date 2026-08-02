@@ -4,38 +4,44 @@ Flight-controller configuration for the **rekon10** airframe, concentrated in th
 coordinator repo alongside the code that supports it. Board **TBS_LUCID_H7**,
 firmware **ArduCopter 4.7.0**.
 
-> Hardware/build narrative (wiring, ESC, radio, tuning log, RTK path) lives in the
-> fables `Drones/rekon10/*.md` docs -- especially `ardupilot.md`. This directory is
-> the machine-readable config; those docs are the prose. Where a doc and this
-> config disagree, **this config (the FC export) is authoritative for values** --
-> see "Known discrepancies" below.
+The FC export is authoritative for values; the fables `Drones/rekon10/*.md` docs
+(especially `ardupilot.md`) carry the hardware/build narrative and the rationale.
 
 ## Layout
 
 | Path | What it is |
 |------|------------|
 | `rekon10-methodi.param` | **Ground truth.** The last full parameter dump exported from the FC (Mission Planner *Write Params* -> *Save to File*). 1293 params, every one including untouched defaults. Do not hand-edit -- replace it wholesale with a fresh export. |
-| `inputs/*.param` | **Decomposition.** The values we *rely on*, split by subsystem, one commented `.param` per group, overrides only. This is the "methodical configurator" idea with a coarser, more readable grouping. |
+| `inputs/*.param` | **Decomposition.** The values we assert, split by subsystem, one commented `.param` per group, overrides only. The "methodical configurator" idea with a coarser, more readable grouping. Numeric prefixes give a sane apply order. |
 | `overrides.csv` | Every param that differs from the ArduCopter 4.7.0 default (`key,export,default,kind,default_source`), 224 rows. `kind=config` (172) vs `calibration/identity` (52). Reference data + input to `verify.py`. |
-| `verify.py` | Checks the decomposition against the ground truth (see below). |
-| `gen_defaults_sitl.py` | Boots ArduCopter SITL bare and dumps the running firmware's code-defaults -- the authoritative source for any default a static source-scan can't resolve. Used to close the classification (see Provenance). |
+| `verify.py` | Verifies the decomposition against the ground truth (see [Verifying](#verifying)). |
+| `gen_defaults_sitl.py` | Boots ArduCopter SITL bare and dumps the running firmware's code-defaults -- the default source for any param a static source-scan can't resolve. Used when rebuilding `overrides.csv` for a new firmware. |
 
-### What the input files cover, and what they don't
+## What the fragments assert, and what they deliberately don't
 
-`inputs/` pins the **172 `config`-kind overrides** (deliberate configuration) minus
-2 runtime values (`FORMAT_VERSION`, `MIS_TOTAL`), plus a handful of load-bearing
-params kept for context even though they sit at the default (frame identity, "2nd/3rd
-notch off", the wired serial protocols). A few params that ArduPilot *learns* or that
-are otherwise per-sample are documented in-file but deliberately left as defaults
-rather than pinned (e.g. `VISO_VEL_M_NSE`, `EK3_ALT_M_NSE`, `SERVO_BLH_POLES`).
+The fragments pin the deliberate **configuration and tuning** for this airframe --
+the 172 `config`-kind overrides (minus the two pure-runtime values `FORMAT_VERSION`
+and `MIS_TOTAL`), including things produced by a procedure we want to lock in and
+reproduce, like the autotune PID/rate results and the one-time-set radio and mode
+config. A few params that sit at the 4.7.0 default but are load-bearing
+(`EK3_ALT_M_NSE`, `VISO_VEL_M_NSE`, `SERVO_BLH_POLES`) are documented inline in the
+relevant fragment so the interaction is visible, rather than pinned.
 
-**Not decomposed** (they live only in `rekon10-methodi.param`): the **52
-calibration/identity** values -- magnetometer and accel/gyro offsets/scales/IDs,
-`AHRS_TRIM`, `BARO1_GND_PRESS`, learned `MOT_THST_HOVER`, `STAT_*` counters. These are
-produced on-vehicle by calibration and by learning; blind-applying a stale snapshot
-would be wrong, so they are intentionally excluded from the apply set.
+**Not asserted** -- the 52 `calibration/identity` values, which live only in the
+ground-truth export. These are per-unit state that the FC or a calibration procedure
+produces for *this specific airframe/sensor* and that you re-establish by running the
+procedure or letting the FC learn, never by pasting a saved value:
 
-Files, in apply order:
+- runtime-learned/estimated on the vehicle: learned hover throttle (`MOT_THST_HOVER`),
+  barometer ground pressure (`BARO1_GND_PRESS`), gyro bias, `STAT_*` flight counters;
+- sensor calibration + hardware identity: compass and accel/gyro offsets & scales,
+  device IDs, board-level accel trim (`AHRS_TRIM`).
+
+(This is *not* "machine-generated vs hand-set" -- the autotune PIDs are machine-generated
+too, but they are a tuning decision we version and reflash. The line is per-unit
+sensor/runtime state you must re-derive, vs a configuration/tuning choice for the airframe.)
+
+Fragments, in apply order:
 
 ```
 10-frame              20-serial            30-compass-gps       40-ekf-vio
@@ -45,77 +51,34 @@ Files, in apply order:
 
 ## Verifying
 
-```
-python3 ardupilot/verify.py
-```
+`verify.py` checks two properties and exits non-zero on either:
 
-1. **Round-trip** -- every `KEY,VALUE` in `inputs/` must match `rekon10-methodi.param`.
-   This proves the decomposition faithfully reflects the FC, and will flag the moment
-   a value drifts on a future re-export (re-export, then reconcile the input file).
-2. **Coverage** -- every `config` override in `overrides.csv` must be pinned by some
-   input file (or be on the small runtime allowlist), so nothing deliberate is missed.
+1. **Round-trip** -- every `KEY,VALUE` in `inputs/` equals the value in
+   `rekon10-methodi.param`. This is what keeps the decomposition honest: the fragments
+   can never silently drift from what was actually on the FC, and a future re-export
+   that changed a value trips this until the fragment is reconciled.
+2. **Coverage** -- every `config` override in `overrides.csv` is pinned by some
+   fragment (or is on the two-item runtime allowlist). This is what stops a deliberate
+   setting from being silently dropped from the decomposition.
 
-Exit 0 = clean. Run it after any change to an input file or after dropping in a new
-export.
+**It runs automatically in pre-commit** (hook `ardupilot-verify`, so also in CI)
+whenever a file under `ardupilot/` changes -- you don't have to remember it. Run it by
+hand with `python3 ardupilot/verify.py` while iterating.
 
-### Refreshing after a new FC export
+## Changing or adding a parameter
 
-1. Export from the FC, replace `rekon10-methodi.param`.
-2. Regenerate the defaults baseline for the new firmware: `python3 ardupilot/gen_defaults_sitl.py`
-   (boots SITL built at the matching tag; confirm the version it prints), then diff the
-   export against it to rebuild `overrides.csv`. Board-gated params come from the board
-   hwdef, not SITL -- see the provenance note below.
-3. `python3 ardupilot/verify.py` and reconcile any round-trip mismatch (a value you
-   changed on the FC) or coverage gap (a new deliberate override) into the input files.
+1. Make the change on the FC, then re-export and replace `rekon10-methodi.param`
+   (normalize to LF).
+2. Put the value in the matching subsystem fragment under `inputs/`, with a one-line
+   rationale and `provenance: <sha> <date>`. If it is a new override (differs from the
+   4.7.0 default), add a row to `overrides.csv`; if it is per-unit calibration/identity,
+   leave it in the export only.
+3. Commit -- pre-commit runs `verify.py`. A round-trip failure means the fragment and
+   the export disagree; a coverage failure means a new override is not pinned yet.
 
-## Provenance
+### Rebuilding `overrides.csv` for a new firmware
 
-Each override's rationale and *when* it arrived is drawn from the git history of the
-param file (fables exported + pushed after each change), the fables/coordinator docs,
-coordinator issues, and past session transcripts. Provenance appears inline in the
-input files as `provenance: <sha> <date>` and `[source]` pointers. Defaults were
-extracted from ArduPilot source at tag `Copter-4.7.0` (the hosted parameter metadata
-carries no default field); calibration-vs-config split is in `overrides.csv`.
-
-The static source-scan left 40 params UNKNOWN (default behind an unresolvable macro,
-a `DEFAULT_POINTER` constructor, or a board/`#if` branch). Those were **fully resolved
-by running SITL at 4.7.0** (`gen_defaults_sitl.py`, firmware confirmed `4.7.0`) plus,
-for the handful compiled out of SITL, reading the source macro directly: **34 turned
-out to equal the export (defaults), 6 are real overrides** (`FRAME_CLASS`, `LOG_BITMASK`,
-`ATC_ANG_{RLL,PIT,YAW}_P`, `BATT_CAPACITY`) -- all 6 were already pinned in the fragments,
-so nothing was missed. No params remain UNKNOWN. (Confirmations of note: `EK3_ALT_M_NSE=2`
-and every `EK3_*_NSE` are exactly default, i.e. they do not affect VIO fusion -- only the
-`VISO_*_M_NSE` terms do; and `AUTOTUNE_AGGR`/`MIN_D` are defaults, not tuned.)
-
-## Where docs lag the config (source of truth: export > commits/flight-notes >
-## fresh build/electrical logs & coordinator bugs > older prose docs)
-
-The FC export is the authoritative record of values, and the fresh flight notes,
-commits, `flight-platform.md`/`electrical-debugging.md`, and coordinator issues track
-the *reasons*. The older prose in `ardupilot.md` lags in several places -- where it
-disagrees with the export it is the doc that is stale, not a conflict to resolve. A
-follow-up fables PR corrects `ardupilot.md`. The lagging items:
-
-1. **`RELAY4_DEFAULT` = 0 is correct.** `ardupilot.md` says "must be 1" because a
-   VTX-cold boot used to force the ELRS RX into WiFi/web-flash. That was **fixed in
-   hardware on 2026-07-27** (RX VCC moved 5V -> 4V5, isolating it from the 5V boot
-   transient); a `=0` boot now links cleanly, scope-verified (G1 RESOLVED in
-   `claude-transcripts/2026-07-27-120208-electrical/electrical-debugging.md`). The
-   `ardupilot.md` "must be 1" note predates the fix and is being corrected.
-2. `INS_HNTCH_ENABLE` = **1** (export) vs `0` (ardupilot.md ESC section) -- notch is on.
-3. `VISO_TYPE` = **2** (export) vs `0` "pre-VIO" (docs/ardupilot-vio.md).
-4. `EK3_SRC_OPTIONS` = **8** SRC_PER_CORE (export) vs `1` (ardupilot.md).
-5. `BATT_FS_LOW_ACT` = **1** Land (export, correct under canopy) vs warn-only prose.
-6. `COMPASS_ORIENT` = **6** carried as historical M100-era; worth re-confirming from an
-   outdoor cal on the F9P, but not blocking.
-7. Firmware is **4.7.0** (git `ea7afee 2026-07-27`), though the `ardupilot.md` header
-   still says 4.6.3.
-
-All of these are the older prose lagging the current export; none is an open conflict.
-
-## Relationship to fables
-
-This is now the home of the rekon10 FC config. The fables copy
-(`Drones/rekon10/config/rekon10-methodi.param`) should be replaced with a pointer
-here, and `ardupilot.md`'s links updated -- a separate fables-repo change (see the
-PR that introduced this directory).
+Run `python3 ardupilot/gen_defaults_sitl.py` (boots SITL built at the matching tag;
+confirm the version it prints), diff the export against the dumped defaults, and update
+`overrides.csv`. Board-gated params (serial protocols, `INS_FAST_SAMPLE`, `BATT_MONITOR`,
+`NTF_LED_TYPES`, relay pins, ...) come from the board hwdef, not SITL.
