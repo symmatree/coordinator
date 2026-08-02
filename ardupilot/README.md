@@ -50,9 +50,9 @@ sensor/runtime state you must re-derive, vs a configuration/tuning choice for th
 Fragments, in apply order:
 
 ```
-10-frame          20-gps-compass    40-ekf-vio    50-esc-motors-notch
-60-rc-modes-relay 62-radio-cal      70-battery    72-failsafe-fence
-80-tuning         90-logging-notify-misc
+10-frame           20-gps-compass  40-ekf-vio    50-esc-motors-notch
+60-rc-modes        62-radio-cal    65-vtx-osd    70-battery
+72-failsafe-fence  80-tuning       90-logging-notify-misc
 ```
 
 ## Verifying

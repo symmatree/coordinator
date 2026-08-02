@@ -145,6 +145,7 @@ NTF_BUZZ_PIN,32,-1,config,code(4.7.0 src)
 NTF_DISPLAY_TYPE,2,0,config,code(4.7.0 src)
 NTF_LED_TYPES,33025,455,config,board
 OSD1_ENABLE,1,0,config,code(4.7.0 src)
+OSD_TYPE2,5,0,config,code(4.7.0 src)
 PILOT_SPD_DN,2.5,0,config,code(4.7.0 src)
 PILOT_SPD_UP,10,2.5,config,code(4.7.0 src)
 RC10_OPTION,90,0,config,code(4.7.0 src)

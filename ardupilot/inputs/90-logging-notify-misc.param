@@ -1,13 +1,13 @@
 # 90 -- Logging, notify (display/LED/buzzer), telemetry streams, board misc
 #
 # --- Logging ---
-# The full replay suite: log while disarmed (2), record EKF replay data (1), rotate
-#   the log on disarm. Load-bearing for the ~1 um EKF-replay fidelity and the
-#   VIO-primary counterfactual (#160/#80).  provenance: 871c15b 2026-07-11
+# Full EKF replay suite: log while disarmed (2), record replay data (1), rotate on
+#   disarm.  provenance: 871c15b 2026-07-11
 LOG_DISARMED,2
 LOG_REPLAY,1
 LOG_FILE_DSRMROT,1
-# LOG_BITMASK=65535 (source default not confirmed; see overrides.csv UNKNOWN).
+# ArduPilot's recommended logging bitmask (was raised for vibration analysis, then
+#   returned here).
 LOG_BITMASK,65535
 #
 # --- Notify ---
@@ -17,17 +17,12 @@ NTF_DISPLAY_TYPE,2
 NTF_LED_TYPES,33025
 NTF_BUZZ_PIN,32
 #
-# --- OSD / RSSI ---
-OSD1_ENABLE,1
-RSSI_TYPE,5
-#
 # --- Scripting ---
-# Lua scripting enabled (was used for quicktune; keep on).  provenance: 8d0f52a
+# Lua scripting enabled (used for quicktune).  provenance: 8d0f52a
 SCR_ENABLE,1
 #
 # --- Telemetry streams on MAV1 (primary GCS channel) ---
-# Extra stream rates turned on for the companion/GCS link.  provenance: 6ec21a2 (SR2),
-#   migrated to MAV1_* names in the 4.7 upgrade (ea7afee)
+#   provenance: 6ec21a2 (SR2), migrated to MAV1_* names in the 4.7 upgrade (ea7afee)
 MAV1_EXT_STAT,1
 MAV1_POSITION,1
 MAV1_RAW_SENS,1
@@ -37,17 +32,17 @@ MAV1_EXTRA2,1
 MAV1_EXTRA3,1
 #
 # --- Unused serial ports ---
-# SERIAL7 disabled (the abandoned F9P-move port); SERIAL9 (OTG) unused, baud raised.
-#   SERIAL0 (USB console) is at board default and omitted.
+# SERIAL7 disabled (the abandoned F9P-move port); SERIAL9 (OTG) unused.
 SERIAL7_PROTOCOL,-1
 SERIAL7_BAUD,115
 SERIAL9_PROTOCOL,2
 SERIAL9_BAUD,460
 #
-# --- Board misc ---
-# RTC timezone offset +240 min (EDT). Safety-switch mask.
+# --- Board relays / misc ---
+# RELAY2/3 = the board's other switched pads, GPIO 81 "VSW" and GPIO 82 "CAMSW";
+#   enabled as relays but unused by this build.
+RELAY2_FUNCTION,1
+RELAY3_FUNCTION,1
+# RTC timezone offset +240 min (EDT); safety-switch mask.
 BRD_RTC_TZ_MIN,240
 BRD_SAFETY_MASK,16368
-#
-# Excluded (runtime/identity, live only in the ground-truth export): FORMAT_VERSION,
-# MIS_TOTAL, STAT_*, BARO1_GND_PRESS, and all sensor-cal offsets/scales/IDs.
