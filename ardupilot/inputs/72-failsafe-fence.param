@@ -1,25 +1,15 @@
 # 72 -- Failsafe and fence
 #
-# Radio and GCS failsafe; geofence. See canopy-ops.md for the operating envelope.
+# Radio and GCS failsafe; geofence. Operating envelope: canopy-ops.md.
 #
 # --- Failsafe ---
-# Throttle/radio failsafe enabled (3 = enabled, continue in Auto/Guided). GCS
-#   failsafe on.  provenance: 5a4a7bd 2026-05-29 (FS_THR_ENABLE 1->3); cff5e9f (GCS)
+# Throttle/radio failsafe on (3 = enabled, continue mission in Auto/Guided).
 FS_THR_ENABLE,3
 FS_GCS_ENABLE,1
-# FS_OPTIONS=16 -- deliberate-looking (source default not confirmed; see
-#   overrides.csv UNKNOWN note). Recorded as the export value.
-FS_OPTIONS,16
-#
-# Left at defaults but LOAD-BEARING for the VIO lane -- documented, not pinned:
-#   FS_EKF_ACTION=1 (Land on EKF failsafe) -- interacts with the VIO source set if
-#     VIO were ever made primary. FS_EKF_THRESH=0.8. FS_VIBE_ENABLE=1.
-#   FS_DR_ENABLE=2, FS_CRASH_CHECK=1.  [canopy-ops.md]
 #
 # --- Fence ---
-# NOTE: FENCE is currently DISABLED (FENCE_ENABLE=0, at default -- turned off
-#   2026-05-29). The parameters below are STAGED, not active. Enable deliberately.
+# Fence is off; the limits below are staged, not active.
+FENCE_ENABLE,0
 FENCE_ACTION,3
 FENCE_ALT_MAX,120
 FENCE_RADIUS,150
-# FENCE_TYPE=7 (alt+circle+polygon) is the Copter default; FENCE_ENABLE=0 default.

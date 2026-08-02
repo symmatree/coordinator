@@ -12,7 +12,7 @@ SERIAL3_PROTOCOL,42
 SERIAL3_BAUD,115
 #
 # --- Flight modes (CH6 / SB) ---
-# Loiter / AltHold; AltHold is the preferred degraded-VIO fallback. FLTMODE6 is unbound.
+# Loiter (5) and AltHold (2).
 FLTMODE_CH,6
 FLTMODE1,5
 FLTMODE4,2
@@ -37,5 +37,7 @@ RELAY4_FUNCTION,1
 #   was fixed 2026-07-27 by moving the RX to the 4V5 rail; a =0 boot now links cleanly.
 #   See flight-platform.md.  provenance: d41a75d 2026-07-26
 RELAY4_DEFAULT,0
+# RELAY2/3 are the board's other switched pads -- GPIO 81 "VSW" (switched V rail) and
+#   GPIO 82 "CAMSW" (camera switch). Enabled as relays but unused by this build.
 RELAY2_FUNCTION,1
 RELAY3_FUNCTION,1

@@ -48,7 +48,7 @@ ATC_ACC_Y_MAX,763.7736
 ATC_ANGLE_MAX,45
 # Throttle-vs-attitude priority raised to 0.9.  provenance: 2056f36 2026-06-16
 ATC_THR_MIX_MAX,0.9
-# Autotune unbound (0) after the tune converged.  provenance: dc198ce 2026-06-17
+# Autotune disabled so it can't be engaged by accident.  provenance: dc198ce 2026-06-17
 AUTOTUNE_AXES,0
 #
 # Vertical rate limits (m/s) for the "vertical bounce" climb test.

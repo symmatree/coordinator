@@ -27,7 +27,6 @@ BATT_LOW_TIMER,0
 BATT_FS_LOW_ACT,1
 BATT_FS_CRT_ACT,1
 #
-# Sag compensation: scale thrust between these pack voltages. No current limit
-#   (MOT_BAT_CURR_MAX=0) despite the ~80 A pack.  provenance: ac57658 2026-04-25
+# Sag compensation: scale thrust between these pack voltages.  provenance: ac57658 2026-04-25
 MOT_BAT_VOLT_MAX,24.6
 MOT_BAT_VOLT_MIN,16.8
