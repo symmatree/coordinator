@@ -4,23 +4,24 @@ Flight-controller configuration for the **rekon10** airframe, concentrated in th
 coordinator repo alongside the code that supports it. Board **TBS_LUCID_H7**,
 firmware **ArduCopter 4.7.0**.
 
-The FC export is authoritative for values; the fables `Drones/rekon10/*.md` docs
-(especially `ardupilot.md`) carry the hardware/build narrative.
+The fragments in `inputs/` are the source we maintain: small per-subsystem files we edit
+and **apply to the FC**. `rekon10-methodi.param` is the last full dump off the FC -- the
+ground truth `verify.py` checks the fragments against. Hardware/build narrative lives in
+the fables `Drones/rekon10/*.md` docs (especially `ardupilot.md`).
 
 ## Layout
 
 | Path | What it is |
 |------|------------|
 | `rekon10-methodi.param` | **Ground truth** -- the last full parameter dump exported from the FC (Mission Planner *Write Params* -> *Save to File*). Do not hand-edit; replace wholesale with a fresh export. |
-| `inputs/*.param` | **Decomposition** -- the config we maintain, one commented `.param` per device/subsystem, named for what it holds. Inspired by the ArduPilot Methodic Configurator. |
-| `overrides.csv` | Classification of every non-default param (config vs the FC's own calibration/identity state); input to `verify.py`'s coverage check. |
-| `verify.py` | Verifies the decomposition against the ground truth (see [Verifying](#verifying)). |
-| `gen_defaults_sitl.py` | Dumps the running firmware's code-defaults from SITL, for reclassifying against a new firmware. |
+| `inputs/*.param` | **The maintained config** -- one commented `.param` per device/subsystem, named for what it holds, applied to the FC. Inspired by the ArduPilot Methodic Configurator. |
+| `verify.py` | Round-trip check: every fragment value matches the export (see [Verifying](#verifying)). |
+| `gen_defaults_sitl.py` | Dumps a firmware version's code-defaults from SITL -- used on a firmware bump to tell "the default changed" from "our value changed." |
 
 The fragments are hand-curated: they carry the rationale and provenance behind the
-build, which is the point -- not a generated projection. Grouping is by device, so
-things that interact sit together: the F9P Rover Lite's serial, GNSS, and onboard
-compass in `20-gps-compass`; the Walksnail's link, OSD, and power relay in `65-vtx-osd`.
+build, which is the point. Grouping is by device, so things that interact sit together:
+the F9P Rover Lite's serial, GNSS, and onboard compass in `gps-compass`; the Walksnail's
+link, OSD, and power relay in `vtx-osd`.
 
 Anything the FC produces and updates on its own -- learned hover throttle, barometer
 ground pressure, auto-detected device IDs, boot/flight counters -- plus the per-unit
@@ -29,27 +30,22 @@ export, never pinned here. Deliberate tuning (e.g. autotune results) *is* pinned
 
 ## Verifying
 
-`verify.py` checks two things and exits non-zero on either:
+`verify.py` is a round-trip check: every value in `inputs/` must match the value in the
+export. The fragments are what we apply to the FC; the export is what came back off it, so
+a mismatch means a fragment edit wasn't applied, or the FC drifted from the fragments.
 
-1. **Round-trip** -- every value in `inputs/` equals the value in the export. Keeps the
-   fragments from silently drifting from what was on the FC.
-2. **Coverage** -- every deliberate override is pinned by some fragment. Stops a config
-   change from being left out of the decomposition.
+It runs in CI as a merge gate (`.github/workflows/ardupilot-verify.yaml`), not a commit
+hook -- a fresh re-export won't match until you reconcile the fragments, and you must be
+able to commit and push it first. Run it by hand while reconciling: `python3 ardupilot/verify.py`.
 
-It runs in CI as a **merge gate** (`.github/workflows/ardupilot-verify.yaml`), not a
-commit hook -- a raw re-export won't round-trip until you reconcile the fragments, and
-you must be able to commit and push it first. Run it by hand while reconciling:
-`python3 ardupilot/verify.py`.
+## Changing a parameter
 
-## Changing or adding a parameter
+1. Edit the value in the matching fragment, with a one-line rationale and
+   `provenance: <sha> <date>`.
+2. Apply that fragment to the FC (Mission Planner / Methodic Configurator load), re-export,
+   and replace `rekon10-methodi.param` (LF).
+3. `python3 ardupilot/verify.py` -- a mismatch means the fragment and the FC still disagree.
 
-1. Make the change on the FC, re-export, and replace `rekon10-methodi.param` (LF).
-2. Put the value in the matching fragment with a one-line rationale and
-   `provenance: <sha> <date>`. Per-unit calibration/identity stays in the export only.
-3. `python3 ardupilot/verify.py`. A round-trip failure means the fragment disagrees with
-   the export; a coverage failure means a new override isn't pinned yet. Intermediate
-   states can be committed; the gate only has to be green to merge.
-
-For a firmware bump, regenerate the defaults baseline with `gen_defaults_sitl.py` and
-reclassify; board-gated params (serial protocols, `BATT_MONITOR`, relay pins, ...) come
-from the board hwdef, not SITL.
+On a firmware bump, diff the new export against the old to find new/changed/renamed params
+and fold the keepers into the fragments; `gen_defaults_sitl.py` dumps the new version's
+code-defaults so you can separate a changed default from a changed value.
