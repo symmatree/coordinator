@@ -41,6 +41,9 @@ jobs:
       - name: Router <-> FC seam test
         run: python3 harness/test_router_stack.py
 
+      - name: VisOdom yaw re-align kick test (#175)
+        run: python3 harness/test_router_align.py
+
       # Estimator-half replayer: decode a synthetic fixture and assert byte-exact,
       # correctly-routed, t_mono-ordered delivery. Pure stdlib, no deps.
       - name: Input replayer test

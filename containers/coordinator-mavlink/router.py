@@ -119,6 +119,15 @@ DEFAULT_POS_FEAT_K = float(os.environ.get("MAVLINK_POS_FEAT_K", "0.0"))
 # numerical hygiene, not signal filtering: real motion spikes still pass through.
 MIN_DT = 1e-3
 
+# VisOdom yaw re-alignment (#175). The T265 backend's (VISO_TYPE=2) yaw-align is one-shot
+# at boot + RC-aux-80 only; stereo-VINS yaw drifts, so a stale alignment blocks arming with
+# "VisOdom: yaw diff >10". We re-kick RC aux function 80 (VISODOM_ALIGN) over MAVLink
+# (MAV_CMD_DO_AUX_FUNCTION) while DISARMED, keeping the alignment fresh up to the arm
+# instant. Hard-gated on disarmed -- re-aligning in flight would snap the VIO frame.
+VISODOM_ALIGN_AUX_FUNC = 80  # ArduPilot RC_Channel AUX_FUNC::VISODOM_ALIGN
+AUX_SWITCH_HIGH = 2          # MAV_CMD_DO_AUX_FUNCTION param2: 0=LOW, 1=MID, 2=HIGH
+DEFAULT_ALIGN_INTERVAL_S = float(os.environ.get("VISODOM_ALIGN_INTERVAL_S", "10.0"))
+
 
 def velocity_covariance(vel_nse):
     """9-element row-major 3x3 for VISION_SPEED_ESTIMATE.
@@ -199,6 +208,16 @@ def parse_args():
                     help="cap on position 1sigma (m); FC honours up to 100")
     ap.add_argument("--pos-feat-k", type=float, default=DEFAULT_POS_FEAT_K,
                     help="feature-starvation inflation gain (0 = disabled)")
+    ap.add_argument("--align-interval", type=float, default=DEFAULT_ALIGN_INTERVAL_S,
+                    help="seconds between VisOdom yaw re-align kicks while disarmed "
+                         "(0 disables); see #175")
+    ap.add_argument("--fc-system", type=int,
+                    default=int(os.environ.get("MAVLINK_FC_SYSTEM", "1")),
+                    help="target system id of the flight controller (aux-function cmd)")
+    ap.add_argument("--fc-component", type=int,
+                    default=int(os.environ.get("MAVLINK_FC_COMPONENT",
+                                str(mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1))),
+                    help="target component id of the FC autopilot")
     return ap.parse_args()
 
 
@@ -257,9 +276,25 @@ def main():
     arm_file = os.environ.get("OAK_ARM_FILE", "/tmp/fc_armed")
     armed = False
     write_arm_file(arm_file, armed)
+    # #175: VisOdom yaw re-align state. Don't kick until a heartbeat has confirmed the
+    # arm state (never re-align if we might already be armed/flying at startup).
+    seen_heartbeat = False
+    last_align = 0.0
 
     while True:
         readable, _, _ = select.select([usock, serial_fd], [], [], 1.0)
+
+        # #175: while disarmed, periodically re-kick VIO yaw alignment so a drifted
+        # one-shot alignment doesn't block arming. Gated on a seen heartbeat + disarmed;
+        # never in flight (would snap the VIO frame).
+        loop_now = time.monotonic()
+        if (args.align_interval > 0 and seen_heartbeat and not armed
+                and (loop_now - last_align) >= args.align_interval):
+            mav.mav.command_long_send(
+                args.fc_system, args.fc_component,
+                mavutil.mavlink.MAV_CMD_DO_AUX_FUNCTION, 0,
+                VISODOM_ALIGN_AUX_FUNC, AUX_SWITCH_HIGH, 0, 0, 0, 0, 0)
+            last_align = loop_now
 
         if usock in readable:
             data = usock.recv(256)
@@ -324,6 +359,7 @@ def main():
                     mav.mav.timesync_send(int(time.time() * 1e9), msg.ts1)
                 elif (msg.get_type() == "HEARTBEAT"
                       and msg.type != mavutil.mavlink.MAV_TYPE_GCS):
+                    seen_heartbeat = True  # #175: arm state known -> align kicks allowed
                     # #88: FC arm/disarm -> shared file; sync() the FS at disarm so the
                     # flight's captures survive the power cut that usually follows.
                     now_armed = bool(
