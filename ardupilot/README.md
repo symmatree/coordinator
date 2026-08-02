@@ -61,9 +61,11 @@ Fragments, in apply order:
    fragment (or is on the two-item runtime allowlist). This is what stops a deliberate
    setting from being silently dropped from the decomposition.
 
-**It runs automatically in pre-commit** (hook `ardupilot-verify`, so also in CI)
-whenever a file under `ardupilot/` changes -- you don't have to remember it. Run it by
-hand with `python3 ardupilot/verify.py` while iterating.
+**It runs in CI as a merge gate** (`.github/workflows/ardupilot-verify.yaml`, on any PR
+touching `ardupilot/`) -- so a PR can't merge with a drifted or incomplete decomposition.
+It is deliberately *not* a commit/pre-commit hook: a raw FC re-export won't round-trip
+until the fragments are reconciled, and you must be able to commit and push that export
+first. Run it by hand with `python3 ardupilot/verify.py` while reconciling.
 
 ## Changing or adding a parameter
 
@@ -73,8 +75,9 @@ hand with `python3 ardupilot/verify.py` while iterating.
    rationale and `provenance: <sha> <date>`. If it is a new override (differs from the
    4.7.0 default), add a row to `overrides.csv`; if it is per-unit calibration/identity,
    leave it in the export only.
-3. Commit -- pre-commit runs `verify.py`. A round-trip failure means the fragment and
-   the export disagree; a coverage failure means a new override is not pinned yet.
+3. Run `python3 ardupilot/verify.py` (also the PR merge gate). A round-trip failure means
+   the fragment and the export disagree; a coverage failure means a new override is not
+   pinned yet. You can commit/push intermediate states; the gate just has to be green to merge.
 
 ### Rebuilding `overrides.csv` for a new firmware
 

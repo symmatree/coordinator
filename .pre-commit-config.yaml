@@ -81,11 +81,3 @@ repos:
         language: python
         types: [shell]
         require_serial: true # shellcheck can detect sourcing this way
-
-      - id: ardupilot-verify
-        name: ardupilot param decomposition
-        description: fragments round-trip against the FC export; every override is pinned
-        entry: python3 ardupilot/verify.py
-        language: system
-        files: ^ardupilot/
-        pass_filenames: false

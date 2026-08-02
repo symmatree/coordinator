@@ -1,0 +1,31 @@
+name: ardupilot-verify
+# Merge gate for the rekon10 param decomposition (ardupilot/verify.py): the input
+# fragments must round-trip against the ground-truth FC export, and every deliberate
+# override must be pinned. This is a PR check, NOT a pre-commit/local hook -- so a raw
+# FC re-export (which won't round-trip until the fragments are reconciled) can still be
+# committed and pushed; the gate just has to be green before the PR merges.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ardupilot/**
+      - .github/workflows/ardupilot-verify.yaml
+  pull_request:
+    paths:
+      - ardupilot/**
+      - .github/workflows/ardupilot-verify.yaml
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # verify.py is pure stdlib -- no deps to install.
+      - name: Verify param decomposition
+        run: python3 ardupilot/verify.py
