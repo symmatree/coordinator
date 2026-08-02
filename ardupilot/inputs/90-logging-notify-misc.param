@@ -1,0 +1,45 @@
+# 90 -- Logging, notify (display/LED/buzzer), telemetry streams, board misc
+#
+# --- Logging ---
+# The full replay suite: log while disarmed (2), record EKF replay data (1), rotate
+#   the log on disarm. Load-bearing for the ~1 um EKF-replay fidelity and the
+#   VIO-primary counterfactual (#160/#80).  provenance: 871c15b 2026-07-11
+LOG_DISARMED,2
+LOG_REPLAY,1
+LOG_FILE_DSRMROT,1
+# LOG_BITMASK=65535 (source default not confirmed; see overrides.csv UNKNOWN).
+LOG_BITMASK,65535
+#
+# --- Notify ---
+# SH1106 OLED (NTF_DISPLAY_TYPE=2), LED types bitmask, buzzer on GPIO 32.
+#   provenance: 91e7055 (display), ca8cd23 2026-07-31 (LED types fix after upgrade)
+NTF_DISPLAY_TYPE,2
+NTF_LED_TYPES,33025
+NTF_BUZZ_PIN,32
+#
+# --- OSD / RSSI ---
+OSD1_ENABLE,1
+RSSI_TYPE,5
+#
+# --- Scripting ---
+# Lua scripting enabled (was used for quicktune; keep on).  provenance: 8d0f52a
+SCR_ENABLE,1
+#
+# --- Telemetry streams on MAV1 (primary GCS channel) ---
+# Extra stream rates turned on for the companion/GCS link.  provenance: 6ec21a2 (SR2),
+#   migrated to MAV1_* names in the 4.7 upgrade (ea7afee)
+MAV1_EXT_STAT,1
+MAV1_POSITION,1
+MAV1_RAW_SENS,1
+MAV1_RC_CHAN,1
+MAV1_EXTRA1,1
+MAV1_EXTRA2,1
+MAV1_EXTRA3,1
+#
+# --- Board misc ---
+# RTC timezone offset +240 min (EDT). Safety-switch mask.
+BRD_RTC_TZ_MIN,240
+BRD_SAFETY_MASK,16368
+#
+# Excluded (runtime/identity, live only in the ground-truth export): FORMAT_VERSION,
+# MIS_TOTAL, STAT_*, BARO1_GND_PRESS, and all sensor-cal offsets/scales/IDs.

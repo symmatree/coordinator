@@ -1,0 +1,46 @@
+# 60 -- RC aux functions, flight modes, VTX relay
+#
+# FC parameters only. The RadioMaster/EdgeTX mix table, switch->channel mapping,
+# and the arm-gate live in ground-station.md and config/MODELS/model01.yml -- not
+# duplicated here.  (RC10 = EKF source toggle is in 40-ekf-vio.)
+#
+# === Flight modes (on CH6 / SB) ===
+# Loiter / AltHold across the switch. AltHold (2) is the preferred degraded-VIO
+#   fallback over Loiter.  [ardupilot.md; canopy-ops.md]
+FLTMODE_CH,6
+FLTMODE1,5
+FLTMODE4,2
+# FLTMODE6 is currently 0 (unbound) -- was Sport(13), unbound with autotune mode on
+#   2026-06-19 (86bd967). Left at default 0; noted, not pinned.
+#
+# === Aux switches ===
+# CH5 = arm/disarm on the L3 latch (153).  [ground-station.md]
+RC5_OPTION,153
+# CH7/SD = LAND, deliberately NOT RTL: under canopy, RTL's climb-then-go-home is
+#   actively dangerous.  provenance: 86bd967 (unbind autotune); [ardupilot.md]
+RC7_OPTION,18
+# CH8 = lost-vehicle buzzer while SF is held (30).
+RC8_OPTION,30
+# CH9/SA = Relay4 (VTX BEC) when disarmed (36); the arm gate forces it high (VTX
+#   on) while armed.  [ground-station.md]
+RC9_OPTION,36
+#
+# === VTX relay (Lucid HD VTX 9/12V BEC on GPIO 83) ===
+RELAY4_FUNCTION,1
+#
+# !!! WARNING -- RELAY4_DEFAULT CONFLICT (needs an operator decision) !!!
+# The committed export has RELAY4_DEFAULT=0. ardupilot.md documents at length that
+# 0 is a KNOWN-BAD value: it breaks the ELRS link at boot (the Matek R24-TD drops
+# into WiFi/web-config within seconds), cleanly isolated as the only variable
+# between failing and working boots. The doc says the FC "is at 1" -- but this
+# export says 0, and no later export reverted it. Provenance: last touched
+# 1->0 by d41a75d 2026-07-26 ("disable VTX by default now that it doesn't kill the
+# radio") -- which contradicts the doc's finding. So the export and the doc
+# genuinely disagree; DO NOT blind-apply this line. Confirm on the FC whether it is
+# actually 0 (bad) or 1 (intended) and re-export, then correct this value.
+# [ardupilot.md "RELAY4_DEFAULT must be 1"; provenance d41a75d]
+RELAY4_DEFAULT,0
+#
+# RELAY2/RELAY3 (pins 81/82) also come up energized at boot -- left alone.
+RELAY2_FUNCTION,1
+RELAY3_FUNCTION,1

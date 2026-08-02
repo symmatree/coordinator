@@ -1,0 +1,8 @@
+# 10 -- Frame
+#
+# Airframe geometry. Set once at build; never touched since the first methodic
+# export (2026-04-25). See flight-platform.md (Rekon10 Pro frame, TBS Lucid H7).
+#
+# Quad / X.
+FRAME_CLASS,1
+FRAME_TYPE,1
