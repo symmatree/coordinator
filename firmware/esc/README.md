@@ -35,8 +35,9 @@ docker run --rm -v "$PWD/out:/work/obj" rekon10-esc
 The Dockerfile clones AM32 at the **v2.20 tag** (the release the ESCs shipped with, so the only
 delta is the patch), lets `make arm_sdk_install` self-fetch the pinned xPack arm-none-eabi-gcc
 10.3.1 into the tree, applies the patch, and `make TBS_6S_4IN1_F421`. Builds are deterministic
-(same md5 every run). The pre-built result is checked in as
-[`AM32_TBS_6S_4IN1_F421_2.20_rekon10-cal.hex`](AM32_TBS_6S_4IN1_F421_2.20_rekon10-cal.hex).
+(same md5 every run), so CI ([`build-esc.yaml`](../../.github/workflows/build-esc.yaml))
+publishes the `.hex` as a workflow artifact (`esc-firmware`) -- download it from the
+Actions run (or `gh run download -n esc-firmware`) rather than committing it to the tree.
 
 To build without Docker: `git clone -b v2.20 ...AM32 && cd AM32 && make arm_sdk_install &&
 git apply /path/rekon10-cal.patch && make TBS_6S_4IN1_F421`.

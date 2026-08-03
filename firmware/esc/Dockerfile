@@ -9,7 +9,7 @@
 #
 #   docker build -t rekon10-esc .
 #   docker run --rm -v "$PWD/out:/work/obj" rekon10-esc
-#   # -> out/AM32_TBS_6S_4IN1_F421_2.20.hex  (should match the checked-in hex, md5 ab21eec3)
+#   # -> out/AM32_TBS_6S_4IN1_F421_2.20.hex  (deterministic; md5 ab21eec3)
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

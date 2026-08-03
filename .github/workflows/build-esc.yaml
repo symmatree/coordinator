@@ -1,0 +1,41 @@
+name: build-esc
+on:
+  push:
+    branches: [main]
+    paths:
+      - firmware/esc/**
+      - .github/workflows/build-esc.yaml
+  pull_request:
+    paths:
+      - firmware/esc/**
+      - .github/workflows/build-esc.yaml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Deterministic build of the calibrated AM32 ESC firmware (md5 ab21eec3). Its output is a
+# firmware file, not a service: build it, copy the .hex out, upload as a workflow artifact
+# (download via the Actions run or `gh run download -n esc-firmware`) -- not committed to
+# the tree. Cross-compile (AM32 self-fetches arm-none-eabi-gcc), so runner arch is moot.
+jobs:
+  build-esc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build firmware image
+        run: docker build -t rekon10-esc firmware/esc
+
+      - name: Produce firmware .hex
+        run: |
+          mkdir -p out
+          docker run --rm -v "$PWD/out:/work/obj" rekon10-esc
+          sha256sum out/*.hex
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: esc-firmware
+          path: out/*.hex
+          if-no-files-found: error
