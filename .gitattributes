@@ -1,0 +1,4 @@
+# ArduPilot param files: the Mission Planner export saves CRLF (Windows/WSL), but we
+# store LF so a fresh export doesn't diff as an all-lines change. git normalizes to LF
+# on add/commit and ignores CRLF-vs-LF in diffs, whatever the editor saved.
+*.param text eol=lf
