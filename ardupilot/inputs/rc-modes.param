@@ -1,4 +1,4 @@
-# 60 -- RC aux switches, flight modes, arming; ELRS radio link
+# RC aux switches, flight modes, arming; ELRS radio link
 #
 # FC parameters only; the EdgeTX mix/switch table is in ground-station.md + model01.yml.
 #

@@ -1,4 +1,4 @@
-# 90 -- Logging, notify (display/LED/buzzer), telemetry streams, board misc
+# Logging, notify (display/LED/buzzer), telemetry streams, board misc
 #
 # --- Logging ---
 # Full EKF replay suite: log while disarmed (2), record replay data (1), rotate on
