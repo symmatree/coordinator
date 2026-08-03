@@ -119,6 +119,11 @@ DEFAULT_POS_FEAT_K = float(os.environ.get("MAVLINK_POS_FEAT_K", "0.0"))
 # numerical hygiene, not signal filtering: real motion spikes still pass through.
 MIN_DT = 1e-3
 
+# Emit a HEARTBEAT at this cadence so the FC recognizes the coordinator as a MAVLink
+# component and streams telemetry to SERIAL4 (MAV2), and so the router is a well-behaved
+# node. ONBOARD_CONTROLLER (not GCS) so there's no GCS-failsafe coupling on the FC.
+HEARTBEAT_INTERVAL_S = 1.0
+
 
 def velocity_covariance(vel_nse):
     """9-element row-major 3x3 for VISION_SPEED_ESTIMATE.
@@ -257,9 +262,18 @@ def main():
     arm_file = os.environ.get("OAK_ARM_FILE", "/tmp/fc_armed")
     armed = False
     write_arm_file(arm_file, armed)
+    last_hb = 0.0  # monotonic ts of the last HEARTBEAT we sent
 
     while True:
         readable, _, _ = select.select([usock, serial_fd], [], [], 1.0)
+
+        now_mono = time.monotonic()
+        if now_mono - last_hb >= HEARTBEAT_INTERVAL_S:
+            mav.mav.heartbeat_send(
+                mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
+                mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0,
+                mavutil.mavlink.MAV_STATE_ACTIVE)
+            last_hb = now_mono
 
         if usock in readable:
             data = usock.recv(256)
