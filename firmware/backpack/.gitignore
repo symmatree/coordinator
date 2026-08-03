@@ -1,0 +1,3 @@
+# Built firmware is copied out to the datasets share, never committed here.
+out/
+*.bin

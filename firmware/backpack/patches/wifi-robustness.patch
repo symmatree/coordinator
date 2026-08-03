@@ -1,0 +1,64 @@
+diff --git a/lib/WIFI/devWIFI.cpp b/lib/WIFI/devWIFI.cpp
+index 26b4013..fdaa481 100644
+--- a/lib/WIFI/devWIFI.cpp
++++ b/lib/WIFI/devWIFI.cpp
+@@ -112,6 +112,8 @@ static bool do_flash = false;
+ static uint32_t totalSize;
+ static UpdateWrapper updater = UpdateWrapper();
+ 
++uint32_t sta_reconnects = 0;   // WiFi STA disconnect/reconnect events (link-flap counter)
++
+ #if defined(MAVLINK_ENABLED)
+ WiFiUDP mavlinkUDP;
+ 
+@@ -571,7 +573,7 @@ static void WebMAVLinkHandler(AsyncWebServerRequest *request)
+ {
+   mavlink_stats_t* stats = mavlink.GetMavlinkStats();
+   
+-  DynamicJsonDocument json(1024);
++  DynamicJsonDocument json(1536);
+   json["enabled"] = wifiService == WIFI_SERVICE_MAVLINK_TX;
+   json["counters"]["packets_down"] = stats->packets_downlink;
+   json["counters"]["packets_up"] = stats->packets_uplink;
+@@ -585,6 +587,12 @@ static void WebMAVLinkHandler(AsyncWebServerRequest *request)
+     json["ip"]["gcs"] = "IP UNSET";
+   }
+   json["protocol"] = "UDP";
++  // WiFi-side link health (the backpack<->AP link, otherwise invisible)
++  json["link"]["rssi"]       = WiFi.RSSI();
++  json["link"]["ssid"]       = WiFi.SSID();
++  json["link"]["bssid"]      = WiFi.BSSIDstr();
++  json["link"]["reconnects"] = sta_reconnects;
++  json["link"]["uptime_ms"]  = millis();
+ 
+   AsyncResponseStream *response = request->beginResponseStream("application/json");
+   serializeJson(json, *response);
+@@ -806,11 +814,13 @@ static void HandleWebUpdate()
+     switch(status) {
+       case WL_NO_SSID_AVAIL:
+       case WL_CONNECT_FAILED:
+-      case WL_CONNECTION_LOST:
+         changeTime = now;
+         changeMode = WIFI_AP;
+         break;
+-      case WL_DISCONNECTED: // try reconnection
++      case WL_CONNECTION_LOST: // was: immediate AP. Now ride out the drop and reconnect.
++      case WL_DISCONNECTED:    // try reconnection
++        sta_reconnects++;
++        WiFi.reconnect();
+         changeTime = now;
+         break;
+       default:
+@@ -865,6 +875,12 @@ static void HandleWebUpdate()
+         WiFi.setHostname(myHostname); // hostname must be set after the mode is set to STA
+         changeTime = now;
+         WiFi.begin(station_ssid, station_password);
++      #if defined(PLATFORM_ESP8266)
++        WiFi.setSleepMode(WIFI_NONE_SLEEP);  // esp8285: no modem-sleep -> fewer missed beacons/drops
++        WiFi.setAutoReconnect(true);
++      #elif defined(PLATFORM_ESP32)
++        WiFi.setSleep(false);
++      #endif
+         startServices();
+       default:
+         break;
