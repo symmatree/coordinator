@@ -1,0 +1,42 @@
+name: build-backpack
+on:
+  push:
+    branches: [main]
+    paths:
+      - firmware/backpack/**
+      - .github/workflows/build-backpack.yaml
+  pull_request:
+    paths:
+      - firmware/backpack/**
+      - .github/workflows/build-backpack.yaml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# This image's output is a firmware file, not a service, so we build it, copy the
+# flashable .bin out, and upload it as a workflow artifact (download via the Actions run
+# or `gh run download -n backpack-firmware`) -- not pushed to a registry, not committed.
+# The build is a cross-compile (PlatformIO self-fetches the esp8266 toolchain), so the
+# runner arch is irrelevant.
+jobs:
+  build-backpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build firmware image
+        run: docker build -t rekon10-backpack firmware/backpack
+
+      - name: Produce firmware .bin
+        run: |
+          mkdir -p out
+          docker run --rm -v "$PWD/out:/out" rekon10-backpack
+          sha256sum out/*.bin
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backpack-firmware
+          path: out/*.bin
+          if-no-files-found: error
