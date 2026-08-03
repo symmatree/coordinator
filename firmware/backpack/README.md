@@ -53,11 +53,34 @@ git apply /path/wifi-robustness.patch && pio run -e ESP_TX_Backpack_via_UART` (a
 
 ## Flash
 
-Flash `ESP_TX_Backpack_1.5.9_rekon10-wifi.bin` to the Boxer backpack **the same way you
-flashed the stock version** (EdgeTX passthrough / ExpressLRS Configurator "flash local file" /
-the backpack's own WiFi web-UI update page). **Rollback** is symmetric: flash any stock
-1.5.x release the same way. Same-family firmware, so backpack config (home-network creds,
-MAVLink ports) persists -- but re-verify the home-network SSID after.
+[`flash.sh`](flash.sh) drives the WiFi web-UI flash: it downloads the CI-built firmware,
+verifies the target is an ELRS backpack in WiFi mode (`/config`), and posts to `/update`.
+The backpack's own target-check rejects a wrong image (`"status": "mismatch"`) and the
+script never auto-forces.
+
+Because a single client usually can't be on both the internet and the backpack's own AP,
+and modern Windows/Android clients bail off a no-uplink AP, it splits into two phases:
+
+```sh
+# 1) on house WiFi -- downloads to /tmp and prints the exact flash line:
+./flash.sh fetch
+# 2) switch your client to the "ExpressLRS TX Backpack" AP (password expresslrs), then:
+./flash.sh flash 10.0.0.1 /tmp/backpack-firmware/<file>.bin
+```
+
+`fetch` needs internet + `gh` and never touches the backpack; `flash` never touches the
+internet. If you *can* reach both at once (backpack on house WiFi, or a dual-homed jump
+box), `./flash.sh auto 10.0.0.1` does both in one go. Flash over the backpack's **own AP**
+(`10.0.0.1`), not the flaky house-WiFi STA path.
+
+**Rollback** is symmetric -- `./flash.sh flash <ip> stock.bin` with any stock 1.5.x
+release. Same-family firmware, so backpack config (home-network creds, MAVLink ports)
+persists across the flash -- but re-verify the home-network SSID after (via `/config`).
+Wired alternatives (EdgeTX passthrough / ExpressLRS Configurator "flash local file")
+remain available if you'd rather not go over WiFi.
+
+If `flash.sh` reports **`mismatch`**, our generic `ESP_TX_Backpack` build isn't tagged as
+the boxer target -- bake the boxer target into the Docker build rather than force-flashing.
 
 ## Verify
 
