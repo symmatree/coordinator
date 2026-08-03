@@ -9,6 +9,15 @@ SERIAL6_BAUD,460
 # RSSI from the ELRS telemetry-radio link stats (5 = TelemetryRadioRSSI).
 RSSI_TYPE,5
 #
+# Downlink telemetry to the ground on this link (MAV3 = SERIAL6). 1 Hz, sized for the
+# ~13211-baud ELRS downlink, which also carries the forwarded (unthrottleable) VIO
+# messages. EXT_STAT=SYS_STATUS+GPS_RAW (health/sats), POSITION=global/local pos,
+# EXTRA1=ATTITUDE, EXTRA2=VFR_HUD (heading/GS).  provenance: 2026-08-03
+MAV3_EXT_STAT,1
+MAV3_POSITION,1
+MAV3_EXTRA1,1
+MAV3_EXTRA2,1
+#
 # --- Flight modes (CH6 / SB) ---
 # Loiter (5) and AltHold (2).
 FLTMODE_CH,6
