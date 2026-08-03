@@ -10,11 +10,11 @@ SERIAL3_PROTOCOL,42
 SERIAL3_BAUD,115
 #
 # --- OSD backend ---
-# MSP DisplayPort (5) as the OSD backend: ArduPilot sends OSD elements over the link and
-#   the Walksnail renders them (semantic OSD, not a pixel overlay). OSD1_ENABLE turns on
-#   the screen-1 layout that gets sent. (Replaces the inert analog MAX7456 primary + MSP
-#   secondary; the analog driver is no longer run.)
+# MSP DisplayPort (5): ArduPilot sends OSD elements over the link and the Walksnail
+#   renders them (semantic OSD). OSD1_ENABLE turns on the screen-1 layout.
 OSD_TYPE,5
+# No second backend. Must be set explicitly -- a partial param load won't clear it.
+OSD_TYPE2,0
 OSD1_ENABLE,1
 #
 # --- Power (Lucid VTX 9/12V BEC on RELAY4 / GPIO 83) ---

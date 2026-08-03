@@ -45,6 +45,8 @@ RELAY2_FUNCTION,1
 RELAY3_FUNCTION,1
 # RTC timezone offset +240 min (EDT).
 BRD_RTC_TZ_MIN,240
+# Boot in the safe state -- motors held until the physical safety switch is pressed.
+BRD_SAFETY_DEFLT,1
 # Safety-switch output mask: which outputs may move while safety is engaged. 16368 =
 #   outputs 5-14; motors (outputs 1-4) stay held until the safety switch is released.
 BRD_SAFETY_MASK,16368
