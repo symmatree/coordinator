@@ -1,4 +1,4 @@
-# 70 -- Battery monitoring and power
+# Battery monitoring and power
 #
 # 6S Li-ion pack. Most thresholds came from Mission Planner "Initial Tune" (6S
 # Li-ion selected). See ardupilot.md "Battery monitoring" and flight-platform.md.

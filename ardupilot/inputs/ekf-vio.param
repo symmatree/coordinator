@@ -1,4 +1,4 @@
-# 40 -- VIO / ExtNav and EKF3 source sets
+# VIO / ExtNav and EKF3 source sets
 #
 # The GPS-vs-VIO integration. SRC1 is GPS (the flown lane); VIO/ExtNav is a
 # selectable source set. Mechanism and the load-bearing fusion details:

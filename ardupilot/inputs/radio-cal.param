@@ -1,4 +1,4 @@
-# 62 -- Radio / servo endpoint calibration
+# Radio / servo endpoint calibration
 #
 # RC input endpoints (from the Mission Planner radio-calibration wizard, Boxer
 # handset) and motor-output endpoints. These are reproducible config, but they are

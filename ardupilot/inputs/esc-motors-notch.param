@@ -1,4 +1,4 @@
-# 50 -- ESC / motor outputs / harmonic notch
+# ESC / motor outputs / harmonic notch
 #
 # AM32 4in1 ESC, DShot + BLHeli passthrough, ESC-telemetry-driven notch.
 # See flight-platform.md (ESC) and ardupilot.md (tuning log).

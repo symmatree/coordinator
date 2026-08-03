@@ -1,4 +1,4 @@
-# 80 -- Attitude / rate tuning
+# Attitude / rate tuning
 #
 # These are AUTOTUNE RESULTS (not defaults), from the 2026-06-13..16 flights; see
 # the "Tuning" log in ardupilot.md for the per-axis before/after. A QuickTune pass

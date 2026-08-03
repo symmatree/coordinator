@@ -1,4 +1,4 @@
-# 20 -- GPS + compass (Holybro F9P Rover Lite)
+# GPS + compass (Holybro F9P Rover Lite)
 #
 # One device on the mast that ArduPilot sees as several things: the ZED-F9P GNSS
 # receiver, an onboard I2C compass, and the connector's safety button + LED. All of
