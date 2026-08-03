@@ -10,6 +10,17 @@
 SERIAL4_PROTOCOL,2
 SERIAL4_BAUD,1500
 #
+# Onboard telemetry to the coordinator on this link (MAV2 = SERIAL4). Flight-state, an
+# onboard tlog, and VIO yaw-align diagnosis. 2 Hz -- enough for monitoring, modest to
+# keep onboard logging writes light. EXT_STAT=SYS_STATUS+GPS_RAW (health/sats),
+# POSITION=global/local pos, EXTRA1=ATTITUDE (yaw vs AHRS), EXTRA2=VFR_HUD (heading/GS),
+# EXTRA3=AHRS+EKF_STATUS_REPORT+VIBRATION.  provenance: 2026-08-03
+MAV2_EXT_STAT,2
+MAV2_POSITION,2
+MAV2_EXTRA1,2
+MAV2_EXTRA2,2
+MAV2_EXTRA3,2
+#
 # --- EKF3 source sets ---
 # SRC1 = GPS -- the flown lane (POSXY/VELXY/VELZ=GPS, POSZ=Baro, YAW=compass).
 EK3_SRC1_POSXY,3
