@@ -24,9 +24,11 @@ Router is located via $ROUTER_PY, else the repo tree, else /opt/coordinator/rout
 
 import math
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 os.environ.setdefault("MAVLINK20", "1")  # match the router (covariance extensions)
@@ -115,8 +117,7 @@ def main():
         return 1
 
     port = 14577
-    sockdir = os.path.join(_HERE, ".smoke")
-    os.makedirs(sockdir, exist_ok=True)
+    sockdir = tempfile.mkdtemp(prefix="router_stack_")  # scratch in /tmp, not the source tree
     sockpath = os.path.join(sockdir, "chobits_server")
 
     # Clear any socket left by a previous run: otherwise os.path.exists() below
@@ -193,6 +194,20 @@ def main():
             ok = False
             print("  timesync: FAIL -- no valid reply")
 
+        # Router must emit its own HEARTBEAT (well-behaved node; also what makes the FC
+        # stream telemetry to the companion link). comp 197 = the router's source id here.
+        hb = None
+        end = time.time() + 2.0
+        while time.time() < end and hb is None:
+            m = fc.recv(timeout=0.2)
+            if m is not None and m.get_type() == "HEARTBEAT" and m.get_srcComponent() == 197:
+                hb = m
+        if hb is not None:
+            print(f"  heartbeat: ok (type={hb.type}, comp={hb.get_srcComponent()})")
+        else:
+            ok = False
+            print("  heartbeat: FAIL -- router emitted no HEARTBEAT")
+
         print("RESULT:", "PASS" if ok else "FAIL")
         return 0 if ok else 1
     finally:
@@ -202,6 +217,7 @@ def main():
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             proc.kill()
+        shutil.rmtree(sockdir, ignore_errors=True)
 
 
 if __name__ == "__main__":
