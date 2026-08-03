@@ -1,0 +1,37 @@
+name: ardupilot-verify
+# DO NOT make this a required/blocking check -- it must stay informational (see why below).
+#
+# Informational round-trip check for the rekon10 param decomposition
+# (ardupilot/verify.py): do the fragment values match the ground-truth FC export?
+#
+# Runs on PRs and reports pass/fail, but is intentionally NOT a required/blocking check.
+# The workflow is: a config change is a PR that edits a fragment, which is then applied
+# to the FC and re-exported. So a fragment legitimately sits *ahead* of the export
+# (red) between merge and apply -- blocking on green would force you to apply before
+# merging (check out the unmerged branch, load it, export, push), which is backwards.
+# Red here just means "not yet applied/reconciled," not "don't merge."
+on:
+  push:
+    branches: [main]
+    paths:
+      - ardupilot/**
+      - .github/workflows/ardupilot-verify.yaml
+  pull_request:
+    paths:
+      - ardupilot/**
+      - .github/workflows/ardupilot-verify.yaml
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # verify.py is pure stdlib -- no deps to install.
+      - name: Verify param decomposition
+        run: python3 ardupilot/verify.py

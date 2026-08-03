@@ -1,0 +1,15 @@
+# 72 -- Failsafe and fence
+#
+# Radio and GCS failsafe; geofence. Operating envelope: canopy-ops.md.
+#
+# --- Failsafe ---
+# Throttle/radio failsafe on (3 = enabled, continue mission in Auto/Guided).
+FS_THR_ENABLE,3
+FS_GCS_ENABLE,1
+#
+# --- Fence ---
+# Fence is off; the limits below are staged, not active.
+FENCE_ENABLE,0
+FENCE_ACTION,3
+FENCE_ALT_MAX,120
+FENCE_RADIUS,150

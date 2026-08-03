@@ -1,0 +1,24 @@
+# 65 -- Walksnail HD VTX (video/OSD link, power relay, OSD backend)
+#
+# The Walksnail Avatar HD is one device with config spread across several ArduPilot
+# subsystems that interact, grouped here: its MSP DisplayPort link, its 9/12V BEC
+# power relay, and the OSD backend that renders to it. Hardware: flight-platform.md.
+#
+# --- Video / OSD serial link (SERIAL3 -> Walksnail, TX3/RX3) ---
+# Proto 42 = MSP DisplayPort.
+SERIAL3_PROTOCOL,42
+SERIAL3_BAUD,115
+#
+# --- OSD backend ---
+# Second OSD backend = 5 (MSP DisplayPort): ArduPilot sends OSD elements over the link
+#   and the Walksnail renders them (semantic OSD, not a pixel overlay). OSD1_ENABLE turns
+#   on the screen-1 layout that gets sent.
+OSD_TYPE2,5
+OSD1_ENABLE,1
+#
+# --- Power (Lucid VTX 9/12V BEC on RELAY4 / GPIO 83) ---
+RELAY4_FUNCTION,1
+# CH9 (SA) toggles Relay4 (aux option 36 = Relay4 on/off).
+RC9_OPTION,36
+# VTX cold at boot (bench-friendly).  provenance: d41a75d 2026-07-26
+RELAY4_DEFAULT,0

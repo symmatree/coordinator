@@ -1,0 +1,50 @@
+# 62 -- Radio / servo endpoint calibration
+#
+# RC input endpoints (from the Mission Planner radio-calibration wizard, Boxer
+# handset) and motor-output endpoints. These are reproducible config, but they are
+# handset/ESC-specific -- re-run radio cal if the transmitter changes.
+#   provenance: ac57658 2026-04-25 (radio cal), 8d0f52a (servo endpoints normalized)
+#
+# --- RC input endpoints ---
+RC1_MIN,990
+RC1_MAX,2011
+RC1_DZ,20
+RC2_MIN,988
+RC2_MAX,2011
+RC2_DZ,20
+RC3_MIN,988
+RC3_MAX,2011
+RC3_TRIM,988
+RC3_DZ,30
+RC4_MIN,988
+RC4_MAX,2011
+RC4_DZ,20
+RC5_MIN,988
+RC5_MAX,2011
+RC5_TRIM,988
+RC6_MIN,988
+RC6_MAX,2011
+RC6_TRIM,988
+RC7_MIN,988
+RC7_MAX,2011
+RC7_TRIM,2011
+RC8_MIN,988
+RC8_MAX,2011
+RC8_TRIM,988
+RC9_MIN,988
+RC9_MAX,2011
+RC9_TRIM,988
+#
+# --- Motor output endpoints (DShot normalized 1000/2000) ---
+SERVO1_MIN,1000
+SERVO1_MAX,2000
+SERVO1_TRIM,1000
+SERVO2_MIN,1000
+SERVO2_MAX,2000
+SERVO2_TRIM,1000
+SERVO3_MIN,1000
+SERVO3_MAX,2000
+SERVO3_TRIM,1000
+SERVO4_MIN,1000
+SERVO4_MAX,2000
+SERVO4_TRIM,1000

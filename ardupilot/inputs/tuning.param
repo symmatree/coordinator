@@ -1,0 +1,66 @@
+# 80 -- Attitude / rate tuning
+#
+# These are AUTOTUNE RESULTS (not defaults), from the 2026-06-13..16 flights; see
+# the "Tuning" log in ardupilot.md for the per-axis before/after. A QuickTune pass
+# preceded autotune. AUTOTUNE_AXES was cleared afterward so the mode is unbound.
+#   provenance: d024d6a (roll), efc0901 (pitch), 2f39366 (yaw), aec02c2 (retune)
+#
+# Angle-P is well above the 4.5 floor on all axes (quality tracks ANG_P). Pitch
+#   gains < roll, attributed to fore/aft weight imbalance (persistent ~22% fore/aft
+#   RPM split, #169).  [ardupilot.md tuning notes; #169]
+#
+# --- Angle P ---
+ATC_ANG_RLL_P,16.54115
+ATC_ANG_PIT_P,20.05561
+ATC_ANG_YAW_P,13.60845
+#
+# --- Rate PID (roll) ---
+ATC_RAT_RLL_P,0.06502037
+ATC_RAT_RLL_I,0.06502037
+ATC_RAT_RLL_D,0.003350064
+ATC_RAT_RLL_SMAX,50
+ATC_RAT_RLL_FLTD,21
+ATC_RAT_RLL_FLTT,21
+#
+# --- Rate PID (pitch) ---
+ATC_RAT_PIT_P,0.06176964
+ATC_RAT_PIT_I,0.06176964
+ATC_RAT_PIT_D,0.003932775
+ATC_RAT_PIT_SMAX,50
+ATC_RAT_PIT_FLTD,21
+ATC_RAT_PIT_FLTT,21
+#
+# --- Rate PID (yaw) ---
+ATC_RAT_YAW_P,0.5446329
+ATC_RAT_YAW_I,0.05446329
+ATC_RAT_YAW_D,0.03149521
+ATC_RAT_YAW_SMAX,50
+ATC_RAT_YAW_FLTE,1
+ATC_RAT_YAW_FLTD,21
+ATC_RAT_YAW_FLTT,21
+#
+# --- Accel limits (from autotune) ---
+ATC_ACC_R_MAX,1131.606
+ATC_ACC_P_MAX,1469.394
+ATC_ACC_Y_MAX,763.7736
+#
+# --- Angle / mix / feel ---
+ATC_ANGLE_MAX,45
+# Throttle-vs-attitude priority raised to 0.9.  provenance: 2056f36 2026-06-16
+ATC_THR_MIX_MAX,0.9
+# Autotune disabled so it can't be engaged by accident.  provenance: dc198ce 2026-06-17
+AUTOTUNE_AXES,0
+#
+# Vertical rate limits (m/s) for the "vertical bounce" climb test.
+#   provenance: d024d6a 2026-06-13
+PILOT_SPD_UP,10
+PILOT_SPD_DN,2.5
+#
+# --- Motor spin / thrust curve ---
+# Spin-arm/min lowered for the low hover throttle; thrust-expo for the props.
+#   provenance: 26e4ab0, fe6f204 (spin), 8d0f52a (expo)
+MOT_SPIN_ARM,0.04
+MOT_SPIN_MIN,0.05
+MOT_THST_EXPO,0.65
+# MOT_THST_HOVER is LEARNED (MOT_HOVER_LEARN=2) and per-flight -- see the
+#   ground-truth export, not pinned here (it hunts with sag/mass/wind).

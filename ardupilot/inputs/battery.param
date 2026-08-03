@@ -1,0 +1,32 @@
+# 70 -- Battery monitoring and power
+#
+# 6S Li-ion pack. Most thresholds came from Mission Planner "Initial Tune" (6S
+# Li-ion selected). See ardupilot.md "Battery monitoring" and flight-platform.md.
+#
+# Monitor via ESC telemetry (9), NOT the FC analog input -- the FC current sense is
+#   dead (arc-blown, #117). Volts/current arrive on SERIAL8 (see 20-serial) from a
+#   custom-calibrated AM32 build: voltage ~1%, current scale generic so mAh is
+#   +/-15%.  provenance: 954150979 2026-07-27; [flight-platform.md; #117]
+BATT_MONITOR,9
+BATT_ESC_MASK,0
+BATT_CAPACITY,8000
+#
+# Voltage thresholds (~3.20 / 3.10 / 3.00 V per cell on 6S). BATT_CRT_VOLT=18 is
+#   toward the low end for sustained load -- raise slightly if it Lands early under
+#   sag.  [ardupilot.md]
+BATT_ARM_VOLT,19.2
+BATT_LOW_VOLT,18.6
+BATT_CRT_VOLT,18
+BATT_LOW_MAH,0
+BATT_CRT_MAH,250
+BATT_LOW_TIMER,0
+#
+# Failsafe ACTIONS: Land on BOTH low and critical (1). Land is the correct action
+#   under canopy (RTL's climb-then-home is not). ardupilot.md prose still describes
+#   LOW as warn-only (=0); that is older -- the export is current.
+BATT_FS_LOW_ACT,1
+BATT_FS_CRT_ACT,1
+#
+# Sag compensation: scale thrust between these pack voltages.  provenance: ac57658 2026-04-25
+MOT_BAT_VOLT_MAX,24.6
+MOT_BAT_VOLT_MIN,16.8

@@ -1,0 +1,50 @@
+# 90 -- Logging, notify (display/LED/buzzer), telemetry streams, board misc
+#
+# --- Logging ---
+# Full EKF replay suite: log while disarmed (2), record replay data (1), rotate on
+#   disarm.  provenance: 871c15b 2026-07-11
+LOG_DISARMED,2
+LOG_REPLAY,1
+LOG_FILE_DSRMROT,1
+# ArduPilot's recommended logging bitmask (was raised for vibration analysis, then
+#   returned here).
+LOG_BITMASK,65535
+#
+# --- Notify ---
+# SH1106 OLED (NTF_DISPLAY_TYPE=2), LED types bitmask, buzzer on GPIO 32.
+#   provenance: 91e7055 (display), ca8cd23 2026-07-31 (LED types fix after upgrade)
+NTF_DISPLAY_TYPE,2
+NTF_LED_TYPES,33025
+NTF_BUZZ_PIN,32
+#
+# --- Scripting ---
+# Lua scripting enabled (used for quicktune).  provenance: 8d0f52a
+SCR_ENABLE,1
+#
+# --- Telemetry streams on MAV1 (primary GCS channel) ---
+#   provenance: 6ec21a2 (SR2), migrated to MAV1_* names in the 4.7 upgrade (ea7afee)
+MAV1_EXT_STAT,1
+MAV1_POSITION,1
+MAV1_RAW_SENS,1
+MAV1_RC_CHAN,1
+MAV1_EXTRA1,1
+MAV1_EXTRA2,1
+MAV1_EXTRA3,1
+#
+# --- Unused serial ports ---
+# SERIAL7 disabled (the abandoned F9P-move port); SERIAL9 (OTG) unused.
+SERIAL7_PROTOCOL,-1
+SERIAL7_BAUD,115
+SERIAL9_PROTOCOL,2
+SERIAL9_BAUD,460
+#
+# --- Board relays / misc ---
+# RELAY2/3 = the board's other switched pads, GPIO 81 "VSW" and GPIO 82 "CAMSW";
+#   enabled as relays but unused by this build.
+RELAY2_FUNCTION,1
+RELAY3_FUNCTION,1
+# RTC timezone offset +240 min (EDT).
+BRD_RTC_TZ_MIN,240
+# Safety-switch output mask: which outputs may move while safety is engaged. 16368 =
+#   outputs 5-14; motors (outputs 1-4) stay held until the safety switch is released.
+BRD_SAFETY_MASK,16368

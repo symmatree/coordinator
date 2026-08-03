@@ -1,0 +1,53 @@
+# 40 -- VIO / ExtNav and EKF3 source sets
+#
+# The GPS-vs-VIO integration. SRC1 is GPS (the flown lane); VIO/ExtNav is a
+# selectable source set. Mechanism and the load-bearing fusion details:
+# docs/ardupilot-extnav-fusion.md, docs/ardupilot-vio.md.
+#
+# --- Companion link (SERIAL4 -> coordinator Pi 4B) ---
+# Proto 2 = MAVLink2 (required for ExtNav ingest). 1.5 Mbaud is the working VIO rate.
+#   provenance: 04b2592, bcd7c65 2026-07-08
+SERIAL4_PROTOCOL,2
+SERIAL4_BAUD,1500
+#
+# --- EKF3 source sets ---
+# SRC1 = GPS -- the flown lane (POSXY/VELXY/VELZ=GPS, POSZ=Baro, YAW=compass).
+EK3_SRC1_POSXY,3
+EK3_SRC1_VELXY,3
+EK3_SRC1_POSZ,1
+EK3_SRC1_VELZ,3
+EK3_SRC1_YAW,1
+# SRC2 = VIO/ExtNav, position-only (velocity-only ExtNav is unsupported upstream).
+EK3_SRC2_POSXY,6
+EK3_SRC2_YAW,1
+# SRC3 = a copy of the GPS lane, so the switch has GPS on both ends, VIO in the middle.
+EK3_SRC3_POSXY,3
+EK3_SRC3_VELXY,3
+EK3_SRC3_VELZ,3
+EK3_SRC3_YAW,1
+# Runtime source-set select on SC/CH10.
+RC10_OPTION,90
+# SRC_OPTIONS bit 3 (=8, SRC_PER_CORE): core 0 runs SRC1/GPS, core 1 runs SRC2/VIO,
+#   so the VIO EKF lane is computed and logged next to the GPS lane (bit 0 off).
+EK3_SRC_OPTIONS,8
+# Reject GPS vertical velocity when reported vertical accuracy > 0.15 m.
+EK3_GPS_VACC_MAX,0.15
+# Baro altitude noise, widened to absorb the measured hover propwash offset (~1.2 m).
+EK3_ALT_M_NSE,2
+#
+# --- VISION_POSITION_ESTIMATE ingest (VISO) ---
+# Backend 2 = IntelT265: yaw-aligns the VIO frame onto AHRS (stereo VINS has no heading ref).
+VISO_TYPE,2
+# Measured VINS->FC transport latency ~100 ms (not the 10 ms default).
+VISO_DELAY_MS,100
+# OAK-D -> FC lever arm, metres FRD. Y carries a half-baseline offset (VINS reports in
+#   the cam0/left-imager frame). Coupled to the camera extrinsics (oak_d.yaml).
+VISO_POS_X,0.072
+VISO_POS_Y,-0.0375
+VISO_POS_Z,-0.116
+# Fusion noise. Position covariance is floored by POS_M_NSE; VIO velocity ignores the
+#   message covariance and fuses at VEL_M_NSE (so a router vel covariance only takes
+#   effect if mirrored here).
+VISO_POS_M_NSE,0.2
+VISO_VEL_M_NSE,0.1
+VISO_YAW_M_NSE,0.2

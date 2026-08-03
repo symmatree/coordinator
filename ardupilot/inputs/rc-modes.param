@@ -1,0 +1,29 @@
+# 60 -- RC aux switches, flight modes, arming; ELRS radio link
+#
+# FC parameters only; the EdgeTX mix/switch table is in ground-station.md + model01.yml.
+#
+# --- ELRS radio link (SERIAL6 -> Matek R24-TD) ---
+# Proto 2 = MAVLink2 (control + telem + RTCM uplink); 460800 to match the ELRS link.
+SERIAL6_PROTOCOL,2
+SERIAL6_BAUD,460
+# RSSI from the ELRS telemetry-radio link stats (5 = TelemetryRadioRSSI).
+RSSI_TYPE,5
+#
+# --- Flight modes (CH6 / SB) ---
+# Loiter (5) and AltHold (2).
+FLTMODE_CH,6
+FLTMODE1,5
+FLTMODE4,2
+#
+# --- Aux switches ---
+# CH5 = arm/disarm on the L3 latch.
+RC5_OPTION,153
+# CH7/SD = LAND, deliberately not RTL (climb-then-home is dangerous under canopy).
+RC7_OPTION,18
+# CH8 = lost-vehicle buzzer while SF held.
+RC8_OPTION,30
+#
+# --- Arming ---
+# Rudder arm/disarm off -- arming is on the CH5 latch, so a rudder gesture must not arm.
+#   provenance: dc198ce 2026-06-17
+ARMING_RUDDER,0

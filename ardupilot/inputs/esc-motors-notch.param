@@ -1,0 +1,44 @@
+# 50 -- ESC / motor outputs / harmonic notch
+#
+# AM32 4in1 ESC, DShot + BLHeli passthrough, ESC-telemetry-driven notch.
+# See flight-platform.md (ESC) and ardupilot.md (tuning log).
+#
+# --- ESC telemetry link (SERIAL8, FC-ESC ribbon) ---
+# Proto 16 = ESC telemetry: feeds motor RPM to the notch and volts/amps to BATT_MONITOR=9.
+SERIAL8_PROTOCOL,16
+SERIAL8_BAUD,115
+#
+# --- Motor output ---
+# DShot600. Required for AM32 passthrough and drives the ESCs on every armed flight.
+MOT_PWM_TYPE,6
+# Passthrough gate (needs both this and DShot).
+SERVO_BLH_AUTO,1
+# Motor pole count -- a physical property of the Helion 3110 motors. Pinned even though
+#   it matches the current default, so a default change can't silently mis-scale eRPM.
+SERVO_BLH_POLES,14
+# RPM comes from the SERIAL8 UART, not bi-directional DShot.
+SERVO_BLH_BDMASK,0
+# Motor mapping SERVO1..4 -> Motor1/3/4/2. This remap also reorders which ESC the AM32
+#   configurator reaches through FC passthrough.
+SERVO1_FUNCTION,33
+SERVO2_FUNCTION,35
+SERVO3_FUNCTION,36
+SERVO4_FUNCTION,34
+#
+# --- Harmonic notch (ESC-RPM driven) ---
+# 1st-harmonic notch on the motor fundamental; MODE 3 = ESC telemetry. Depends on the
+#   SERIAL8 RPM feed and SERVO_BLH_POLES. Tuned post-hover (see ardupilot.md).
+INS_HNTCH_ENABLE,1
+INS_HNTCH_MODE,3
+INS_HNTCH_FREQ,58.8
+INS_HNTCH_BW,22
+INS_HNTCH_HMNCS,1
+INS_HNTCH_REF,1
+INS_HNTCH_OPTS,6
+INS_HNTC2_ENABLE,0
+INS_HNTC3_ENABLE,0
+# INS sampling / filtering supporting the notch.
+INS_FAST_SAMPLE,5
+INS_GYRO_FILTER,42
+INS_ENABLE_MASK,127
+INS_GYRO_RATE,0
