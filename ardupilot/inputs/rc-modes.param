@@ -10,13 +10,23 @@ SERIAL6_BAUD,460
 RSSI_TYPE,5
 #
 # Downlink telemetry to the ground on this link (MAV3 = SERIAL6). 1 Hz, sized for the
-# ~13211-baud ELRS downlink, which also carries the forwarded (unthrottleable) VIO
-# messages. EXT_STAT=SYS_STATUS+GPS_RAW (health/sats), POSITION=global/local pos,
-# EXTRA1=ATTITUDE, EXTRA2=VFR_HUD (heading/GS).  provenance: 2026-08-03
+# ~13211-baud ELRS downlink. EXT_STAT=SYS_STATUS+GPS_RAW (health/sats), POSITION=global/local
+# pos, EXTRA1=ATTITUDE, EXTRA2=VFR_HUD (heading/GS).  provenance: 2026-08-03
 MAV3_EXT_STAT,1
 MAV3_POSITION,1
 MAV3_EXTRA1,1
 MAV3_EXTRA2,1
+# Mark this link private -- bit 1 = NO_FORWARD (GCS.h Option::NO_FORWARD). The FC stops
+# relaying broadcast traffic from the coordinator link (MAV2) onto ELRS. Measured on
+# 260812-maneuver: forwarded VISION_POSITION_ESTIMATE (3.2 Hz) + VISION_SPEED_ESTIMATE
+# (2.8 Hz) were 491 of 1061 B/s -- 46% of downlink bytes -- and RADIO_STATUS.txbuf sat below
+# ArduPilot's "very low on space" threshold (<20), throttling our own 1 Hz streams down to
+# ~0.6 Hz actual. Earlier note here called the VIO messages "unthrottleable"; they are not,
+# they are forwarded, and this is the switch. Incoming RTCM is unaffected -- a private
+# channel still processes locally (MAVLink_routing.cpp: from_private_channel -> return
+# process_locally), and FC-originated STATUSTEXT/streams do not route through the table.
+#   provenance: 2026-08-13, coordinator #197
+MAV3_OPTIONS,2
 #
 # --- Flight modes (CH6 / SB) ---
 # Loiter (5) and AltHold (2).
