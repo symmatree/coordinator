@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Poll the ELRS TX backpack's /mavlink link-health endpoint and record it.
+#
+# Every sample is appended to $OUT as JSONL (timestamp + full payload). stdout gets
+# only actionable changes, so it is safe to leave running in a terminal:
+#   association, reachability loss/recovery, reconnect-counter moves, backpack reboot,
+#   RSSI moves of >=6 dBm, and ip.gcs latching to an unexpected host.
+#
+# Start it BEFORE the first flight of a session -- on 2026-08-12 it was started four
+# minutes late and the window where RTK should have been resolving to Fixed has no data.
+#
+# Usage:  bin/backpack-link-watch
+#         OUT=flights/rekon10/260814-hover/ground/backpack-link.jsonl bin/backpack-link-watch
+#         URL=http://boxer-txbp.local.symmatree.com/mavlink bin/backpack-link-watch
+#
+# See docs/backpack-link-watch.md. Superseded eventually by #190 (scrape into Mimir).
+URL="${URL:-http://10.0.6.120/mavlink}"
+OUT="${OUT:-./backpack-link.jsonl}"
+INTERVAL="${INTERVAL:-5}"
+
+last_rssi=""
+last_recon=""
+last_uptime=""
+reachable=""
+
+while true; do
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	body=$(curl -s --max-time 4 "$URL" 2>/dev/null) || body=""
+
+	if [ -z "$body" ]; then
+		echo "{\"t\":\"$ts\",\"ok\":false}" >>"$OUT"
+		if [ "$reachable" != "no" ]; then
+			echo "$ts  UNREACHABLE  backpack not answering $URL"
+			reachable="no"
+		fi
+		sleep "$INTERVAL"
+		continue
+	fi
+
+	echo "{\"t\":\"$ts\",\"ok\":true,\"d\":$body}" >>"$OUT"
+
+	rssi=$(echo "$body" | grep -o '"rssi":-\?[0-9]*' | cut -d: -f2)
+	recon=$(echo "$body" | grep -o '"reconnects":[0-9]*' | cut -d: -f2)
+	uptime=$(echo "$body" | grep -o '"uptime_ms":[0-9]*' | cut -d: -f2)
+	gcs=$(echo "$body" | grep -o '"gcs":"[^"]*"' | cut -d'"' -f4)
+	bssid=$(echo "$body" | grep -o '"bssid":"[^"]*"' | cut -d'"' -f4)
+	drops=$(echo "$body" | grep -o '"drops_down":[0-9]*' | cut -d: -f2)
+	up=$(echo "$body" | grep -o '"packets_up":[0-9]*' | cut -d: -f2)
+
+	if [ "$reachable" = "no" ]; then
+		echo "$ts  RECOVERED  rssi=${rssi}dBm reconnects=${recon}"
+		reachable="yes"
+		last_rssi="$rssi"
+		last_recon="$recon"
+		last_uptime="$uptime"
+		sleep "$INTERVAL"
+		continue
+	fi
+	reachable="yes"
+
+	# first sample
+	if [ -z "$last_rssi" ]; then
+		echo "$ts  START  rssi=${rssi}dBm reconnects=${recon} uptime=$((uptime / 1000))s bssid=${bssid} gcs=${gcs}"
+		last_rssi="$rssi"
+		last_recon="$recon"
+		last_uptime="$uptime"
+		sleep "$INTERVAL"
+		continue
+	fi
+
+	# reboot: uptime went backwards
+	if [ -n "$uptime" ] && [ -n "$last_uptime" ] && [ "$uptime" -lt "$last_uptime" ]; then
+		echo "$ts  REBOOT  backpack uptime reset ($((last_uptime / 1000))s -> $((uptime / 1000))s) rssi=${rssi}dBm"
+	fi
+
+	# reconnect counter moved -- the #99 signal
+	if [ -n "$recon" ] && [ "$recon" != "$last_recon" ]; then
+		echo "$ts  RECONNECT  ${last_recon} -> ${recon}  rssi=${rssi}dBm bssid=${bssid}"
+		last_recon="$recon"
+	fi
+
+	# meaningful RSSI move (>=6 dBm from last reported) -- survey feedback as you walk
+	if [ -n "$rssi" ]; then
+		d=$((rssi - last_rssi))
+		[ "$d" -lt 0 ] && d=$((-d))
+		if [ "$d" -ge 6 ]; then
+			echo "$ts  RSSI  ${last_rssi} -> ${rssi} dBm  bssid=${bssid} drops_down=${drops} packets_up=${up}"
+			last_rssi="$rssi"
+		fi
+	fi
+
+	# GCS latch changed -- the old MP-race worry
+	if [ -n "$gcs" ] && [ "$gcs" != "10.0.99.14" ]; then
+		echo "$ts  GCS-LATCH  ip.gcs=${gcs} (not acebase 10.0.99.14)"
+	fi
+
+	last_uptime="$uptime"
+	sleep "$INTERVAL"
+done
