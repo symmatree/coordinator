@@ -18,18 +18,29 @@ upstream master and apply to the esp8285 path, so they need a local patch.
 
 ## What the patch changes (details in [`patches/wifi-robustness.patch`](patches/wifi-robustness.patch))
 
-Three narrow changes in `lib/WIFI/devWIFI.cpp`, no new files, ~19 lines:
+Four narrow changes in `lib/WIFI/devWIFI.cpp`, no new files:
 
 1. **Ride out transient drops.** Stock treats `WL_CONNECTION_LOST` as fatal and falls straight
    to its own AP -- so one missed-beacon blip strands the backpack off-network until a
    power-cycle. Patched, it reconnects (like `WL_DISCONNECTED`) and only falls back after the
    existing 30 s failure window. This is the direct cause of the "power-cycle roulette."
-2. **Disable WiFi power-save** (esp8285 modem-sleep) + enable auto-reconnect -- fewer missed
+2. **Retry the home network from AP mode.** Change 1 widens the window before the backpack
+   gives up, but upstream's fallback to AP is still *terminal*: both the status handler and
+   the 30 s timeout are gated on `wifiMode == WIFI_STA`, and the only routes back are the
+   `/connect` and forget-network HTTP handlers -- reachable only from a browser on the
+   backpack's own AP. So any outage longer than 30 s (flying out of range) leaves the
+   backpack sitting as an access point, and it will not rejoin even once it is back in
+   range. Patched, an *involuntary* fallback re-attempts the home network every
+   `STA_RETRY_INTERVAL_MS` (60 s). A deliberate `/access` request is exempt, and a retry
+   never fires while a client is associated to the AP, so an in-progress config or flash
+   session is never yanked away.
+3. **Disable WiFi power-save** (esp8285 modem-sleep) + enable auto-reconnect -- fewer missed
    beacons / drops at range.
-3. **Expose the backpack<->AP link health** on the `GET /mavlink` status endpoint (previously
+4. **Expose the backpack<->AP link health** on the `GET /mavlink` status endpoint (previously
    invisible -- we had RF-link stats but nothing on the WiFi side): `rssi`, `ssid`, `bssid`,
-   `reconnects` (a real flap counter), and `uptime_ms`. `drops_down` is left as-is (it's a
-   per-source sequence artifact, not real loss); `reconnects` is the meaningful error-state.
+   `reconnects` (see the caveat under Verify), and `uptime_ms`. `drops_down` is left as-is
+   (it's a per-source sequence artifact, not real loss); `overflows_down` is the meaningful
+   loss counter.
 
 Everything else -- MAVLink forwarding, ports, targets -- is byte-identical to stock 1.5.9.
 
