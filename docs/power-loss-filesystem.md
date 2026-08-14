@@ -24,12 +24,26 @@ Not a RO-base + overlay (that was the earlier call — superseded 2026-07-12). I
 **granular per-subvolume ro/rw** — stronger protection than an overlay, with no ramdisk catching
 writes and no custom initramfs:
 
+> [!WARNING]
+> **Read-only `/usr` is NOT actually enforced as built** (verified 2026-08-14 on the first unit, pipboy).
+> The `ro` reaches fstab, the generated `usr.mount` unit, and even the initramfs mounts `/usr` read-only —
+> but `@usr` and `@` are **one btrfs filesystem sharing one superblock**, so when `systemd-remount-fs`
+> remounts `/` **read-write** at boot, `/usr` comes up **`rw`** too, and a live `/usr` can't be flipped
+> back (`remount,ro` → "busy"). Consequences: the "mount `ro` → `remount,rw` for apt → `remount,ro` after"
+> cycle described in the table **cannot complete**, and the *"SD is fine because ro-`/usr` keeps write
+> volume low"* rationale below **does not currently hold** — which matters most for the SD roles
+> (coordinator + pods). Open design question tracked in [#96](https://github.com/symmatree/coordinator/issues/96);
+> full evidence chain in `facts/topics/power-unstable-pi.md` → "Reality check — read-only `/usr` is NOT
+> actually enforced". Candidate fixes: put `@usr` on a **separate btrfs filesystem** (its own superblock,
+> so its `ro` is independent), a late-boot unit that re-asserts `ro` after `systemd-remount-fs`, or drop
+> the live-ro claim and use per-service `ProtectSystem` + snapshots instead.
+
 All subvolumes `noatime`; the filesystem is `mkfs.btrfs -m single` (single metadata, no DUP — SD write-amplification). One btrfs FS → one UUID; the `subvol=` mount option differentiates the mounts (in `/etc/fstab`).
 
 | Subvolume | Mount (option) | Contents / why |
 |-----------|----------------|----------------|
 | `@` | `/` (`compress=zstd`) | root. |
-| `@usr` | `/usr` (**`ro`**) | the OS binaries/libraries — can't be written mid-cut, so can't corrupt. **Mount-option `ro`** (not the btrfs ro *property*), so `remount,rw` → apt → `remount,ro` works live for ansible maintenance, no reboot. |
+| `@usr` | `/usr` (**`ro`** — ⚠️ *not enforced as built, see warning above*) | the OS binaries/libraries — can't be written mid-cut, so can't corrupt. **Mount-option `ro`** (not the btrfs ro *property*), *intended* so `remount,rw` → apt → `remount,ro` works live for ansible maintenance, no reboot. **In practice `/usr` comes up `rw` (shared superblock); [#96](https://github.com/symmatree/coordinator/issues/96).** |
 | `@var` | `/var` (`compress=zstd`) | `journald`, Docker `data-root` (images survive reboot; `/var/lib/docker` is `chattr +C` / nodatacow — CoW-on-CoW footgun for overlay2), spool. |
 | `@home` | `/home` (`compress=zstd`) | operator home (the checkout, interactive scratch that must survive a reboot). |
 | `@data` | `/var/lib/coordinator` (`compress=zstd`) | config + captures — the precious data; **nests under `/var`** (mount after `@var`). Disarm takes an **RO snapshot** of this (#88). |
@@ -67,8 +81,11 @@ actually **boots** from a btrfs-subvolume root on the stock initramfs (mounts `s
 rollback). Everything else (the mmdebstrap rootfs, genimage packaging) is hardware-free.
 
 (Gotcha found in the spike: btrfs `compress` is a **per-superblock** option, not per-mount, so
-`@usr` inherits `@`'s `compress` regardless of its fstab line — harmless. `ro`/`noatime`/`nodev`
-*are* true per-mount VFS flags, which is why the `ro`-`/usr` mount behaves as intended.)
+`@usr` inherits `@`'s `compress` regardless of its fstab line — harmless. `noatime`/`nodev` are true
+per-mount VFS flags — but **`ro` turned out NOT to be reliably per-mount here**: because `@usr` shares
+`@`'s superblock, remounting `/` rw at boot drops `/usr`'s read-only flag, so `/usr` ends up `rw`
+despite the fstab `ro`. This is the correction to the spike's assumption — see the warning at the top
+of this section and [#96](https://github.com/symmatree/coordinator/issues/96).)
 
 ### Built images (where they are, how they were made)
 
