@@ -88,17 +88,19 @@ After flashing, `curl http://boxer-txbp.local.symmatree.com/mavlink` (or `http:/
 should now include a `link` block:
 
 ```json
-"link": { "rssi": -63, "ssid": "...", "bssid": "...", "reconnects": 0, "uptime_ms": 123456 }
+"link": { "rssi": -63, "ssid": "...", "bssid": "...", "reconnects": 1, "uptime_ms": 123456 }
 ```
 
 - **`rssi`** is the backpack's own signal to the AP -- read it under the antenna vs. at the
   flying spot to quantify the link margin (turns the manual RSSI survey into a live number).
-- **`reconnects`** climbing while stationary = a flapping link (the thing patch #1 now rides
-  out instead of dying on).
+- **`reconnects`** is misnamed -- read it as "connections". `sta_reconnects++` sits in the
+  shared `WL_CONNECTION_LOST` / `WL_DISCONNECTED` case, so it counts every entry into
+  reconnection, not just genuine link losses. Its post-boot baseline is therefore **not
+  necessarily 0** -- take the first post-association sample as the baseline and read only
+  increments *above* it as real losses. Climbing while stationary is a flapping link (the
+  thing patch #1 rides out instead of dying on).
 
-## Scope / status
+## Scope
 
 - **esp8285 / Boxer internal backpack only.** The newer C3 backpacks (Nomad, GX12, ...) are a
   different target and already got the upstream C3 WiFi fix.
-- **Compile-verified in the image; not yet field-verified.** The runtime behavior (reconnect,
-  power-save, link telemetry) still needs a bench/flight confirmation.
