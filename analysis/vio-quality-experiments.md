@@ -383,9 +383,12 @@ wrong noise model — either poisons the tightly-coupled fusion once acceleratin
     residual global offset is dominated by a rotation vs a scale error — both give local-good/global-bad;
     the drift-vs-speed correlation is confounded by scale (wrong scale → error ∝ distance). TODO:
     per-segment VINS rotation vs FC `ATT` to test the rotation read.
-  - [ ] **X2 — Local-vs-global agreement check** (cheap; do before trusting any global metric) —
-    segment-wise rigidity vs global fit (the metric-inflation caveat below), esp. handheld vision-only.
-    X12 is the first instance.
+  - [x] **X2 — Local-vs-global agreement check — DONE (E25/E26, 2026-08-30).** Rather than segmenting
+    the published pose, this went one level lower: frame-to-frame relative pose solved **directly from
+    the tracker's stereo feature stream** (`chobits_features` in the `.feat`), RANSAC 3D-3D, VINS
+    entirely out of the loop. Notebook: `flights/rekon10/260812-hover/vio-local-vs-global.ipynb`.
+    Result is split by axis -- **attitude confirms the local/global story, position does not**. See
+    E25, E26. X12 was the first instance; this is the estimator-independent one.
 
 ### T8 — Architecture: redundant, low-quality inertial fusion given authority (**new; leading**)
 *We run **two** inertial fusions in series: VINS fuses the **bad** IMU (BNO085 fused output,
@@ -434,6 +437,36 @@ wrong IMU doesn't get ignored — it drags the whole solution off a cliff.*
 > checked the same way.)
 
 ---
+
+### T12 — The 7.5 cm stereo baseline is too short for the scene depth we actually fly — **new; measured, upstream of the architecture question**
+*Depth from a stereo pair degrades as Z^2/(B*f). At the ranges these flights actually present, disparity
+is a couple of pixels and depth error is tens of percent -- so translation magnitude is unobservable
+before any estimator sees it.*
+> **Claim —** *metric:* triangulated feature depth + disparity distribution vs the B=0.075 m baseline ·
+> *region:* outdoor scene depth (trees, open ground at 5-70 m) × 640x400 mono at f~450 px ·
+> *behaviour:* both VINS and a naive relative-pose solve under-report motion by 2-6x ·
+> *decision:* whether **camera geometry** (mount orientation / scene distance), not fusion architecture,
+> is the first thing to fix.
+- **For:** **E27** — 260812-maneuver in-flight features: median depth **14.7 m**, p75 26.9 m, p95 70.7 m,
+  **64.5% beyond 10 m**; median disparity **2.25 px** with **45% under 2 px**. For 0.5 px disparity error
+  that is 15% depth error at 10 m, 30% at 20 m, 44% at 30 m. Both estimators under-scale on the same
+  flight (fit-scale 0.566 relative-pose, **0.162** VISP) and their post-alignment error curves are
+  nearly superimposed -- same broken input, two smoothers.
+- **Against / not established:** not shown to be *sufficient* to explain the failure -- feature count is
+  also low (E28) and the scene/vibration cause of that is unknown. Depth error alone predicts scale
+  error, not the full 7.5-9 m ATE. f~450 px is an order-of-magnitude estimate, not a calibrated intrinsic.
+- **Status:** **measured, not isolated.** No cause named for the overall failure; this is one quantified
+  term that is upstream of every fusion-interface question (T8, X5) and unaffected by any of them.
+- **Probes:**
+  - [ ] **X22 — point the camera down.** At 5 m AGL a nadir view puts the scene at ~5 m instead of
+    15-70 m: disparity ~6.8 px instead of 2.25, depth error ~7% instead of 30%. `VISO_ORIENT` is a
+    parameter, not a code change. Costs forward obstacle detection; **does not** cost yaw rate, which a
+    downward camera observes directly as image rotation about the optical axis. Note the OAK-D S2 and
+    IoT-40 do **not** help -- same or shorter baseline; the fix is scene distance, not the device.
+  - [ ] **X23 — usable-feature segments.** Operator observation: some flight segments carry usable
+    feature counts between dropouts. Score relative-pose quality (inliers, residual, disparity) per
+    segment and test whether solve quality tracks scene depth, feature count, or `VIBE` -- the three
+    candidates E28 leaves open.
 
 ## Theories — imagery quality (UC6 / mapping side)
 
@@ -516,6 +549,10 @@ above. New evidence is authored where it argues (under a theory); this table is 
 | **E22** | **Rubber isolation does not rescue `imu:1` (260730).** Same isolated-flight `.feat` (`20260730T115037Z`), offline `vins_fusion_offline`: **imu:0** stereo-only **bounded 69 m**; **imu:1** (`estimate_extrinsic:2`, pre-#69 default) **runs away 20,149 m / 239 m/s**; **imu:1** with a **fixed** extrinsic (`estimate_extrinsic:0`) is **bit-identical** (20,149 m). Isolation was mechanically real -- it **halved** the OAK-D >5 Hz accel band-RMS (**226** vs **444**, non-isolated 260705). Logged failure mode: **`numerically unstable in preintegration`** from the first frames. | native amd64 rootfs (`pull_estimator_rootfs.py`, Option B1) + `.feat` IMU/feature streams | Isolation at **this dose does not rescue** `imu:1` -- but 2× is far from zero (E1: armed ~400-500× handheld), so this is one partial-dose point that **weakens vibration-as-rescue without disproving T3**; near-zero-vibration (X14) is the real test. The fixed==calibrated **bit-identity means the extrinsic estimator never engaged** (divergence precedes it), so this run **cannot test T4** -- neither supports nor refutes it. **No cause is named:** it rules nothing out cleanly and -- with **no successful `imu:1` run, ever** -- establishes nothing positively. Open discriminators: X14 (near-zero vibration), X7 (raw vs fused IMU). |
 | **E23** | **`imu:1` also runs away on the month-old 260705 capture.** `imu:1` on 260705's `.feat` **runs away 25,910 m / 686 m/s** with **zero** `numerically unstable` warnings -- diverges **smoothly** (bounded ~30 s, then integrates away), unlike the gappy flights' preintegration instability. 260705's IMU stream is continuous ~100 Hz (no ~5 s stalls) -- **but see provenance.** | native amd64 rootfs (`pull_estimator_rootfs.py`) + 260705 `.feat` -- **captured ~1 month earlier under different onboard software AND a different ArduPilot build**, pre the in-tracker-capture stall; **not reproducible under the current build**. Differs from the recent flights in *many* variables, not just the stalls. | **Confounded -- does NOT isolate the gaps.** Because 260705 differs in software, ArduPilot version, and a month of changes, `imu:1` diverging here **does not exclude** the stalls as a contributor to anything; at most it shows `imu:1` divergence is **not unique to the current build**. No attribution follows: with **zero** successful `imu:1` runs and the OAK-D IMU's physical health unknown, no cause -- IMU model, product/axis-remap, time-sync, init, or **a physically faulty part** -- is named or ruled out. The stalls remain a separate safety problem ([#156](https://github.com/symmatree/coordinator/issues/156)). |
 | **E24** | **Eye-visible still banding ~ motor 1st-order rev (260730 hover; suggestive, n=1).** Operator annotated **4 horizontal blur bands** on an in-flight hover still (`_00000020_`, ~2.5 m, motors ~6400 rpm) → ~760-row pitch → **~120 Hz** via the IMX378 12 MP **33 ms** readout; matches **fast-pair motor rev (114–121 Hz)** = FC harmonic-notch 1st-harmonic (`INS_HNTCH_MODE=3`, `HMNCS=1`), **not** 3-blade blade-pass (~290–360 Hz). | operator visual annotation + `image-sharpness-vs-motion` blur profile (PR [#161](https://github.com/symmatree/coordinator/pull/161)) + `ESC`/`INS_HNTCH` decode (260730 `.bin`) | **+T11 (suggestive).** **Caveats:** rests on the *visual* count — an automated var-Laplacian detector **over-counts** (6–10 bands, fires on ground frames too), so **not independently confirmed**; metadata↔pixel timing ~5 s off ([#167](https://github.com/symmatree/coordinator/issues/167)) → coarse per-frame RPM tie (hover RPM flat, so ~120 Hz holds); **n=1 frame, 1 flight**. **No cause named** — *consistent with* rotational-vibration jello, not established. Probe: **X21** (targeted target mission). |
+| **E25** | **Local relative pose is sound where global attitude is not (260812-hover).** Frame-to-frame rigid pose from the tracker's stereo features, no VINS: on an FC-VIBE-confirmed **at-rest** capture (VIBE X/Y/Z all 0.01; OAK-D accel sd 0.052 m/s^2) 4011/4079 pairs solve, median 15 inliers, **4.4 mm** residual, **0.22 m** drift over 208 s, **1.46 deg** attitude. In the armed hover window: 690/1647 solve (42%), median **5** inliers, **23.4 mm** residual, **6.75 deg** attitude drift (max 13.1). `VISP` attitude vs AHRS on the sibling flights reached **142-158 deg**. | `.feat` `chobits_features` + `analysis/ardupilot_log`; notebook `260812-hover/vio-local-vs-global.ipynb` | **+T8 on attitude only.** With `imu: 0` there is no gravity reference, so global roll/pitch/yaw are **gauge freedoms** -- unobservable, held only by the marginalisation prior. A relative rotation has no gauge. `harness/sitl_extnav/orchestrate_yaw.py` already records the yaw half: *"Stereo-only VINS has no heading reference, so its world-frame yaw is arbitrary."* |
+| **E26** | **On position the local solve is NOT better -- and neither is usable (260812-maneuver, true extent 30 m).** Aligned ATE vs FC EKF: relative-pose integration **7.48 m** rmse (med 5.43, max 19.3, fit-scale 0.566); `VISP` **9.22 m** (med 7.28, max 18.6, fit-scale **0.162**), or 24.3 m rigid. Both collapse the 30 m ground track into a ~10 m blob; their error curves are nearly superimposed. The equivalent comparison on **260812-hover is degenerate and withdrawn** -- true extent there is ~1.2 m in a near-straight line, so Umeyama has almost nothing to constrain rotation or scale (fitted scales 1.658 / 0.534). | same pipeline, 260812-maneuver `.feat` + `.bin` | **Does NOT support "local deltas are sufficient" for position.** The failure is shared, so it is upstream of the fusion interface -- see **T12**. Retract any reading of the hover-window ATE numbers. |
+| **E27** | **Stereo geometry is the measured upstream limit.** In-flight triangulated depths (260812-maneuver, armed): p25 7.4 m, **median 14.7 m**, p75 26.9 m, p95 70.7 m; 64.5% beyond 10 m. Disparity median **2.25 px**, 45% under 2 px. With B=0.075 m, f~450 px: depth error 7%/15%/30%/44% at 5/10/20/30 m. | `.feat` features, direct triangulation | **+T12 (new).** Explains the shared under-scaling in E26 and the ground-vs-flight residual split (4.4 mm at near-field vs 22 mm at 15 m median). |
+| **E28** | **Feature supply is low, and light and autofocus are eliminated as causes.** In-flight median **24-31** stereo-matched features/frame against `setNumTargetFeatures(16*5)=80` per camera; the `118` in the send loop is datagram-buffer arithmetic, not a tuning cap. Mono (the VIO input) ran at **417-1376 us p50 exposure at ISO 100-101** across 260728/260730/260812 -- minimum gain, light to spare, so a longer exposure buys nothing. The mono pair is **fixed-focus**, so `OAK_STILL_FOCUS` / AF cannot affect the VIO input at all (it is the colour still camera only). | `.feat` counts; `mono_rect_left` capture sidecars; `feature_tracker.cpp` | **No cause named for the low count.** Scene content and vibration remain open (**X23**). Candidate relaxations, in source terms: stereo preset is `HIGH_ACCURACY` + `setLeftRightCheck(true)` which *rejects* uncertain disparity and an invalid disparity kills its feature outright; `PAIR_DIST_SQ = 9` (3 px) match tolerance; then `setNumTargetFeatures`, which would also require raising `big_buf`. Untested under canopy -- 260814-woods has no captures. |
 
 ---
 
