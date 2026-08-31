@@ -448,21 +448,33 @@ before any estimator sees it.*
 > *decision:* whether **camera geometry** (mount orientation / scene distance), not fusion architecture,
 > is the first thing to fix.
 - **For:** **E27** — 260812-maneuver in-flight features: median depth **14.7 m**, p75 26.9 m, p95 70.7 m,
-  **64.5% beyond 10 m**; median disparity **2.25 px** with **45% under 2 px**. For 0.5 px disparity error
-  that is 15% depth error at 10 m, 30% at 20 m, 44% at 30 m. Both estimators under-scale on the same
-  flight (fit-scale 0.566 relative-pose, **0.162** VISP) and their post-alignment error curves are
-  nearly superimposed -- same broken input, two smoothers.
-- **Against / not established:** not shown to be *sufficient* to explain the failure -- feature count is
-  also low (E28) and the scene/vibration cause of that is unknown. Depth error alone predicts scale
-  error, not the full 7.5-9 m ATE. f~450 px is an order-of-magnitude estimate, not a calibrated intrinsic.
-- **Status:** **measured, not isolated.** No cause named for the overall failure; this is one quantified
-  term that is upstream of every fusion-interface question (T8, X5) and unaffected by any of them.
+  **64.5% beyond 10 m**; median disparity **2.25 px** with **45% under 2 px**. Both estimators under-scale
+  on the same flight (fit-scale 0.566 relative-pose, **0.162** VISP) and their post-alignment error curves
+  are nearly superimposed -- same input, two smoothers.
+- **Against / not established — and the depth-accuracy case is weaker than it first looked.** With `fx`
+  and the disparity noise **measured** rather than assumed (E29: `fx` = 400.5 px derived from the feature
+  stream; at-rest disparity noise median **0.212 px**), depth uncertainty is **7% at 10 m, 14% at 20 m,
+  21% at 30 m** — about half what a 0.5 px / f=450 guess gives, and 7% at 10 m is tolerable. So "the
+  baseline is unsuited" is **not** supported by the depth-accuracy numbers alone.
+  **The mechanism is also unsettled, and the obvious one has the wrong sign:** triangulation with noisy
+  disparity *over*-estimates depth (`Z = Bf/d` is convex in `d`), which would predict **over**-scaling,
+  while the observed error is **under**-scaling. A mechanism that does predict under-scaling is
+  **regression dilution / weak translation observability**: image motion from translation goes as `t/Z`,
+  so at 15 m median depth and ~3 m/s a 20 Hz interval gives ~1% image motion, and a least-squares fit
+  dominated by uninformative distant points shrinks toward zero (the 5 cm RANSAC threshold on points with
+  metres of 3D uncertainty pushes the same way). **That is a hypothesis, not demonstrated.**
+  Also unresolved: feature count is low (E28) with its own unknown cause.
+- **Status:** **geometry measured; mechanism not established.** No cause named for the overall failure.
+  What is defensible is the *observability ratio*, not a depth-accuracy verdict.
 - **Probes:**
-  - [ ] **X22 — point the camera down.** At 5 m AGL a nadir view puts the scene at ~5 m instead of
-    15-70 m: disparity ~6.8 px instead of 2.25, depth error ~7% instead of 30%. `VISO_ORIENT` is a
-    parameter, not a code change. Costs forward obstacle detection; **does not** cost yaw rate, which a
-    downward camera observes directly as image rotation about the optical axis. Note the OAK-D S2 and
-    IoT-40 do **not** help -- same or shorter baseline; the fix is scene distance, not the device.
+  - [ ] **X22 — point the camera down.** At 5 m AGL a nadir view puts the scene at ~5 m instead of a
+    14.7 m median. The argument is **observability, not depth accuracy**: it roughly triples the
+    per-frame translation-to-depth ratio (`t/Z`), which is the term that makes translation estimable at
+    all; depth error only improves 7% -> 3.5%. `VISO_ORIENT` is a parameter, not a code change. Costs
+    forward obstacle detection; **does not** cost yaw rate, which a downward camera observes directly as
+    image rotation about the optical axis. Untested risks: whether ground texture at 5 m supports feature
+    tracking, and whether the narrower footprint shortens track length at survey speed. The OAK-D S2 and
+    IoT-40 do **not** help -- same or shorter baseline.
   - [ ] **X23 — usable-feature segments.** Operator observation: some flight segments carry usable
     feature counts between dropouts. Score relative-pose quality (inliers, residual, disparity) per
     segment and test whether solve quality tracks scene depth, feature count, or `VIBE` -- the three
@@ -552,7 +564,8 @@ above. New evidence is authored where it argues (under a theory); this table is 
 | **E25** | **Local relative pose is sound where global attitude is not (260812-hover).** Frame-to-frame rigid pose from the tracker's stereo features, no VINS: on an FC-VIBE-confirmed **at-rest** capture (VIBE X/Y/Z all 0.01; OAK-D accel sd 0.052 m/s^2) 4011/4079 pairs solve, median 15 inliers, **4.4 mm** residual, **0.22 m** drift over 208 s, **1.46 deg** attitude. In the armed hover window: 690/1647 solve (42%), median **5** inliers, **23.4 mm** residual, **6.75 deg** attitude drift (max 13.1). `VISP` attitude vs AHRS on the sibling flights reached **142-158 deg**. | `.feat` `chobits_features` + `analysis/ardupilot_log`; notebook `260812-hover/vio-local-vs-global.ipynb` | **+T8 on attitude only.** With `imu: 0` there is no gravity reference, so global roll/pitch/yaw are **gauge freedoms** -- unobservable, held only by the marginalisation prior. A relative rotation has no gauge. `harness/sitl_extnav/orchestrate_yaw.py` already records the yaw half: *"Stereo-only VINS has no heading reference, so its world-frame yaw is arbitrary."* |
 | **E26** | **On position the local solve is NOT better -- and neither is usable (260812-maneuver, true extent 30 m).** Aligned ATE vs FC EKF: relative-pose integration **7.48 m** rmse (med 5.43, max 19.3, fit-scale 0.566); `VISP` **9.22 m** (med 7.28, max 18.6, fit-scale **0.162**), or 24.3 m rigid. Both collapse the 30 m ground track into a ~10 m blob; their error curves are nearly superimposed. The equivalent comparison on **260812-hover is degenerate and withdrawn** -- true extent there is ~1.2 m in a near-straight line, so Umeyama has almost nothing to constrain rotation or scale (fitted scales 1.658 / 0.534). | same pipeline, 260812-maneuver `.feat` + `.bin` | **Does NOT support "local deltas are sufficient" for position.** The failure is shared, so it is upstream of the fusion interface -- see **T12**. Retract any reading of the hover-window ATE numbers. |
 | **E27** | **Stereo geometry is the measured upstream limit.** In-flight triangulated depths (260812-maneuver, armed): p25 7.4 m, **median 14.7 m**, p75 26.9 m, p95 70.7 m; 64.5% beyond 10 m. Disparity median **2.25 px**, 45% under 2 px. With B=0.075 m, f~450 px: depth error 7%/15%/30%/44% at 5/10/20/30 m. | `.feat` features, direct triangulation | **+T12 (new).** Explains the shared under-scaling in E26 and the ground-vs-flight residual split (4.4 mm at near-field vs 22 mm at 15 m median). |
-| **E28** | **Feature supply is low, and light and autofocus are eliminated as causes.** In-flight median **24-31** stereo-matched features/frame against `setNumTargetFeatures(16*5)=80` per camera; the `118` in the send loop is datagram-buffer arithmetic, not a tuning cap. Mono (the VIO input) ran at **417-1376 us p50 exposure at ISO 100-101** across 260728/260730/260812 -- minimum gain, light to spare, so a longer exposure buys nothing. The mono pair is **fixed-focus**, so `OAK_STILL_FOCUS` / AF cannot affect the VIO input at all (it is the colour still camera only). | `.feat` counts; `mono_rect_left` capture sidecars; `feature_tracker.cpp` | **No cause named for the low count.** Scene content and vibration remain open (**X23**). Candidate relaxations, in source terms: stereo preset is `HIGH_ACCURACY` + `setLeftRightCheck(true)` which *rejects* uncertain disparity and an invalid disparity kills its feature outright; `PAIR_DIST_SQ = 9` (3 px) match tolerance; then `setNumTargetFeatures`, which would also require raising `big_buf`. Untested under canopy -- 260814-woods has no captures. |
+| **E28** | **Feature supply is low, and light and autofocus are eliminated as causes.** In-flight median **24-31** stereo-matched features/frame against `setNumTargetFeatures(16*5)=80` per camera; the `118` in the send loop is datagram-buffer arithmetic, not a tuning cap. Mono (the VIO input) ran at **417-1376 us p50 exposure at ISO 100-101** across 260728/260730/260812 -- minimum gain, so in **open flight** a longer exposure buys nothing. **This does NOT eliminate light under canopy:** no flight with captures ever saw low light on mono (>5 ms frames: 0-1.4% everywhere), so the dark case is *unmeasured*, not excluded. `OAK_MONO_MAX_EXPOSURE_US = 0` leaves mono **uncapped**, and 260709 shows what the ceiling looks like when it is reached -- its *still* camera pinned at **29,995 us / ISO 1068**. A mono AE free to run to 30 ms under canopy would motion-blur the VIO input, which is E19's starvation mechanism with a number on it. The mono pair is **fixed-focus**, so `OAK_STILL_FOCUS` / AF cannot affect the VIO input at all (it is the colour still camera only). | `.feat` counts; `mono_rect_left` capture sidecars; `feature_tracker.cpp` | **No cause named for the low count.** Scene content and vibration remain open (**X23**). Candidate relaxations, in source terms: stereo preset is `HIGH_ACCURACY` + `setLeftRightCheck(true)` which *rejects* uncertain disparity and an invalid disparity kills its feature outright; `PAIR_DIST_SQ = 9` (3 px) match tolerance; then `setNumTargetFeatures`, which would also require raising `big_buf`. **The under-canopy case is retrievable, not lost:** 260814-woods has FC logs but its coordinator-side captures were never pulled off the aircraft. Those would test mono AE pinning, canopy feature counts, and T12's depth distribution in close-in trees -- the one geometry where a 7.5 cm baseline might be adequate. |
+| **E29** | **Camera intrinsics and disparity noise, measured rather than assumed.** The feature stream carries both raw pixels and undistorted normalised coords, so `fx` falls out directly: **fx = fy = 400.5 px**, cx 311.5, cy 207.8 (residual 0.0000 px), i.e. **77.3 deg HFOV** on the 640x400 mono -- not the ~450 px previously assumed. Disparity noise measured from the at-rest capture (a stationary feature's disparity variance *is* the measurement noise, 63 tracks with >=15 observations): median **0.212 px**, p75 0.573, p90 0.957 -- not the 0.5 px assumed. | `.feat` `chobits_features`, 260812-hover at-rest session | **Weakens T12's depth-accuracy case by ~2x**: depth uncertainty is 7% at 10 m / 14% at 20 m / 21% at 30 m. **Caveat:** 0.212 px is an *at-rest floor*; in-flight matching is worse (RANSAC residual 4.4 mm at rest vs 23.4 mm armed), so the flight-time noise is unmeasured and these are optimistic. |
 
 ---
 
