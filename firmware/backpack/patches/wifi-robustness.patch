@@ -1,17 +1,30 @@
 diff --git a/lib/WIFI/devWIFI.cpp b/lib/WIFI/devWIFI.cpp
-index 26b4013..fdaa481 100644
 --- a/lib/WIFI/devWIFI.cpp
 +++ b/lib/WIFI/devWIFI.cpp
-@@ -112,6 +112,8 @@ static bool do_flash = false;
+@@ -112,6 +112,14 @@
  static uint32_t totalSize;
  static UpdateWrapper updater = UpdateWrapper();
  
 +uint32_t sta_reconnects = 0;   // WiFi STA disconnect/reconnect events (link-flap counter)
 +
++// True only when AP mode was entered by the 30 s STA timeout below, rather than by an
++// explicit /access request. Auto-retry of the home network keys off this so that a
++// deliberate "put it in AP mode so I can flash it" session is never yanked away.
++static bool sta_auto_fallback = false;
++#define STA_RETRY_INTERVAL_MS 60000
++
  #if defined(MAVLINK_ENABLED)
  WiFiUDP mavlinkUDP;
  
-@@ -571,7 +573,7 @@ static void WebMAVLinkHandler(AsyncWebServerRequest *request)
+@@ -361,6 +369,7 @@
+ static void WebUpdateAccessPoint(AsyncWebServerRequest *request)
+ {
+   DBGLN("Starting Access Point");
++  sta_auto_fallback = false;   // explicit request -- do not auto-retry the home network
+   String msg = String("Access Point starting, please connect to access point '") + wifi_ap_ssid + "' with password '" + wifi_ap_password + "'";
+   sendResponse(request, msg);
+   changeWifiMode(WIFI_AP);
+@@ -571,7 +580,7 @@
  {
    mavlink_stats_t* stats = mavlink.GetMavlinkStats();
    
@@ -20,7 +33,7 @@ index 26b4013..fdaa481 100644
    json["enabled"] = wifiService == WIFI_SERVICE_MAVLINK_TX;
    json["counters"]["packets_down"] = stats->packets_downlink;
    json["counters"]["packets_up"] = stats->packets_uplink;
-@@ -585,6 +587,12 @@ static void WebMAVLinkHandler(AsyncWebServerRequest *request)
+@@ -585,6 +594,12 @@
      json["ip"]["gcs"] = "IP UNSET";
    }
    json["protocol"] = "UDP";
@@ -33,7 +46,7 @@ index 26b4013..fdaa481 100644
  
    AsyncResponseStream *response = request->beginResponseStream("application/json");
    serializeJson(json, *response);
-@@ -806,11 +814,13 @@ static void HandleWebUpdate()
+@@ -806,11 +821,13 @@
      switch(status) {
        case WL_NO_SSID_AVAIL:
        case WL_CONNECT_FAILED:
@@ -49,7 +62,30 @@ index 26b4013..fdaa481 100644
          changeTime = now;
          break;
        default:
-@@ -865,6 +875,12 @@ static void HandleWebUpdate()
+@@ -821,8 +838,22 @@
+   if (status != WL_CONNECTED && wifiMode == WIFI_STA && (now - changeTime) > 30000) {
+     changeTime = now;
+     changeMode = WIFI_AP;
++    sta_auto_fallback = true;
+     DBGLN("Connection failed %d", status);
+   }
++
++  // An involuntary fall back to AP is not a terminal state. Upstream has no path from AP
++  // back to STA except a human hitting /connect from a browser on the backpack's own AP,
++  // so any outage longer than the 30 s window above strands the backpack as an access
++  // point until it is power-cycled -- it will not rejoin the home network even once it is
++  // back in range. Retry periodically, but never while a client is actually associated to
++  // the AP, so an in-progress config or flash session is left alone.
++  if (wifiMode == WIFI_AP && sta_auto_fallback && station_ssid[0] != 0 &&
++      WiFi.softAPgetStationNum() == 0 && (now - changeTime) > STA_RETRY_INTERVAL_MS) {
++    changeTime = now;
++    changeMode = WIFI_STA;
++    DBGLN("AP fallback: retrying home network '%s'", station_ssid);
++  }
+   if (changeMode != wifiMode && changeMode != WIFI_OFF) {
+     switch(changeMode) {
+       case WIFI_AP:
+@@ -865,6 +896,12 @@
          WiFi.setHostname(myHostname); // hostname must be set after the mode is set to STA
          changeTime = now;
          WiFi.begin(station_ssid, station_password);
