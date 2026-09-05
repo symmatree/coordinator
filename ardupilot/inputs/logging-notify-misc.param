@@ -6,9 +6,18 @@
 LOG_DISARMED,2
 LOG_REPLAY,1
 LOG_FILE_DSRMROT,1
-# ArduPilot's recommended logging bitmask (was raised for vibration analysis, then
-#   returned here).
-LOG_BITMASK,65535
+# Raw IMU logging enabled: ArduPilot's recommended bitmask (65535) + bit 19 /
+#   IMU_RAW (524288) = 589823. Bit 19 is the gate for the raw-gyro logging that
+#   replaced the IMU batch sampler on 4.5+ H7 boards; it feeds the Filter Review
+#   tool and any FFT of the FC's own gyro. Produces large logs -- note LOG_DISARMED=2
+#   above, so a long bench session writes a lot.
+#   provenance: 2026-09-05
+LOG_BITMASK,589823
+# Raw-IMU logging options, paired with LOG_BITMASK bit 19 -- neither does anything
+#   without the other. 9 = bit 0 (primary gyro only) + bit 3 (log pre- AND post-filter),
+#   ArduPilot's recommended value to keep the logging rate survivable.
+#   provenance: 2026-09-05
+INS_RAW_LOG_OPT,9
 #
 # --- Notify ---
 # SH1106 OLED (NTF_DISPLAY_TYPE=2), LED types bitmask, buzzer on GPIO 32.
