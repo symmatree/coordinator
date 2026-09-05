@@ -7,12 +7,14 @@ asserts the emitted bytes decode to VISION_POSITION_ESTIMATE + VISION_SPEED_ESTI
 with the right values -- the (x, -y, -z) axis flip, the dPos/dt velocity (computed
 by the router, #62), the growing position covariance zeroed at the reset, the
 forwarded reset_counter (#67), and velocity suppressed on the reset sample -- and
-that the router replies to a TIMESYNC request. Run directly (needs pymavlink):
+that the router replies to a TIMESYNC request and logs the exchange (#167). Run
+directly (needs pymavlink):
 
     python3 test_router.py
 
 It is also run at image build time so a wrong proxy fails the build.
 """
+import json
 import math
 import os
 import pty
@@ -53,12 +55,15 @@ def decode(data):
 def main():
     master_fd, slave_fd = pty.openpty()
     slave_name = os.ttyname(slave_fd)
-    sockpath = os.path.join(tempfile.mkdtemp(), "chobits_server")
+    tmpdir = tempfile.mkdtemp()
+    sockpath = os.path.join(tmpdir, "chobits_server")
+    ts_log = os.path.join(tmpdir, "timesync", "timesync.jsonl")  # nested: dir is created
 
     proc = subprocess.Popen(
         [sys.executable, ROUTER, "--device", slave_name, "--baud", "115200",
          "--socket", sockpath, "--source-system", "1", "--source-component", "197"],
         stderr=subprocess.PIPE, text=True,
+        env={**os.environ, "COORD_TIMESYNC_LOG": ts_log},
     )
     try:
         for _ in range(100):
@@ -151,6 +156,16 @@ def main():
             print(f"  TIMESYNC reply ok: ts1={reply[0].ts1}")
         else:
             print(f"  FAIL: no valid TIMESYNC reply ({[(r.tc1, r.ts1) for r in reply]})")
+            ok = False
+
+        # #167: the exchange is also written to the JSONL sink, carrying both our
+        # clocks alongside the FC's ts1 -- that pairing is the point of the file.
+        lines = [json.loads(ln) for ln in open(ts_log)] if os.path.exists(ts_log) else []
+        entry = next((e for e in lines if e.get("fc_ts1_ns") == 12345), None)
+        if entry and entry["monotonic_ns"] > 0 and entry["tc1_realtime_ns"] > 0:
+            print(f"  TIMESYNC logged ok: {entry}")
+        else:
+            print(f"  FAIL: TIMESYNC not logged to {ts_log} ({lines})")
             ok = False
 
         print("RESULT:", "PASS" if ok else "FAIL")

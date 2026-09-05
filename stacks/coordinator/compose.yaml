@@ -59,11 +59,15 @@ services:
       - ${MAVLINK_DEVICE}:${MAVLINK_DEVICE}
     volumes:
       - ${COORDINATOR_IPC_DIR}:/tmp
+      # #167: the TIMESYNC log lands beside the captures so a flight pull carries
+      # the FC-clock <-> monotonic pairs needed to join stills to the FC log.
+      - ${COORDINATOR_CAPTURES_DIR}:/captures
     env_file:
       - .env
     environment:
       - MAVLINK_DEVICE
       - MAVLINK_BAUD
+      - COORD_TIMESYNC_LOG=/captures/timesync.jsonl
 
   # RGB still capture (#72). Owns the OAK-D like vio-tracker (same /dev/bus/usb
   # bind-mount + privileged for MyriadX re-enumeration), so it is a standalone

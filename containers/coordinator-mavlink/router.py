@@ -31,6 +31,17 @@ The (x,-y,-z) flip is the ENU/FLU -> NED/FRD convention from the chobits
 reference. The router also replies to FC TIMESYNC requests so the link is a
 cooperative time-sync endpoint.
 
+Time reconciliation (#167)
+--------------------------
+Every TIMESYNC exchange is appended to a JSONL file (COORD_TIMESYNC_LOG). Each
+line pairs the FC's clock with ours at one instant: the FC's ts1, the tc1 we
+reply with (CLOCK_REALTIME), and CLOCK_MONOTONIC read next to the reply. The
+monotonic reading is the load-bearing one -- the OAK-D capture sidecars stamp
+frames with monotonic_ns, and both containers share the host kernel's clock
+(network_mode: host), so these lines are what maps a still to a point on the FC
+log's timeline. Without them the two clocks are only relatable through wall time,
+which is where the ~5 s capture/flight-timeline discrepancy of #167 lives.
+
 Attitude note: VISION_POSITION_ESTIMATE carries euler roll/pitch/yaw. We convert
 the estimator quaternion directly (no NED frame correction). This is fusion-inert
 under our config (EK3_SRC_YAW=compass -> VIO yaw unused; roll/pitch come from the
@@ -67,6 +78,7 @@ FC to reset cleanly.
 """
 
 import argparse
+import json
 import math
 import os
 import select
@@ -218,6 +230,17 @@ def write_arm_file(path, armed):
     os.replace(tmp, path)
 
 
+def open_timesync_log(path):
+    """Append-mode JSONL sink for TIMESYNC exchanges (#167).
+
+    Line-buffered so a power cut keeps everything up to the last exchange, and the
+    directory is created if absent so the router runs the same standalone (tests,
+    stack-smoke) as it does with /captures mounted.
+    """
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    return open(path, "a", buffering=1)
+
+
 def main():
     args = parse_args()
 
@@ -262,6 +285,10 @@ def main():
     arm_file = os.environ.get("OAK_ARM_FILE", "/tmp/fc_armed")
     armed = False
     write_arm_file(arm_file, armed)
+
+    # #167: FC-clock <-> our-clock pairs, for joining captures to the FC log.
+    ts_log = open_timesync_log(
+        os.environ.get("COORD_TIMESYNC_LOG", "/tmp/timesync.jsonl"))
     last_hb = 0.0  # monotonic ts of the last HEARTBEAT we sent
 
     while True:
@@ -335,7 +362,16 @@ def main():
                 if msg is None:
                     break
                 if msg.get_type() == "TIMESYNC" and msg.tc1 == 0:
-                    mav.mav.timesync_send(int(time.time() * 1e9), msg.ts1)
+                    # Read both clocks as close to the reply as possible: tc1 is what
+                    # the FC sees, mono is what the capture sidecars are stamped in.
+                    mono_ns = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+                    tc1 = time.time_ns()
+                    mav.mav.timesync_send(tc1, msg.ts1)
+                    ts_log.write(json.dumps({
+                        "fc_ts1_ns": msg.ts1,
+                        "tc1_realtime_ns": tc1,
+                        "monotonic_ns": mono_ns,
+                    }) + "\n")
                 elif (msg.get_type() == "HEARTBEAT"
                       and msg.type != mavutil.mavlink.MAV_TYPE_GCS):
                     # #88: FC arm/disarm -> shared file; sync() the FS at disarm so the
