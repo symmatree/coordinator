@@ -156,6 +156,24 @@ nanosecond clock, echoing `ts1`. This makes the coordinator a passive time-sync
 peer now; the active side (disciplining a shared epoch across GPS/VINS/FC for the
 GPS-anchored co-estimation in #65) is future work.
 
+Every exchange is appended as one JSON object to `COORD_TIMESYNC_LOG`
+(`/tmp/timesync.jsonl` by default; the compose stack points it at
+`/captures/timesync.jsonl` so a flight pull carries it):
+
+| field | what |
+|-------|------|
+| `fc_ts1_ns` | the FC's own clock, echoed back from its request |
+| `tc1_realtime_ns` | the `CLOCK_REALTIME` value we replied with |
+| `monotonic_ns` | `CLOCK_MONOTONIC`, read next to the reply |
+
+`monotonic_ns` is the load-bearing field. The OAK-D capture sidecars stamp each
+frame with `monotonic_ns`, and every container runs `network_mode: host` so they
+share the host kernel's clock -- so these lines are what places a still on the FC
+log's timeline. Without them the two clocks are only relatable through wall time,
+which is where the ~5 s capture/flight-timeline discrepancy of
+[#167](https://github.com/symmatree/coordinator/issues/167) lives. The file is
+append-only across sessions; slice it by `monotonic_ns` for a given flight.
+
 ## Not done here -- deliberate follow-ups
 
 - **VINS reset-counter propagation -- DONE (contract v2, #67).** A VINS re-init now
