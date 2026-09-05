@@ -69,9 +69,11 @@ NTRIP client) verified healthy. Occurrences:
 fables `flight-platform-build-log.md` (Flights 1 and later).
 
 **Candidate mechanism, read from the firmware source.** ExpressLRS/Backpack
-[`lib/WIFI/devWIFI.cpp`](https://github.com/ExpressLRS/Backpack/blob/master/lib/WIFI/devWIFI.cpp)
-on the **master** branch (local clone `~/expresslrs-backpack`, HEAD `7c0e3b2`) --
-**not yet confirmed to match our deployed backpack firmware, Rev 1.5.5**:
+[`lib/WIFI/devWIFI.cpp`](https://github.com/ExpressLRS/Backpack/blob/1.5.9/lib/WIFI/devWIFI.cpp).
+The backpack runs the build in [`firmware/backpack/`](../firmware/backpack/README.md) --
+upstream tag **1.5.9** plus our WiFi patch -- so this is the source that runs. The latch
+logic (`gcsIP` / `gcsIPSet`, lines 118-119, 582-583, 894-896, 932-933) is byte-identical
+between 1.5.9 and master, so the reading below applies to either:
 
 - On boot `gcsIPSet = false`, so the backpack **broadcasts** MAVLink to the subnet
   (`WiFi.broadcastIP()` in STA mode) on the send port -- discovery.
@@ -99,14 +101,12 @@ before the firmware read; the code makes it more plausible, it does not confirm 
 
 ### What would confirm it (not yet in hand)
 
-The two cases are *consistent* with this theory but do not prove it, and none of the
-following has been observed on our system:
+The two cases are *consistent* with this theory but do not prove it. Still missing:
 
-- No GCS caught red-handed -- `ip.gcs` pointing at a non-acebase host during a failure
-  is the missing direct evidence.
-- The `/mavlink` endpoint (below) has not been confirmed to resolve or return `ip.gcs`
-  on our unit / firmware 1.5.5 -- it is read from the master source only.
-- The cloned source is **master**, not verified equal to deployed 1.5.5.
+- **No GCS caught red-handed** -- `ip.gcs` pointing at a non-acebase host during a
+  failure is the direct evidence, and it has not been seen. Every sample taken since
+  the endpoint became readable shows the expected `10.0.99.14`, including through the
+  2026-08-14 link loss -- so that particular failure was *not* this mechanism.
 - The predicted recovery (down the offender -> power-cycle -> mavproxy wins) has not
   been run as a deliberate predict-then-confirm.
 
@@ -116,25 +116,35 @@ concentrates here; new evidence should update this section.
 ## Diagnosing it next time (ask the backpack directly)
 
 Under this theory the backpack is not failing -- it is talking to the wrong GCS -- so
-its own status endpoint should name that GCS, without any packet capture. In the
-master source, `GET http://boxer-txbp.local.symmatree.com/mavlink` (route
-`server.on("/mavlink", ...)`, `WebMAVLinkHandler`) returns the following. **This
-endpoint has not been hit on our unit; the shape is from-source, not observed, and is
-the first thing to check next time it fails:**
+its own status endpoint should name that GCS, without any packet capture.
+`GET http://boxer-txbp.local.symmatree.com/mavlink` (route `server.on("/mavlink", ...)`,
+`WebMAVLinkHandler`) returns:
 
 ```json
 { "enabled": true,
   "counters": { "packets_down": N, "packets_up": N, "drops_down": N, "overflows_down": N },
   "ports":    { "listen": 14555, "send": 14550 },
-  "ip":       { "gcs": "10.0.x.y" },   // "IP UNSET" == still broadcasting, unlatched
-  "protocol": "UDP" }
+  "ip":       { "gcs": "10.0.99.14" },   // "IP UNSET" == still broadcasting, unlatched
+  "protocol": "UDP",
+  "link":     { "rssi": -78, "ssid": "...", "bssid": "...", "reconnects": 1, "uptime_ms": 211727 } }
 ```
 
+The `link` block is our patch's addition, not stock -- its presence is also how you tell
+which firmware is on the unit.
+
 - `ip.gcs` would be the offender -- the GCS it anchored to. If it is not acebase's
-  address, that host has the link. `"IP UNSET"` means it hasn't latched yet.
-- `counters` are the live traffic rates: incrementing `packets_up/down` confirm it is
-  streaming happily (to whoever `ip.gcs` is); `drops_down`/`overflows_down` would flag
-  a genuine link-capacity problem instead.
+  address (`10.0.99.14`), that host has the link. `"IP UNSET"` means it hasn't latched yet.
+- `counters` need care, and have already produced wrong readings. `drops_down` is one
+  global sequence counter across three interleaving MAVLink sources, so per-source gaps
+  read as huge losses -- **use `overflows_down`**. And `packets_up` is **not** proof of
+  delivery: on 2026-08-12 it climbed steadily at ~6/s through a window when the FC was
+  receiving nothing.
+- `link.uptime_ms` distinguishes a power-cycle from a link drop across a gap in sampling
+  -- compare its delta against wall-clock, not just whether it went backwards.
+
+Record it per flight rather than curling by hand; `bin/backpack-link-watch` (coordinator
+[#201](https://github.com/symmatree/coordinator/pull/201)) does that and documents the
+traps above in more detail.
 
 ## Recovery
 
@@ -160,5 +170,6 @@ and it is open: it depends on the site network and hasn't been chosen or tested.
   `Drones/rekon10/ardupilot.md`; path summary in `Drones/rekon10/flight-platform.md`.
 - Under-canopy correction doctrine (why RTCM must flow continuously): fables
   `Drones/rekon10/canopy-ops.md`.
-- Backpack firmware (local reference clone): `~/expresslrs-backpack`
-  (`lib/WIFI/devWIFI.cpp`).
+- Backpack firmware: what we build and flash is [`firmware/backpack/`](../firmware/backpack/README.md)
+  (tag 1.5.9 + WiFi patch). `~/expresslrs-backpack` is a convenience clone of upstream
+  **master** for reading `lib/WIFI/devWIFI.cpp` -- check the tag before citing it as what runs.
