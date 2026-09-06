@@ -6,7 +6,7 @@ UDP MAVLink/RTCM to the ELRS uplink. It exists because that WiFi bridge is the l
 link in the RTCM corrections path -- it intermittently fails to hold the house AP and needs
 repeated power-cycles. Corrections path and the failure history:
 coordinator [`docs/rtk-corrections-path.md`](../../docs/rtk-corrections-path.md); ground kit
-inventory: fables [`Drones/rekon10/ground-station.md`](https://github.com/symmatree/fables/blob/main/Drones/rekon10/ground-station.md).
+inventory: [`docs/rekon10/ground-station.md`](../../docs/rekon10/ground-station.md).
 
 ## Why not just update stock
 

@@ -64,7 +64,7 @@ into the existing ledgers (`E#` in `vio-quality-experiments.md`) rather than dup
   (wet canopy attenuates far more than dry). Seasonal + diurnal.
 - **Corrections feed** *[controllable]* — the RTCM stream's **rate**, **latency / correction age**,
   **message set delivered**, and **baseline length** to the base. Today: base → ntrip (tiles) → mavproxy →
-  house WiFi → Boxer ELRS backpack (UDP) → ELRS uplink → FC → F9P (see fables `flight-platform.md`), at
+  house WiFi → Boxer ELRS backpack (UDP) → ELRS uplink → FC → F9P (see [`flight-platform.md`](../docs/rekon10/flight-platform.md)), at
   ~333 Hz / 1:2 telemetry, ~13 kbaud budget on the ELRS link — a **thin, latency-prone** path.
 
 **The lever worth naming:** the corrections feed is the most controllable axis. In a limited physical
@@ -167,7 +167,7 @@ on the **same event**, with **VIO failing first**. So the notional operating con
 canopy, so VIO covers the gap" — has a hole: the conditions that degrade GPS (dense, dark canopy) are the
 same ones that starve VIO, and VIO gives out *earlier*. The envelope where **"GPS-denied AND VIO-usable"**
 holds may be **narrow or, under real canopy, empty** — which is precisely the ice-hole mission's core
-regime (fables `canopy-ops.md`).
+regime ([`canopy-ops.md`](../docs/rekon10/canopy-ops.md)).
 
 This is why the flip is worth it: only by drawing both envelopes in the **same driver-space** do you see
 that the fallback and the primary fail together. It reframes the roadmap from "make each better in
@@ -228,7 +228,7 @@ An `E#` observation typically informs both — a theory *and* an envelope sample
 - `analysis/vio-quality-experiments.md` — VIO theories/evidence (E19: the 260712 feature+light+GPS
   co-degradation this doc's cross-coupling section rests on).
 - `analysis/sitl-validation-experiments.md` — FC/EKF gate behaviour (what the FC *does* as a tier degrades).
-- fables `Drones/rekon10/canopy-ops.md` — the ice-hole mission doctrine and error budgets these envelopes
+- [`docs/rekon10/canopy-ops.md`](../docs/rekon10/canopy-ops.md) — the ice-hole mission doctrine and error budgets these envelopes
   serve; `flight-platform.md` — the RTCM corrections path this doc proposes rerouting over WiFi.
 - #124 (feature-count health signal), #125/#128 (mono capture — the instrument for the VIO light/blur
   axis), #121 (per-flight capability tags — the query layer for step 1).

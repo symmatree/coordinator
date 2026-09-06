@@ -143,7 +143,7 @@ writer alongside git and the box). Visibility is already covered by `coord statu
 SH1106 status OLED, the Top pHAT readiness indicator
 ([#87](https://github.com/symmatree/coordinator/issues/87)), and persisted journald.
 
-**Why it was ever there:** [OpenMower](https://github.com/symmatree/fables/blob/main/fables/OpenMower/openmower-os-stack.md)
+**Why it was ever there:** [OpenMower](https://github.com/symmatree/fables/blob/main/OpenMower/openmower-os-stack.md)
 has built a Docker + Dockge + `/opt/stacks/` edge stack, and interop with it (as a rover, at
 least to start) motivated adopting the same shape. That interop is a **separate future
 decision**; it is not a reason to run a web authoring surface on the flight appliance now.

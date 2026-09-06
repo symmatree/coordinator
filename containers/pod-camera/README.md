@@ -1,6 +1,6 @@
 # coordinator-pod-camera
 
-Capture container for the Rekon camera pod (Pi Zero 2 W + Camera Module 3 / IMX708). Pulls JPEG stills at a fixed cadence (default 1 Hz) and writes each frame plus a JSON metadata sidecar to the Zero's **local SD card** (never over USB -- the USB 2.0 bus is for commands only; see fables `arm-pods.md`).
+Capture container for the Rekon camera pod (Pi Zero 2 W + Camera Module 3 / IMX708). Pulls JPEG stills at a fixed cadence (default 1 Hz) and writes each frame plus a JSON metadata sidecar to the Zero's **local SD card** (never over USB -- the USB 2.0 bus is for commands only; see [`arm-pods.md`](../../docs/rekon10/arm-pods.md)).
 
 **Status: built, pending hardware bring-up (#23).** Image + CI exist; not yet run on a real Zero + camera. Plan of record: [docs/pi-zero-bringup.md](../../docs/pi-zero-bringup.md).
 

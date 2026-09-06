@@ -7,7 +7,7 @@ firmware **ArduCopter 4.7.0**.
 The fragments in `inputs/` are the source we maintain: small per-subsystem files we edit
 and **apply to the FC**. `rekon10-methodi.param` is the last full dump off the FC -- the
 ground truth `verify.py` checks the fragments against. Hardware/build narrative lives in
-the fables `Drones/rekon10/*.md` docs (especially `ardupilot.md`).
+[`docs/rekon10/`](../docs/rekon10/README.md) (especially [`ardupilot.md`](../docs/rekon10/ardupilot.md)).
 
 ## Layout
 

@@ -77,7 +77,7 @@ stills from the OAK-D **RGB** camera to disk -- **timestamped**, and ideally rep
 camera-trigger event (`CAMERA_TRIGGER` / logged `CAM`) so the FC log geotags each frame (times may need
 later correction, but it is a start). This is the **only onboard stills-quality camera** (the VTX is
 FPV-only, separate, with its own quality issues to diagnose). It feeds several products: **optical SfM**
-via OpenDroneMap (the [mapping pipeline](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/mapping.md)),
+via OpenDroneMap (the [mapping pipeline](rekon10/mapping.md)),
 **timelapse / movies** (real-time or sped up), and **high-quality single stills** (sunsets, prints).
 Constraint: the OAK-D is a single USB device owned by the tracker pipeline, so RGB capture rides in that
 pipeline (an added still branch) or a dedicated capture profile -- not a second process contending for
