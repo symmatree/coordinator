@@ -48,7 +48,7 @@ For headless bench without Imager step 4: use **Ethernet**, or attach a **displa
 | User / password | Your operator account (step 4) | SSH and Docker group membership |
 | SSH | Enable in step 4, or use first-boot wizard / Pi Connect | Headless bring-up |
 | WiFi | **Lab SSID in step 4** (and/or Ethernet on the bench) | Built-in Pi 4B WiFi; no dongle. Useful for prep; not the in-flight network |
-| Storage | Quality SD or USB boot later | Per [virtualization-study](https://github.com/symmatree/fables/blob/main/fables/Drones/coordinator/virtualization-study.md): avoid heavy control-plane IOPS on SD; Docker Compose idle I/O is low |
+| Storage | Quality SD or USB boot later | Per [virtualization-study](https://github.com/symmatree/fables/blob/main/Drones/coordinator/virtualization-study.md): avoid heavy control-plane IOPS on SD; Docker Compose idle I/O is low |
 
 ### Not needed at image install (later host playbooks)
 

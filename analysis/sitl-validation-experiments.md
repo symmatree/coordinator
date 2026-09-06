@@ -453,4 +453,4 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
 - `docs/ardupilot-extnav-fusion.md` -- FC-side ExtNav fusion + covariance floors (`VISO_*_M_NSE`).
 - `docs/vins-stereo-only.md` -- why the stereo-only pose drifts (no global datum).
 - `harness/README.md` -- router half (`fake_fc.py`, `pose_replayer.py`) that SITL replaces the far end of.
-- fables `Drones/rekon10/canopy-ops.md` -- the ice-hole error budget the whole thing serves.
+- [`docs/rekon10/canopy-ops.md`](../docs/rekon10/canopy-ops.md) -- the ice-hole error budget the whole thing serves.

@@ -4,9 +4,9 @@ Background reading and deployment patterns that influenced coordinator design. *
 
 ## Rekon hardware and mission
 
-- [central-hub.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/central-hub.md) -- Pi 4B hub, OAK-D, Pi Zero USB, PPS
-- [oak-d-mount.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/oak-d-mount.md) -- VIO mount constraints
-- [virtualization-study.md](https://github.com/symmatree/fables/blob/main/fables/Drones/coordinator/virtualization-study.md) -- host vs container tradeoffs (Docker Compose recommendation)
+- [central-hub.md](rekon10/central-hub.md) -- Pi 4B hub, OAK-D, Pi Zero USB, PPS
+- [oak-d-mount.md](rekon10/oak-d-mount.md) -- VIO mount constraints
+- [virtualization-study.md](https://github.com/symmatree/fables/blob/main/Drones/coordinator/virtualization-study.md) -- host vs container tradeoffs (Docker Compose recommendation)
 
 ## ArduPilot VIO
 
@@ -20,7 +20,7 @@ Coordinator IPC and binary plan: [vio-integration.md](vio-integration.md).
 
 ## Operator-pattern influence (generic tooling)
 
-Private notes on a v2 edge stack using Docker + Dockge + `/opt/stacks/` + compose CLI: [openmower-os-stack.md](https://github.com/symmatree/fables/blob/main/fables/OpenMower/openmower-os-stack.md). Coordinator borrows the `/opt/stacks/` + compose **shape** with its own naming and Rekon payload; no shared codebase. It does **not** adopt Dockge -- that maps to neither runtime control nor drift-free deploy on a flight appliance (see [deployment-model.md](deployment-model.md) and [#13](https://github.com/symmatree/coordinator/issues/13)); OpenMower interop stays a separate future decision.
+Private notes on a v2 edge stack using Docker + Dockge + `/opt/stacks/` + compose CLI: [openmower-os-stack.md](https://github.com/symmatree/fables/blob/main/OpenMower/openmower-os-stack.md). Coordinator borrows the `/opt/stacks/` + compose **shape** with its own naming and Rekon payload; no shared codebase. It does **not** adopt Dockge -- that maps to neither runtime control nor drift-free deploy on a flight appliance (see [deployment-model.md](deployment-model.md) and [#13](https://github.com/symmatree/coordinator/issues/13)); OpenMower interop stays a separate future decision.
 
 ## Upstream tools (unbranded)
 

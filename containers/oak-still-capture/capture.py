@@ -7,7 +7,7 @@ owns the OAK-D, so it runs in its own `capture` compose profile, NOT alongside t
 `vio-tracker` (single USB device -- they cannot share it). Simultaneous VIO + stills
 is the harder phase-3 integration into the tracker pipeline.
 
-Feeds the mapping / imagery products in fables `Drones/rekon10/mapping.md`: optical
+Feeds the mapping / imagery products in `docs/rekon10/mapping.md`: optical
 SfM (OpenDroneMap), timelapse, and high-res single stills. FC geotagging
 (CAMERA_TRIGGER / logged CAM) is phase 2 -- not wired here.
 

@@ -15,7 +15,7 @@ The Pi supplies estimates; fusion is FC-side via `EK3_SRC*` when `VISO_TYPE` is 
 
 ## Rekon context (not a param recipe)
 
-Rekon uses **F9P + compass when RTK is good** and **VIO for bounded under-canopy legs** between ice-hole GPS resets ([rekon-design.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/rekon-design.md), [canopy-ops.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/canopy-ops.md)). The ArduPilot wiki OAK-D page describes a **VIO-primary** bench setup useful to prove the Pi pipeline -- not the same problem as dual-mode GPS+VIO operations.
+Rekon uses **F9P + compass when RTK is good** and **VIO for bounded under-canopy legs** between ice-hole GPS resets ([rekon-design.md](rekon10/rekon-design.md), [canopy-ops.md](rekon10/canopy-ops.md)). The ArduPilot wiki OAK-D page describes a **VIO-primary** bench setup useful to prove the Pi pipeline -- not the same problem as dual-mode GPS+VIO operations.
 
 Current FC export (`config/rekon10-methodi.param` in facts) is **pre-VIO**: `VISO_TYPE=0`, `EK3_SRC1` on GPS/compass/baro. Turning VIO on and choosing lane strategy is FC tuning work on the bench with you, not something this repo should pretend is settled.
 

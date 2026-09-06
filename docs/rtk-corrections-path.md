@@ -9,9 +9,9 @@ The path, workloads, and rates below are documented state. The failure-cause is 
 **leading theory, not a confirmed diagnosis** -- it is consistent with the two cases
 we have and with a firmware read, but has not been caught in the act; see the caveats
 in that section. This is the reference for the correction path. The physical ground
-kit (radio, backpack, IPs, ELRS profiles) is inventoried in fables
-`Drones/rekon10/ground-station.md`; the FC-side RTK/serial wiring in
-`Drones/rekon10/ardupilot.md`; the under-canopy operational doctrine ("RTCM must
+kit (radio, backpack, IPs, ELRS profiles) is inventoried in
+[`rekon10/ground-station.md`](rekon10/ground-station.md); the FC-side RTK/serial wiring in
+[`rekon10/ardupilot.md`](rekon10/ardupilot.md); the under-canopy operational doctrine ("RTCM must
 flow continuously") in `Drones/rekon10/canopy-ops.md`. Those link here for the
 network story rather than restating it.
 
@@ -66,7 +66,7 @@ received zero MAVLink from the vehicle. Everything upstream (base, caster, mavpr
 NTRIP client) verified healthy. Occurrences:
 [#99](https://github.com/symmatree/coordinator/issues/99) (2026-07-12), tiles #664
 (2026-07-30, first no-laptop flight; closed -> tracked in #99), and the field notes in
-fables `flight-platform-build-log.md` (Flights 1 and later).
+[`rekon10/flight-platform-build-log.md`](rekon10/flight-platform-build-log.md) (Flights 1 and later).
 
 **Candidate mechanism, read from the firmware source.** ExpressLRS/Backpack
 [`lib/WIFI/devWIFI.cpp`](https://github.com/ExpressLRS/Backpack/blob/1.5.9/lib/WIFI/devWIFI.cpp).
@@ -164,12 +164,12 @@ and it is open: it depends on the site network and hasn't been chosen or tested.
 
 - Tracking bug: [coordinator#99](https://github.com/symmatree/coordinator/issues/99).
   Closed occurrence: [tiles#664](https://github.com/symmatree/tiles/issues/664).
-- Ground kit inventory (radio, backpack, ELRS profiles, IPs): fables
-  `Drones/rekon10/ground-station.md`.
-- FC-side RTK/serial (F9P on SERIAL2, ELRS serial modes): fables
-  `Drones/rekon10/ardupilot.md`; path summary in `Drones/rekon10/flight-platform.md`.
-- Under-canopy correction doctrine (why RTCM must flow continuously): fables
-  `Drones/rekon10/canopy-ops.md`.
+- Ground kit inventory (radio, backpack, ELRS profiles, IPs):
+  [`rekon10/ground-station.md`](rekon10/ground-station.md).
+- FC-side RTK/serial (F9P on SERIAL2, ELRS serial modes):
+  [`rekon10/ardupilot.md`](rekon10/ardupilot.md); path summary in [`rekon10/flight-platform.md`](rekon10/flight-platform.md).
+- Under-canopy correction doctrine (why RTCM must flow continuously):
+  [`rekon10/canopy-ops.md`](rekon10/canopy-ops.md).
 - Backpack firmware: what we build and flash is [`firmware/backpack/`](../firmware/backpack/README.md)
   (tag 1.5.9 + WiFi patch). `~/expresslrs-backpack` is a convenience clone of upstream
   **master** for reading `lib/WIFI/devWIFI.cpp` -- check the tag before citing it as what runs.

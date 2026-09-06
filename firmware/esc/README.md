@@ -3,7 +3,7 @@
 Custom AM32 build for the rekon10's **TBS Lucid 60A 3-6S AM32 4-in-1** ESC, so ArduPilot's
 ESC telemetry (`BATT_MONITOR=9`) reports usable **battery voltage and current / mAh**. This
 exists because the FC's own analog current sensor is dead (arc-blown at first bring-up, PC1
-stuck ~9.9 V) -- see the airframe hardware doc [`flight-platform.md`](https://github.com/symmatree/fables/blob/main/Drones/rekon10/flight-platform.md) (fables) and
+stuck ~9.9 V) -- see the airframe hardware doc [`flight-platform.md`](../../docs/rekon10/flight-platform.md) and
 [coordinator#117](https://github.com/symmatree/coordinator/issues/117).
 
 ## What's wrong with stock, and the fix
@@ -53,7 +53,7 @@ All four ESCs, via ArduPilot passthrough (props off, battery connected):
    Connect -> flash the `.hex` (local firmware) to each ESC.
 
 Same version (2.20) as stock, so EEPROM config persists -- but **verify motor directions
-after** (one ESC is reversed); backups in [`config/am32-esc/`](https://github.com/symmatree/fables/blob/main/Drones/rekon10/config/am32-esc/) (fables).
+after** (one ESC is reversed); backups in [`config/am32-esc/`](../../docs/rekon10/config/am32-esc/).
 
 ## Verify (`BATT_MONITOR=9`, disarmed)
 

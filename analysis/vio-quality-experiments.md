@@ -36,7 +36,7 @@ design against is a **sudden lateral jump into an obstacle**, *not* global posit
 quality" decomposes, in priority order: (1) bounded local drift for hover + short hops; (2) a
 trustworthy **health/confidence signal** → hold/land (fail-safe, not fail-confident); (3) obstacle
 sensing from the same stereo depth. Global metric accuracy is a *post-hoc* mapping product, not a
-real-time requirement. See fables `Drones/rekon10/canopy-ops.md` (ice-hole doctrine + error budgets).
+real-time requirement. See [`docs/rekon10/canopy-ops.md`](../docs/rekon10/canopy-ops.md) (ice-hole doctrine + error budgets).
 
 **Principal docs / artifacts:**
 - `analysis/vio-quality.ipynb` (+ `analysis/vio_ekf_compare.py`) — per-flight VINS-vs-FC-EKF/GPS
@@ -70,7 +70,7 @@ was" is a measurement, not a verdict. Two axes matter, and a pose can pass one w
   corridor**: how far the path could stray before striking an obstacle on either side — the **max
   deviation** from truth, which **grows with distance/time** (one mis-estimated turn offsets everything
   downstream, no loop closure to recover — E14), so the corridor **widens with penetration depth**. The
-  **ice-hole doctrine is the mitigation** (fables `canopy-ops.md`): a periodic GPS re-anchor (or a clean
+  **ice-hole doctrine is the mitigation** ([`canopy-ops.md`](../docs/rekon10/canopy-ops.md)): a periodic GPS re-anchor (or a clean
   VINS reset, [#67](https://github.com/symmatree/coordinator/issues/67)) **bounds** the accumulated error,
   resetting the corridor at each hole instead of letting it grow without limit. Feasibility here =
   achievable **mission length** and **max penetration depth** for a given corridor budget.

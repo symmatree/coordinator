@@ -2,7 +2,7 @@
 
 Plan of record for bringing up the first Rekon camera pod node -- a **Pi Zero 2 W + Camera Module 3 (IMX708)** -- from bare SD card to a node that captures stills locally and reports to the Coordinator. Tracked in the coordinator repo for now (the pod may split into its own repo later; the layout below keeps that cheap).
 
-Design source (private fables): [arm-pods.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/arm-pods.md), [central-hub.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/central-hub.md). Coordinator side: [architecture.md](architecture.md), [host-setup.md](host-setup.md).
+Design source: [arm-pods.md](rekon10/arm-pods.md), [central-hub.md](rekon10/central-hub.md). Coordinator side: [architecture.md](architecture.md), [host-setup.md](host-setup.md).
 
 ## Why this lives next to the coordinator code
 
@@ -48,9 +48,9 @@ There is intentionally **no** nested `pizero/{host,containers,stacks}` mirror of
 
 No demonstrated blocker. The honest constraints:
 
-- **RAM (512 MB) is the binding limit, and the budget fits one low-duty container.** Estimate (not measured): Pi OS Lite headless ~100 MB + `dockerd`/`containerd` ~100 MB + one `picamera2`-class container ~100 MB ~= 300 MB, with zram/swap for spikes. Capture is **1--2 Hz, very low duty cycle** (fables), so steady-state churn is low.
+- **RAM (512 MB) is the binding limit, and the budget fits one low-duty container.** Estimate (not measured): Pi OS Lite headless ~100 MB + `dockerd`/`containerd` ~100 MB + one `picamera2`-class container ~100 MB ~= 300 MB, with zram/swap for spikes. Capture is **1--2 Hz, very low duty cycle** ([arm-pods.md](rekon10/arm-pods.md)), so steady-state churn is low.
 - **The real iteration cost is camera passthrough, not resources.** libcamera in a container needs `/dev/video*`, `/dev/media*`, `/dev/dma_heap`, vchiq, and `/run/udev` visible inside. Known-solvable (privileged or explicit device mounts); this is what Phase 2 exists to shake out.
-- **Thermal is hardware-mitigated** in fables (full-length heatsinks + open-core prop-wash), driven by chrony/USB-gadget/SD-writes, not the runtime. Docker idle cost is small; the CPU is mostly idle between frames.
+- **Thermal is hardware-mitigated** ([arm-pods.md](rekon10/arm-pods.md)): full-length heatsinks + open-core prop-wash, driven by chrony/USB-gadget/SD-writes, not the runtime. Docker idle cost is small; the CPU is mostly idle between frames.
 - **Never build on the Zero** -- CI builds arm64, the Zero pulls (the existing repo pattern). The heavy cost never lands on the device.
 - **Fallback, not a fork:** if the daemon overhead ever annoys, the same capture binary/config runs natively under systemd; the built image stays the artifact. Note it; don't plan around it.
 
@@ -70,10 +70,10 @@ No camera, no gadget net, no PPS yet. This proves Docker runs on the Zero -- the
 
 ### Phase 2 -- Capture container (stills to local SD, no coordination) -- [#23](https://github.com/symmatree/coordinator/issues/23)
 
-A `pod-camera` container pulls IMX708 stills at 1--2 Hz and writes JPEG + timestamp metadata to the Zero's **own SD card** (never over USB -- fables: USB 2.0 would bottleneck; the bus is for commands only). **Image + CI built** ([`containers/pod-camera/`](../containers/pod-camera/README.md)); pending hardware bring-up.
+A `pod-camera` container pulls IMX708 stills at 1--2 Hz and writes JPEG + timestamp metadata to the Zero's **own SD card** (never over USB -- [arm-pods.md](rekon10/arm-pods.md): USB 2.0 would bottleneck; the bus is for commands only). **Image + CI built** ([`containers/pod-camera/`](../containers/pod-camera/README.md)); pending hardware bring-up.
 
 - **Front-end: picamera2** (over rpicam-apps), chosen for frame-sync exposure and easy extension to the Phase 4 control API -- device passthrough is identical for both. Base image is `debian:bookworm-slim` + the Raspberry Pi apt archive so libcamera + picamera2 are matched and Pi-pipeline-aware (stock Debian libcamera enumerates "no cameras").
-- **Frame sync (the oddball bit):** the CM3 has no XVS hardware trigger, so the array relies on libcamera's **software camera-sync** -- one Zero is the **pacesetter/server**, the rest clients aligning frame timing, sync messages on the USB net (fables `arm-pods.md`; "<10 us" per libcamera). `capture.py` carries a guarded `POD_SYNC_MODE` hook, **default off**; the exact control surface (`SyncMode` server/client) is verified and wired in Phase 3 (#24). Standalone capture works regardless.
+- **Frame sync (the oddball bit):** the CM3 has no XVS hardware trigger, so the array relies on libcamera's **software camera-sync** -- one Zero is the **pacesetter/server**, the rest clients aligning frame timing, sync messages on the USB net ([arm-pods.md](rekon10/arm-pods.md); "<10 us" per libcamera). `capture.py` carries a guarded `POD_SYNC_MODE` hook, **default off**; the exact control surface (`SyncMode` server/client) is verified and wired in Phase 3 (#24). Standalone capture works regardless.
 - Each frame writes a JSON sidecar with `SensorTimestamp` (CLOCK_BOOTTIME at exposure) + wall/monotonic time -- the anchor for later PPK-style interpolation against ArduPilot pose logs.
 - On-disk layout: `/var/lib/pod/captures/<node>/<session>/<stem>.{jpg,json}`.
 - Success: `coord start` on the pod, frames accumulate on disk at the target rate, container stays up.
@@ -97,7 +97,7 @@ Make the pod reachable and time-aligned. This is the **Zero side** of two host s
 
 ### Phase 4 -- Control + status (start/stop, report to Coordinator, Alloy) -- [#25](https://github.com/symmatree/coordinator/issues/25)
 
-The pod accepts start/stop capture commands and reports status; the Coordinator collects it and informationally relays successful-capture telemetry to the FC over MAVLink (**not** a load-bearing timestamp -- operator visibility only, per fables).
+The pod accepts start/stop capture commands and reports status; the Coordinator collects it and informationally relays successful-capture telemetry to the FC over MAVLink (**not** a load-bearing timestamp -- operator visibility only, per [arm-pods.md](rekon10/arm-pods.md)).
 
 - A small **pod control service** (the "Pi Zero pod control API" already reserved in [architecture.md](architecture.md)) exposes start/stop and status. This pairs with the **deferred Pi Zero relay** noted in `coordinator-mavlink` ([#10](https://github.com/symmatree/coordinator/issues/10) / [vio-integration.md](vio-integration.md)).
 - **Open contract (decide with #10):** wire format and transport. Candidates: MAVLink over the gadget net (consistent with the FC path, lets the Coordinator forward directly) vs. a small HTTP/gRPC pod API on `br0` (simpler to build/debug, Coordinator translates to MAVLink). The relay is deliberately unspecified in #10 -- this phase defines it.
@@ -121,5 +121,5 @@ These are the seams where pod and Coordinator work must align; each is owned by 
 - [host-setup.md](host-setup.md) -- Coordinator equivalent (shared bootstrap shape)
 - [architecture.md](architecture.md) -- host/container split, reserved Pi Zero control API
 - [vio-integration.md](vio-integration.md) -- deferred Pi Zero relay in `coordinator-mavlink`
-- fables: [arm-pods.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/arm-pods.md), [central-hub.md](https://github.com/symmatree/fables/blob/main/fables/Drones/rekon10/central-hub.md)
+- [arm-pods.md](rekon10/arm-pods.md), [central-hub.md](rekon10/central-hub.md) -- airframe/payload design notes (now in this repo)
 </invoke>

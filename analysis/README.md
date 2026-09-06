@@ -13,17 +13,25 @@ Flight-log and VIO analysis for the rekon10 platform.
 ## The flight-analysis notebook runs as a nightly CronJob — it lives in `tiles`, not here
 
 **Don't go looking for a runner in this repo.** The initial per-flight analysis
-(`Drones/rekon10/flight-analysis.ipynb`, whose source is in the **`fables`** repo) is executed by a
-Kubernetes **CronJob** defined in the **`tiles`** repo:
+([`docs/rekon10/flight-analysis.ipynb`](../docs/rekon10/flight-analysis.ipynb), whose source now lives in
+**this** repo) is executed by a Kubernetes **CronJob** defined in the **`tiles`** repo:
 
 > **`tiles/tanka/environments/flight-analysis/`** — [`main.jsonnet`](https://github.com/symmatree/tiles/blob/main/tanka/environments/flight-analysis/main.jsonnet), [`runner.py`](https://github.com/symmatree/tiles/blob/main/tanka/environments/flight-analysis/runner.py), [`README.md`](https://github.com/symmatree/tiles/blob/main/tanka/environments/flight-analysis/README.md) ← the authoritative doc.
+
+**The runner has not been repointed yet.** `tiles` `runner.py` still clones
+`https://github.com/symmatree/fables.git` and runs `Drones/rekon10/flight-analysis.ipynb`.
+The notebook moved here, so the nightly job breaks until `tiles` is changed. `instrument.sha`
+provenance follows the move: it starts tracking coordinator commits, not fables ones.
+Repointing the clone is the minimum fix; the coupling itself is the real smell -- a cron in
+one repo hard-coding another repo's URL and internal layout. Publishing the notebook as a
+release artifact (tarball or OCI image) the runner just pulls would decouple them.
 
 Locally (this machine): `~/tiles/tanka/environments/flight-analysis/`.
 
 ### What it does
 
 - **Schedule:** `0 4 * * *` (04:00 UTC daily), `concurrencyPolicy: Forbid`. Namespace `flight-analysis`.
-- Clones `fables` fresh, then for **every `.bin` under the NAS `flights` share**
+- Clones the notebook's repo fresh, then for **every `.bin` under the NAS `flights` share**
   (`raconteur.ad.local.symmatree.com:/volume2/datasets/flights`, mounted `/mnt/flights`) runs
   `papermill` on `flight-analysis.ipynb` with `-p input_file <bin>`, then `nbconvert --to webpdf`.
 - Writes **alongside each `.bin`**:
@@ -51,8 +59,8 @@ when you don't want to wait for 04:00 UTC.
 
 ### Local papermill is a fallback, not the cron
 
-You *can* run the notebook by hand (e.g. the `fables` `.venv` has papermill):
-`papermill fables/Drones/rekon10/flight-analysis.ipynb <out>.ipynb -p input_file <bin> -p debug false`.
+You *can* run the notebook by hand (any venv with papermill):
+`papermill docs/rekon10/flight-analysis.ipynb <out>.ipynb -p input_file <bin> -p debug false`.
 But note it is **not** equivalent to the CronJob: it does **not** write `polisher.json`, and if you name
 outputs differently (`flight-analysis.html` / the notebook's own `manifest.json`) they will sit *next to*
 the cron's `flight-analysis-<stem>.{ipynb,pdf}` rather than replace them. Prefer the `kubectl` trigger so
@@ -62,7 +70,7 @@ provenance and naming stay consistent.
 
 | lives in | what |
 |----------|------|
-| **`fables`** `Drones/rekon10/flight-analysis.ipynb` | the per-flight FC-log analysis notebook (source of truth) |
+| **`coordinator`** `docs/rekon10/flight-analysis.ipynb` (here) | the per-flight FC-log analysis notebook (source of truth) |
 | **`tiles`** `tanka/environments/flight-analysis/` | the nightly CronJob that executes it (schedule, NFS PV, runner, provenance) |
 | **`tiles`** `containers/datascience-notebook-ssh/` | the runner image (papermill, playwright/Chromium, LaTeX) |
 | **`coordinator`** `analysis/` (here) | `parse_log()` helper + VIO-specific analysis (`vio-input-alignment.ipynb`) |
