@@ -17,6 +17,7 @@ Config via environment (all optional):
   POD_STILL_MAX_EXPOSURE_US
                       cap the shutter (default: 5000; 0 = uncapped AE)
   POD_STILL_FOCUS     auto | infinity | <dioptres> (default: auto)
+  POD_SESSION         session id (default: UTC timestamp at start)
   POD_SYNC_MODE       off | server | client (default: off) -- see note below
 """
 
@@ -179,7 +180,12 @@ def main():
     signal.signal(signal.SIGINT, _request_stop)
 
     # Per-process session dir so reboots/restarts don't interleave sequences.
-    session = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # POD_SESSION lets the entrypoint hand the same id to the accelerometer
+    # reader, so a session directory holds the frames and the vibration record
+    # for the same interval -- one self-contained unit (#211).
+    session = os.getenv("POD_SESSION") or dt.datetime.now(dt.timezone.utc).strftime(
+        "%Y%m%dT%H%M%SZ"
+    )
     session_dir = out_dir / node / session
     session_dir.mkdir(parents=True, exist_ok=True)
 

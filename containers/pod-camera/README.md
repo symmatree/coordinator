@@ -58,6 +58,77 @@ the same vibration writes **2.4x more bands** here. Binning is a lever if it eve
 | `POD_STILL_FOCUS` | `auto` | `auto` \| `infinity` \| lens position in **dioptres** |
 | `POD_SYNC_MODE` | `off` | `off` \| `server` \| `client` (Phase 3) |
 
+## ADXL345 vibration logging (#211)
+
+`adxl345.py` reads one or more ADXL345s over SPI and writes batched samples as JSONL
+into the **same session directory** as the frames, on the **same kernel clock** -- which
+is the whole point: accelerometer and camera share one host, so correlating them needs
+no NTP, no PPS, and no network.
+
+Opt-in via `POD_ACCEL_DEVICES` (empty disables), supervised separately from the camera
+loop so a missing sensor or an unset `dtparam=spi=on` cannot cost you the frames.
+
+| Var | Default | Meaning |
+|-----|---------|---------|
+| `POD_ACCEL_DEVICES` | *(empty)* | `label:/dev/spidevN.M,...`; empty = off |
+| `POD_ACCEL_ODR_HZ` | `3200` | output data rate |
+| `POD_ACCEL_RANGE_G` | `16` | 2 \| 4 \| 8 \| 16 |
+| `POD_ACCEL_SPI_HZ` | `1500000` | SPI clock |
+| `POD_ACCEL_POLL_HZ` | `200` | FIFO poll rate |
+| `POD_ACCEL_SEPARATION_M` | *(empty)* | camera-to-arm baseline, recorded in the header |
+
+### Why spidev and not the IIO driver
+
+Checked, not assumed. There **is** a stock `i2c-sensor,adxl345` overlay, and the mainline
+IIO driver gained FIFO + watermark support in kernel 6.16 -- but **Pi OS does not ship
+it**. The Raspberry Pi archive's `Contents-arm64` lists only
+`drivers/input/misc/adxl34x*.ko` (the legacy *input* driver: `/dev/input` events, no IIO
+buffer) for every kernel through 6.18.39, and `CONFIG_ADXL345_SPI` appears in no bcm27xx
+defconfig. There is no SPI overlay for the part, and generic `anyspi` cannot express
+`spi-cpol`/`spi-cpha` (this part is mode 3) or `interrupt-names` -- without which the IIO
+driver forces `FIFO_BYPASS` and exposes no buffer. Even with the module built it pushes
+X/Y/Z with **no `IIO_TIMESTAMP` channel**, so the timestamps would still be ours to make.
+
+Consequence worth stating plainly: **the INT wire is not needed.** Two fewer conductors
+through the camera sandwich.
+
+### Settings that are not arbitrary
+
+| Choice | Why |
+|---|---|
+| **mode 3, <= 1.5 MHz** | Datasheet: CPOL=1/CPHA=1, 5 MHz ceiling. Separately, 5 us must elapse between FIFO sample reads, and *"for SPI operation at 1.6 MHz or less, the register addressing portion of the transmission is a sufficient delay"* -- so staying under 1.6 MHz removes the CS-deassert dance entirely. A 32-sample drain is 1.2 ms; the FIFO takes 10 ms to fill. |
+| **ODR 3200** | The part's native internal rate, so nothing is decimated on the way out. Lower ODRs decimate through a filter the datasheet does not characterise, adding aliasing you cannot separate afterwards. |
+| **+/-16 g** | In FULL_RES the scale factor is a constant **3.9 mg/LSB at every range** -- bit depth grows instead (10 bits at 2 g, 13 at 16 g). The wide range is free, and the design doc's own "tens of microns at ~330 Hz" works out to **4-9 g**, so clipping is live. Check the data for rail-hits; do not change parts pre-emptively. |
+| **Batch timestamps, raw LSB** | Each FIFO batch carries `CLOCK_BOOTTIME` (matching the camera's `SensorTimestamp`) and `CLOCK_MONOTONIC`, plus the cumulative sample index. Per-sample times are **not** computed here: the datasheet specifies no tolerance on the part's internal clock, so the effective ODR is fitted offline by regressing index against batch time. Baking in a nominal rate would lose the evidence needed to correct it. |
+| **Self-test at startup** | Electrostatically actuates the sensor and checks the deflection lands inside the datasheet's per-axis g limits. Catches a cold joint or dead part before the airframe leaves the ground, rather than after a flight of zeros. Logged pass/fail with the measured deltas; a failure warns and keeps logging -- suspect data beats no data. |
+
+### Why two sensors, and why the separation matters
+
+One pixel of image shift on the CM3 is **282 urad** of camera rotation but **705 um** of
+camera *translation* at a 2.5 m hover -- rotation is roughly a thousand times more
+efficient at writing rolling-shutter banding. A single accelerometer senses rotation only
+through its lever arm and under-reads it. Differential acceleration across a known
+baseline is the rotational signature:
+
+    theta = (delta_a / d) / (2*pi*f)^2
+
+At 120 Hz over a 150 mm baseline, 1 g of differential acceleration is 115 urad, or
+**0.41 px** of image shift. Which is why `POD_ACCEL_SEPARATION_M` needs a measured number
+and "near the end of the arm" will not do.
+
+### Output
+
+`/captures/<node>/<session>/accel-<label>.jsonl` -- one header record (device, ODR,
+range, scale, self-test result, separation), then one record per FIFO batch:
+
+```json
+{"t":"b","i":320,"boot_ns":...,"mono_ns":...,"n":32,"ovr":false,"x":[...],"y":[...],"z":[...]}
+```
+
+Append-only and flushed per record, `fsync` at 1 Hz -- the `.feat` lesson from #89: a
+power cut costs one record, not the file. At 3200 Hz with two sensors that is roughly
+120 kB/s, about 7 MB per flight minute.
+
 ## Runtime
 
 ```bash

@@ -17,6 +17,10 @@ services:
     # /run/udev lets libcamera enumerate the camera. If enumeration ever fails,
     # fall back to explicit devices (/dev/video*, /dev/media*, /dev/dma_heap,
     # vchiq). Verified end-to-end on hardware in #23.
+    #
+    # privileged also covers /dev/spidev* for the ADXL345 reader (#211), which is
+    # why no explicit device list is needed for it either. The host still needs
+    # dtparam=spi=on for those nodes to exist at all.
     privileged: true
     volumes:
       - ${POD_CAPTURES_DIR}:/captures
