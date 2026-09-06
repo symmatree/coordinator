@@ -2,5 +2,10 @@
 # picamera2 + libcamera come from the Raspberry Pi apt archive at build time
 # (no git SHA to pin); keep RPI_SUITE aligned with the host Pi OS release.
 
-BASE_IMAGE=debian:bookworm-slim
-RPI_SUITE=bookworm
+BASE_IMAGE=debian:trixie-slim
+RPI_SUITE=trixie
+# The archive key comes from this keyring package rather than the raw .gpg.key
+# URL: same key and fingerprint, but re-signed with SHA-512, which trixie's
+# Sequoia-based apt verification requires (the raw URL is still SHA-1).
+RPI_KEYRING_DEB=pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb
+RPI_KEY_FPR="CF8A 1AF5 02A2 AA2D 763B AE7E 82B1 2992 7FA3 303E"

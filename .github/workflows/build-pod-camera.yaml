@@ -33,6 +33,8 @@ jobs:
           {
             echo "base_image=${BASE_IMAGE}"
             echo "rpi_suite=${RPI_SUITE}"
+            echo "rpi_keyring_deb=${RPI_KEYRING_DEB}"
+            echo "rpi_key_fpr=${RPI_KEY_FPR}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
@@ -69,5 +71,7 @@ jobs:
           build-args: |
             BASE_IMAGE=${{ steps.pins.outputs.base_image }}
             RPI_SUITE=${{ steps.pins.outputs.rpi_suite }}
+            RPI_KEYRING_DEB=${{ steps.pins.outputs.rpi_keyring_deb }}
+            RPI_KEY_FPR=${{ steps.pins.outputs.rpi_key_fpr }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
