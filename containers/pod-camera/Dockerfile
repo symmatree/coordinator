@@ -52,13 +52,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dumb-init \
     python3-picamera2 \
     python3-simplejpeg \
+    python3-spidev \
   && apt-get purge -y curl gpg \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
 
 COPY capture.py /opt/pod/capture.py
+COPY adxl345.py /opt/pod/adxl345.py
 COPY entrypoint.sh /opt/pod/entrypoint.sh
 RUN chmod +x /opt/pod/entrypoint.sh
+
+# Hardware-free check of the ADXL345 register protocol, decode, and JSONL shape
+# against a fake spidev -- a broken reader fails the build instead of a flight.
+COPY test_adxl345.py /opt/pod/test_adxl345.py
+RUN cd /opt/pod && python3 test_adxl345.py && rm test_adxl345.py
 
 # Flush logs immediately so `coord logs -f pod-camera` is live (cf. the
 # vio-tracker stdbuf line-buffering fix).
