@@ -308,6 +308,20 @@ challenge worth a metric and a threshold.)
     probe the motion-blur half. Bonus: it also fills the doc's **"hover untested"** gap (level-2 local
     stability — see "What working means"). *(Props-spinning-on-the-ground is only a quick look — **unloaded
     props vibrate differently** from thrusting ones, so it is not a faithful flight-vibration proxy.)*
+    - **The ground alternative is worse than "only a quick look" — it is a different dose, and it is not
+      collectable anyway (measured 2026-09-06).** On 260814, armed-on-the-ground sits at median **2057 RPM
+      / VIBE 0.99**, against **6970 RPM / VIBE 8.72** in the airborne hover: **3.4× the RPM and 8.8× the
+      vibration**. So a motors-on-ground frame is ~11% of the hover dose, not a control for it. And it
+      cannot be dwelt in: arming is a **transition, not a state** on this airframe — it times out within
+      seconds and forces a disarm/rearm cycle, so the operator arms and launches within ~5 s. E18's
+      *"no motors-on-ground frames to separate them"* should therefore be read as naming a control that
+      **this vehicle cannot supply**, not a gap to be filled by a ground capture. The hover is the only
+      route to it.
+    - **260814 supplies a partial instance (imagery half only).** Its t=85–125 s hover is airborne at full
+      hover RPM (VIBE 8.2–9.7) with translation **0.01–0.07 m/s** and body rate **0.17–0.59 deg/s** across
+      5 stills — i.e. loaded-prop vibration with motion effectively removed, which is what this probe asks
+      for. **E34** is measured on exactly those frames. Left unchecked because X14 also asks for the IMU
+      spectrum and an at-rest / hover / forward-flight comparison, neither of which was run.
   - **Make it SPECTRAL, not scalar — the resonance question.** `VIBE` (E18's correlate) is broadband RMS;
     it hides *which* frequency. The failure to fear is a **resonance** — a motor prop-pass line (or a
     harmonic) exciting the camera **VCM/autofocus**, the mount, or **aliasing** a high-frequency line into
@@ -710,10 +724,12 @@ Drift is tolerated (operator + post-hoc); jumps must be handled (they break even
   unattributed — see E31's caveats and [#156](https://github.com/symmatree/coordinator/issues/156).
 - **Open (new 2026-09-06) — capture sets recorded before arm-gating are a quarter to a half
   pre-flight *ground* frames.** Arming is **not** the useful boundary: armed-but-still-on-the-ground is
-  0.0–4.3% of frames on all five flights checked (it is a few seconds of idle throttle while the
-  operator waits out a GPS/RTK lock, then disarms and rearms). The window that is large is **pre-arm**
-  ground time, before capture arm-gating landed ([#88](https://github.com/symmatree/coordinator/issues/88),
-  2026-07-30): **51.7% of the 260712 capture set and 24.0% of 260730**, against 0.0–1.3% on the
+  0.0–4.3% of frames on all five flights checked (it is a few seconds of idle throttle before launch;
+  arming times out and forces a disarm/rearm, so it is a transition rather than a dwell). The window that is large is **pre-arm**
+  ground time — the operator is getting the backpack link to pass RTCM and holding for **RTK Float
+  before launch** (a deliberate precondition, so that GPS is good enough to serve as ground truth for
+  everything else) — on flights recorded before capture arm-gating landed
+  ([#88](https://github.com/symmatree/coordinator/issues/88), 2026-07-30): **51.7% of the 260712 capture set and 24.0% of 260730**, against 0.0–1.3% on the
   arm-gated flights (260812, 260814). Those frames are a different scene — on 260814 the on-ground
   disparity median is 20 px (Z ~1.5 m) against 2 px airborne — so a statistic quoted as "in-flight"
   over a whole pre-gating session mixes regimes. **E28's mono exposure percentiles** across
