@@ -92,19 +92,26 @@ cd coordinator
 
 1. `docker-host` role -- Docker CE + Compose plugin, docker group, service enabled.
 2. `pod` role -- `/var/lib/pod/{config,captures}`, **symlinks** `/opt/stacks/pod` to this
-   checkout's `stacks/pod/`, installs the `coord` CLI, and enables **SPI0** in
-   `/boot/firmware/config.txt`.
+   checkout's `stacks/pod/`, and installs the `coord` CLI. It deliberately writes nothing
+   under `/boot/firmware`: device tree comes from the image (see below).
 
 It does **not** reboot itself ([#113](https://github.com/symmatree/coordinator/issues/113)
 removed that -- it runs locally, so it cannot reboot out from under its own play). It exits
 non-zero while `/var/run/reboot-required` is set. **Re-run it after each reboot until it
-exits clean.** The SPI change alone guarantees at least one cycle on a fresh card.
+exits clean.** With device tree coming from the image there is nothing here that forces a
+reboot by itself, so a clean card should normally go through in one pass.
 
-```bash
-sudo reboot            # after the first run, for the SPI overlay
-# ... then, once it is back:
-cd coordinator && ./host/one_time.sh pod
-```
+**SPI0 comes from the image**, not from ansible: `dtparam=spi=on` lives in
+`dotfiles-symm/pi-image/roles/campod/config.append.txt` alongside the serial console and
+`dtoverlay=dwc2`. It is device tree, it is inert with nothing on the bus, and keeping
+ansible out of `/boot/firmware` matters more than it looks -- that partition is FAT on an
+SD card in a vehicle that loses power abruptly, with none of the checksumming or CoW the
+btrfs subvolumes give the rest of the disk.
+
+> **Cards flashed before that line landed do not have it.** `ls /dev/spidev*` is the check
+> in the next section. If it is empty, the card predates the change: reflash from a current
+> image (clean), or add `dtparam=spi=on` to `/boot/firmware/config.txt` by hand and reboot
+> (fast, and a stopgap rather than a pattern -- the image is the source of truth).
 
 ### 3. Check the host
 
@@ -116,8 +123,8 @@ ls /dev/spidev*               # expect spidev0.0 and spidev0.1
 coord status                  # empty until `coord start`
 ```
 
-`/dev/spidev0.*` missing means the SPI overlay has not taken effect -- reboot and re-run
-`one_time.sh pod`.
+`/dev/spidev0.*` missing means the card's `config.txt` has no `dtparam=spi=on` -- see the
+note above. Re-running `one_time.sh pod` will not fix it; that line comes from the image.
 
 ### 4. Wire the sensors
 
@@ -215,14 +222,14 @@ binding constraint on this device and a build will not fit.
 
 | Symptom | Check |
 |---------|-------|
-| `exec format error` | 32-bit OS flashed; re-flash **64-bit** Lite |
+| `exec format error` | wrong artifact flashed -- confirm it is the campod image, not a stock card. (The campod image is always arm64, so this cannot come from picking a 32-bit variant; there isn't one.) |
 | `permission denied` on `docker ps` | `newgrp docker` or re-login (not a reboot) |
 | `one_time.sh` exits 1, reboot-required set | reboot, run it again -- expected at least once on a fresh card |
 | `accel: ... does not exist -- is dtparam=spi=on set?` | `ls /dev/spidev*`; if empty, reboot and re-run `one_time.sh pod` |
 | `accel: DEVID 0x00, expected 0xE5` | wiring, chip select, or SPI mode -- the bus is reaching nothing |
 | `accel: self-test FAIL` | sensor is talking but not moving: cold joint on a supply pin, or a dead part |
-| `capture: WARNING could not pin exposure` | libcamera in the image is older than the exposure/gain mode split; check `RPI_SUITE` matches the host OS |
-| libcamera reports "no cameras" | container/host suite mismatch -- `RPI_SUITE` must track the host Pi OS release |
+| `capture: WARNING could not pin exposure` | container libcamera predates the exposure/gain mode split (needs >= 0.4). Check `RPI_SUITE` matches **the campod image's pinned suite** -- `dotfiles-symm/pi-image/build-image.sh`, currently Bookworm -- not whatever Pi OS ships today |
+| libcamera reports "no cameras" | container/host suite mismatch. `RPI_SUITE` tracks **the campod image's pinned suite** (`dotfiles-symm/pi-image/build-image.sh`), not current stock Pi OS -- reading it the other way is what produced [#214](https://github.com/symmatree/coordinator/pull/214) |
 | Out-of-memory during bootstrap | expected pressure point on 512 MB; confirm zram/swap is on (Pi OS default) |
 | `coord` picks the wrong stack | only the pod stack belongs under `/opt/stacks/` on a campod |
 | Dead on **first** boot: no network, dark ACT LED, `firstrun.sh` still on the card | seen once, unexplained; power-cycle cleared it. Invisible without the serial console (GPIO 14/15) |
@@ -259,11 +266,23 @@ defaulting to NULL, and `get_ether_addr()` falls straight through to `eth_random
 when its string argument is NULL. **Both** ends randomise, not just one.
 
 Harmless with a single pod; with four on a bridge it means DHCP reservations never stick
-and NetworkManager creates a fresh connection profile per boot. The fix is per-unit
-`options g_ether dev_addr=... host_addr=...` in `/etc/modprobe.d/` -- a per-unit
-provisioning value like the hostname. Use locally-administered addresses (`02:...`);
-`get_ether_addr` rejects anything `is_valid_ether_addr()` refuses and silently falls back
-to random.
+and NetworkManager creates a fresh connection profile per boot.
+
+**Decided fix: derive the addresses, don't assign them.** `options g_ether dev_addr=...
+host_addr=...` in `/etc/modprobe.d/`, with both computed as `02:` + the first five bytes of
+`sha256("<salt>" + hostname)` -- different salts for the two ends so they cannot collide.
+That is deterministic, stable across reboots, unique per unit, and computable by ansible
+from the hostname it already has, so the per-unit provisioning surface stays **one** value
+instead of three and there is no registry to drift out of sync with reality. Deriving from
+the hostname rather than the board serial is deliberate: identity should follow the logical
+node, so a card swapped into a different Zero keeps its address (which is exactly the #211
+rollback plan).
+
+`02:` is what makes it valid: locally-administered bit set, multicast bit clear. That
+matters more than it sounds, because `get_ether_addr()` silently falls back to a random
+address for anything `is_valid_ether_addr()` refuses -- a bad value looks identical to not
+having set one. Checked over the eight camera-node names: 16 addresses, all valid, no
+collisions; birthday odds across five bytes at this fleet size are ~1e-10.
 
 Note the packaged `rpi-usb-gadget` does **not** do this for you: it pins the USB
 VID/PID/serial strings in `/usr/lib/modprobe.d/g_ether.conf` but leaves both MACs

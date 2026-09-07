@@ -1,9 +1,0 @@
----
-- name: Reboot required
-  # Generic: touch the Debian "reboot needed" marker for any config.txt change that
-  # only takes effect at boot. one_time.sh exits non-zero while it is set, so the
-  # operator re-runs after rebooting -- same loop as the coordinator.
-  ansible.builtin.file:
-    path: /var/run/reboot-required
-    state: touch
-    mode: "0644"
