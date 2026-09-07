@@ -23,6 +23,17 @@ The pitch is a spatial period in rows. Converting it to a frequency needs the se
 time, which we have **not** measured -- `pitch_to_hz` takes it as an explicit argument and
 does not default, so the assumption stays visible at the call site.
 
+**Choosing the pairs.** Registering every nearby-in-time pair and discarding what fails is a
+weak filter -- on 260814 it rejected 79 of 88 candidates and every survivor came from the one
+hover, because 5 s of translation moves the scene out from under the method. When the flight
+log is available, select candidates by **pose** instead: two stills taken from nearly the same
+position and heading should show nearly the same scene, whenever they were taken.
+
+That inversion also turns the rejects into a signal. A pair that is *pose-close* and still will
+not register is interesting on its own -- the geometry says the frames should match, so
+something non-geometric differs: blur, exposure, focus, wind in the scene, or the banding
+itself. `session_pitch` reports those separately rather than dropping them.
+
 Backs `analysis/vio-quality-experiments.md` E34.
 """
 
@@ -115,14 +126,49 @@ def pitch_to_hz(pitch_rows, readout_s, n_rows=3040):
     return (n_rows / readout_s) / pitch_rows
 
 
-def session_pitch(paths, max_lag=2, min_r2=MIN_R2, **kw):
+def pose_pairs(times, positions, yaw_deg, max_dist_m=1.0, max_yaw_deg=10.0,
+               min_dt_s=2.0, max_pairs=400):
+    """Still pairs taken from nearly the same pose, whenever they were taken.
+
+    `positions` is (n, 3) in any consistent frame; `yaw_deg` is (n,). `min_dt_s` keeps a still
+    from pairing with its immediate neighbour when the vehicle is stationary and every frame
+    qualifies -- without it a hover produces only adjacent pairs and no revisits. Returns
+    (i, j, dist_m, dyaw_deg, dt_s) sorted by separation, closest first.
+    """
+    t = np.asarray(times, dtype=float)
+    P = np.asarray(positions, dtype=float)
+    y = np.asarray(yaw_deg, dtype=float)
+    out = []
+    for i in range(len(t)):
+        for j in range(i + 1, len(t)):
+            if abs(t[j] - t[i]) < min_dt_s:
+                continue
+            d = float(np.linalg.norm(P[j] - P[i]))
+            if d > max_dist_m:
+                continue
+            dy = abs((y[j] - y[i] + 180) % 360 - 180)
+            if dy > max_yaw_deg:
+                continue
+            out.append((i, j, d, float(dy), float(t[j] - t[i])))
+    out.sort(key=lambda r: (r[2], r[3]))
+    return out[:max_pairs]
+
+
+def session_pitch(paths, max_lag=2, min_r2=MIN_R2, pairs=None, **kw):
     """Quality-filtered band pitch over a session's stills.
 
-    Pairs each still with the next `max_lag` stills, keeps only pairs that register and whose
-    sinusoid fit clears `min_r2`, and reports the median and IQR of what survives. Returns the
-    per-pair values too, so a wide IQR is visible rather than hidden behind a median.
+    `pairs` is an optional explicit candidate list -- (i, j, ...) tuples, as produced by
+    `pose_pairs`. Without it, each still is paired with the next `max_lag` stills, which only
+    finds revisits that happen to be adjacent in time.
+
+    Keeps pairs that register and whose sinusoid fit clears `min_r2`, and reports the median and
+    IQR of what survives, plus the per-pair values so a wide IQR is visible rather than hidden
+    behind a median. Candidates that fail registration are returned in `unregistered_pairs`
+    with whatever metadata the candidate carried: when candidates came from `pose_pairs`, a pair
+    that is pose-close and will not register is a finding, not noise.
     """
     kept, rejected = [], {"unregistered": 0, "low_r2": 0, "at_bound": 0}
+    unregistered_pairs = []
     cache = {}
 
     def gray(i):
@@ -135,26 +181,40 @@ def session_pitch(paths, max_lag=2, min_r2=MIN_R2, **kw):
                 cache.pop(next(iter(cache)))
         return cache[i]
 
-    for i in range(len(paths) - 1):
-        for j in range(i + 1, min(i + 1 + max_lag, len(paths))):
-            a, b = gray(i), gray(j)
-            if a is None or b is None or a.shape != b.shape:
-                rejected["unregistered"] += 1
-                continue
-            out = band_pitch(a, b, **kw)
-            if out is None:
-                rejected["unregistered"] += 1
-                continue
-            ps, ve, info = out
-            pitch, r2, status = pitch_from_periodogram(ps, ve)
-            if status != "ok":
-                rejected["at_bound"] += 1
-            elif r2 < min_r2:
-                rejected["low_r2"] += 1
-            else:
-                kept.append({"i": i, "j": j, "pitch_rows": pitch, "r2": r2, **info})
+    if pairs is None:
+        candidates = [(i, j) for i in range(len(paths) - 1)
+                      for j in range(i + 1, min(i + 1 + max_lag, len(paths)))]
+    else:
+        candidates = list(pairs)
+
+    for cand in candidates:
+        i, j = int(cand[0]), int(cand[1])
+        meta = {"i": i, "j": j}
+        if len(cand) >= 5:
+            meta.update({"dist_m": round(cand[2], 3), "dyaw_deg": round(cand[3], 2),
+                         "dt_s": round(cand[4], 2)})
+        a, b = gray(i), gray(j)
+        if a is None or b is None or a.shape != b.shape:
+            rejected["unregistered"] += 1
+            unregistered_pairs.append({**meta, "why": "unreadable_or_mismatched"})
+            continue
+        out = band_pitch(a, b, **kw)
+        if out is None:
+            rejected["unregistered"] += 1
+            _dy, _dx, _pk = register(a, b)
+            unregistered_pairs.append({**meta, "why": "phase_corr_below_floor",
+                                       "phase_corr": round(_pk, 3)})
+            continue
+        ps, ve, info = out
+        pitch, r2, status = pitch_from_periodogram(ps, ve)
+        if status != "ok":
+            rejected["at_bound"] += 1
+        elif r2 < min_r2:
+            rejected["low_r2"] += 1
+        else:
+            kept.append({**meta, "pitch_rows": pitch, "r2": r2, **info})
     if not kept:
-        return {"n": 0, "rejected": rejected}
+        return {"n": 0, "rejected": rejected, "unregistered_pairs": unregistered_pairs}
     v = np.array([k["pitch_rows"] for k in kept])
     return {
         "n": len(kept),
@@ -163,6 +223,7 @@ def session_pitch(paths, max_lag=2, min_r2=MIN_R2, **kw):
         "r2_median": round(float(np.median([k["r2"] for k in kept])), 3),
         "rejected": rejected,
         "pairs": kept,
+        "unregistered_pairs": unregistered_pairs,
     }
 
 
