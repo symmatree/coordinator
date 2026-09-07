@@ -5,9 +5,19 @@ vibration sensors. This is the operator doc: how to bring a node up from a blank
 what to run on every update afterwards. It is deliberately command-oriented; the reasoning
 lives in the docs it points at.
 
-> **Naming.** Code identifiers say `pod`, not `campod` -- `host/ansible/roles/pod`,
-> `stacks/pod/`, `POD_*` env, `one_time.sh pod`. Renaming them is a separate mechanical
-> change; this doc uses the operator's word and the code's identifiers side by side.
+> **Naming.** The device is a **campod** -- a bare "pod" is hopelessly aliased in a
+> Kubernetes-adjacent environment. Code identifiers in this repo still say `pod`
+> (`host/ansible/roles/pod`, `stacks/pod/`, `POD_*` env, `one_time.sh pod`), and the image
+> role in `dotfiles-symm` is `campod`. Renaming this side is a coordinated cross-repo
+> change, not a local one -- see the tripwire below.
+
+> **Cross-repo tripwire: `/var/lib/pod` is load-bearing.** The image mounts the `@data`
+> btrfs subvolume at `/var/lib/pod` **specifically** to match `coord_state_root` in
+> `host/ansible/roles/pod/tasks/main.yml`. Move that path on either side alone and captures
+> land silently on `@var` instead of the capture subvolume -- no error, no warning, and the
+> power-loss properties the subvolume exists for quietly stop applying. Changing it means
+> changing `roles/pod`, `/opt/stacks/pod`, `stacks/pod/`, `coord`'s stack detection, the
+> docs, **and** `dotfiles-symm/pi-image/roles/campod.env`, in one window.
 
 | Where the reasoning lives | |
 |---|---|
@@ -24,38 +34,46 @@ lives in the docs it points at.
 
 ### 1. Flash
 
-**Raspberry Pi Imager 2.0+**, **Raspberry Pi OS Lite (64-bit)** from Imager's *online list*
--- not a downloaded `.img`. Two traps, both silent:
+**Campods boot the btrfs image, not stock Pi OS Lite.** This reverses the "SD image" row
+in [#211](https://github.com/symmatree/coordinator/issues/211)'s settled table -- see the
+[owner decision of 2026-09-06](https://github.com/symmatree/coordinator/issues/211#issuecomment-5559432953).
+Reasoning: validating the stack on one storage layout and then switching means validating a
+stack you throw away.
 
-- **Imager 1.x cannot customise Trixie.** It assumes the old `firstrun.sh` format, writes
-  one, and Trixie never runs it. No user, no SSH, no WiFi, and nothing says so. Current Pi
-  OS Lite arm64 declares `init_format: cloudinit-rpi`; only Imager 2.x honours it.
-- **A local `.img` gets `init_format: none`** in Imager 2.x, so customisation is silently
-  unavailable. Pick from the online list, or build a local manifest with Imager's
-  `create_local_json.py`.
+The image and its per-unit provisioning live in **`dotfiles-symm/pi-image`**, not here:
 
-Imager step 4:
+- `roles/campod.env` -- Zero 2 W / SD knobs: `DATA_MOUNT=/var/lib/pod`, `METADATA=single`,
+  and a `config.append.txt` carrying `enable_uart=1` + `dtoverlay=disable-bt` (serial
+  console) and `dtoverlay=dwc2,dr_mode=peripheral` (gadget net, device tree, must come
+  from the image).
+- `pi-image/provision/` -- `firstrun.sh` template + `Flash-Card.ps1`. Per-unit identity
+  (hostname, user, SSH key, WiFi) is injected onto the FAT partition **at flash time**;
+  secrets stay in a gitignored `fleet.env` on the operator's machine, so the image itself
+  stays secret-free.
 
-| Setting | Value |
-|---------|-------|
-| Hostname | `pod-NNE` (or the camera-node name from `rekon10/arm-pods.md`) |
-| User / password | operator account |
-| SSH | enable, public key |
-| WiFi | **lab SSID** -- for `git clone` and `coord pull` during bring-up, not for flight |
+**Do not use Imager's step 4 for this.** rpi-imager offers no customisation for a
+locally-selected `.img.xz` (`OSSelectionStep.qml`: *"For custom images, customization is
+not supported"*), so the wizard path that works for stock Pi OS does not apply. Provision
+via `pi-image/provision/` instead.
 
-Two things Imager will *not* do for you, so don't go looking:
+**Stage the rollout.** Flash **one** campod with the btrfs image and prove it boots before
+touching the rest, and keep that unit's stock Pi OS Lite card. If it doesn't come up,
+swapping the card isolates the fault: boots on stock means the image, boots on neither
+means the hardware. That preserves the one-candidate-cause property #211 wanted, without
+deferring the image.
 
-- **The Interfaces & Features step (SPI, I2C, USB gadget) does not appear.** It is gated on
-  a per-device hardware capability list, and the live manifest ships `"capabilities": []`
-  for every model including the Zero 2 W. SPI is handled by the pod role below instead.
-- **Passwordless sudo is not offered** for this image (its manifest advertises only
-  `rpi_connect`), and Pi OS disabled passwordless sudo by default in 2026-04. Expect to
-  type the password during bootstrap; that is fine interactively and will hang a
-  non-interactive run.
+> **Known, unexplained, and silent.** On the first card built, the **very first boot hung
+> partway through `firstrun.sh`** -- no network, dark ACT LED, `firstrun.sh` still on the
+> card and `cmdline.txt` still carrying `systemd.run=`. A power cycle got through cleanly
+> and it has not recurred. No explanation. If a campod comes up dead on its first boot,
+> that is the shape to look for, and **it is invisible without the serial console** --
+> which is why `enable_uart=1` + `dtoverlay=disable-bt` are in the image. Both are needed
+> on a Zero 2 W: without them `console=serial0` is silent, because PL011 goes to Bluetooth
+> and the mini-UART is disabled.
 
-Filesystem: btrfs. `CONFIG_BTRFS_FS=m` and `btrfs.ko` ship in the Pi OS kernel, so no
-custom kernel is needed -- but it is a **module**, so root-on-btrfs needs it in the
-initramfs. See [power-loss-filesystem.md](power-loss-filesystem.md).
+btrfs boot on a Zero 2 W on SD is **proven** as of 2026-09-07 -- `@` and `@usr` both mount,
+the initramfs carries btrfs, and `initramfs8` loads under `auto_initramfs=1`. That was
+[#96](https://github.com/symmatree/coordinator/issues/96)'s standing gate.
 
 ### 2. Clone and bootstrap
 
@@ -207,6 +225,8 @@ binding constraint on this device and a build will not fit.
 | libcamera reports "no cameras" | container/host suite mismatch -- `RPI_SUITE` must track the host Pi OS release |
 | Out-of-memory during bootstrap | expected pressure point on 512 MB; confirm zram/swap is on (Pi OS default) |
 | `coord` picks the wrong stack | only the pod stack belongs under `/opt/stacks/` on a campod |
+| Dead on **first** boot: no network, dark ACT LED, `firstrun.sh` still on the card | seen once, unexplained; power-cycle cleared it. Invisible without the serial console (GPIO 14/15) |
+| Captures not landing on the `@data` subvolume | `findmnt /var/lib/pod` -- if it is on `@var`, the image's `DATA_MOUNT` and `coord_state_root` have diverged |
 
 ---
 
@@ -229,3 +249,22 @@ the bench over lab WiFi and false in the field. The options, with the numbers th
 
 Not decided. Related: [#12](https://github.com/symmatree/coordinator/issues/12) (coordinator
 bridge), [#24](https://github.com/symmatree/coordinator/issues/24) (pod gadget net).
+
+### Verified in passing: `g_ether` really does randomise its MAC every boot
+
+Worth recording before the gadget net gets built, because it looks exactly like a flaky
+link. From the kernel source (`drivers/usb/gadget/function/u_ether.{c,h}`, rpi-6.12.y):
+`USB_ETHERNET_MODULE_PARAMETERS()` declares `dev_addr` and `host_addr` as `charp` params
+defaulting to NULL, and `get_ether_addr()` falls straight through to `eth_random_addr()`
+when its string argument is NULL. **Both** ends randomise, not just one.
+
+Harmless with a single pod; with four on a bridge it means DHCP reservations never stick
+and NetworkManager creates a fresh connection profile per boot. The fix is per-unit
+`options g_ether dev_addr=... host_addr=...` in `/etc/modprobe.d/` -- a per-unit
+provisioning value like the hostname. Use locally-administered addresses (`02:...`);
+`get_ether_addr` rejects anything `is_valid_ether_addr()` refuses and silently falls back
+to random.
+
+Note the packaged `rpi-usb-gadget` does **not** do this for you: it pins the USB
+VID/PID/serial strings in `/usr/lib/modprobe.d/g_ether.conf` but leaves both MACs
+unspecified.

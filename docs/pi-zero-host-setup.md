@@ -14,6 +14,13 @@ That a Pi Zero 2 W (512 MB) actually runs Docker + Compose for our workload shap
 
 ## 1. Flash and first boot
 
+> **Superseded for campods.** They boot the **btrfs image** from `dotfiles-symm/pi-image`,
+> provisioned per unit by `pi-image/provision/` -- not stock Pi OS Lite via Imager's wizard
+> ([owner decision, 2026-09-06](https://github.com/symmatree/coordinator/issues/211#issuecomment-5559432953)).
+> rpi-imager offers no customisation for a locally-selected `.img.xz`, so step 4 does not
+> apply. See [campod.md](campod.md). The rest of this page -- the bootstrap narrative from
+> section 2 on -- is unchanged and still current.
+
 Raspberry Pi Imager 2.0+, **Raspberry Pi OS (64-bit) Lite** from the online list (container images are `linux/arm64`; Lite is enough headless).
 
 Imager step 4 -- Configure your system:
