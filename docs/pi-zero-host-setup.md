@@ -1,5 +1,9 @@
 # Pi Zero pod host setup (Phase 1)
 
+> **Looking for the operator runbook?** [campod.md](campod.md) is the consolidated
+> one-time-and-every-update doc for a campod node. This page is the Phase 1 host
+> bootstrap narrative it draws on.
+
 Fresh SD card -> a Pi Zero 2 W that runs Docker and the pod stack scaffolding, ready for the capture container (Phase 2). The Coordinator equivalent is [host-setup.md](host-setup.md); this reuses the same shared bootstrap with `device_role=pod`.
 
 Scope: **host bootstrap only**. No camera, no USB gadget network, no PPS -- those are Phases 2--4 ([pi-zero-bringup.md](pi-zero-bringup.md)).

@@ -3,6 +3,7 @@
 Plan of record for bringing up the first Rekon camera pod node -- a **Pi Zero 2 W + Camera Module 3 (IMX708)** -- from bare SD card to a node that captures stills locally and reports to the Coordinator. Tracked in the coordinator repo for now (the pod may split into its own repo later; the layout below keeps that cheap).
 
 Design source: [arm-pods.md](rekon10/arm-pods.md), [central-hub.md](rekon10/central-hub.md). Coordinator side: [architecture.md](architecture.md), [host-setup.md](host-setup.md).
+Operator runbook (one-time + every-update commands): [campod.md](campod.md).
 
 ## Why this lives next to the coordinator code
 

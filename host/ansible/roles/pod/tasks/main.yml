@@ -1,9 +1,8 @@
 ---
-# Pod (Pi Zero 2 W) specifics. Phase 1: just the pod stack and state dirs so the
-# Zero is container-ready. The USB gadget network (dwc2/g_ether), PPS overlay,
-# and chrony client are Phase 3 (see docs/pi-zero-bringup.md); the camera stack
-# service is Phase 2. Those add tasks here and a config.txt edit; nothing in
-# Phase 1 touches /boot/firmware/config.txt.
+# Pod (Pi Zero 2 W) specifics: the pod stack and state dirs so the Zero is
+# container-ready, plus the SPI bus the vibration sensors sit on. The USB gadget
+# network (dwc2/g_ether), PPS overlay, and chrony client are still Phase 3 (see
+# docs/pi-zero-bringup.md); node bring-up and maintenance: docs/campod.md.
 
 - name: Install pod stack and state dirs
   ansible.builtin.include_role:
@@ -14,3 +13,21 @@
     coord_state_subdirs:
       - config
       - captures
+
+# SPI0 for the ADXL345 vibration sensors (#211). Without this there are no
+# /dev/spidev0.* nodes and the reader in pod-camera logs "does not exist" on every
+# retry -- the camera still captures, but the vibration half of a session is empty.
+#
+# This is not something Imager can do for us today: its Interfaces & Features step
+# is gated on a hardware capability list that the live device manifest ships empty
+# for every model, so the SPI toggle does not appear. Config, not a wizard.
+#
+# dtparam=spi=on gives spidev0.0 (CE0) and spidev0.1 (CE1) -- exactly the two
+# chip selects the first flight needs: camera-colocated and arm-end.
+- name: Enable SPI0 for the vibration sensors (config.txt)
+  ansible.builtin.blockinfile:
+    path: /boot/firmware/config.txt
+    marker: "# {mark} POD SPI"
+    block: |
+      dtparam=spi=on
+  notify: Reboot required
