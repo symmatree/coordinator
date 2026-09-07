@@ -147,6 +147,43 @@ def test_pitch_at_the_search_bound_is_rejected():
     assert pitch is None and status == "peak_at_bound"
 
 
+def test_pose_pairs_finds_revisits_not_just_neighbours():
+    """A revisit is two moments at the same pose, far apart in time -- the max_lag sweep misses it."""
+    t = np.arange(0.0, 40.0, 5.0)                       # 8 stills
+    P = np.zeros((len(t), 3))
+    P[:, 0] = [0, 3, 6, 9, 9, 6, 3, 0]                  # out and back: 0<->7, 1<->6, 2<->5, 3<->4
+    yaw = np.zeros(len(t))
+    pr = still_banding.pose_pairs(t, P, yaw, max_dist_m=0.5, min_dt_s=2.0)
+    got = {(i, j) for i, j, *_ in pr}
+    assert (0, 7) in got and (1, 6) in got and (2, 5) in got
+    assert all(abs(t[j] - t[i]) >= 2.0 for i, j, *_ in pr)
+
+
+def test_pose_pairs_respects_heading():
+    t = np.array([0.0, 10.0])
+    P = np.zeros((2, 3))
+    assert still_banding.pose_pairs(t, P, np.array([0.0, 5.0]), max_yaw_deg=10) != []
+    assert still_banding.pose_pairs(t, P, np.array([0.0, 90.0]), max_yaw_deg=10) == []
+    # yaw wraps: 359 and 1 are 2 degrees apart, not 358
+    assert still_banding.pose_pairs(t, P, np.array([359.0, 1.0]), max_yaw_deg=10) != []
+
+
+def test_close_but_unregistered_pairs_are_reported(tmp_path):
+    """The inversion: a pose-close pair that will not register is a finding, not a reject."""
+    from PIL import Image
+    rng = np.random.default_rng(7)
+    a = tmp_path / "a.jpg"; b = tmp_path / "b.jpg"
+    Image.fromarray(rng.integers(0, 255, (3040, 4032), dtype=np.uint8)).save(a, quality=90)
+    Image.fromarray(rng.integers(0, 255, (3040, 4032), dtype=np.uint8)).save(b, quality=90)
+    out = still_banding.session_pitch([str(a), str(b)],
+                                      pairs=[(0, 1, 0.12, 1.5, 8.0)])   # pose-close by construction
+    assert out["n"] == 0
+    bad = out["unregistered_pairs"]
+    assert len(bad) == 1
+    assert bad[0]["dist_m"] == 0.12 and bad[0]["dyaw_deg"] == 1.5
+    assert bad[0]["why"] == "phase_corr_below_floor"
+
+
 def test_pitch_to_hz_needs_an_explicit_readout():
     assert abs(still_banding.pitch_to_hz(900, 0.033) - (3040 / 0.033) / 900) < 1e-9
 
