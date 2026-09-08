@@ -220,6 +220,32 @@ flight date**: derive that from the `GPS` records, or from `telemetry.jsonl` onc
 
 ---
 
+## The dataflash is not a MAVLink capture
+
+This is the single most surprising thing in here and it explains a lot of apparent gaps.
+
+The FC `.bin` is **ArduPilot's own binary log format with its own message set** -- `GPA`, `XKF1`,
+`RGPJ`, `RISI`, `MAV`, `TSYN`. MAVLink telemetry is a **separate** message set -- `GPS_RTK`,
+`EKF_STATUS_REPORT`, `VIBRATION`, `SYSTEM_TIME`. They overlap in content but neither contains the
+other, and **nothing on this vehicle has ever recorded the MAVLink side**.
+
+Consequences worth knowing before going looking for something:
+
+* **`GPS_RTK` has never been recorded on this aircraft.** It carries `time_last_baseline_ms` --
+  correction *age* -- plus baseline vector, accuracy, and `iar_num_hypotheses`. None of that exists
+  in dataflash in any form. The closest proxy is `GPA.RTCMFU`, a count of RTCM fragments *used*,
+  which tells you whether fragments arrived and nothing about how stale they were. **Corrections
+  arriving systematically late look identical to corrections arriving fine** in everything we have
+  logged to date.
+* Mission Planner's Status page is a live view of the **MAVLink** side (its `CurrentState`), plus a
+  few counters it computes about its own link. That is why it shows things that look absent from the
+  logs: same underlying data, different message set and different names, with the GCS-side link
+  counters genuinely not observable from the vehicle.
+* The fix is unconditional packet logging on both ends -- the coordinator tlog
+  ([#220](https://github.com/symmatree/coordinator/pull/220)) and the ground-side mavproxy tlog
+  ([#192](https://github.com/symmatree/coordinator/issues/192)). Until both are landed and pulled per
+  flight, any question about MAVLink-only fields is unanswerable retrospectively.
+
 ## What each stream is good for
 
 | stream | good for | not good for |
@@ -234,6 +260,14 @@ flight date**: derive that from the `GPS` records, or from `telemetry.jsonl` onc
 | `TSYN` | the FC's own record of TIMESYNC exchanges, **with the peer SysID** and round-trip time (33 exchanges on 260814, RTT median 1007 us). A third, FC-side route to the clock bridge | high-rate work -- it is ~0.1 Hz |
 | colour stills | the mapping product | anything needing their own timestamp -- see above |
 | `mono_rect_left` | the actual VIO input, global shutter and fixed focus | only 260814 has it; capture is off by default from #216 |
+
+**Configuration changes between flights, so cross-flight comparisons need dating.** The clearest
+example: `MAV3_OPTIONS` went to 2 (`NO_FORWARD`, stopping VIO traffic being forwarded onto the ELRS
+link) for the first time on **260814**, and on that same flight every MAV3 stream rate went from 0 or
+1 to 4 Hz. Measured from the `MAV` counters, the ELRS downlink roughly **doubled** (17.5-19.3 -> 39.6
+pkt/s) despite the forwarding fix. So 260814 is the first post-fix flight, and a measurement taken on
+it verifies that a fix landed -- it is **not** evidence about the condition the fix addressed.
+Check `PARM` for the parameters your question depends on before comparing flights.
 
 **Every `.feat` recorded with the capture overlay running is missing 38-59% of the frames the camera
 produced** (E31, [#156](https://github.com/symmatree/coordinator/issues/156)). Sessions that wrote no
