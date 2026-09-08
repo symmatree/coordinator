@@ -3,21 +3,27 @@
 # Uses Raspberry Pi's apt archive (NOT stock Debian) so libcamera + picamera2 are
 # the matched, Pi-pipeline-aware versions -- the one real gotcha for camera-in-
 # container (stock Debian libcamera enumerates "no cameras"). Base suite tracks
-# the host Pi OS, which is trixie: current Pi OS Lite arm64 (2026-06-18) is Debian
-# 13 on kernel 6.18.x. Trixie also carries libcamera 0.7.x, which is where the
-# ExposureTimeMode / AnalogueGainMode split capture.py needs lives.
+# the host Pi OS, and the campod image is pinned to BOOKWORM -- 2025-05-13, the
+# last Bookworm Lite release, deliberately pinned by URL+sha in
+# dotfiles-symm/pi-image/build-image.sh. It is not stock current Pi OS.
+#
+# This was briefly bumped to trixie on the premise that the host would be current
+# stock Pi OS (2026-06-18, Debian 13). That premise was wrong: the campods boot
+# the btrfs image, which is Bookworm. Bookworm's Pi archive carries libcamera
+# 0.5.2, which already has the ExposureTimeMode / AnalogueGainMode split capture.py
+# needs, so nothing is lost by matching the host.
 #
 # Local build on the Zero (or arm64 box):
 #   docker build -t coordinator-pod-camera:local containers/pod-camera
 # Cross-build (slow; QEMU):
 #   docker buildx build --platform linux/arm64 -t coordinator-pod-camera:local containers/pod-camera
 
-ARG BASE_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+ARG BASE_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 FROM ${BASE_IMAGE}
 
 ARG DEBIAN_FRONTEND=noninteractive
 # Raspberry Pi apt suite; keep aligned with the host Pi OS release.
-ARG RPI_SUITE=trixie
+ARG RPI_SUITE=bookworm
 # Take the archive key from the KEYRING PACKAGE, not from the raw
 # archive.raspberrypi.com/debian/raspberrypi.gpg.key URL.
 #
