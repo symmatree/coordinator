@@ -42,6 +42,27 @@ frames with monotonic_ns, and both containers share the host kernel's clock
 log's timeline. Without them the two clocks are only relatable through wall time,
 which is where the ~5 s capture/flight-timeline discrepancy of #167 lives.
 
+Coordinator-side telemetry record (COORD_TELEM_LOG)
+---------------------------------------------------
+The FC already streams state to us and we were dropping all of it. The coordinator
+is **MAV2** (MAVLink channels are assigned in SERIALn order over the MAVLink ports:
+SERIAL0 USB, SERIAL4 coordinator, SERIAL6 ELRS, SERIAL9 OTG), and `MAV2_EXT_STAT=2`,
+`MAV2_POSITION=2`, `MAV2_EXTRA1/2/3=2` -- so SYSTEM_TIME, GLOBAL_POSITION_INT,
+ATTITUDE, VFR_HUD and SYS_STATUS arrive at 1-2 Hz without any parameter change.
+
+Logging them next to the captures buys two things:
+
+  * **A wall clock that does not need the network.** SYSTEM_TIME.time_unix_usec is
+    GPS-derived, so pairing it with our CLOCK_MONOTONIC gives absolute time in the
+    field with no NTP and no wifi. TIMESYNC (above) is the round-trip cross-check;
+    this is the one-way source. Both are needed because neither is self-validating.
+  * **Flight state on our own clock.** Mode, position, altitude and battery,
+    stamped in the same monotonic that the capture sidecars use -- so a still can be
+    placed against flight state without going through the FC log at all.
+
+Mode changes are written immediately regardless of the rate limit; everything else
+is throttled to COORD_TELEM_HZ per message type.
+
 Attitude note: VISION_POSITION_ESTIMATE carries euler roll/pitch/yaw. We convert
 the estimator quaternion directly (no NED frame correction). This is fusion-inert
 under our config (EK3_SRC_YAW=compass -> VIO yaw unused; roll/pitch come from the
@@ -241,6 +262,50 @@ def open_timesync_log(path):
     return open(path, "a", buffering=1)
 
 
+# Per-type field projection for the telemetry record. Deliberately a whitelist: a raw
+# dump would be large, unstable across dialect versions, and mostly noise. Anything not
+# listed here is not logged, so adding a field is an explicit act.
+TELEM_FIELDS = {
+    "SYSTEM_TIME": ("time_unix_usec", "time_boot_ms"),
+    "HEARTBEAT": ("custom_mode", "base_mode", "system_status"),
+    "GLOBAL_POSITION_INT": ("lat", "lon", "alt", "relative_alt", "hdg"),
+    "VFR_HUD": ("airspeed", "groundspeed", "alt", "climb", "throttle"),
+    "SYS_STATUS": ("voltage_battery", "current_battery", "battery_remaining"),
+    "GPS_RAW_INT": ("fix_type", "satellites_visible", "eph", "epv"),
+    "ATTITUDE": ("roll", "pitch", "yaw"),
+}
+DEFAULT_TELEM_HZ = 1.0
+
+
+def open_telem_log(path):
+    """Append-mode JSONL sink for received FC telemetry. Line-buffered, dir created."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    return open(path, "a", buffering=1)
+
+
+def log_telem(fh, msg, mono_ns, seen, min_period, force=False):
+    """Append one projected message if its type is due (or forced).
+
+    `seen` carries the last-logged monotonic per type. Rate limiting is per type so a
+    2 Hz stream and a 1 Hz stream each land at COORD_TELEM_HZ rather than the union
+    being throttled as a whole.
+    """
+    t = msg.get_type()
+    fields = TELEM_FIELDS.get(t)
+    if fields is None:
+        return
+    now = mono_ns / 1e9
+    if not force and (now - seen.get(t, -1e9)) < min_period:
+        return
+    seen[t] = now
+    rec = {"monotonic_ns": mono_ns, "type": t}
+    for f in fields:
+        v = getattr(msg, f, None)
+        if v is not None:
+            rec[f] = v
+    fh.write(json.dumps(rec) + "\n")
+
+
 def main():
     args = parse_args()
 
@@ -289,6 +354,16 @@ def main():
     # #167: FC-clock <-> our-clock pairs, for joining captures to the FC log.
     ts_log = open_timesync_log(
         os.environ.get("COORD_TIMESYNC_LOG", "/tmp/timesync.jsonl"))
+
+    # Coordinator-side record of FC telemetry (see the module docstring). Off if
+    # COORD_TELEM_LOG is empty, so the router stays byte-identical in behaviour for
+    # anyone who does not want the file.
+    telem_path = os.environ.get("COORD_TELEM_LOG", "/tmp/telemetry.jsonl")
+    telem_log = open_telem_log(telem_path) if telem_path else None
+    telem_period = 1.0 / float(os.environ.get("COORD_TELEM_HZ", DEFAULT_TELEM_HZ) or DEFAULT_TELEM_HZ)
+    telem_seen = {}
+    mode = None  # FC custom_mode, tracked so a change can be logged immediately
+
     last_hb = 0.0  # monotonic ts of the last HEARTBEAT we sent
 
     while True:
@@ -361,6 +436,18 @@ def main():
                 msg = mav.recv_match(blocking=False)
                 if msg is None:
                     break
+                if telem_log is not None:
+                    # Mode changes are the one thing worth an unthrottled line: they are
+                    # rare, they bound every other interpretation of the flight, and a
+                    # 1 Hz limit could drop one entirely if it lands in the wrong second.
+                    forced = False
+                    if msg.get_type() == "HEARTBEAT" and msg.type != mavutil.mavlink.MAV_TYPE_GCS:
+                        if msg.custom_mode != mode:
+                            mode = msg.custom_mode
+                            forced = True
+                    log_telem(telem_log, msg,
+                              time.clock_gettime_ns(time.CLOCK_MONOTONIC),
+                              telem_seen, telem_period, force=forced)
                 if msg.get_type() == "TIMESYNC" and msg.tc1 == 0:
                     # Read both clocks as close to the reply as possible: tc1 is what
                     # the FC sees, mono is what the capture sidecars are stamped in.

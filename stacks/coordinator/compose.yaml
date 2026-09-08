@@ -68,6 +68,12 @@ services:
       - MAVLINK_DEVICE
       - MAVLINK_BAUD
       - COORD_TIMESYNC_LOG=/captures/timesync.jsonl
+      # Coordinator-side record of the telemetry the FC already streams to us (MAV2:
+      # EXT_STAT/POSITION/EXTRA1-3 at 1-2 Hz, no param change needed). Gives every
+      # flight a mode/position/SYSTEM_TIME trace on OUR monotonic clock -- and a
+      # GPS-derived wall clock that needs no NTP and no wifi. Set empty to disable.
+      - COORD_TELEM_LOG=/captures/telemetry.jsonl
+      - COORD_TELEM_HZ=1.0
 
   # RGB still capture (#72). Owns the OAK-D like vio-tracker (same /dev/bus/usb
   # bind-mount + privileged for MyriadX re-enumeration), so it is a standalone
