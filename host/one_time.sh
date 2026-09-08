@@ -8,7 +8,7 @@
 # reboot into every deploy). The OS version is a property of the flashed image (#96); to move
 # it forward in place, run ./host/os_upgrade.sh deliberately (#48). Ansible may still reboot for
 # a kernel/firmware/module change it installs -- repeat until this completes without a reboot.
-# Docs: docs/host-setup.md (coordinator), docs/pi-zero-host-setup.md (pod).
+# Docs: docs/host-setup.md (coordinator), docs/campod.md (campod).
 set -euo pipefail
 cd "$(dirname "$0")"
 SAVE_DIR=$(pwd)

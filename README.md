@@ -1,6 +1,6 @@
 # coordinator
 
-On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and time sync. Hosts the stacks for both the Raspberry Pi 4B payload computer (**coordinator**) and the Pi Zero 2 W camera pods (**pod**) ([symmatree/coordinator](https://github.com/symmatree/coordinator)). The two devices share one bootstrap and CLI; see [docs/pi-zero-bringup.md](docs/pi-zero-bringup.md).
+On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and time sync. Hosts the stacks for both the Raspberry Pi 4B payload computer (**coordinator**) and the Pi Zero 2 W camera pods (**pod**) ([symmatree/coordinator](https://github.com/symmatree/coordinator)). The two devices share one bootstrap and CLI; see [docs/campod.md](docs/campod.md).
 
 ## Stack layout
 

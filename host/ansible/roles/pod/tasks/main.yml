@@ -1,9 +1,17 @@
 ---
-# Pod (Pi Zero 2 W) specifics. Phase 1: just the pod stack and state dirs so the
-# Zero is container-ready. The USB gadget network (dwc2/g_ether), PPS overlay,
-# and chrony client are Phase 3 (see docs/pi-zero-bringup.md); the camera stack
-# service is Phase 2. Those add tasks here and a config.txt edit; nothing in
-# Phase 1 touches /boot/firmware/config.txt.
+# Pod (Pi Zero 2 W) specifics: the pod stack and state dirs so the Zero is
+# container-ready. Node bring-up and maintenance: docs/campod.md.
+#
+# Nothing here writes /boot/firmware, deliberately. Device tree comes from the
+# campod image (dotfiles-symm/pi-image/roles/campod/config.append.txt) -- serial
+# console, dwc2 for the gadget net, and dtparam=spi=on for the ADXL345 bus. The
+# boot partition is FAT on an SD card in a vehicle that loses power abruptly: no
+# checksums, no CoW, none of the protection the btrfs subvolumes give the rest of
+# the disk. "The image writes it, nothing else does" is worth keeping as an
+# invariant, and it also spares every unit a guaranteed reboot during bootstrap.
+#
+# Module LOADING is still ansible's (dwc2/g_ether via /etc/modules-load.d/), along
+# with the g_ether MAC pinning in /etc/modprobe.d/ -- see docs/campod.md.
 
 - name: Install pod stack and state dirs
   ansible.builtin.include_role:
