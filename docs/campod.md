@@ -331,9 +331,17 @@ name glob would be matching cabling; the driver is the invariant.
 
 No DHCP and no dnsmasq (#211). #12's title says DHCP and predates that decision.
 
-Useful before any of the coordinator side exists: with a static address on `usb0`, the
-Zero's inner micro-USB into any laptop plus a static address at the other end is an SSH
-path that needs nothing built.
+**A laptop at the other end is a debugging tool, not a validation path.** With a static
+address on `usb0` you can reach a campod over its inner micro-USB from a laptop, which is
+worth having when something is broken and you want to dummy out one end. It does not
+substitute for the real pairing: a success there does not predict a Pi 4B host, and a
+failure there indicts the laptop as readily as the pod. Different host controller,
+different scheduler -- and against Windows, `g_ether` presents RNDIS rather than the
+CDC-ECM a Linux host binds through `cdc_ether`, so it is not even the same protocol. If you
+do reach for one, a **Linux** laptop at least shares the driver with the coordinator.
+
+Throughput and stability over the gadget link are unmeasured, and the only measurement that
+means anything is Pi 4B host to Zero 2 W gadget through the real hub.
 
 Set `campod_gadget_enabled: false` to leave a node exactly as it was.
 
