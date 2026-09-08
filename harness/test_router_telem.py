@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""test_router_telem -- the router's coordinator-side telemetry record.
+"""test_router_telem -- the router's coordinator-side tlog.
 
-No serial port, no FC: build message stubs, run them through `log_telem`, and assert
-the projection, the per-type rate limit, and that a mode change is never dropped.
+No serial port, no FC: build real MAVLink frames, run them through `log_frame`, then read
+the file back with pymavlink and assert it round-trips.
 
-The mode-change case is the one worth pinning. Everything else in this log is a
-sampled signal where losing a line costs resolution; a mode change is an edge that
-bounds the interpretation of everything around it, so it is forced past the rate
-limit. A test that only checked the happy path would not notice that regressing.
+The round-trip is the point. An earlier version of this logged a hand-picked projection of
+fields, which is smaller but encodes today's guess about what matters and fails silently
+when a field is renamed upstream. Writing raw frames means the test that matters is "can a
+standard tool read this back and get the same messages", not "did we copy the right keys".
 
 Run: python3 harness/test_router_telem.py   (exit 0 = pass)
 """
 
-import io
-import json
 import os
+import struct
 import sys
+import tempfile
+
+from pymavlink import mavutil
+from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "containers", "coordinator-mavlink"))
@@ -23,62 +26,63 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import router  # noqa: E402
 
 
-class Msg:
-    def __init__(self, mtype, **fields):
-        self._t = mtype
-        self.__dict__.update(fields)
-
-    def get_type(self):
-        return self._t
-
-
-def lines(fh):
-    return [json.loads(l) for l in fh.getvalue().splitlines() if l.strip()]
-
-
-def test_projects_only_whitelisted_fields():
-    fh = io.StringIO()
-    router.log_telem(fh, Msg("SYSTEM_TIME", time_unix_usec=1786712345000000,
-                             time_boot_ms=4242, secret="nope"), 1_000_000_000, {}, 1.0)
-    (rec,) = lines(fh)
-    assert rec["type"] == "SYSTEM_TIME"
-    assert rec["time_unix_usec"] == 1786712345000000 and rec["time_boot_ms"] == 4242
-    assert "secret" not in rec
-    assert rec["monotonic_ns"] == 1_000_000_000
+def _frames():
+    """A few real encoded messages, as they would arrive off the wire."""
+    mav = mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+    out = []
+    m = mav.system_time_encode(1786712345000000, 4242); m.pack(mav); out.append(m)
+    m = mav.heartbeat_encode(mavutil.mavlink.MAV_TYPE_QUADROTOR,
+                             mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+                             81, 5, 4); m.pack(mav); out.append(m)
+    m = mav.vibration_encode(0, 1.5, 2.5, 3.5, 0, 0, 0); m.pack(mav); out.append(m)
+    return out
 
 
-def test_unknown_types_are_not_logged():
-    fh = io.StringIO()
-    router.log_telem(fh, Msg("SCALED_IMU2", xacc=1), 1_000_000_000, {}, 1.0)
-    assert lines(fh) == []
+def test_frames_round_trip_through_pymavlink():
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "sub", "vehicle.tlog")     # nested: dir must be created
+        fh = router.open_tlog(path)
+        for i, m in enumerate(_frames()):
+            router.log_frame(fh, m, 1786712345000000 + i)
+        fh.close()
+
+        conn = mavutil.mavlink_connection(path)
+        got = []
+        while True:
+            m = conn.recv_match(blocking=False)
+            if m is None:
+                break
+            got.append(m)
+        types = [m.get_type() for m in got]
+        assert types == ["SYSTEM_TIME", "HEARTBEAT", "VIBRATION"], types
+        # and the fields survived, including ones no whitelist would have thought to keep
+        assert got[0].time_unix_usec == 1786712345000000
+        assert got[1].custom_mode == 5
+        assert abs(got[2].vibration_z - 3.5) < 1e-6
 
 
-def test_rate_limit_is_per_type():
-    """A 2 Hz stream and a 1 Hz stream should each land at the limit, not compete."""
-    fh, seen = io.StringIO(), {}
-    for k in range(6):                       # 0.0 .. 2.5 s, one of each type per 0.5 s
-        t = int(k * 0.5 * 1e9)
-        router.log_telem(fh, Msg("VFR_HUD", alt=1.0, groundspeed=0.0), t, seen, 1.0)
-        router.log_telem(fh, Msg("SYS_STATUS", voltage_battery=25000), t, seen, 1.0)
-    got = lines(fh)
-    for want in ("VFR_HUD", "SYS_STATUS"):
-        n = len([r for r in got if r["type"] == want])
-        assert n == 3, f"{want}: expected 3 at 1 Hz over 2.5 s, got {n}"
+def test_timestamp_is_standard_tlog_format():
+    """8-byte big-endian microseconds, then the frame -- what every tlog reader expects."""
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "vehicle.tlog")
+        fh = router.open_tlog(path)
+        router.log_frame(fh, _frames()[0], 1786712345000000)
+        fh.close()
+        raw = open(path, "rb").read()
+        (stamp,) = struct.unpack(">Q", raw[:8])
+        assert stamp == 1786712345000000
+        assert raw[8] in (0xFD, 0xFE), "frame should start with a MAVLink magic byte"
 
 
-def test_mode_change_is_not_dropped_by_the_rate_limit():
-    fh, seen = io.StringIO(), {}
-    router.log_telem(fh, Msg("HEARTBEAT", custom_mode=0, base_mode=81,
-                             system_status=3), 0, seen, 1.0)
-    # 0.1 s later, well inside the 1 Hz window: throttled when unforced...
-    router.log_telem(fh, Msg("HEARTBEAT", custom_mode=5, base_mode=81,
-                             system_status=4), 100_000_000, seen, 1.0)
-    assert len(lines(fh)) == 1
-    # ...and kept when the caller flags it as a change.
-    router.log_telem(fh, Msg("HEARTBEAT", custom_mode=5, base_mode=81,
-                             system_status=4), 100_000_000, seen, 1.0, force=True)
-    got = lines(fh)
-    assert len(got) == 2 and got[-1]["custom_mode"] == 5
+def test_unpacked_message_is_skipped_not_crashed():
+    """A message with no wire buffer must be ignored rather than raising in the drain loop."""
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "vehicle.tlog")
+        fh = router.open_tlog(path)
+        mav = mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+        router.log_frame(fh, mav.system_time_encode(1, 2), 1)   # never .pack()ed
+        fh.close()
+        assert os.path.getsize(path) == 0
 
 
 def main():
