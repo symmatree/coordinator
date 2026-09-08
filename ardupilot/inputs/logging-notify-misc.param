@@ -40,6 +40,24 @@ MAV1_EXTRA1,1
 MAV1_EXTRA2,1
 MAV1_EXTRA3,1
 #
+# --- Telemetry streams on MAV2 (SERIAL4, the coordinator) ---
+# MAVLink channels are assigned in SERIALn order over the MAVLink ports, so with SERIAL0
+# (USB), SERIAL4 (coordinator), SERIAL6 (ELRS) and SERIAL9 (OTG) all on protocol 2, the
+# coordinator is MAV2. Everything except RC_CHAN and RAW_SENS was already at 2 Hz; only
+# RC_CHAN is pinned here, the rest stay as the FC has them.
+#
+# RC_CHAN turns on SERVO_OUTPUT_RAW and RC_CHANNELS to the coordinator, which the
+# coordinator tlog records (#220). Two uses:
+#   * SERVO_OUTPUT_RAW is motor commands on the COORDINATOR's clock -- an independent
+#     cross-check on the capture<->FC time join rather than another consumer of it.
+#   * RC_CHANNELS lets a spare switch on the radio annotate a flight from the air
+#     (mark arriving on station, mark a target, mark something felt wrong) instead of
+#     annotating a file afterwards.
+# 2 Hz to match the rest of the MAV2 row; the added traffic is ~4 msg/s on a 1.5 Mbaud
+# link that currently carries ~41. NOT set on MAV3 -- that is the ELRS link and it is
+# already saturated (#197).
+MAV2_RC_CHAN,2
+#
 # --- Unused serial ports ---
 # SERIAL7 disabled (the abandoned F9P-move port); SERIAL9 (OTG) unused.
 SERIAL7_PROTOCOL,-1
