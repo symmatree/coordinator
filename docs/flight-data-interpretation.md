@@ -54,8 +54,31 @@ A third route exists and is **not** recommended: fitting GPS week/ms from the `G
 recover UTC. It works (9 ms rms on 260814) but needs `GWk > 1000` filtering to reject the pre-lock
 rows, and it buys nothing the two routes above do not.
 
-`telemetry.jsonl` (#220) adds `SYSTEM_TIME.time_unix_usec`, which is GPS-derived absolute time
-arriving at 1-2 Hz on MAV2 -- the field answer to "what time is it" when there is no network.
+`vehicle.tlog` (#220) is every frame the FC sent us, which includes `SYSTEM_TIME` -- GPS-derived
+absolute time at 2 Hz on MAV2, the field answer to "what time is it" when there is no network. Its
+own timestamps are wall clock and inherit the problem above; `timesync.jsonl` is what repairs them.
+
+**Which stream carries what** (read from `libraries/GCS_MAVLink/GCS_MAVLink_Parameters.cpp` at
+`1511f271`, the firmware in these logs -- not from memory, which had `SYSTEM_TIME` on the wrong one):
+
+| stream | MAV2 rate | carries (subset) |
+|---|---|---|
+| `EXT_STAT` | 2 Hz | `SYS_STATUS`, `POWER_STATUS`, `MCU_STATUS`, `MEMINFO`, `GPS_RAW_INT`, **`GPS_RTK`**, `NAV_CONTROLLER_OUTPUT` |
+| `POSITION` | 2 Hz | `GLOBAL_POSITION_INT`, `LOCAL_POSITION_NED` |
+| `EXTRA1` | 2 Hz | `ATTITUDE`, `AHRS2`, `PID_TUNING`, **`ESC_TELEMETRY`** |
+| `EXTRA2` | 2 Hz | `VFR_HUD` |
+| `EXTRA3` | 2 Hz | `AHRS`, `DISTANCE_SENSOR`, **`SYSTEM_TIME`**, `BATTERY_STATUS`, **`EKF_STATUS_REPORT`**, **`VIBRATION`** |
+| `RC_CHANNELS` | **0** | `SERVO_OUTPUT_RAW`, `RC_CHANNELS` -- off, so neither is arriving |
+| `RAW_SENSORS` | **0** | off |
+
+`GPS_RTK` is the direct source for RTK correction age and baseline, and it is already being sent --
+better than differencing `GPA.RTCMFU`, which is only in the dataflash and is not populated on every
+firmware we have flown.
+
+Mission Planner's Status page is a live view of these same MAVLink fields (its `CurrentState`), plus
+a few values it computes about its own link. That is why it shows things that look absent from the
+logs: same data, different transport and different names, with the GCS-side link counters genuinely
+not observable from the vehicle.
 
 ### Stills are stamped after they are compressed
 
