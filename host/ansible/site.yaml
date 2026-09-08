@@ -12,6 +12,10 @@
   hosts: localhost
   connection: local
   become: true
+  vars_files:
+    # The gadget-net contract, read by both device roles so the two halves cannot
+    # drift apart. See the file for why it is not in each role's defaults.
+    - vars/gadget-net.yml
   vars:
     device_role: coordinator
     sync_repo: false

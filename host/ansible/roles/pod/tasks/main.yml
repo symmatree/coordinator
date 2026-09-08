@@ -86,6 +86,14 @@
   # Static both ends, no DHCP, nothing to run on the coordinator (#211). A keyfile
   # rather than nmcli so the deployed state is declarative and diffable.
   # may-fail is left at its default: an unplugged pod must still finish booting.
+  #
+  # NO GATEWAY, and never-default explicitly. This is a link-local segment between
+  # two boxes, not a route to anywhere. Naming the coordinator as a gateway would
+  # install a default route on usb0, and NM's per-type route metrics put ethernet
+  # (100) ahead of wifi (600) -- so the pod would try to reach the internet through
+  # a coordinator that does not forward or NAT, and lose the WiFi path it currently
+  # uses for updates. That would present as "the pod stopped being able to pull"
+  # right after the gadget net was enabled.
   ansible.builtin.copy:
     dest: /etc/NetworkManager/system-connections/campod-gadget.nmconnection
     mode: "0600"
@@ -99,7 +107,8 @@
 
       [ipv4]
       method=manual
-      address1={{ campod_gadget_addresses[ansible_hostname] }}/{{ campod_gadget_prefix }},{{ campod_gadget_coordinator_ip }}
+      address1={{ campod_gadget_addresses[ansible_hostname] }}/{{ campod_gadget_prefix }}
+      never-default=true
 
       [ipv6]
       method=disabled

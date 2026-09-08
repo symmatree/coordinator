@@ -297,11 +297,39 @@ The dwc2 overlay is device tree and comes from the image. Everything in userspac
 | `/etc/modprobe.d/campod-g_ether.conf` | pins both MACs, derived from the hostname (below) |
 | `/etc/NetworkManager/system-connections/campod-gadget.nmconnection` | static address on `usb0`, no DHCP (#211) |
 
-Addresses live in `host/ansible/roles/pod/defaults/main.yml` as a map, not a derivation --
-a MAC collision is improbable and harmless, an IP collision is neither. The subnet
-(`10.55.0.0/24`, coordinator at `.1`, nodes at `.11`-`.18`) is **proposed, pending the #12
-contract**; it is the one thing in this section that is a joint decision rather than a fact.
-A node whose hostname is not in the map gets no address and says so.
+Addresses live in `host/ansible/vars/gadget-net.yml` as a map, not a derivation -- a MAC
+collision is improbable and harmless, an IP collision is neither. That file is the contract
+**both** roles read, on purpose: the subnet and the coordinator's address have to agree
+across two devices, and two definitions is how they end up disagreeing. A node whose
+hostname is not in the map gets no address and says so.
+
+Neither side sets a gateway, and both set `never-default`. This is a link-local segment
+between two boxes, not a route to anywhere. Naming the coordinator as a gateway would put a
+default route on `usb0`, and NM's per-type metrics rank ethernet (100) ahead of WiFi (600)
+-- so a pod would try to reach the internet through a coordinator that neither forwards nor
+NATs, and lose the WiFi path it currently uses for updates. Adding forwarding + NAT later is
+a deliberate change on the coordinator, not something to fall into.
+
+## Gadget network, coordinator side
+
+All campods land on one bridge (`br0`, `10.55.0.1/24`), so the coordinator holds one address
+rather than one per pod and the pods share an L2 segment. `stp=false` and `forward-delay=0`:
+it is a star of point-to-point USB links with no possible loop, and 30 s of
+listening/learning on every pod reboot would cost something for nothing.
+
+Membership is dynamic -- pods appear when they boot -- and is handled by one NM profile with
+`multi-connect=3`, which lets a single profile be active on every matching device at once.
+No per-pod profile, no udev glue.
+
+**It matches on driver, not interface name.** systemd will generate an `enx<mac>` identifier
+for our pinned MACs -- `names_mac()` only skips non-permanent addresses and has no
+locally-administered guard -- but `99-default.link` ships
+`NamePolicy=keep kernel database onboard slot path`, with `mac` only in
+`AlternativeNamesPolicy`. So `enx<mac>` is an *alternative* name and the primary is
+path-based (`enp1s0u1u2`), which identifies the hub port rather than the pod. Matching a
+name glob would be matching cabling; the driver is the invariant.
+
+No DHCP and no dnsmasq (#211). #12's title says DHCP and predates that decision.
 
 Useful before any of the coordinator side exists: with a static address on `usb0`, the
 Zero's inner micro-USB into any laptop plus a static address at the other end is an SSH
