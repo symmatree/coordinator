@@ -2,6 +2,11 @@
 
 Flight-log and VIO analysis for the rekon10 platform.
 
+**Before trusting a number out of any of this:** which clock to use, how a sortie appears in a log,
+and what each stream is and is not good for are in
+[`docs/flight-data-interpretation.md`](../docs/flight-data-interpretation.md). Several entries there
+exist because a notebook or a script here got it wrong first.
+
 | file | what |
 |------|------|
 | [`ardupilot_log.py`](ardupilot_log.py) | canonical `parse_log()` + ArduPilot message-type constants. Imported by the notebooks. |
