@@ -1,0 +1,29 @@
+---
+# USB gadget network, campod side (#24). The dwc2 overlay is device tree and comes
+# from the campod image; everything here is the userspace half.
+
+# Enable/disable the whole gadget-net block. Off leaves the node exactly as before.
+campod_gadget_enabled: true
+
+# Interface the g_ether gadget presents.
+campod_gadget_iface: usb0
+
+# Addressing. Static on both ends, no DHCP and nothing to run on the coordinator
+# (#211). PROPOSED, pending the #12 contract -- this is the one thing here that is
+# a joint decision rather than a fact, and changing it is this file plus the
+# coordinator's own address.
+campod_gadget_prefix: 24
+campod_gadget_coordinator_ip: 10.55.0.1
+
+# Per-node address. A map rather than a derivation on purpose: a MAC collision is
+# improbable and harmless, an IP collision is neither. Names are the camera-node
+# names from rekon10/arm-pods.md.
+campod_gadget_addresses:
+  pod-NNE: 10.55.0.11
+  pod-ENE: 10.55.0.12
+  pod-ESE: 10.55.0.13
+  pod-SSE: 10.55.0.14
+  pod-SSW: 10.55.0.15
+  pod-WSW: 10.55.0.16
+  pod-WNW: 10.55.0.17
+  pod-NNW: 10.55.0.18

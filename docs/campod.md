@@ -286,6 +286,29 @@ the bench over lab WiFi and false in the field. The options, with the numbers th
 Not decided. Related: [#12](https://github.com/symmatree/coordinator/issues/12) (coordinator
 bridge), [#24](https://github.com/symmatree/coordinator/issues/24) (pod gadget net).
 
+## Gadget network, campod side
+
+The dwc2 overlay is device tree and comes from the image. Everything in userspace is
+`roles/pod`, applied by `one_time.sh pod`:
+
+| | |
+|---|---|
+| `/etc/modules-load.d/campod-gadget.conf` | loads `dwc2` + `g_ether` at boot |
+| `/etc/modprobe.d/campod-g_ether.conf` | pins both MACs, derived from the hostname (below) |
+| `/etc/NetworkManager/system-connections/campod-gadget.nmconnection` | static address on `usb0`, no DHCP (#211) |
+
+Addresses live in `host/ansible/roles/pod/defaults/main.yml` as a map, not a derivation --
+a MAC collision is improbable and harmless, an IP collision is neither. The subnet
+(`10.55.0.0/24`, coordinator at `.1`, nodes at `.11`-`.18`) is **proposed, pending the #12
+contract**; it is the one thing in this section that is a joint decision rather than a fact.
+A node whose hostname is not in the map gets no address and says so.
+
+Useful before any of the coordinator side exists: with a static address on `usb0`, the
+Zero's inner micro-USB into any laptop plus a static address at the other end is an SSH
+path that needs nothing built.
+
+Set `campod_gadget_enabled: false` to leave a node exactly as it was.
+
 ## Open: seams with the coordinator
 
 Each of these has to be agreed on both sides, and each is owned by a pair of issues.
@@ -307,8 +330,8 @@ when its string argument is NULL. **Both** ends randomise, not just one.
 Harmless with a single pod; with four on a bridge it means DHCP reservations never stick
 and NetworkManager creates a fresh connection profile per boot.
 
-**Decided fix: derive the addresses, don't assign them.** `options g_ether dev_addr=...
-host_addr=...` in `/etc/modprobe.d/`, with both computed as `02:` + the first five bytes of
+**Implemented in `roles/pod`:** `options g_ether dev_addr=... host_addr=...` in
+`/etc/modprobe.d/campod-g_ether.conf`, both computed as `02:` + the first five bytes of
 `sha256("<salt>" + hostname)` -- different salts for the two ends so they cannot collide.
 That is deterministic, stable across reboots, unique per unit, and computable by ansible
 from the hostname it already has, so the per-unit provisioning surface stays **one** value
