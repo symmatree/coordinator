@@ -103,8 +103,33 @@ getting the backpack link to pass RTCM ([#195](https://github.com/symmatree/coor
 
 **RTK Float is a launch condition and does not survive the sortie.** On 260814 Float held to t=176 s,
 then dropped to a plain 3D fix at t=199 and stayed there: **0% of the deep-woods window at Float,
-43% of the airborne window overall.** "GPS truth" is a claim about the open parts of a flight. The
-tell is accuracy (`GPA.HAcc`/`VAcc`), not satellite count or HDop, both of which stay green (E19).
+43% of the airborne window overall.** "GPS truth" is a claim about the open parts of a flight.
+
+**The tell is accuracy, and satellite count is actively misleading.** On 260814, going into the
+woods:
+
+```
+window              NSats   HDop   HAcc m   VAcc m   status
+RTK Float held         24   0.92     0.14     0.23        5
+deep woods             26   0.57     1.46     2.11        3
+```
+
+Satellites went **up** and HDop **improved** while horizontal accuracy got 10x worse. A health check
+on sat count or HDop sees nothing wrong (E19 records the same on 260712).
+
+**Age of the last RTK correction is derivable: `GPA.RTCMFU`** counts RTCM fragments used, so the time
+since it last advanced is the age of the last accepted correction. On 260814 it advanced about once
+a second while Float held (median gap 1.00 s, max 3.00 s) and then **stopped completely -- zero
+advances across the 90 s deep-woods window** -- with only 14 fragments discarded in the whole flight.
+So on that flight the corrections stopped *arriving*; they were not being rejected, and the GNSS
+reception was if anything better. **The RTK loss there is a corrections-delivery failure, not canopy
+attenuation of the satellite signal** -- consistent with an RTCM path that runs over a WiFi link back
+to the house ([#195](https://github.com/symmatree/coordinator/issues/195),
+[#196](https://github.com/symmatree/coordinator/issues/196)).
+
+*Caveat on the counter:* it reads ~0 on 260712 and 260730 even though 260712 reached RTK Float, so on
+those flights it is either unpopulated or corrections arrived by a path that does not increment it.
+Usable on 260728 and 260814; check that it advances at all before reading anything into a gap.
 
 **Armed spans the flight; armed-but-not-flying is seconds.** Arming times out if the vehicle does not
 launch, so the operator arms last and launches immediately -- measured arm-to-liftoff **1.2 to 8.0 s**
@@ -112,8 +137,22 @@ across four flights. There is no dwellable motors-on-the-ground regime to collec
 low dose of hover: on 260814, armed-on-ground is **2057 rpm / VIBE 0.99** against **6970 rpm /
 VIBE 8.72** in hover, so a ground frame carries ~11% of the hover vibration dose.
 
-**Deriving liftoff and touchdown.** Use altitude above the pre-arm ground level for liftoff and
-throttle falling to zero for touchdown (`capture_align.airborne_window`). Two traps:
+**Deriving liftoff and touchdown -- and cross-checking it.** The explicit markers and the derived
+ones answer different questions and you want both. `ARM` is a record of something the operator
+physically did; vertical velocity is a record of what the airframe did. Neither alone is "liftoff":
+vertical motion while disarmed is somebody carrying the aircraft, and armed-with-no-motion is the
+pre-launch pause. **Commanded liftoff is the conjunction** -- armed, positive commanded throttle, and
+vertical motion following it.
+
+Treat the agreement itself as the check. When the explicit and derived answers line up, or differ in
+a way that has an explanation (the ~3 s of spool-up between arming and moving), that consistency is
+evidence for the whole chain -- the clock join, the log decode, the state model. When they disagree
+without one, **this is an aberrant flight and it should be investigated before any number derived
+from it is believed** -- whether that number is a segmentation, a time alignment, or two flight paths
+overlaid. `capture_align.airborne_window` computes the derived half; the `ARM` records are the
+explicit half; a consumer should look at both.
+
+Two traps in the derived half:
 
 * `EV Id=28` fires at spool-up, **before** liftoff -- 3.7 s early on 260814, at `ThO=0.018` with zero
   climb rate. The `EV_MAP` in `analysis/ardupilot_log.py` does not carry 17/28 and its 16/18 entries
@@ -168,6 +207,8 @@ flight date**: derive that from the `GPS` records, or from `telemetry.jsonl` onc
 | `VISP` / `VISV` | the onboard pose exactly as the FC received it, on the FC clock | truth of any kind |
 | `XKF1` | truth-ish -- but only while RTK holds (see above) | under canopy |
 | `ESC` | per-motor RPM, **indexed by output channel, not ArduPilot motor number** -- map through `SERVOn_FUNCTION` ([#169](https://github.com/symmatree/coordinator/issues/169) has the table) | reading motor 1/2/3/4 straight off `Instance` -- that mis-sorts a fore/aft split into a diagonal one |
+| `MAV` | **per-MAVLink-channel link health**: rx/tx packet counts, drops, times-full, max gap. `chan` is 0-based and equals the `MAVn` parameter minus 1, so chan1 = MAV2 = the coordinator and chan2 = MAV3 = the ELRS/ground link. On 260814 chan1 ran 17 rx / 41 tx pkt/s with **zero** drops, chan2 190 rx / 47 tx. This is how a ground-link dropout is visible from the vehicle side | identifying *which* messages -- it is counters only |
+| `TSYN` | the FC's own record of TIMESYNC exchanges, **with the peer SysID** and round-trip time (33 exchanges on 260814, RTT median 1007 us). A third, FC-side route to the clock bridge | high-rate work -- it is ~0.1 Hz |
 | colour stills | the mapping product | anything needing their own timestamp -- see above |
 | `mono_rect_left` | the actual VIO input, global shutter and fixed focus | only 260814 has it; capture is off by default from #216 |
 
@@ -184,7 +225,11 @@ Things it would be reasonable to assume and that are **not** established:
 
 * Whether `SYSTEM_TIME` actually arrives on MAV2 in practice. The rates say it should
   (`MAV2_EXT_STAT=2`); nobody has watched the wire. #220 will show it or its absence.
-* Whether the FC pushes time of day by any other route.
+* Whether the FC pushes time of day by any other route. (`TSYN` shows it *does* exchange TIMESYNC
+  with SysID 1 and logs the RTT, so the FC-side half of the bridge exists independently of ours.)
+* Whether the 260814 corrections dropout was the WiFi link, the ground station, or something else --
+  only that the fragments stopped arriving at the FC.
+* Whether `GPA.RTCMFU` is populated on every firmware we have flown; it reads ~0 on 260712/260730.
 * Whether the coordinator wall clock in the field is merely offset or also drifting. Only the
   post-NTP case has been measured (-11 ppm on 260814).
 * The exact per-frame still encode lag. Only its distribution is known, and the light-curve check
