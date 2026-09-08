@@ -21,12 +21,41 @@ lives in the docs it points at.
 
 | Where the reasoning lives | |
 |---|---|
-| Plan of record, phases, why the pod lives in this repo | [pi-zero-bringup.md](pi-zero-bringup.md) |
 | Capture container, ADXL345 reader, SPI settings, readout constant | [containers/pod-camera/README.md](../containers/pod-camera/README.md) |
 | Airframe/payload design, aim geometry, vibration rationale | [rekon10/arm-pods.md](rekon10/arm-pods.md) |
 | Filesystem choice and power-loss behaviour | [power-loss-filesystem.md](power-loss-filesystem.md) |
 | Coordinator equivalent of this doc | [host-setup.md](host-setup.md) |
 | The vibration question the pod exists to answer | [#211](https://github.com/symmatree/coordinator/issues/211) |
+
+---
+
+## Why the campod lives in this repo
+
+The campod and the coordinator have to collaborate -- gadget network, time, start/stop,
+status -- so they share one operator model rather than maintaining two parallel copies:
+
+| Shared asset | How it serves both |
+|--------------|--------------------|
+| `bin/coord` | One stack-aware CLI. Each device runs only its own stack under `/opt/stacks/*`; `coord` defaults to the sole installed stack. |
+| `host/ansible/roles/docker-host` | Docker engine, group, state dirs -- identical on Pi 4B and Pi Zero. |
+| `host/one_time.sh [coordinator\|pod]` | One bootstrap entrypoint; the role argument selects the device. |
+| `/opt/stacks/<name>` | Both devices lay their one stack there. |
+
+Device-specific code stays small: `roles/pod`, `containers/pod-camera/`, `stacks/pod/`.
+
+## Constraints that shape everything below
+
+- **512 MB of RAM is the binding limit.** Estimate, not measured: Pi OS Lite headless
+  ~100 MB + `dockerd`/`containerd` ~100 MB + one `picamera2`-class container ~100 MB, with
+  zram/swap for spikes. Capture is 1-2 Hz at a very low duty cycle, so steady-state churn
+  is low.
+- **Never build on the Zero.** CI builds arm64 and the Zero pulls. A build will not fit.
+- **Camera passthrough is the fiddly part, not resources.** libcamera in a container needs
+  `/dev/video*`, `/dev/media*`, `/dev/dma_heap`, vchiq and `/run/udev` visible inside;
+  `stacks/pod/compose.yaml` uses `privileged: true` + `/run/udev`, with explicit device
+  mounts as the fallback if enumeration ever fails.
+- **Thermal is handled in hardware**, not by the runtime -- full-length heatsinks and an
+  open centre channel for prop-wash. See [rekon10/arm-pods.md](rekon10/arm-pods.md).
 
 ---
 
@@ -256,6 +285,16 @@ the bench over lab WiFi and false in the field. The options, with the numbers th
 
 Not decided. Related: [#12](https://github.com/symmatree/coordinator/issues/12) (coordinator
 bridge), [#24](https://github.com/symmatree/coordinator/issues/24) (pod gadget net).
+
+## Open: seams with the coordinator
+
+Each of these has to be agreed on both sides, and each is owned by a pair of issues.
+
+| Contract | Campod side | Coordinator side | Must agree on |
+|----------|-------------|------------------|---------------|
+| Gadget-net reachability | [#24](https://github.com/symmatree/coordinator/issues/24) | [#12](https://github.com/symmatree/coordinator/issues/12) | subnet, static vs DHCP, per-node address (see the `g_ether` MAC note below) |
+| Time | [#24](https://github.com/symmatree/coordinator/issues/24) | [#11](https://github.com/symmatree/coordinator/issues/11) | NTP server address, shared epoch. No PPS is wired anywhere on this vehicle, so this is not on the path for #211 |
+| Control + status | [#25](https://github.com/symmatree/coordinator/issues/25) | [#10](https://github.com/symmatree/coordinator/issues/10) | start/stop and status wire format and transport |
 
 ### Verified in passing: `g_ether` really does randomise its MAC every boot
 

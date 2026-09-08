@@ -5,7 +5,7 @@ Captures JPEG stills from the Camera Module 3 (IMX708) at a fixed cadence and
 writes each frame plus a JSON metadata sidecar to local storage. Standalone
 (Phase 2): no network, no coordination. The frame-sync hooks (pacesetter/server
 + clients) are present but default off -- they are exercised once multiple pods
-share a network and time base (Phase 3, #24). See docs/pi-zero-bringup.md.
+share a network and time base (#24). See docs/campod.md.
 
 Config via environment (all optional):
   POD_NODE_NAME       node label in filenames/metadata (default: hostname)

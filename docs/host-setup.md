@@ -2,7 +2,7 @@
 
 One-time path from a fresh SD card to a host that can run `coord pull` / `coord start` for the `tracker` profile. OAK-D bench steps live in [bench-tracker.md](bench-tracker.md).
 
-Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansible, runs [host/ansible/site.yaml](../host/ansible/site.yaml) with `device_role=coordinator`). Manual narrative below ends at that script; bench bring-up is separate. The pod (Pi Zero) equivalent is [pi-zero-host-setup.md](pi-zero-host-setup.md).
+Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansible, runs [host/ansible/site.yaml](../host/ansible/site.yaml) with `device_role=coordinator`). Manual narrative below ends at that script; bench bring-up is separate. The campod (Pi Zero) equivalent is [campod.md](campod.md).
 
 ## Resolved choices (issue #5)
 

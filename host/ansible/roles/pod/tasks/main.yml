@@ -11,8 +11,7 @@
 # invariant, and it also spares every unit a guaranteed reboot during bootstrap.
 #
 # Module LOADING is still ansible's (dwc2/g_ether via /etc/modules-load.d/), along
-# with the g_ether MAC pinning in /etc/modprobe.d/ -- Phase 3, see
-# docs/pi-zero-bringup.md.
+# with the g_ether MAC pinning in /etc/modprobe.d/ -- see docs/campod.md.
 
 - name: Install pod stack and state dirs
   ansible.builtin.include_role:
