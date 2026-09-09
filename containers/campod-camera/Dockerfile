@@ -1,4 +1,4 @@
-# coordinator-pod-camera: picamera2 + libcamera still capture (arm64 / Pi Zero 2 W).
+# coordinator-campod-camera: picamera2 + libcamera still capture (arm64 / Pi Zero 2 W).
 #
 # Uses Raspberry Pi's apt archive (NOT stock Debian) so libcamera + picamera2 are
 # the matched, Pi-pipeline-aware versions -- the one real gotcha for camera-in-
@@ -14,9 +14,9 @@
 # needs, so nothing is lost by matching the host.
 #
 # Local build on the Zero (or arm64 box):
-#   docker build -t coordinator-pod-camera:local containers/pod-camera
+#   docker build -t coordinator-campod-camera:local containers/campod-camera
 # Cross-build (slow; QEMU):
-#   docker buildx build --platform linux/arm64 -t coordinator-pod-camera:local containers/pod-camera
+#   docker buildx build --platform linux/arm64 -t coordinator-campod-camera:local containers/campod-camera
 
 ARG BASE_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 FROM ${BASE_IMAGE}
@@ -63,19 +63,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
 
-COPY capture.py /opt/pod/capture.py
-COPY adxl345.py /opt/pod/adxl345.py
-COPY entrypoint.sh /opt/pod/entrypoint.sh
-RUN chmod +x /opt/pod/entrypoint.sh
+COPY capture.py /opt/campod/capture.py
+COPY adxl345.py /opt/campod/adxl345.py
+COPY entrypoint.sh /opt/campod/entrypoint.sh
+RUN chmod +x /opt/campod/entrypoint.sh
 
 # Hardware-free check of the ADXL345 register protocol, decode, and JSONL shape
 # against a fake spidev -- a broken reader fails the build instead of a flight.
-COPY test_adxl345.py /opt/pod/test_adxl345.py
-RUN cd /opt/pod && python3 test_adxl345.py && rm test_adxl345.py
+COPY test_adxl345.py /opt/campod/test_adxl345.py
+RUN cd /opt/campod && python3 test_adxl345.py && rm test_adxl345.py
 
-# Flush logs immediately so `coord logs -f pod-camera` is live (cf. the
+# Flush logs immediately so `coord logs -f campod-camera` is live (cf. the
 # vio-tracker stdbuf line-buffering fix).
 ENV PYTHONUNBUFFERED=1
-WORKDIR /opt/pod
+WORKDIR /opt/campod
 
-ENTRYPOINT ["/usr/bin/dumb-init", "--", "/opt/pod/entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/opt/campod/entrypoint.sh"]

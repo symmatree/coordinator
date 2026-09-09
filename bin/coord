@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Rekon stack operator CLI -- one script for both coordinator and pod devices.
+# Rekon stack operator CLI -- one script for both coordinator and campod devices.
 set -euo pipefail
 
 # Stack-aware compose-file resolution:
 #   1. COORD_COMPOSE_FILE (explicit)
 #   2. COORD_STACK -> /opt/stacks/$COORD_STACK/compose.yaml
-#   3. the sole stack under /opt/stacks/* (the common case: a pod has only the
-#      pod stack installed, the coordinator only the coordinator stack)
+#   3. the sole stack under /opt/stacks/* (the common case: a campod has only the
+#      campod stack installed, the coordinator only the coordinator stack)
 COORD_STACKS_ROOT="${COORD_STACKS_ROOT:-/opt/stacks}"
 
 resolve_compose_file() {
@@ -67,7 +67,7 @@ Commands:
 
 Environment:
   COORD_COMPOSE_FILE   Explicit compose file (overrides stack detection)
-  COORD_STACK          Stack name under /opt/stacks (e.g. coordinator, pod)
+  COORD_STACK          Stack name under /opt/stacks (e.g. coordinator, campod)
   COORD_STACKS_ROOT    Default: /opt/stacks
   COORD_ENV_PATH       Default: directory of compose file + /.env
   COORD_DEFAULT_SERVICE Default service for shell (else first service)

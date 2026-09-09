@@ -188,7 +188,7 @@ append-only across sessions; slice it by `monotonic_ns` for a given flight.
 - **GPS-anchored co-estimation feed** (#65): fuse GPS on our side (port `globalOpt`)
   and hand the FC a non-drifting, pre-anchored pose, so intermittent RTK "bubbles"
   bound VINS drift. Needs the shared-clock work above.
-- **`SYSTEM_TIME` -> chrony** feed, in-flight pose logging (#30), Pi Zero pod
+- **`SYSTEM_TIME` -> chrony** feed, in-flight pose logging (#30), Pi Zero campod
   relay + obstacle-distance MAVLink, GPS-denied origin handshake.
 
 ## Configuration

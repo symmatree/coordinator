@@ -18,7 +18,7 @@ campod_gadget_enabled: true
 campod_gadget_iface: usb0
 
 # Bridge the coordinator puts every campod on, so all of them share one L2
-# segment and the coordinator needs one address rather than one per pod.
+# segment and the coordinator needs one address rather than one per campod.
 campod_gadget_bridge: br0
 
 # How the coordinator recognises a campod as it appears. Matching on DRIVER, not
@@ -30,7 +30,7 @@ campod_gadget_bridge: br0
 # `NamePolicy=keep kernel database onboard slot path`, with `mac` present only in
 # AlternativeNamesPolicy. So enx<mac> is an ALTERNATIVE name, never the primary
 # one, and the primary is path-based (enp1s0u1u2...), i.e. determined by which hub
-# port the pod is plugged into rather than by which pod it is. Matching a name
+# port the campod is plugged into rather than by which campod it is. Matching a name
 # glob would be matching cabling. The driver is the actual invariant.
 campod_gadget_host_drivers: cdc_ether rndis_host cdc_subset
 

@@ -1,7 +1,7 @@
-# Deployment & config model (coordinator + pods)
+# Deployment & config model (coordinator + campods)
 
 How on-disk state gets **deployed, updated, and maintained** on the coordinator (and the
-pods) -- and, deliberately, how that is **not** a develop-on-the-box workflow. This is the
+campods) -- and, deliberately, how that is **not** a develop-on-the-box workflow. This is the
 management-layer companion to [power-loss-filesystem.md](power-loss-filesystem.md) (the
 substrate) and [architecture.md](architecture.md) (what runs).
 
