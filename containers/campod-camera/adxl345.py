@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADXL345 vibration logger for the Rekon camera pod (coordinator #211).
+"""ADXL345 vibration logger for the Rekon campod (coordinator #211).
 
 Reads one or more ADXL345 accelerometers over SPI and writes batched samples as
 JSONL into the same session directory as the camera frames, stamped on the same
@@ -51,15 +51,15 @@ internal clock. Writing derived per-sample timestamps now would bake in a nomina
 rate we have no basis for and lose the evidence needed to correct it.
 
 Configuration (all optional):
-  POD_ACCEL_DEVICES   comma list of `label:/dev/spidevN.M`; empty disables.
+  CAMPOD_ACCEL_DEVICES   comma list of `label:/dev/spidevN.M`; empty disables.
                       e.g. camera:/dev/spidev0.0,arm:/dev/spidev0.1
-  POD_ACCEL_ODR_HZ    output data rate (default: 3200)
-  POD_ACCEL_RANGE_G   2 | 4 | 8 | 16 (default: 16)
-  POD_ACCEL_SPI_HZ    SPI clock (default: 1500000 -- see POP_NOTE)
-  POD_ACCEL_POLL_HZ   FIFO poll rate (default: 200)
-  POD_ACCEL_DIR       output dir (default: /captures)
-  POD_ACCEL_SEPARATION_M  camera-to-arm baseline, recorded in the manifest
-  POD_NODE_NAME / POD_SESSION   shared with capture.py
+  CAMPOD_ACCEL_ODR_HZ    output data rate (default: 3200)
+  CAMPOD_ACCEL_RANGE_G   2 | 4 | 8 | 16 (default: 16)
+  CAMPOD_ACCEL_SPI_HZ    SPI clock (default: 1500000 -- see POP_NOTE)
+  CAMPOD_ACCEL_POLL_HZ   FIFO poll rate (default: 200)
+  CAMPOD_ACCEL_DIR       output dir (default: /captures)
+  CAMPOD_ACCEL_SEPARATION_M  camera-to-arm baseline, recorded in the manifest
+  CAMPOD_NODE_NAME / CAMPOD_SESSION   shared with capture.py
 """
 
 import datetime as dt
@@ -297,18 +297,18 @@ def _parse_devices(raw):
 
 
 def main():
-    devices = _parse_devices(os.getenv("POD_ACCEL_DEVICES"))
+    devices = _parse_devices(os.getenv("CAMPOD_ACCEL_DEVICES"))
     if not devices:
-        print("accel: POD_ACCEL_DEVICES empty, nothing to log", flush=True)
+        print("accel: CAMPOD_ACCEL_DEVICES empty, nothing to log", flush=True)
         return 0
 
-    odr = _env_int("POD_ACCEL_ODR_HZ", 3200)
-    range_g = _env_int("POD_ACCEL_RANGE_G", 16)
-    spi_hz = _env_int("POD_ACCEL_SPI_HZ", 1500000)
-    poll_hz = _env_float("POD_ACCEL_POLL_HZ", 200.0)
-    out_dir = Path(os.getenv("POD_ACCEL_DIR", "/captures"))
-    node = os.getenv("POD_NODE_NAME") or socket.gethostname()
-    session = os.getenv("POD_SESSION") or dt.datetime.now(dt.timezone.utc).strftime(
+    odr = _env_int("CAMPOD_ACCEL_ODR_HZ", 3200)
+    range_g = _env_int("CAMPOD_ACCEL_RANGE_G", 16)
+    spi_hz = _env_int("CAMPOD_ACCEL_SPI_HZ", 1500000)
+    poll_hz = _env_float("CAMPOD_ACCEL_POLL_HZ", 200.0)
+    out_dir = Path(os.getenv("CAMPOD_ACCEL_DIR", "/captures"))
+    node = os.getenv("CAMPOD_NODE_NAME") or socket.gethostname()
+    session = os.getenv("CAMPOD_SESSION") or dt.datetime.now(dt.timezone.utc).strftime(
         "%Y%m%dT%H%M%SZ"
     )
 
@@ -388,7 +388,7 @@ def main():
             "spi_hz": spi_hz,
             "poll_hz": poll_hz,
             "self_test": st,
-            "separation_m": os.getenv("POD_ACCEL_SEPARATION_M"),
+            "separation_m": os.getenv("CAMPOD_ACCEL_SEPARATION_M"),
             "started_utc": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
             "note": (
                 "Samples are raw LSB counts, not g. Batches carry the cumulative "

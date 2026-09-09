@@ -4,7 +4,7 @@ Generated 2026-07-05. Summaries reflect the docs AS OF this date; verify before 
 
 ## Repo description
 
-`coordinator` is the on-vehicle companion software for the Rekon10 drone platform. It wires an OAK-D camera through a VIO pipeline (feature tracking -> VINS-Fusion pose estimation) and forwards pose to the ArduPilot flight controller over MAVLink, all running in Docker on a Raspberry Pi 4B payload computer. A companion Pi Zero 2 W acts as a camera pod; both devices share a single Ansible bootstrap and `coord` operator CLI.
+`coordinator` is the on-vehicle companion software for the Rekon10 drone platform. It wires an OAK-D camera through a VIO pipeline (feature tracking -> VINS-Fusion pose estimation) and forwards pose to the ArduPilot flight controller over MAVLink, all running in Docker on a Raspberry Pi 4B payload computer. A companion Pi Zero 2 W acts as a campod; both devices share a single Ansible bootstrap and `coord` operator CLI.
 
 ---
 
@@ -41,7 +41,7 @@ Generated 2026-07-05. Summaries reflect the docs AS OF this date; verify before 
 |------|-----------------|------|
 | `containers/coordinator-mavlink/README.md` | Minimal Python MAVLink router that reads pose from the IPC socket and forwards it to the FC over UART. | [containers/coordinator-mavlink/README.md](https://github.com/symmatree/coordinator/blob/main/containers/coordinator-mavlink/README.md) |
 | `containers/oak-still-capture/README.md` | Standalone depthai-python service: OAK-D RGB full-res stills to disk with JSON sidecars (`capture` profile; owns the OAK-D). | [containers/oak-still-capture/README.md](https://github.com/symmatree/coordinator/blob/main/containers/oak-still-capture/README.md) |
-| `containers/pod-camera/README.md` | Capture container for the Pi Zero pod: pulls JPEG stills at 1 Hz and writes frames + JSON sidecars to local SD. | [containers/pod-camera/README.md](https://github.com/symmatree/coordinator/blob/main/containers/pod-camera/README.md) |
+| `containers/campod-camera/README.md` | Capture container for the campod: pulls JPEG stills at 1 Hz and writes frames + JSON sidecars to local SD. | [containers/campod-camera/README.md](https://github.com/symmatree/coordinator/blob/main/containers/campod-camera/README.md) |
 | `containers/vio-estimator/README.md` | VINS-Fusion (`vio-estimator`) container: consumes tracker IMU + feature streams and publishes pose; no ROS. | [containers/vio-estimator/README.md](https://github.com/symmatree/coordinator/blob/main/containers/vio-estimator/README.md) |
 | `containers/vio-tracker/README.md` | OAK-D `feature_tracker` container built against depthai-core v2.25.0; produces IMU and feature streams over IPC sockets. | [containers/vio-tracker/README.md](https://github.com/symmatree/coordinator/blob/main/containers/vio-tracker/README.md) |
 
@@ -51,7 +51,7 @@ Generated 2026-07-05. Summaries reflect the docs AS OF this date; verify before 
 
 | Path | One-line summary | Link |
 |------|-----------------|------|
-| `host/README.md` | Ansible playbook and one-time shell entrypoint for bootstrapping both coordinator and pod devices via `device_role`. | [host/README.md](https://github.com/symmatree/coordinator/blob/main/host/README.md) |
+| `host/README.md` | Ansible playbook and one-time shell entrypoint for bootstrapping both coordinator and campod devices via `device_role`. | [host/README.md](https://github.com/symmatree/coordinator/blob/main/host/README.md) |
 
 ---
 

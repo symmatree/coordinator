@@ -3,7 +3,7 @@
 # to converge config. Run from a coordinator checkout after flash + first boot.
 #   ./host/one_time.sh              # coordinator (Pi 4B), default
 #   ./host/one_time.sh coordinator  # same, explicit
-#   ./host/one_time.sh pod          # pod (Pi Zero 2 W)
+#   ./host/one_time.sh campod       # campod (Pi Zero 2 W)
 # This is a CONFIG deploy -- it does NOT `apt dist-upgrade` (that dragged a full OS upgrade +
 # reboot into every deploy). The OS version is a property of the flashed image (#96); to move
 # it forward in place, run ./host/os_upgrade.sh deliberately (#48). Ansible may still reboot for
@@ -15,9 +15,9 @@ SAVE_DIR=$(pwd)
 
 DEVICE_ROLE="${1:-coordinator}"
 case "${DEVICE_ROLE}" in
-coordinator | pod) ;;
+coordinator | campod) ;;
 *)
-	echo "one_time: unknown device role '${DEVICE_ROLE}' (expected: coordinator | pod)" >&2
+	echo "one_time: unknown device role '${DEVICE_ROLE}' (expected: coordinator | campod)" >&2
 	exit 2
 	;;
 esac
