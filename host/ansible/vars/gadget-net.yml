@@ -42,14 +42,19 @@ campod_gadget_prefix: 24
 campod_gadget_coordinator_ip: 10.55.0.1
 
 # Per-node address. A map rather than a derivation on purpose: a MAC collision is
-# improbable and harmless, an IP collision is neither. Names are the camera-node
-# names from rekon10/arm-pods.md.
+# improbable and harmless, an IP collision is neither.
+#
+# Compass, nose = N (the convention rekon10/arm-pods.md already uses). Four arms
+# today; the scheme subdivides if an arm ever carries two cameras -- ne splits
+# into nne + ene, se into ese + sse, and so on -- so a second camera per arm does
+# not mean renaming the first.
+#
+# campod-, not pod-. "pod" already means three other things: the Kubernetes
+# object, this repo's ansible role, and (rekon10/arm-pods.md) the physical arm
+# enclosure that holds one or two of these hosts. None of the three is the machine
+# being named.
 campod_gadget_addresses:
-  pod-NNE: 10.55.0.11
-  pod-ENE: 10.55.0.12
-  pod-ESE: 10.55.0.13
-  pod-SSE: 10.55.0.14
-  pod-SSW: 10.55.0.15
-  pod-WSW: 10.55.0.16
-  pod-WNW: 10.55.0.17
-  pod-NNW: 10.55.0.18
+  campod-ne: 10.55.0.11
+  campod-se: 10.55.0.12
+  campod-sw: 10.55.0.13
+  campod-nw: 10.55.0.14

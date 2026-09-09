@@ -107,7 +107,7 @@ the initramfs carries btrfs, and `initramfs8` loads under `auto_initramfs=1`. Th
 ### 2. Clone and bootstrap
 
 ```bash
-ssh <user>@pod-NNE.local
+ssh <user>@campod-sw.local
 uname -m                      # expect aarch64
 
 sudo apt-get update && sudo apt-get install -y git
@@ -188,7 +188,7 @@ Expect, in the log:
 ```
 pod: session 2026...Z
 capture: exposure pinned to 5000 us, gain left on AEGC
-capture: node=pod-NNE dir=/captures/pod-NNE/<session> size=4608x2592 ...
+capture: node=campod-sw dir=/captures/campod-sw/<session> size=4608x2592 ...
 accel: camera: DEVID ok, self-test PASS (x=+0.99g y=-0.99g z=+1.50g)
 ```
 
@@ -205,8 +205,8 @@ Done when a session directory holds frames **and** a continuous accel record ove
 interval:
 
 ```bash
-ls /var/lib/pod/captures/pod-NNE/<session>/
-# pod-NNE_00000000_...jpg  pod-NNE_00000000_...json  accel-camera.jsonl  accel-arm.jsonl
+ls /var/lib/pod/captures/campod-sw/<session>/
+# campod-sw_00000000_...jpg  campod-sw_00000000_...json  accel-camera.jsonl  accel-arm.jsonl
 ```
 
 ---
@@ -388,7 +388,7 @@ rollback plan).
 `02:` is what makes it valid: locally-administered bit set, multicast bit clear. That
 matters more than it sounds, because `get_ether_addr()` silently falls back to a random
 address for anything `is_valid_ether_addr()` refuses -- a bad value looks identical to not
-having set one. Checked over the eight camera-node names: 16 addresses, all valid, no
+having set one. Checked over the node names: 8 addresses, all valid, no
 collisions; birthday odds across five bytes at this fleet size are ~1e-10.
 
 Note the packaged `rpi-usb-gadget` does **not** do this for you: it pins the USB
