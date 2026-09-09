@@ -32,7 +32,7 @@ writes and no custom initramfs:
 > back (`remount,ro` → "busy"). Consequences: the "mount `ro` → `remount,rw` for apt → `remount,ro` after"
 > cycle described in the table **cannot complete**, and the *"SD is fine because ro-`/usr` keeps write
 > volume low"* rationale below **does not currently hold** — which matters most for the SD roles
-> (coordinator + pods). Open design question tracked in [#96](https://github.com/symmatree/coordinator/issues/96);
+> (coordinator + campods). Open design question tracked in [#96](https://github.com/symmatree/coordinator/issues/96);
 > full evidence chain in `facts/topics/power-unstable-pi.md` → "Reality check — read-only `/usr` is NOT
 > actually enforced". Candidate fixes: put `@usr` on a **separate btrfs filesystem** (its own superblock,
 > so its `ro` is independent), a late-boot unit that re-asserts `ro` after `systemd-remount-fs`, or drop
@@ -53,7 +53,7 @@ All subvolumes `noatime`; the filesystem is `mkfs.btrfs -m single` (single metad
 
 Boot config is **standard, no custom initramfs hook**: `cmdline.txt` carries `rootfstype=btrfs rootflags=subvol=@`, and the stock Pi initramfs already has the btrfs module.
 
-Why btrfs over the overlay: tmpfs-upper overlay costs RAM we can't spare on the 512 MB Zero 2 W pods;
+Why btrfs over the overlay: tmpfs-upper overlay costs RAM we can't spare on the 512 MB Zero 2 W campods;
 disk-upper + conditional-reset needs a custom initramfs hook. Subvolumes give ro-where-it-matters +
 CoW crash-consistency + checksums (detect SD FTL rot ext4 serves silently) + snapshots, with only
 standard btrfs-root boot config. **Medium:** SD is fine *because* ro-`/usr` keeps write volume low;

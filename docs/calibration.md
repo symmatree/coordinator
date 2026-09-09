@@ -53,7 +53,7 @@ Multi-source, because artifacts originate on different devices; the coordinator 
 3. **Post-flight pull** (`coord flight pull <id>`, operator-triggered post-disarm; automate later) gathers into `flights/<id>/`:
    - `.bin` from the FC — MAVLink log download over the link (automatable, slow) or SD-card pull (fast, manual fallback)
    - VINS logs from the coordinator's own disk
-   - images from the OAK-D / Zero pods — over `br0` (#12) or **card-pull**; card-pull is fine **only as a declared step**, so the bundle is never silently incomplete (the notebook must distinguish "no images captured" from "images not recovered yet")
+   - images from the OAK-D / Zero campods — over `br0` (#12) or **card-pull**; card-pull is fine **only as a declared step**, so the bundle is never silently incomplete (the notebook must distinguish "no images captured" from "images not recovered yet")
 
 ## Evaluation = a flight-analysis notebook
 

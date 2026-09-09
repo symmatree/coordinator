@@ -111,7 +111,7 @@
 # decision.
 - name: Create the campod bridge
   # stp off and forward-delay 0: this is a star of point-to-point USB links with
-  # no possible loop, and 30 s of listening/learning on every pod reboot would be
+  # no possible loop, and 30 s of listening/learning on every campod reboot would be
   # a real cost for no benefit.
   ansible.builtin.copy:
     dest: "/etc/NetworkManager/system-connections/{{ campod_gadget_bridge }}.nmconnection"
@@ -141,11 +141,11 @@
 - name: Enslave campod gadget interfaces to the bridge as they appear
   # multi-connect=3 (MULTI_CONNECT_MULTIPLE) lets ONE profile be active on every
   # matching device at once, which is what makes this work for a variable number
-  # of pods with no per-pod profile and no udev glue.
+  # of campods with no per-campod profile and no udev glue.
   #
   # match.driver rather than match.interface-name on purpose: the primary name of
   # a USB NIC here is path-based (enp1s0u1u2...), so it identifies the hub port
-  # rather than the pod. The driver is the invariant. See vars/gadget-net.yml.
+  # rather than the campod. The driver is the invariant. See vars/gadget-net.yml.
   ansible.builtin.copy:
     dest: /etc/NetworkManager/system-connections/campod-bridge-port.nmconnection
     mode: "0600"

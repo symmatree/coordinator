@@ -1,25 +1,25 @@
-name: build-pod-camera
+name: build-campod-camera
 on:
   push:
     branches: [main]
     paths:
-      - containers/pod-camera/**
-      - .github/workflows/build-pod-camera.yaml
+      - containers/campod-camera/**
+      - .github/workflows/build-campod-camera.yaml
   pull_request:
     paths:
-      - containers/pod-camera/**
-      - .github/workflows/build-pod-camera.yaml
+      - containers/campod-camera/**
+      - .github/workflows/build-campod-camera.yaml
   workflow_dispatch: {}
 
 jobs:
-  build-pod-camera:
+  build-campod-camera:
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       id-token: write
       packages: write
     env:
-      IMAGE_NAME: ghcr.io/symmatree/coordinator-pod-camera
+      IMAGE_NAME: ghcr.io/symmatree/coordinator-campod-camera
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +28,7 @@ jobs:
         run: |
           set -a
           # shellcheck disable=SC1091
-          source containers/pod-camera/upstream.lock
+          source containers/campod-camera/upstream.lock
           set +a
           {
             echo "base_image=${BASE_IMAGE}"
@@ -62,8 +62,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: containers/pod-camera
-          file: containers/pod-camera/Dockerfile
+          context: containers/campod-camera
+          file: containers/campod-camera/Dockerfile
           platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.docker-metadata.outputs.tags }}

@@ -5,27 +5,40 @@ vibration sensors. This is the operator doc: how to bring a node up from a blank
 what to run on every update afterwards. It is deliberately command-oriented; the reasoning
 lives in the docs it points at.
 
-> **Naming.** The device is a **campod** -- a bare "pod" is hopelessly aliased in a
-> Kubernetes-adjacent environment. Code identifiers in this repo still say `pod`
-> (`host/ansible/roles/pod`, `stacks/pod/`, `POD_*` env, `one_time.sh pod`), and the image
-> role in `dotfiles-symm` is `campod`. Renaming this side is a coordinated cross-repo
-> change, not a local one -- see the tripwire below.
+> **Naming.** The device is a **campod**, everywhere: hostnames (`campod-ne` ...), the
+> ansible role, `stacks/campod/`, `/opt/stacks/campod`, `/var/lib/campod`, `CAMPOD_*` env,
+> `one_time.sh campod`, `containers/campod-camera`, and the image role in `dotfiles-symm`.
+>
+> A bare "pod" already denoted three other things -- the Kubernetes object, this repo's
+> ansible role, and (per [rekon10/arm-pods.md](rekon10/arm-pods.md)) the physical arm
+> enclosure that holds one or two of these hosts. None of the three is the machine. Where
+> "pod" survives in this repo it means one of those other things and is left alone.
 
-> **Cross-repo tripwire: `/var/lib/pod` is load-bearing.** The image mounts the `@data`
-> btrfs subvolume at `/var/lib/pod` **specifically** to match `coord_state_root` in
-> `host/ansible/roles/pod/tasks/main.yml`. Move that path on either side alone and captures
-> land silently on `@var` instead of the capture subvolume -- no error, no warning, and the
-> power-loss properties the subvolume exists for quietly stop applying. Changing it means
-> changing `roles/pod`, `/opt/stacks/pod`, `stacks/pod/`, `coord`'s stack detection, the
-> docs, **and** `dotfiles-symm/pi-image/roles/campod.env`, in one window.
+> **Cross-repo tripwire: `/var/lib/campod` is load-bearing.** The image mounts the `@data`
+> btrfs subvolume there **specifically** to match `coord_state_root` in
+> `host/ansible/roles/campod/tasks/main.yml`. Move that path on either side alone and
+> captures land silently on `@var` instead of the capture subvolume -- no error, no warning,
+> and the power-loss properties the subvolume exists for quietly stop applying.
+>
+> **This path just moved** (`/var/lib/pod` -> `/var/lib/campod`), so it needs
+> `DATA_MOUNT` in `dotfiles-symm/pi-image/roles/campod.env` to move in the same window.
+> Done now while nothing is deployed and no captures exist; after four units are stamped
+> and capturing it is the divergence above.
+>
+> **The role now fails rather than diverging.** `one_time.sh campod` checks whether
+> anything is mounted at `/var/lib/pod` and stops if so, because that means the card was
+> flashed from an image predating the rename while the checkout is from after it. The
+> symptom it prevents is silent: `findmnt /var/lib/campod` showing `@var` instead of
+> `@data`. **Don't mix a pre-rename card with a post-rename checkout** -- reflash, or check
+> out a commit from before the rename.
 
 | Where the reasoning lives | |
 |---|---|
-| Capture container, ADXL345 reader, SPI settings, readout constant | [containers/pod-camera/README.md](../containers/pod-camera/README.md) |
+| Capture container, ADXL345 reader, SPI settings, readout constant | [containers/campod-camera/README.md](../containers/campod-camera/README.md) |
 | Airframe/payload design, aim geometry, vibration rationale | [rekon10/arm-pods.md](rekon10/arm-pods.md) |
 | Filesystem choice and power-loss behaviour | [power-loss-filesystem.md](power-loss-filesystem.md) |
 | Coordinator equivalent of this doc | [host-setup.md](host-setup.md) |
-| The vibration question the pod exists to answer | [#211](https://github.com/symmatree/coordinator/issues/211) |
+| The vibration question the campod exists to answer | [#211](https://github.com/symmatree/coordinator/issues/211) |
 
 ---
 
@@ -38,10 +51,10 @@ status -- so they share one operator model rather than maintaining two parallel 
 |--------------|--------------------|
 | `bin/coord` | One stack-aware CLI. Each device runs only its own stack under `/opt/stacks/*`; `coord` defaults to the sole installed stack. |
 | `host/ansible/roles/docker-host` | Docker engine, group, state dirs -- identical on Pi 4B and Pi Zero. |
-| `host/one_time.sh [coordinator\|pod]` | One bootstrap entrypoint; the role argument selects the device. |
+| `host/one_time.sh [coordinator\|campod]` | One bootstrap entrypoint; the role argument selects the device. |
 | `/opt/stacks/<name>` | Both devices lay their one stack there. |
 
-Device-specific code stays small: `roles/pod`, `containers/pod-camera/`, `stacks/pod/`.
+Device-specific code stays small: `roles/campod`, `containers/campod-camera/`, `stacks/campod/`.
 
 ## Constraints that shape everything below
 
@@ -52,7 +65,7 @@ Device-specific code stays small: `roles/pod`, `containers/pod-camera/`, `stacks
 - **Never build on the Zero.** CI builds arm64 and the Zero pulls. A build will not fit.
 - **Camera passthrough is the fiddly part, not resources.** libcamera in a container needs
   `/dev/video*`, `/dev/media*`, `/dev/dma_heap`, vchiq and `/run/udev` visible inside;
-  `stacks/pod/compose.yaml` uses `privileged: true` + `/run/udev`, with explicit device
+  `stacks/campod/compose.yaml` uses `privileged: true` + `/run/udev`, with explicit device
   mounts as the fallback if enumeration ever fails.
 - **Thermal is handled in hardware**, not by the runtime -- full-length heatsinks and an
   open centre channel for prop-wash. See [rekon10/arm-pods.md](rekon10/arm-pods.md).
@@ -71,7 +84,7 @@ stack you throw away.
 
 The image and its per-unit provisioning live in **`dotfiles-symm/pi-image`**, not here:
 
-- `roles/campod.env` -- Zero 2 W / SD knobs: `DATA_MOUNT=/var/lib/pod`, `METADATA=single`,
+- `roles/campod.env` -- Zero 2 W / SD knobs: `DATA_MOUNT=/var/lib/campod`, `METADATA=single`,
   and a `config.append.txt` carrying `enable_uart=1` + `dtoverlay=disable-bt` (serial
   console) and `dtoverlay=dwc2,dr_mode=peripheral` (gadget net, device tree, must come
   from the image).
@@ -107,21 +120,21 @@ the initramfs carries btrfs, and `initramfs8` loads under `auto_initramfs=1`. Th
 ### 2. Clone and bootstrap
 
 ```bash
-ssh <user>@pod-NNE.local
+ssh <user>@campod-sw.local
 uname -m                      # expect aarch64
 
 sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/symmatree/coordinator.git
 cd coordinator
-./host/one_time.sh pod
+./host/one_time.sh campod
 ```
 
-`one_time.sh pod` installs Ansible, then runs the shared playbook with
-`device_role=pod`:
+`one_time.sh campod` installs Ansible, then runs the shared playbook with
+`device_role=campod`:
 
 1. `docker-host` role -- Docker CE + Compose plugin, docker group, service enabled.
-2. `pod` role -- `/var/lib/pod/{config,captures}`, **symlinks** `/opt/stacks/pod` to this
-   checkout's `stacks/pod/`, and installs the `coord` CLI. It deliberately writes nothing
+2. `campod` role -- `/var/lib/campod/{config,captures}`, **symlinks** `/opt/stacks/campod` to this
+   checkout's `stacks/campod/`, and installs the `coord` CLI. It deliberately writes nothing
    under `/boot/firmware`: device tree comes from the image (see below).
 
 It does **not** reboot itself ([#113](https://github.com/symmatree/coordinator/issues/113)
@@ -147,18 +160,18 @@ btrfs subvolumes give the rest of the disk.
 ```bash
 newgrp docker                 # or re-login, if `docker ps` says permission denied
 docker ps
-ls -l /opt/stacks/pod/        # symlink into the checkout
+ls -l /opt/stacks/campod/        # symlink into the checkout
 ls /dev/spidev*               # expect spidev0.0 and spidev0.1
 coord status                  # empty until `coord start`
 ```
 
 `/dev/spidev0.*` missing means the card's `config.txt` has no `dtparam=spi=on` -- see the
-note above. Re-running `one_time.sh pod` will not fix it; that line comes from the image.
+note above. Re-running `one_time.sh campod` will not fix it; that line comes from the image.
 
 ### 4. Wire the sensors
 
 Full pin table, connector and harness guidance: `#211` and
-[containers/pod-camera/README.md](../containers/pod-camera/README.md). Everything lives in
+[containers/campod-camera/README.md](../containers/campod-camera/README.md). Everything lives in
 one contiguous 2x5 block on the Zero's 40-pin header:
 
 | odd | | even | |
@@ -175,12 +188,12 @@ harness is above the Pi's own logic level.
 
 ### 5. Turn on capture
 
-`stacks/pod/.env` ships `COMPOSE_PROFILES=capture`, so:
+`stacks/campod/.env` ships `COMPOSE_PROFILES=capture`, so:
 
 ```bash
-coord pull                    # ~241 MB compressed for pod-camera
+coord pull                    # ~241 MB compressed for campod-camera
 coord start
-coord logs -f pod-camera
+coord logs -f campod-camera
 ```
 
 Expect, in the log:
@@ -188,32 +201,32 @@ Expect, in the log:
 ```
 pod: session 2026...Z
 capture: exposure pinned to 5000 us, gain left on AEGC
-capture: node=pod-NNE dir=/captures/pod-NNE/<session> size=4608x2592 ...
+capture: node=campod-sw dir=/captures/campod-sw/<session> size=4608x2592 ...
 accel: camera: DEVID ok, self-test PASS (x=+0.99g y=-0.99g z=+1.50g)
 ```
 
-The accelerometer reader is **opt-in and off by default** -- `POD_ACCEL_DEVICES` is empty
-in `stacks/pod/.env` so a node without sensors wired does not spew retries. Set it (in git,
+The accelerometer reader is **opt-in and off by default** -- `CAMPOD_ACCEL_DEVICES` is empty
+in `stacks/campod/.env` so a node without sensors wired does not spew retries. Set it (in git,
 see below) to switch it on:
 
 ```
-POD_ACCEL_DEVICES=camera:/dev/spidev0.0,arm:/dev/spidev0.1
-POD_ACCEL_SEPARATION_M=<measured camera-to-arm baseline>
+CAMPOD_ACCEL_DEVICES=camera:/dev/spidev0.0,arm:/dev/spidev0.1
+CAMPOD_ACCEL_SEPARATION_M=<measured camera-to-arm baseline>
 ```
 
 Done when a session directory holds frames **and** a continuous accel record over the same
 interval:
 
 ```bash
-ls /var/lib/pod/captures/pod-NNE/<session>/
-# pod-NNE_00000000_...jpg  pod-NNE_00000000_...json  accel-camera.jsonl  accel-arm.jsonl
+ls /var/lib/campod/captures/campod-sw/<session>/
+# campod-sw_00000000_...jpg  campod-sw_00000000_...json  accel-camera.jsonl  accel-arm.jsonl
 ```
 
 ---
 
 ## Every update
 
-**Config and code are the same thing here.** `/opt/stacks/pod` is a *symlink* into the
+**Config and code are the same thing here.** `/opt/stacks/campod` is a *symlink* into the
 checkout, so `git pull` **is** the config deploy -- there is no copy step and no on-box
 edit to make ([#48](https://github.com/symmatree/coordinator/issues/48)). Never hand-edit
 the deployed `.env`; change it in git and pull.
@@ -229,17 +242,17 @@ Re-run the bootstrap only when the **host** changes -- a new role task, a new co
 entry, a Docker or Ansible bump:
 
 ```bash
-./host/one_time.sh pod        # re-run after any reboot it asks for, until clean
+./host/one_time.sh campod        # re-run after any reboot it asks for, until clean
 ```
 
 It is idempotent; running it when nothing changed is cheap and safe.
 
 | What changed | What to run |
 |---|---|
-| `stacks/pod/.env`, `compose.yaml` | `git pull && coord start` |
+| `stacks/campod/.env`, `compose.yaml` | `git pull && coord start` |
 | A container image (new build on `main`) | `coord pull` |
-| `containers/pod-camera/*` merged upstream | `coord pull` (CI builds it; never build on the Zero) |
-| An Ansible role, or anything in `/boot/firmware/config.txt` | `./host/one_time.sh pod`, reboot, re-run |
+| `containers/campod-camera/*` merged upstream | `coord pull` (CI builds it; never build on the Zero) |
+| An Ansible role, or anything in `/boot/firmware/config.txt` | `./host/one_time.sh campod`, reboot, re-run |
 | OS packages | `./host/os_upgrade.sh` -- deliberate, not part of a config deploy |
 
 **Never build on the Zero.** CI builds arm64 and the Zero pulls. 512 MB of RAM is the
@@ -254,15 +267,15 @@ binding constraint on this device and a build will not fit.
 | `exec format error` | wrong artifact flashed -- confirm it is the campod image, not a stock card. (The campod image is always arm64, so this cannot come from picking a 32-bit variant; there isn't one.) |
 | `permission denied` on `docker ps` | `newgrp docker` or re-login (not a reboot) |
 | `one_time.sh` exits 1, reboot-required set | reboot, run it again -- expected at least once on a fresh card |
-| `accel: ... does not exist -- is dtparam=spi=on set?` | `ls /dev/spidev*`; if empty, reboot and re-run `one_time.sh pod` |
+| `accel: ... does not exist -- is dtparam=spi=on set?` | `ls /dev/spidev*`; if empty, reboot and re-run `one_time.sh campod` |
 | `accel: DEVID 0x00, expected 0xE5` | wiring, chip select, or SPI mode -- the bus is reaching nothing |
 | `accel: self-test FAIL` | sensor is talking but not moving: cold joint on a supply pin, or a dead part |
 | `capture: WARNING could not pin exposure` | container libcamera predates the exposure/gain mode split (needs >= 0.4). Check `RPI_SUITE` matches **the campod image's pinned suite** -- `dotfiles-symm/pi-image/build-image.sh`, currently Bookworm -- not whatever Pi OS ships today |
 | libcamera reports "no cameras" | container/host suite mismatch. `RPI_SUITE` tracks **the campod image's pinned suite** (`dotfiles-symm/pi-image/build-image.sh`), not current stock Pi OS -- reading it the other way is what produced [#214](https://github.com/symmatree/coordinator/pull/214) |
 | Out-of-memory during bootstrap | expected pressure point on 512 MB; confirm zram/swap is on (Pi OS default) |
-| `coord` picks the wrong stack | only the pod stack belongs under `/opt/stacks/` on a campod |
+| `coord` picks the wrong stack | only the campod stack belongs under `/opt/stacks/` on a campod |
 | Dead on **first** boot: no network, dark ACT LED, `firstrun.sh` still on the card | seen once, unexplained; power-cycle cleared it. Invisible without the serial console (GPIO 14/15) |
-| Captures not landing on the `@data` subvolume | `findmnt /var/lib/pod` -- if it is on `@var`, the image's `DATA_MOUNT` and `coord_state_root` have diverged |
+| Captures not landing on the `@data` subvolume | `findmnt /var/lib/campod` -- if it is on `@var`, the image's `DATA_MOUNT` and `coord_state_root` have diverged |
 
 ---
 
@@ -271,7 +284,7 @@ binding constraint on this device and a build will not fit.
 Everything above assumes the node has its own route to GitHub and GHCR, which is true on
 the bench over lab WiFi and false in the field. The options, with the numbers that matter:
 
-- **pod-camera is ~241 MB compressed.** Five nodes pulling independently is ~1.2 GB of WAN
+- **campod-camera is ~241 MB compressed.** Five nodes pulling independently is ~1.2 GB of WAN
   traffic per image bump; one coordinator pull plus local distribution is 241 MB of WAN and
   ~1 GB over USB.
 - **The USB gadget link is not the constraint.** An image update is an occasional bulk
@@ -284,21 +297,21 @@ the bench over lab WiFi and false in the field. The options, with the numbers th
   `docker save | ssh | docker load`.
 
 Not decided. Related: [#12](https://github.com/symmatree/coordinator/issues/12) (coordinator
-bridge), [#24](https://github.com/symmatree/coordinator/issues/24) (pod gadget net).
+bridge), [#24](https://github.com/symmatree/coordinator/issues/24) (campod gadget net).
 
 ## Gadget network, campod side
 
 **What comes from where.** The image supplies exactly one thing: the
 `dtoverlay=dwc2,dr_mode=peripheral` line, because it is device tree and nothing in userspace
-can substitute for it. Everything else is `roles/pod`, applied by `one_time.sh pod` -- so a
+can substitute for it. Everything else is `roles/campod`, applied by `one_time.sh campod` -- so a
 gadget-net change is a `git pull` and a bootstrap re-run, not a reflash.
 
 The bootstrap loads `g_ether` itself rather than leaving it for the next boot, so the link
-comes up in the same run. Both ends need their own bootstrap: `one_time.sh pod` on each
+comes up in the same run. Both ends need their own bootstrap: `one_time.sh campod` on each
 campod, `one_time.sh` on the coordinator for the bridge. The coordinator side needs no
 reboot -- the handler reloads NetworkManager.
 
-Everything in userspace is `roles/pod`:
+Everything in userspace is `roles/campod`:
 
 | | |
 |---|---|
@@ -315,27 +328,27 @@ hostname is not in the map gets no address and says so.
 Neither side sets a gateway, and both set `never-default`. This is a link-local segment
 between two boxes, not a route to anywhere. Naming the coordinator as a gateway would put a
 default route on `usb0`, and NM's per-type metrics rank ethernet (100) ahead of WiFi (600)
--- so a pod would try to reach the internet through a coordinator that neither forwards nor
+-- so a campod would try to reach the internet through a coordinator that neither forwards nor
 NATs, and lose the WiFi path it currently uses for updates. Adding forwarding + NAT later is
 a deliberate change on the coordinator, not something to fall into.
 
 ## Gadget network, coordinator side
 
 All campods land on one bridge (`br0`, `10.55.0.1/24`), so the coordinator holds one address
-rather than one per pod and the pods share an L2 segment. `stp=false` and `forward-delay=0`:
+rather than one per campod and the campods share an L2 segment. `stp=false` and `forward-delay=0`:
 it is a star of point-to-point USB links with no possible loop, and 30 s of
-listening/learning on every pod reboot would cost something for nothing.
+listening/learning on every campod reboot would cost something for nothing.
 
-Membership is dynamic -- pods appear when they boot -- and is handled by one NM profile with
+Membership is dynamic -- campods appear when they boot -- and is handled by one NM profile with
 `multi-connect=3`, which lets a single profile be active on every matching device at once.
-No per-pod profile, no udev glue.
+No per-campod profile, no udev glue.
 
 **It matches on driver, not interface name.** systemd will generate an `enx<mac>` identifier
 for our pinned MACs -- `names_mac()` only skips non-permanent addresses and has no
 locally-administered guard -- but `99-default.link` ships
 `NamePolicy=keep kernel database onboard slot path`, with `mac` only in
 `AlternativeNamesPolicy`. So `enx<mac>` is an *alternative* name and the primary is
-path-based (`enp1s0u1u2`), which identifies the hub port rather than the pod. Matching a
+path-based (`enp1s0u1u2`), which identifies the hub port rather than the campod. Matching a
 name glob would be matching cabling; the driver is the invariant.
 
 No DHCP and no dnsmasq (#211). #12's title says DHCP and predates that decision.
@@ -344,7 +357,7 @@ No DHCP and no dnsmasq (#211). #12's title says DHCP and predates that decision.
 address on `usb0` you can reach a campod over its inner micro-USB from a laptop, which is
 worth having when something is broken and you want to dummy out one end. It does not
 substitute for the real pairing: a success there does not predict a Pi 4B host, and a
-failure there indicts the laptop as readily as the pod. Different host controller,
+failure there indicts the laptop as readily as the campod. Different host controller,
 different scheduler -- and against Windows, `g_ether` presents RNDIS rather than the
 CDC-ECM a Linux host binds through `cdc_ether`, so it is not even the same protocol. If you
 do reach for one, a **Linux** laptop at least shares the driver with the coordinator.
@@ -372,10 +385,10 @@ link. From the kernel source (`drivers/usb/gadget/function/u_ether.{c,h}`, rpi-6
 defaulting to NULL, and `get_ether_addr()` falls straight through to `eth_random_addr()`
 when its string argument is NULL. **Both** ends randomise, not just one.
 
-Harmless with a single pod; with four on a bridge it means DHCP reservations never stick
+Harmless with a single campod; with four on a bridge it means DHCP reservations never stick
 and NetworkManager creates a fresh connection profile per boot.
 
-**Implemented in `roles/pod`:** `options g_ether dev_addr=... host_addr=...` in
+**Implemented in `roles/campod`:** `options g_ether dev_addr=... host_addr=...` in
 `/etc/modprobe.d/campod-g_ether.conf`, both computed as `02:` + the first five bytes of
 `sha256("<salt>" + hostname)` -- different salts for the two ends so they cannot collide.
 That is deterministic, stable across reboots, unique per unit, and computable by ansible
@@ -388,7 +401,7 @@ rollback plan).
 `02:` is what makes it valid: locally-administered bit set, multicast bit clear. That
 matters more than it sounds, because `get_ether_addr()` silently falls back to a random
 address for anything `is_valid_ether_addr()` refuses -- a bad value looks identical to not
-having set one. Checked over the eight camera-node names: 16 addresses, all valid, no
+having set one. Checked over the node names: 8 addresses, all valid, no
 collisions; birthday odds across five bytes at this fleet size are ~1e-10.
 
 Note the packaged `rpi-usb-gadget` does **not** do this for you: it pins the USB

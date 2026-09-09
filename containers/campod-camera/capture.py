@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Rekon pod still-capture loop.
+"""Rekon campod still-capture loop.
 
 Captures JPEG stills from the Camera Module 3 (IMX708) at a fixed cadence and
 writes each frame plus a JSON metadata sidecar to local storage. Standalone
 (Phase 2): no network, no coordination. The frame-sync hooks (pacesetter/server
-+ clients) are present but default off -- they are exercised once multiple pods
++ clients) are present but default off -- they are exercised once multiple campods
 share a network and time base (#24). See docs/campod.md.
 
 Config via environment (all optional):
-  POD_NODE_NAME       node label in filenames/metadata (default: hostname)
-  POD_CAPTURE_DIR     output dir (default: /captures)
-  POD_CAPTURE_HZ      captures per second (default: 1.0)
-  POD_CAPTURE_WIDTH   frame width  (default: 0 = sensor full resolution)
-  POD_CAPTURE_HEIGHT  frame height (default: 0 = sensor full resolution)
-  POD_JPEG_QUALITY    1-100 (default: 90)
-  POD_STILL_MAX_EXPOSURE_US
+  CAMPOD_NODE_NAME       node label in filenames/metadata (default: hostname)
+  CAMPOD_CAPTURE_DIR     output dir (default: /captures)
+  CAMPOD_CAPTURE_HZ      captures per second (default: 1.0)
+  CAMPOD_CAPTURE_WIDTH   frame width  (default: 0 = sensor full resolution)
+  CAMPOD_CAPTURE_HEIGHT  frame height (default: 0 = sensor full resolution)
+  CAMPOD_JPEG_QUALITY    1-100 (default: 90)
+  CAMPOD_STILL_MAX_EXPOSURE_US
                       cap the shutter (default: 5000; 0 = uncapped AE)
-  POD_STILL_FOCUS     auto | infinity | <dioptres> (default: auto)
-  POD_SESSION         session id (default: UTC timestamp at start)
-  POD_SYNC_MODE       off | server | client (default: off) -- see note below
+  CAMPOD_STILL_FOCUS     auto | infinity | <dioptres> (default: auto)
+  CAMPOD_SESSION         session id (default: UTC timestamp at start)
+  CAMPOD_SYNC_MODE       off | server | client (default: off) -- see note below
 """
 
 import datetime as dt
@@ -108,7 +108,7 @@ def _apply_focus(picam2, focus):
     2 m, 2.0 is 0.5 m. Copying OAK_STILL_FOCUS=125 here would ask for 8 mm.
 
     Default is `auto`, deliberately: a wrong fixed position is worse than AF, and
-    the bench calibration that would justify a number (X17's pod equivalent) has
+    the bench calibration that would justify a number (X17's campod equivalent) has
     not been run. Set it once the flight distance is known.
     """
     if focus in ("", "auto"):
@@ -135,7 +135,7 @@ def _apply_focus(picam2, focus):
 def _maybe_apply_sync(picam2, mode):
     """Best-effort libcamera camera-sync configuration.
 
-    The CM3 has no XVS hardware trigger, so multi-pod alignment uses libcamera's
+    The CM3 has no XVS hardware trigger, so multi-campod alignment uses libcamera's
     software sync (one server/pacesetter, the rest clients). The exact picamera2
     control surface is NOT verified on hardware yet, so this is guarded: a wrong
     control name logs a warning instead of killing capture. Confirm against the
@@ -164,15 +164,15 @@ def _maybe_apply_sync(picam2, mode):
 
 
 def main():
-    node = os.getenv("POD_NODE_NAME") or socket.gethostname()
-    out_dir = Path(os.getenv("POD_CAPTURE_DIR", "/captures"))
-    hz = _env_float("POD_CAPTURE_HZ", 1.0)
-    width = _env_int("POD_CAPTURE_WIDTH", 0)
-    height = _env_int("POD_CAPTURE_HEIGHT", 0)
-    quality = _env_int("POD_JPEG_QUALITY", 90)
-    max_exposure_us = _env_int("POD_STILL_MAX_EXPOSURE_US", 5000)
-    focus = (os.getenv("POD_STILL_FOCUS") or "auto").strip().lower()
-    sync_mode = (os.getenv("POD_SYNC_MODE") or "off").strip().lower()
+    node = os.getenv("CAMPOD_NODE_NAME") or socket.gethostname()
+    out_dir = Path(os.getenv("CAMPOD_CAPTURE_DIR", "/captures"))
+    hz = _env_float("CAMPOD_CAPTURE_HZ", 1.0)
+    width = _env_int("CAMPOD_CAPTURE_WIDTH", 0)
+    height = _env_int("CAMPOD_CAPTURE_HEIGHT", 0)
+    quality = _env_int("CAMPOD_JPEG_QUALITY", 90)
+    max_exposure_us = _env_int("CAMPOD_STILL_MAX_EXPOSURE_US", 5000)
+    focus = (os.getenv("CAMPOD_STILL_FOCUS") or "auto").strip().lower()
+    sync_mode = (os.getenv("CAMPOD_SYNC_MODE") or "off").strip().lower()
 
     interval = 1.0 / hz if hz > 0 else 1.0
 
@@ -180,10 +180,10 @@ def main():
     signal.signal(signal.SIGINT, _request_stop)
 
     # Per-process session dir so reboots/restarts don't interleave sequences.
-    # POD_SESSION lets the entrypoint hand the same id to the accelerometer
+    # CAMPOD_SESSION lets the entrypoint hand the same id to the accelerometer
     # reader, so a session directory holds the frames and the vibration record
     # for the same interval -- one self-contained unit (#211).
-    session = os.getenv("POD_SESSION") or dt.datetime.now(dt.timezone.utc).strftime(
+    session = os.getenv("CAMPOD_SESSION") or dt.datetime.now(dt.timezone.utc).strftime(
         "%Y%m%dT%H%M%SZ"
     )
     session_dir = out_dir / node / session
@@ -245,7 +245,7 @@ def main():
                 "lens_position": metadata.get("LensPosition"),
                 "af_state": metadata.get("AfState"),
                 # Rolling-shutter window. Band pitch in rows -> Hz needs the
-                # line time; see containers/pod-camera/README.md.
+                # line time; see containers/campod-camera/README.md.
                 "frame_duration_us": metadata.get("FrameDuration"),
                 "size": [size[0], size[1]],
                 "sync_mode": sync_active or "off",

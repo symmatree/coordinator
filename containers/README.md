@@ -26,7 +26,7 @@ The two big offenders were **depthai-core** (~built, then copied in) and the **O
 ## The strategy (three parts)
 
 1. **Pin every base image by digest.** `FROM debian:bookworm-slim@sha256:...` in every Dockerfile
-   (and `pod-camera`'s `BASE_IMAGE` default). The readable tag stays for humans; the digest makes
+   (and `campod-camera`'s `BASE_IMAGE` default). The readable tag stays for humans; the digest makes
    the base layer immutable, so a Debian release no longer silently re-pulls the fleet. A base
    move becomes a **deliberate, reviewed** digest bump.
 2. **Factor the heavy, stable content into pinned base images**, built on their own cadence and
@@ -58,7 +58,7 @@ the app images, never an implicit move.
 | `oak-still-capture` | arm64 | -- | `debian@digest` | uses **depthai-python + OpenCV pip wheels**, a different dependency path -- no shared apt/C++ base to factor; just pins Debian |
 | `sh1106-display` | arm64 | -- | `debian@digest` | small; no heavy shared content |
 | `coordinator-mavlink` | arm64 | -- | `debian@digest` | small; no heavy shared content |
-| `pod-camera` | arm64 | -- | `debian@digest` (via `BASE_IMAGE`) | small; adds the Raspberry Pi apt suite for matched `libcamera`/`picamera2` |
+| `campod-camera` | arm64 | -- | `debian@digest` (via `BASE_IMAGE`) | small; adds the Raspberry Pi apt suite for matched `libcamera`/`picamera2` |
 
 The rule of thumb: **factor a base only for content that is both heavy and shared/expensive to
 rebuild** (the C++ depthai build; the OpenCV runtime). Small images, or ones on a self-contained

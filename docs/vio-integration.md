@@ -53,7 +53,7 @@ Long-term home for Rekon FC integration:
 
 - Read `/tmp/chobits_server` (same pose contract as chobitsfan initially -- keeps `vins_fusion` untouched).
 - UART to FC (1.5 Mbaud MAVLink2 per current wiring).
-- Later: Pi Zero pod messages (host `br0` / USB gadget network), obstacle MAVLink, operator-facing status.
+- Later: Pi Zero campod messages (host `br0` / USB gadget network), obstacle MAVLink, operator-facing status.
 
 Defer Pi Zero relay and obstacle messages until after vision bench if that sharply reduces early complexity; do not defer having **some** coordinator-owned router for flight.
 

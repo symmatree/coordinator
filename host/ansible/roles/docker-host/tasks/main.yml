@@ -1,5 +1,5 @@
 ---
-# Shared across coordinator (Pi 4B) and pod (Pi Zero 2 W): Docker engine,
+# Shared across coordinator (Pi 4B) and campod (Pi Zero 2 W): Docker engine,
 # group membership, service, and the kernel/firmware reboot loop. No
 # device-specific paths or hardware here -- that lives in the device roles.
 
@@ -8,7 +8,7 @@
     that:
       - ansible_architecture == "aarch64"
     fail_msg: >-
-      Coordinator/pod images are linux/arm64. Install 64-bit Raspberry Pi OS.
+      Coordinator/campod images are linux/arm64. Install 64-bit Raspberry Pi OS.
 
 - name: Install packages for Docker apt repo
   ansible.builtin.apt:
