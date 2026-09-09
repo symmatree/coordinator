@@ -24,6 +24,13 @@ lives in the docs it points at.
 > `DATA_MOUNT` in `dotfiles-symm/pi-image/roles/campod.env` to move in the same window.
 > Done now while nothing is deployed and no captures exist; after four units are stamped
 > and capturing it is the divergence above.
+>
+> **The role now fails rather than diverging.** `one_time.sh campod` checks whether
+> anything is mounted at `/var/lib/pod` and stops if so, because that means the card was
+> flashed from an image predating the rename while the checkout is from after it. The
+> symptom it prevents is silent: `findmnt /var/lib/campod` showing `@var` instead of
+> `@data`. **Don't mix a pre-rename card with a post-rename checkout** -- reflash, or check
+> out a commit from before the rename.
 
 | Where the reasoning lives | |
 |---|---|

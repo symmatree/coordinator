@@ -13,6 +13,34 @@
 # Module LOADING is still ansible's (dwc2/g_ether via /etc/modules-load.d/), along
 # with the g_ether MAC pinning in /etc/modprobe.d/ -- see docs/campod.md.
 
+# The image mounts the @data btrfs subvolume at coord_state_root. Those two names
+# have to agree across two repos, and when they don't, nothing errors: captures
+# just land on @var instead of the capture subvolume, and the power-loss
+# properties @data exists for quietly stop applying. It is invisible until
+# somebody runs findmnt.
+#
+# That divergence is live right now, in exactly one direction: a card flashed from
+# an image predating the /var/lib/pod -> /var/lib/campod rename, running a checkout
+# from after it. Cheap to detect and worth failing on -- findmnt only succeeds here
+# if something really is mounted at the old path, so it cannot fire on a coordinator
+# or a dev box that simply has no @data.
+- name: Check whether @data is still mounted at the pre-rename path
+  ansible.builtin.command: findmnt -n -o TARGET /var/lib/pod
+  register: campod_stale_data_mount
+  changed_when: false
+  failed_when: false
+
+- name: Fail if the image and this checkout disagree about the state path
+  ansible.builtin.fail:
+    msg: >-
+      /var/lib/pod is a mountpoint, but this checkout puts campod state at
+      /var/lib/campod. The card was flashed from an image predating that rename.
+      Bootstrapping anyway would create /var/lib/campod on @var and captures would
+      silently miss the @data subvolume. Reflash from an image carrying
+      DATA_MOUNT=/var/lib/campod (dotfiles-symm/pi-image/roles/campod.env), or
+      check out a commit from before the rename. Do not mix the two.
+  when: campod_stale_data_mount.rc == 0
+
 - name: Install campod stack and state dirs
   ansible.builtin.include_role:
     name: coord-stack
