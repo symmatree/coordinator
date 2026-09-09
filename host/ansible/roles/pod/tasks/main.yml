@@ -117,11 +117,44 @@
     - ansible_hostname in campod_gadget_addresses
   notify: Reload NetworkManager connections
 
+# modules-load.d only takes effect at boot, and nothing here touches config.txt,
+# so nothing sets /var/run/reboot-required and one_time.sh exits clean. Without
+# this the bootstrap reports success and the gadget link is simply not up until
+# somebody happens to reboot -- with no message saying so. Load it now instead.
+#
+# Safe to run with no cable and no coordinator: g_ether just presents a device
+# nobody has enumerated.
+- name: Check whether the gadget module is already loaded
+  ansible.builtin.command: lsmod
+  changed_when: false
+  register: campod_lsmod
+  when: campod_gadget_enabled | bool
+
+- name: Load the gadget module now
+  # The options file above is already written, so this picks up the pinned MACs.
+  ansible.builtin.command: modprobe g_ether
+  when:
+    - campod_gadget_enabled | bool
+    - "'g_ether' not in campod_lsmod.stdout"
+  changed_when: true
+
+- name: Note that pinned MACs need a reload if the module was already up
+  # modprobe will not re-read options for an already-loaded module, and unloading
+  # it would drop a live link. Rare -- it means the MACs changed under a running
+  # gadget, i.e. the hostname changed -- but silent otherwise.
+  ansible.builtin.debug:
+    msg: >-
+      g_ether was already loaded, so any change to the pinned MAC addresses takes
+      effect on the next reboot.
+  when:
+    - campod_gadget_enabled | bool
+    - "'g_ether' in campod_lsmod.stdout"
+
 - name: Warn when this node has no gadget address assigned
   ansible.builtin.debug:
     msg: >-
       {{ ansible_hostname }} is not in campod_gadget_addresses, so {{ campod_gadget_iface }}
-      gets no address. Add it in host/ansible/roles/pod/defaults/main.yml.
+      gets no address. Add it in host/ansible/vars/gadget-net.yml.
   when:
     - campod_gadget_enabled | bool
     - ansible_hostname not in campod_gadget_addresses
