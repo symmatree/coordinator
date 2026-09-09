@@ -1,0 +1,55 @@
+---
+# USB gadget network -- the contract BOTH halves read (#12 coordinator, #24 campod).
+#
+# Deliberately one file rather than a copy in each role's defaults. The subnet and
+# the coordinator's address have to agree across two devices; two definitions is
+# how they end up disagreeing, and the failure is a link that comes up and carries
+# nothing. Included by site.yaml, so both roles see the same values.
+#
+# The dwc2 overlay is device tree and comes from the campod image. Everything
+# here is userspace.
+
+# Enable/disable the whole gadget-net block on both devices. Off leaves each
+# exactly as it was.
+campod_gadget_enabled: true
+
+# Interface the g_ether gadget presents ON THE CAMPOD. The coordinator side does
+# not get to assume a name -- see campod_gadget_host_drivers below.
+campod_gadget_iface: usb0
+
+# Bridge the coordinator puts every campod on, so all of them share one L2
+# segment and the coordinator needs one address rather than one per pod.
+campod_gadget_bridge: br0
+
+# How the coordinator recognises a campod as it appears. Matching on DRIVER, not
+# on interface name, and that is not fussiness:
+#
+# systemd's names_mac() will happily generate an enx<mac> identifier for our
+# pinned addresses -- it only skips non-permanent (random) MACs, and has no
+# locally-administered guard -- but 99-default.link ships
+# `NamePolicy=keep kernel database onboard slot path`, with `mac` present only in
+# AlternativeNamesPolicy. So enx<mac> is an ALTERNATIVE name, never the primary
+# one, and the primary is path-based (enp1s0u1u2...), i.e. determined by which hub
+# port the pod is plugged into rather than by which pod it is. Matching a name
+# glob would be matching cabling. The driver is the actual invariant.
+campod_gadget_host_drivers: cdc_ether rndis_host cdc_subset
+
+# Addressing. Static on both ends, no DHCP and nothing to run on the coordinator
+# (#211). PROPOSED, pending the #12 contract -- this is the one thing here that is
+# a joint decision rather than a fact, and changing it is this file plus the
+# coordinator's own address.
+campod_gadget_prefix: 24
+campod_gadget_coordinator_ip: 10.55.0.1
+
+# Per-node address. A map rather than a derivation on purpose: a MAC collision is
+# improbable and harmless, an IP collision is neither. Names are the camera-node
+# names from rekon10/arm-pods.md.
+campod_gadget_addresses:
+  pod-NNE: 10.55.0.11
+  pod-ENE: 10.55.0.12
+  pod-ESE: 10.55.0.13
+  pod-SSE: 10.55.0.14
+  pod-SSW: 10.55.0.15
+  pod-WSW: 10.55.0.16
+  pod-WNW: 10.55.0.17
+  pod-NNW: 10.55.0.18

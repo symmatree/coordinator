@@ -286,6 +286,65 @@ the bench over lab WiFi and false in the field. The options, with the numbers th
 Not decided. Related: [#12](https://github.com/symmatree/coordinator/issues/12) (coordinator
 bridge), [#24](https://github.com/symmatree/coordinator/issues/24) (pod gadget net).
 
+## Gadget network, campod side
+
+The dwc2 overlay is device tree and comes from the image. Everything in userspace is
+`roles/pod`, applied by `one_time.sh pod`:
+
+| | |
+|---|---|
+| `/etc/modules-load.d/campod-gadget.conf` | loads `dwc2` + `g_ether` at boot |
+| `/etc/modprobe.d/campod-g_ether.conf` | pins both MACs, derived from the hostname (below) |
+| `/etc/NetworkManager/system-connections/campod-gadget.nmconnection` | static address on `usb0`, no DHCP (#211) |
+
+Addresses live in `host/ansible/vars/gadget-net.yml` as a map, not a derivation -- a MAC
+collision is improbable and harmless, an IP collision is neither. That file is the contract
+**both** roles read, on purpose: the subnet and the coordinator's address have to agree
+across two devices, and two definitions is how they end up disagreeing. A node whose
+hostname is not in the map gets no address and says so.
+
+Neither side sets a gateway, and both set `never-default`. This is a link-local segment
+between two boxes, not a route to anywhere. Naming the coordinator as a gateway would put a
+default route on `usb0`, and NM's per-type metrics rank ethernet (100) ahead of WiFi (600)
+-- so a pod would try to reach the internet through a coordinator that neither forwards nor
+NATs, and lose the WiFi path it currently uses for updates. Adding forwarding + NAT later is
+a deliberate change on the coordinator, not something to fall into.
+
+## Gadget network, coordinator side
+
+All campods land on one bridge (`br0`, `10.55.0.1/24`), so the coordinator holds one address
+rather than one per pod and the pods share an L2 segment. `stp=false` and `forward-delay=0`:
+it is a star of point-to-point USB links with no possible loop, and 30 s of
+listening/learning on every pod reboot would cost something for nothing.
+
+Membership is dynamic -- pods appear when they boot -- and is handled by one NM profile with
+`multi-connect=3`, which lets a single profile be active on every matching device at once.
+No per-pod profile, no udev glue.
+
+**It matches on driver, not interface name.** systemd will generate an `enx<mac>` identifier
+for our pinned MACs -- `names_mac()` only skips non-permanent addresses and has no
+locally-administered guard -- but `99-default.link` ships
+`NamePolicy=keep kernel database onboard slot path`, with `mac` only in
+`AlternativeNamesPolicy`. So `enx<mac>` is an *alternative* name and the primary is
+path-based (`enp1s0u1u2`), which identifies the hub port rather than the pod. Matching a
+name glob would be matching cabling; the driver is the invariant.
+
+No DHCP and no dnsmasq (#211). #12's title says DHCP and predates that decision.
+
+**A laptop at the other end is a debugging tool, not a validation path.** With a static
+address on `usb0` you can reach a campod over its inner micro-USB from a laptop, which is
+worth having when something is broken and you want to dummy out one end. It does not
+substitute for the real pairing: a success there does not predict a Pi 4B host, and a
+failure there indicts the laptop as readily as the pod. Different host controller,
+different scheduler -- and against Windows, `g_ether` presents RNDIS rather than the
+CDC-ECM a Linux host binds through `cdc_ether`, so it is not even the same protocol. If you
+do reach for one, a **Linux** laptop at least shares the driver with the coordinator.
+
+Throughput and stability over the gadget link are unmeasured, and the only measurement that
+means anything is Pi 4B host to Zero 2 W gadget through the real hub.
+
+Set `campod_gadget_enabled: false` to leave a node exactly as it was.
+
 ## Open: seams with the coordinator
 
 Each of these has to be agreed on both sides, and each is owned by a pair of issues.
@@ -307,8 +366,8 @@ when its string argument is NULL. **Both** ends randomise, not just one.
 Harmless with a single pod; with four on a bridge it means DHCP reservations never stick
 and NetworkManager creates a fresh connection profile per boot.
 
-**Decided fix: derive the addresses, don't assign them.** `options g_ether dev_addr=...
-host_addr=...` in `/etc/modprobe.d/`, with both computed as `02:` + the first five bytes of
+**Implemented in `roles/pod`:** `options g_ether dev_addr=... host_addr=...` in
+`/etc/modprobe.d/campod-g_ether.conf`, both computed as `02:` + the first five bytes of
 `sha256("<salt>" + hostname)` -- different salts for the two ends so they cannot collide.
 That is deterministic, stable across reboots, unique per unit, and computable by ansible
 from the hostname it already has, so the per-unit provisioning surface stays **one** value

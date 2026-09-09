@@ -22,3 +22,106 @@
     coord_state_subdirs:
       - config
       - captures
+
+# ---------------------------------------------------------------------------
+# USB gadget network -- the userspace half (#24).
+#
+# The dwc2 overlay is device tree and comes from the campod image; it cannot come
+# from here. What is ours: loading the gadget module, pinning its MACs, and giving
+# the interface an address.
+- name: Derive this node's g_ether MAC addresses
+  # g_ether randomises BOTH MACs at every module load when the params are unset:
+  # USB_ETHERNET_MODULE_PARAMETERS() declares dev_addr/host_addr as charp
+  # defaulting to NULL, and get_ether_addr() falls through to eth_random_addr()
+  # on a NULL string (drivers/usb/gadget/function/u_ether.{c,h}). Unpinned, every
+  # boot looks like a new device: reservations never stick and NetworkManager
+  # accumulates a connection profile per boot.
+  #
+  # Derived rather than assigned, so the per-unit provisioning surface stays at
+  # one value -- the hostname -- with no registry to drift. From the HOSTNAME and
+  # not the board serial on purpose: identity should follow the logical node, so a
+  # card moved into a different Zero keeps its address. That is exactly the #211
+  # rollback plan.
+  #
+  # `02:` is what makes it valid -- locally administered, multicast bit clear.
+  # That matters: get_ether_addr silently falls back to random for anything
+  # is_valid_ether_addr() rejects, so a malformed value is indistinguishable from
+  # not having set one.
+  #
+  # ansible_hostname, NOT inventory_hostname: this playbook runs with
+  # `-i localhost, --connection=local`, so inventory_hostname is "localhost" on
+  # every unit and would hand the whole fleet the same address.
+  ansible.builtin.set_fact:
+    campod_dev_addr: >-
+      02:{{ (('campod-dev:' + ansible_hostname) | hash('sha256'))[0:10]
+            | regex_replace('(..)(?!$)', '\1:') }}
+    campod_host_addr: >-
+      02:{{ (('campod-host:' + ansible_hostname) | hash('sha256'))[0:10]
+            | regex_replace('(..)(?!$)', '\1:') }}
+  when: campod_gadget_enabled | bool
+
+- name: Load the USB gadget modules at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/campod-gadget.conf
+    mode: "0644"
+    content: |
+      # Managed by roles/pod. dwc2 is bound by the device-tree overlay in the
+      # campod image and would autoload anyway; naming it is harmless and makes
+      # the pair legible in one place.
+      dwc2
+      g_ether
+  when: campod_gadget_enabled | bool
+
+- name: Pin the g_ether MAC addresses
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/campod-g_ether.conf
+    mode: "0644"
+    content: |
+      # Managed by roles/pod. Derived from the hostname; see the task comment.
+      # Must exist before the module loads, which modules-load.d guarantees.
+      options g_ether dev_addr={{ campod_dev_addr | trim }} host_addr={{ campod_host_addr | trim }}
+  when: campod_gadget_enabled | bool
+
+- name: Give the gadget interface its static address
+  # Static both ends, no DHCP, nothing to run on the coordinator (#211). A keyfile
+  # rather than nmcli so the deployed state is declarative and diffable.
+  # may-fail is left at its default: an unplugged pod must still finish booting.
+  #
+  # NO GATEWAY, and never-default explicitly. This is a link-local segment between
+  # two boxes, not a route to anywhere. Naming the coordinator as a gateway would
+  # install a default route on usb0, and NM's per-type route metrics put ethernet
+  # (100) ahead of wifi (600) -- so the pod would try to reach the internet through
+  # a coordinator that does not forward or NAT, and lose the WiFi path it currently
+  # uses for updates. That would present as "the pod stopped being able to pull"
+  # right after the gadget net was enabled.
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/system-connections/campod-gadget.nmconnection
+    mode: "0600"
+    content: |
+      # Managed by roles/pod.
+      [connection]
+      id=campod-gadget
+      type=ethernet
+      interface-name={{ campod_gadget_iface }}
+      autoconnect=true
+
+      [ipv4]
+      method=manual
+      address1={{ campod_gadget_addresses[ansible_hostname] }}/{{ campod_gadget_prefix }}
+      never-default=true
+
+      [ipv6]
+      method=disabled
+  when:
+    - campod_gadget_enabled | bool
+    - ansible_hostname in campod_gadget_addresses
+  notify: Reload NetworkManager connections
+
+- name: Warn when this node has no gadget address assigned
+  ansible.builtin.debug:
+    msg: >-
+      {{ ansible_hostname }} is not in campod_gadget_addresses, so {{ campod_gadget_iface }}
+      gets no address. Add it in host/ansible/roles/pod/defaults/main.yml.
+  when:
+    - campod_gadget_enabled | bool
+    - ansible_hostname not in campod_gadget_addresses

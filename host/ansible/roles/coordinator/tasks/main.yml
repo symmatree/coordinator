@@ -100,3 +100,66 @@
 # the avionics 5 V rail.
 - name: Configure power-bounce resilience
   ansible.builtin.include_tasks: power-resilience.yml
+
+# ---------------------------------------------------------------------------
+# USB gadget network -- coordinator half (#12).
+#
+# The campods are USB devices on a hub whose upstream is this machine, so each one
+# appears here as a network interface when it boots and disappears when it does
+# not. They all land on one bridge: one L2 segment, one address here, static
+# addresses there. No DHCP and no dnsmasq (#211) -- #12's title predates that
+# decision.
+- name: Create the campod bridge
+  # stp off and forward-delay 0: this is a star of point-to-point USB links with
+  # no possible loop, and 30 s of listening/learning on every pod reboot would be
+  # a real cost for no benefit.
+  ansible.builtin.copy:
+    dest: "/etc/NetworkManager/system-connections/{{ campod_gadget_bridge }}.nmconnection"
+    mode: "0600"
+    content: |
+      # Managed by roles/coordinator.
+      [connection]
+      id={{ campod_gadget_bridge }}
+      type=bridge
+      interface-name={{ campod_gadget_bridge }}
+      autoconnect=true
+
+      [bridge]
+      stp=false
+      forward-delay=0
+
+      [ipv4]
+      method=manual
+      address1={{ campod_gadget_coordinator_ip }}/{{ campod_gadget_prefix }}
+      never-default=true
+
+      [ipv6]
+      method=disabled
+  when: campod_gadget_enabled | bool
+  notify: Reload NetworkManager connections
+
+- name: Enslave campod gadget interfaces to the bridge as they appear
+  # multi-connect=3 (MULTI_CONNECT_MULTIPLE) lets ONE profile be active on every
+  # matching device at once, which is what makes this work for a variable number
+  # of pods with no per-pod profile and no udev glue.
+  #
+  # match.driver rather than match.interface-name on purpose: the primary name of
+  # a USB NIC here is path-based (enp1s0u1u2...), so it identifies the hub port
+  # rather than the pod. The driver is the invariant. See vars/gadget-net.yml.
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/system-connections/campod-bridge-port.nmconnection
+    mode: "0600"
+    content: |
+      # Managed by roles/coordinator.
+      [connection]
+      id=campod-bridge-port
+      type=ethernet
+      autoconnect=true
+      multi-connect=3
+      master={{ campod_gadget_bridge }}
+      slave-type=bridge
+
+      [match]
+      driver={{ campod_gadget_host_drivers }}
+  when: campod_gadget_enabled | bool
+  notify: Reload NetworkManager connections
