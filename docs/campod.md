@@ -288,8 +288,17 @@ bridge), [#24](https://github.com/symmatree/coordinator/issues/24) (pod gadget n
 
 ## Gadget network, campod side
 
-The dwc2 overlay is device tree and comes from the image. Everything in userspace is
-`roles/pod`, applied by `one_time.sh pod`:
+**What comes from where.** The image supplies exactly one thing: the
+`dtoverlay=dwc2,dr_mode=peripheral` line, because it is device tree and nothing in userspace
+can substitute for it. Everything else is `roles/pod`, applied by `one_time.sh pod` -- so a
+gadget-net change is a `git pull` and a bootstrap re-run, not a reflash.
+
+The bootstrap loads `g_ether` itself rather than leaving it for the next boot, so the link
+comes up in the same run. Both ends need their own bootstrap: `one_time.sh pod` on each
+campod, `one_time.sh` on the coordinator for the bridge. The coordinator side needs no
+reboot -- the handler reloads NetworkManager.
+
+Everything in userspace is `roles/pod`:
 
 | | |
 |---|---|
