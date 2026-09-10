@@ -42,6 +42,35 @@ frames with monotonic_ns, and both containers share the host kernel's clock
 log's timeline. Without them the two clocks are only relatable through wall time,
 which is where the ~5 s capture/flight-timeline discrepancy of #167 lives.
 
+Coordinator-side tlog (COORD_TLOG)
+---------------------------------
+The FC already streams state to us and we were dropping all of it. The coordinator is
+**MAV2** (MAVLink channels are assigned in SERIALn order over the MAVLink ports:
+SERIAL0 USB, SERIAL4 coordinator, SERIAL6 ELRS, SERIAL9 OTG), and MAV2 has EXT_STAT,
+POSITION and EXTRA1/2/3 all at 2 Hz -- about 41 messages/s measured on 260814. So
+SYSTEM_TIME (on EXTRA3), GPS_RTK, EKF_STATUS_REPORT, VIBRATION, ESC_TELEMETRY,
+ATTITUDE and the rest arrive without any parameter change.
+
+We log **everything that arrives**, in standard tlog format: an 8-byte big-endian
+microsecond timestamp followed by the raw MAVLink frame. Reasons to prefer that over a
+curated projection:
+
+  * **It is small.** 41 msg/s is ~0.7 MB for a six-minute flight, against 192 MB of
+    captures and an 83 MB dataflash log for 260814. Selectivity buys nothing here.
+  * **A whitelist encodes today's beliefs about what matters**, and those have been
+    wrong repeatedly -- the RTCM correction counters, the per-channel link stats and
+    the FC's own TIMESYNC records were all "noise" until they were the answer.
+  * **A whitelist fails silently.** Rename a field upstream and it stops being logged
+    with no error; a raw frame records whatever actually arrived.
+  * It is the same format mavproxy writes on the ground, so one set of tools reads
+    both, and the vehicle-side and ground-side records are directly comparable.
+
+The timestamp is wall clock, for tool compatibility -- which means it inherits the
+coordinator's untrustworthy wall clock (see below and docs/flight-data-interpretation.md).
+COORD_TIMESYNC_LOG remains the bridge: it pairs realtime with CLOCK_MONOTONIC and the
+FC's own clock, and that pairing is *computed*, not received, so it cannot be recovered
+from the tlog.
+
 Attitude note: VISION_POSITION_ESTIMATE carries euler roll/pitch/yaw. We convert
 the estimator quaternion directly (no NED frame correction). This is fusion-inert
 under our config (EK3_SRC_YAW=compass -> VIO yaw unused; roll/pitch come from the
@@ -241,6 +270,27 @@ def open_timesync_log(path):
     return open(path, "a", buffering=1)
 
 
+TLOG_STAMP = struct.Struct(">Q")  # standard tlog: 8-byte BE microseconds, then the frame
+
+
+def open_tlog(path):
+    """Append-mode binary tlog sink. Directory created; unbuffered enough to survive a cut."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    return open(path, "ab", buffering=0)
+
+
+def log_frame(fh, msg, when_us):
+    """Append one received MAVLink frame in tlog format.
+
+    Writes the raw bytes as they arrived -- no decode, no projection, so nothing is lost
+    and nothing depends on this dialect version being the one that reads it back.
+    """
+    buf = msg.get_msgbuf()
+    if not buf:
+        return
+    fh.write(TLOG_STAMP.pack(when_us) + bytes(buf))
+
+
 def main():
     args = parse_args()
 
@@ -289,6 +339,12 @@ def main():
     # #167: FC-clock <-> our-clock pairs, for joining captures to the FC log.
     ts_log = open_timesync_log(
         os.environ.get("COORD_TIMESYNC_LOG", "/tmp/timesync.jsonl"))
+
+    # Coordinator-side tlog: everything the FC sends us (see the module docstring).
+    # Empty COORD_TLOG disables it.
+    tlog_path = os.environ.get("COORD_TLOG", "/tmp/vehicle.tlog")
+    tlog = open_tlog(tlog_path) if tlog_path else None
+
     last_hb = 0.0  # monotonic ts of the last HEARTBEAT we sent
 
     while True:
@@ -361,6 +417,8 @@ def main():
                 msg = mav.recv_match(blocking=False)
                 if msg is None:
                     break
+                if tlog is not None:
+                    log_frame(tlog, msg, time.time_ns() // 1000)
                 if msg.get_type() == "TIMESYNC" and msg.tc1 == 0:
                     # Read both clocks as close to the reply as possible: tc1 is what
                     # the FC sees, mono is what the capture sidecars are stamped in.

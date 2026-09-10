@@ -2,7 +2,7 @@
 # Refresh the pinned base-image digests in containers/*/Dockerfile.
 #
 # This is the "shared pin" mechanism for the layer-cache fix (#145) WITHOUT the Renovate
-# app: run it to bump every `FROM <image>:<tag>@sha256:...` pin (and pod-camera's
+# app: run it to bump every `FROM <image>:<tag>@sha256:...` pin (and campod-camera's
 # `ARG BASE_IMAGE=`) to the current digest of its tag. A base image moving thus becomes a
 # deliberate, reviewable commit -- not an implicit tag drift that re-pulls the whole image
 # on the Pi. Run it by hand, or on a schedule via .github/workflows/update-base-digests.yaml.

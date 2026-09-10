@@ -1,0 +1,188 @@
+---
+# Campod (Pi Zero 2 W) specifics: the campod stack and state dirs so the Zero is
+# container-ready. Node bring-up and maintenance: docs/campod.md.
+#
+# Nothing here writes /boot/firmware, deliberately. Device tree comes from the
+# campod image (dotfiles-symm/pi-image/roles/campod/config.append.txt) -- serial
+# console, dwc2 for the gadget net, and dtparam=spi=on for the ADXL345 bus. The
+# boot partition is FAT on an SD card in a vehicle that loses power abruptly: no
+# checksums, no CoW, none of the protection the btrfs subvolumes give the rest of
+# the disk. "The image writes it, nothing else does" is worth keeping as an
+# invariant, and it also spares every unit a guaranteed reboot during bootstrap.
+#
+# Module LOADING is still ansible's (dwc2/g_ether via /etc/modules-load.d/), along
+# with the g_ether MAC pinning in /etc/modprobe.d/ -- see docs/campod.md.
+
+# The image mounts the @data btrfs subvolume at coord_state_root. Those two names
+# have to agree across two repos, and when they don't, nothing errors: captures
+# just land on @var instead of the capture subvolume, and the power-loss
+# properties @data exists for quietly stop applying. It is invisible until
+# somebody runs findmnt.
+#
+# That divergence is live right now, in exactly one direction: a card flashed from
+# an image predating the /var/lib/pod -> /var/lib/campod rename, running a checkout
+# from after it. Cheap to detect and worth failing on -- findmnt only succeeds here
+# if something really is mounted at the old path, so it cannot fire on a coordinator
+# or a dev box that simply has no @data.
+- name: Check whether @data is still mounted at the pre-rename path
+  ansible.builtin.command: findmnt -n -o TARGET /var/lib/pod
+  register: campod_stale_data_mount
+  changed_when: false
+  failed_when: false
+
+- name: Fail if the image and this checkout disagree about the state path
+  ansible.builtin.fail:
+    msg: >-
+      /var/lib/pod is a mountpoint, but this checkout puts campod state at
+      /var/lib/campod. The card was flashed from an image predating that rename.
+      Bootstrapping anyway would create /var/lib/campod on @var and captures would
+      silently miss the @data subvolume. Reflash from an image carrying
+      DATA_MOUNT=/var/lib/campod (dotfiles-symm/pi-image/roles/campod.env), or
+      check out a commit from before the rename. Do not mix the two.
+  when: campod_stale_data_mount.rc == 0
+
+- name: Install campod stack and state dirs
+  ansible.builtin.include_role:
+    name: coord-stack
+  vars:
+    coord_stack_name: campod
+    coord_state_root: /var/lib/campod
+    coord_state_subdirs:
+      - config
+      - captures
+
+# ---------------------------------------------------------------------------
+# USB gadget network -- the userspace half (#24).
+#
+# The dwc2 overlay is device tree and comes from the campod image; it cannot come
+# from here. What is ours: loading the gadget module, pinning its MACs, and giving
+# the interface an address.
+- name: Derive this node's g_ether MAC addresses
+  # g_ether randomises BOTH MACs at every module load when the params are unset:
+  # USB_ETHERNET_MODULE_PARAMETERS() declares dev_addr/host_addr as charp
+  # defaulting to NULL, and get_ether_addr() falls through to eth_random_addr()
+  # on a NULL string (drivers/usb/gadget/function/u_ether.{c,h}). Unpinned, every
+  # boot looks like a new device: reservations never stick and NetworkManager
+  # accumulates a connection profile per boot.
+  #
+  # Derived rather than assigned, so the per-unit provisioning surface stays at
+  # one value -- the hostname -- with no registry to drift. From the HOSTNAME and
+  # not the board serial on purpose: identity should follow the logical node, so a
+  # card moved into a different Zero keeps its address. That is exactly the #211
+  # rollback plan.
+  #
+  # `02:` is what makes it valid -- locally administered, multicast bit clear.
+  # That matters: get_ether_addr silently falls back to random for anything
+  # is_valid_ether_addr() rejects, so a malformed value is indistinguishable from
+  # not having set one.
+  #
+  # ansible_hostname, NOT inventory_hostname: this playbook runs with
+  # `-i localhost, --connection=local`, so inventory_hostname is "localhost" on
+  # every unit and would hand the whole fleet the same address.
+  ansible.builtin.set_fact:
+    campod_dev_addr: >-
+      02:{{ (('campod-dev:' + ansible_hostname) | hash('sha256'))[0:10]
+            | regex_replace('(..)(?!$)', '\1:') }}
+    campod_host_addr: >-
+      02:{{ (('campod-host:' + ansible_hostname) | hash('sha256'))[0:10]
+            | regex_replace('(..)(?!$)', '\1:') }}
+  when: campod_gadget_enabled | bool
+
+- name: Load the USB gadget modules at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/campod-gadget.conf
+    mode: "0644"
+    content: |
+      # Managed by roles/campod. dwc2 is bound by the device-tree overlay in the
+      # campod image and would autoload anyway; naming it is harmless and makes
+      # the pair legible in one place.
+      dwc2
+      g_ether
+  when: campod_gadget_enabled | bool
+
+- name: Pin the g_ether MAC addresses
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/campod-g_ether.conf
+    mode: "0644"
+    content: |
+      # Managed by roles/campod. Derived from the hostname; see the task comment.
+      # Must exist before the module loads, which modules-load.d guarantees.
+      options g_ether dev_addr={{ campod_dev_addr | trim }} host_addr={{ campod_host_addr | trim }}
+  when: campod_gadget_enabled | bool
+
+- name: Give the gadget interface its static address
+  # Static both ends, no DHCP, nothing to run on the coordinator (#211). A keyfile
+  # rather than nmcli so the deployed state is declarative and diffable.
+  # may-fail is left at its default: an unplugged campod must still finish booting.
+  #
+  # NO GATEWAY, and never-default explicitly. This is a link-local segment between
+  # two boxes, not a route to anywhere. Naming the coordinator as a gateway would
+  # install a default route on usb0, and NM's per-type route metrics put ethernet
+  # (100) ahead of wifi (600) -- so the campod would try to reach the internet through
+  # a coordinator that does not forward or NAT, and lose the WiFi path it currently
+  # uses for updates. That would present as "the campod stopped being able to pull"
+  # right after the gadget net was enabled.
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/system-connections/campod-gadget.nmconnection
+    mode: "0600"
+    content: |
+      # Managed by roles/campod.
+      [connection]
+      id=campod-gadget
+      type=ethernet
+      interface-name={{ campod_gadget_iface }}
+      autoconnect=true
+
+      [ipv4]
+      method=manual
+      address1={{ campod_gadget_addresses[ansible_hostname] }}/{{ campod_gadget_prefix }}
+      never-default=true
+
+      [ipv6]
+      method=disabled
+  when:
+    - campod_gadget_enabled | bool
+    - ansible_hostname in campod_gadget_addresses
+  notify: Reload NetworkManager connections
+
+# modules-load.d only takes effect at boot, and nothing here touches config.txt,
+# so nothing sets /var/run/reboot-required and one_time.sh exits clean. Without
+# this the bootstrap reports success and the gadget link is simply not up until
+# somebody happens to reboot -- with no message saying so. Load it now instead.
+#
+# Safe to run with no cable and no coordinator: g_ether just presents a device
+# nobody has enumerated.
+- name: Check whether the gadget module is already loaded
+  ansible.builtin.command: lsmod
+  changed_when: false
+  register: campod_lsmod
+  when: campod_gadget_enabled | bool
+
+- name: Load the gadget module now
+  # The options file above is already written, so this picks up the pinned MACs.
+  ansible.builtin.command: modprobe g_ether
+  when:
+    - campod_gadget_enabled | bool
+    - "'g_ether' not in campod_lsmod.stdout"
+  changed_when: true
+
+- name: Note that pinned MACs need a reload if the module was already up
+  # modprobe will not re-read options for an already-loaded module, and unloading
+  # it would drop a live link. Rare -- it means the MACs changed under a running
+  # gadget, i.e. the hostname changed -- but silent otherwise.
+  ansible.builtin.debug:
+    msg: >-
+      g_ether was already loaded, so any change to the pinned MAC addresses takes
+      effect on the next reboot.
+  when:
+    - campod_gadget_enabled | bool
+    - "'g_ether' in campod_lsmod.stdout"
+
+- name: Warn when this node has no gadget address assigned
+  ansible.builtin.debug:
+    msg: >-
+      {{ ansible_hostname }} is not in campod_gadget_addresses, so {{ campod_gadget_iface }}
+      gets no address. Add it in host/ansible/vars/gadget-net.yml.
+  when:
+    - campod_gadget_enabled | bool
+    - ansible_hostname not in campod_gadget_addresses

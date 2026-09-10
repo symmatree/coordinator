@@ -1,12 +1,12 @@
-# coordinator-pod-camera
+# coordinator-campod-camera
 
 Capture container for the Rekon camera pod (Pi Zero 2 W + Camera Module 3 / IMX708). Pulls JPEG stills at a fixed cadence (default 1 Hz) and writes each frame plus a JSON metadata sidecar to the Zero's **local SD card** (never over USB -- the USB 2.0 bus is for commands only; see [`arm-pods.md`](../../docs/rekon10/arm-pods.md)).
 
-**Status: built, pending hardware bring-up (#23).** Image + CI exist; not yet run on a real Zero + camera. Plan of record: [docs/pi-zero-bringup.md](../../docs/pi-zero-bringup.md).
+**Status: built, pending hardware bring-up (#23).** Image + CI exist; not yet run on a real Zero + camera. Node bring-up and maintenance: [docs/campod.md](../../docs/campod.md).
 
 ## What it does
 
-- `capture.py` runs picamera2 + libcamera, captures stills at `POD_CAPTURE_HZ`, and writes `<stem>.jpg` + `<stem>.json` under `/captures/<node>/<session>/`.
+- `capture.py` runs picamera2 + libcamera, captures stills at `CAMPOD_CAPTURE_HZ`, and writes `<stem>.jpg` + `<stem>.json` under `/captures/<node>/<session>/`.
 - The sidecar records `sensor_timestamp_ns` (libcamera `SensorTimestamp`, CLOCK_BOOTTIME at exposure) plus wall-clock and monotonic time -- the anchor for later PPK-style interpolation against ArduPilot pose logs. Georeferencing comes from GNSS, not here.
 - Clean shutdown on SIGTERM/SIGINT so `coord stop` / `docker stop` finishes the in-flight frame and stops the camera.
 
@@ -38,25 +38,25 @@ the same vibration writes **2.4x more bands** here. Binning is a lever if it eve
 | Choice | Notes |
 |--------|-------|
 | Front-end: **picamera2** | Picked over `rpicam-apps` for frame-sync exposure (see below) and easy extension to the Phase 4 control API. |
-| Base image | `debian:bookworm-slim` + the **Raspberry Pi apt archive** (`archive.raspberrypi.com`) for matched, Pi-pipeline-aware libcamera + `python3-picamera2`. Stock Debian libcamera enumerates "no cameras" -- the one real container gotcha. Keep `RPI_SUITE` aligned with the host Pi OS release. |
-| Camera passthrough | `privileged: true` + `/run/udev` (in `stacks/pod/compose.yaml`); fall back to explicit device mounts if enumeration fails. |
-| Frame sync (the oddball bit) | The CM3 has no XVS hardware trigger, so multi-pod alignment uses libcamera **software sync** (one server/pacesetter, the rest clients). `capture.py` has a guarded `POD_SYNC_MODE` hook, **default off** -- the exact picamera2 control surface (`SyncMode` server/client) is not hardware-verified, so a wrong control logs a warning instead of crashing. Wired properly in Phase 3 (#24); standalone capture is unaffected. |
+| Base image | `debian:bookworm-slim` + the **Raspberry Pi apt archive** (`archive.raspberrypi.com`) for matched, Pi-pipeline-aware libcamera + `python3-picamera2`. Stock Debian libcamera enumerates "no cameras" -- the one real container gotcha. **`RPI_SUITE` tracks the campod image, not stock current Pi OS.** That image is pinned to Bookworm (`2025-05-13`, the last Bookworm Lite) in `dotfiles-symm/pi-image/build-image.sh`; bumping this to trixie without bumping the image there is the mismatch, not the fix. |
+| Camera passthrough | `privileged: true` + `/run/udev` (in `stacks/campod/compose.yaml`); fall back to explicit device mounts if enumeration fails. |
+| Frame sync (the oddball bit) | The CM3 has no XVS hardware trigger, so multi-campod alignment uses libcamera **software sync** (one server/pacesetter, the rest clients). `capture.py` has a guarded `CAMPOD_SYNC_MODE` hook, **default off** -- the exact picamera2 control surface (`SyncMode` server/client) is not hardware-verified, so a wrong control logs a warning instead of crashing. Wired properly in Phase 3 (#24); standalone capture is unaffected. |
 | Exposure cap | libcamera has no max-AE-exposure control, and `FrameDurationLimits` can't stand in (the 12 MP mode's minimum frame duration is already ~70 ms). The lever is the exposure/gain split from libcamera 0.4: `ExposureTimeMode=Manual` + `ExposureTime` pins the shutter while `AnalogueGainMode=Auto` lets the AEGC make up the light in gain. Best-effort -- unsupported means a warning, not a crash, and the sidecar records what the sensor actually did. |
 | Focus units | `LensPosition` is **dioptres** (1/metres): `0.0` infinity, `0.5` = 2 m, `2.0` = 0.5 m. Deliberately *not* the OAK-D's 0-255 VCM scale -- `OAK_STILL_FOCUS=125` would ask for 8 mm here. Default `auto` because an uncalibrated fixed position is worse than AF (T10). |
-| Build | arm64 in CI ([`.github/workflows/build-pod-camera.yaml`](../../.github/workflows/build-pod-camera.yaml)), pulled on the Zero -- never built on the Zero. |
+| Build | arm64 in CI ([`.github/workflows/build-campod-camera.yaml`](../../.github/workflows/build-campod-camera.yaml)), pulled on the Zero -- never built on the Zero. |
 
-## Config (env, via `stacks/pod/.env`)
+## Config (env, via `stacks/campod/.env`)
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `POD_NODE_NAME` | hostname | label in filenames + metadata |
-| `POD_CAPTURE_DIR` | `/captures` | output dir (bind of `/var/lib/pod/captures`) |
-| `POD_CAPTURE_HZ` | `1.0` | captures per second |
-| `POD_CAPTURE_WIDTH` / `_HEIGHT` | `0` | `0` = sensor full resolution (4608x2592) |
-| `POD_JPEG_QUALITY` | `90` | JPEG quality 1-100 |
-| `POD_STILL_MAX_EXPOSURE_US` | `5000` | caps the shutter; `0` = uncapped AE |
-| `POD_STILL_FOCUS` | `auto` | `auto` \| `infinity` \| lens position in **dioptres** |
-| `POD_SYNC_MODE` | `off` | `off` \| `server` \| `client` (Phase 3) |
+| `CAMPOD_NODE_NAME` | hostname | label in filenames + metadata |
+| `CAMPOD_CAPTURE_DIR` | `/captures` | output dir (bind of `/var/lib/campod/captures`) |
+| `CAMPOD_CAPTURE_HZ` | `1.0` | captures per second |
+| `CAMPOD_CAPTURE_WIDTH` / `_HEIGHT` | `0` | `0` = sensor full resolution (4608x2592) |
+| `CAMPOD_JPEG_QUALITY` | `90` | JPEG quality 1-100 |
+| `CAMPOD_STILL_MAX_EXPOSURE_US` | `5000` | caps the shutter; `0` = uncapped AE |
+| `CAMPOD_STILL_FOCUS` | `auto` | `auto` \| `infinity` \| lens position in **dioptres** |
+| `CAMPOD_SYNC_MODE` | `off` | `off` \| `server` \| `client` (Phase 3) |
 
 ## ADXL345 vibration logging (#211)
 
@@ -65,17 +65,17 @@ into the **same session directory** as the frames, on the **same kernel clock** 
 is the whole point: accelerometer and camera share one host, so correlating them needs
 no NTP, no PPS, and no network.
 
-Opt-in via `POD_ACCEL_DEVICES` (empty disables), supervised separately from the camera
+Opt-in via `CAMPOD_ACCEL_DEVICES` (empty disables), supervised separately from the camera
 loop so a missing sensor or an unset `dtparam=spi=on` cannot cost you the frames.
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `POD_ACCEL_DEVICES` | *(empty)* | `label:/dev/spidevN.M,...`; empty = off |
-| `POD_ACCEL_ODR_HZ` | `3200` | output data rate |
-| `POD_ACCEL_RANGE_G` | `16` | 2 \| 4 \| 8 \| 16 |
-| `POD_ACCEL_SPI_HZ` | `1500000` | SPI clock |
-| `POD_ACCEL_POLL_HZ` | `200` | FIFO poll rate |
-| `POD_ACCEL_SEPARATION_M` | *(empty)* | camera-to-arm baseline, recorded in the header |
+| `CAMPOD_ACCEL_DEVICES` | *(empty)* | `label:/dev/spidevN.M,...`; empty = off |
+| `CAMPOD_ACCEL_ODR_HZ` | `3200` | output data rate |
+| `CAMPOD_ACCEL_RANGE_G` | `16` | 2 \| 4 \| 8 \| 16 |
+| `CAMPOD_ACCEL_SPI_HZ` | `1500000` | SPI clock |
+| `CAMPOD_ACCEL_POLL_HZ` | `200` | FIFO poll rate |
+| `CAMPOD_ACCEL_SEPARATION_M` | *(empty)* | camera-to-arm baseline, recorded in the header |
 
 ### Why spidev and not the IIO driver
 
@@ -113,7 +113,7 @@ baseline is the rotational signature:
     theta = (delta_a / d) / (2*pi*f)^2
 
 At 120 Hz over a 150 mm baseline, 1 g of differential acceleration is 115 urad, or
-**0.41 px** of image shift. Which is why `POD_ACCEL_SEPARATION_M` needs a measured number
+**0.41 px** of image shift. Which is why `CAMPOD_ACCEL_SEPARATION_M` needs a measured number
 and "near the end of the arm" will not do.
 
 ### Output
@@ -132,10 +132,10 @@ power cut costs one record, not the file. At 3200 Hz with two sensors that is ro
 ## Runtime
 
 ```bash
-# On the Zero, after host bootstrap (./host/one_time.sh pod).
-# stacks/pod/.env ships COMPOSE_PROFILES=capture, so this just works:
+# On the Zero, after host bootstrap (./host/one_time.sh campod).
+# stacks/campod/.env ships COMPOSE_PROFILES=capture, so this just works:
 coord pull
 coord start
-coord logs -f pod-camera     # expect: "capture: node=... size=4608x2592 hz=1.0 ..."
-ls /var/lib/pod/captures/    # frames accumulating under <node>/<session>/
+coord logs -f campod-camera     # expect: "capture: node=... size=4608x2592 hz=1.0 ..."
+ls /var/lib/campod/captures/    # frames accumulating under <node>/<session>/
 ```

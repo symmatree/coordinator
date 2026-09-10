@@ -102,7 +102,7 @@ safely) are the next conversation.
 | VINS estimator (`vins_fusion`) | container | Heavy native build; pin upstream; rebuild rarely |
 | MAVLink router (coordinator-owned) | container | FC UART, Pi Zero relay, obstacle, pose ingress |
 | Grafana Alloy (later) | container | Isolated observability |
-| Pi Zero pod control API (later) | container or host | App logic; may share network with router |
+| Pi Zero campod control API (later) | container or host | App logic; may share network with router |
 | chrony + PPS discipline | **host** | GPIO `/dev/pps0`, `SYS_TIME` |
 | USB gadget `br0` + DHCP | **host** | Dynamic `usb*` interfaces; not a Docker bridge problem |
 | WiFi AP / station / off | **host** (or D-Bus-mounted utility container later) | NetworkManager integration |

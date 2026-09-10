@@ -70,7 +70,14 @@ that space, even when it has the same shape as a capture. Concretely:
           ...
         features/                        # per-frame feature/telemetry records
           <MxId>_<seq>_<ts>.json
+        timesync.jsonl                   # FC-clock <-> our-monotonic pairs (#167/#208)
+        vehicle.tlog                     # every MAVLink frame the FC sent us, tlog format (#220)
       # NO derived files here -- the regenerated pose does NOT live in captures/
+
+  ground/                           # SOURCE (immutable): ground-side records for this flight
+    mavproxy-console.log                 # GCS console output
+    backpack-link.jsonl                  # RTCM/backpack link state
+    <session>-mavproxy.tlog              # per-session telemetry log (#192; rotation not landed yet)
 
   derived/                          # DERIVED (regenerable, provenance-stamped) -- everything we recompute
     pose/
@@ -88,7 +95,10 @@ that space, even when it has the same shape as a capture. Concretely:
 Two rules make this navigable:
 
 1. **Sources are immutable and live at fixed places.** The `.bin` at the flight root; every OAK-D
-   capture under `captures/<MxId>/<session>/`, media split by type with each file's JSON beside it.
+   capture under `captures/<MxId>/<session>/`, media split by type with each file's JSON beside it;
+   ground-side records under `ground/`. `captures/` is the **vehicle's** view and `ground/` is the
+   **ground station's** -- they are different observers and neither substitutes for the other (a
+   ground-side link dropout is invisible to the vehicle, and vice versa).
    A flight may have **zero or many** capture sessions (bench record, in-flight tee #78; multiple
    only if the OAK-D/tracker restarts mid-session -- rare/hypothetical today).
 2. **Nothing derived lives in the capture area.** The regenerated pose is *derived* -- a
@@ -104,6 +114,8 @@ Two rules make this navigable:
 | **vio-tracker** tee (#78) | in-flight, on the vehicle | live OAK-D | `captures/<MxId>/<session>/<MxId>_<session>.feat` (+ `.feat.json`, `features/*.json`) |
 | **oak-still-capture** (#72) | in-flight / bench | OAK-D RGB | `captures/<MxId>/<session>/stills/<MxId>_<seq>_<ts>.jpg` (+ `.json`) |
 | `bin/vio-ipc-record` (bench) | manual bench | estimator sockets | a capture session (same `captures/...` shape) |
+| **coordinator-mavlink** (#208, #220) | in-flight, on the vehicle | FC MAVLink (MAV2) | `captures/timesync.jsonl`, `captures/vehicle.tlog` |
+| ground station (mavproxy, backpack watch) | in-flight, on the ground | the radio link | `ground/*` -- see [#192](https://github.com/symmatree/coordinator/issues/192) for per-session tlog rotation |
 | **flight-analysis** CronJob (tiles) | nightly 04:00 UTC | `<fc-log>.bin` | `flight-analysis-<logstem>.{ipynb,pdf}`, `manifest.json`, `polisher.json` |
 | **vio-offline** CronJob (tiles) | on-demand (manual `create job --from`; #139) | each `*.feat` | `derived/pose/<stem>.vinspose.csv` + sidecar (#139) |
 | `analysis/vio-quality.ipynb` | manual / after cron | pose CSV + `.bin` + `manifest.json` | `derived/vio-quality.json` (+ figures) |
@@ -215,6 +227,12 @@ predicted optimum and fly only a few points to confirm the local slope.)
 Synology sprinkles `@eaDir/` and `Thumbs.db` throughout the share (indexer/thumbnail artifacts).
 Listing/processing tools should skip them; the cron runners already match on `*.bin` / `*.feat`
 so they are unaffected.
+
+## Reading the data
+
+This document says **where things are**. What the fields mean, which clock to trust, and how a
+sortie appears in a log are in [flight-data-interpretation.md](flight-data-interpretation.md) --
+the two are meant to be read together and neither repeats the other.
 
 ## Related
 

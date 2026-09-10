@@ -2,7 +2,7 @@
 
 One-time path from a fresh SD card to a host that can run `coord pull` / `coord start` for the `tracker` profile. OAK-D bench steps live in [bench-tracker.md](bench-tracker.md).
 
-Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansible, runs [host/ansible/site.yaml](../host/ansible/site.yaml) with `device_role=coordinator`). Manual narrative below ends at that script; bench bring-up is separate. The pod (Pi Zero) equivalent is [pi-zero-host-setup.md](pi-zero-host-setup.md).
+Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansible, runs [host/ansible/site.yaml](../host/ansible/site.yaml) with `device_role=coordinator`). Manual narrative below ends at that script; bench bring-up is separate. The campod (Pi Zero) equivalent is [campod.md](campod.md).
 
 ## Resolved choices (issue #5)
 
@@ -103,7 +103,7 @@ What it does:
 
 1. `apt update`, install `ansible` and minimal deps. **Config-only** -- no `dist-upgrade`; for an in-place OS upgrade run `./host/os_upgrade.sh` deliberately ([#48](https://github.com/symmatree/coordinator/issues/48)).
 2. Ansible: Docker CE + Compose plugin, **symlink** `/opt/stacks/coordinator` to this checkout, `/var/lib/coordinator/{config,ipc}`, install `coord` CLI.
-3. If Ansible installed a new kernel, firmware, or module that set `/var/run/reboot-required`, it **reboots and waits** for the host to return.
+3. If Ansible installed a new kernel, firmware, or module that set `/var/run/reboot-required`, the script **exits non-zero and asks you to reboot** -- it does not reboot itself. Bootstrap runs locally, so `ansible.builtin.reboot` would be rebooting the control node out from under its own play ([#113](https://github.com/symmatree/coordinator/issues/113)).
 
 **Repeat until stable:** run `./host/one_time.sh` again after any reboot until the script prints `one_time: complete (coordinator, no pending kernel/firmware reboot).` Fresh images often need one cycle; idempotent re-runs should not reboot again. (A fresh flash you also want current can get one `./host/os_upgrade.sh` pass first; routine config deploys skip it.)
 

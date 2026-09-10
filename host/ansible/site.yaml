@@ -3,15 +3,19 @@
 # the device-specific role layered on top of the shared docker-host role.
 #
 #   Coordinator (Pi 4B):  ansible-playbook host/ansible/site.yaml -e device_role=coordinator
-#   Pod (Pi Zero 2 W):    ansible-playbook host/ansible/site.yaml -e device_role=pod
+#   Campod (Pi Zero 2 W):    ansible-playbook host/ansible/site.yaml -e device_role=campod
 #
-# Normally invoked via host/one_time.sh [coordinator|pod] (sets sync_repo=true).
+# Normally invoked via host/one_time.sh [coordinator|campod] (sets sync_repo=true).
 # Coordinator behavior is identical to the former install-coordinator.yaml.
 
 - name: Rekon host bootstrap
   hosts: localhost
   connection: local
   become: true
+  vars_files:
+    # The gadget-net contract, read by both device roles so the two halves cannot
+    # drift apart. See the file for why it is not in each role's defaults.
+    - vars/gadget-net.yml
   vars:
     device_role: coordinator
     sync_repo: false
@@ -22,8 +26,8 @@
     - role: docker-host
     - role: coordinator
       when: device_role == 'coordinator'
-    - role: pod
-      when: device_role == 'pod'
+    - role: campod
+      when: device_role == 'campod'
   post_tasks:
     - name: Re-check reboot required after possible reboot
       ansible.builtin.stat:

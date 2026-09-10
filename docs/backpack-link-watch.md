@@ -63,10 +63,9 @@ Alongside the flight it covers, in the `ground/` directory next to the FC log:
 flights/rekon10/<flight>/ground/backpack-link.jsonl
 ```
 
-Note `ground/` is not yet part of the canonical tree in
-[`docs/flight-data-layout.md`](flight-data-layout.md), which defines only the FC `.bin`,
-`captures/`, and `derived/`. Ground-side capture is immutable source and needs a defined slot
--- see [#137](https://github.com/symmatree/coordinator/issues/137).
+`ground/` is now part of the canonical tree in
+[`docs/flight-data-layout.md`](flight-data-layout.md) as immutable ground-side source, alongside
+the FC `.bin`, `captures/` and `derived/` (it had been an undocumented convention; #137).
 
 ## This should not stay a script
 
