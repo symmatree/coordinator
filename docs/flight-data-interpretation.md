@@ -63,7 +63,7 @@ own timestamps are wall clock and inherit the problem above; `timesync.jsonl` is
 
 | stream | MAV2 rate | carries (subset) |
 |---|---|---|
-| `EXT_STAT` | 2 Hz | `SYS_STATUS`, `POWER_STATUS`, `MCU_STATUS`, `MEMINFO`, `GPS_RAW_INT`, **`GPS_RTK`**, `NAV_CONTROLLER_OUTPUT` |
+| `EXT_STAT` | 2 Hz | `SYS_STATUS`, `POWER_STATUS`, `MCU_STATUS`, `MEMINFO`, `GPS_RAW_INT`, `GPS_RTK` (never generated -- below), `NAV_CONTROLLER_OUTPUT` |
 | `POSITION` | 2 Hz | `GLOBAL_POSITION_INT`, `LOCAL_POSITION_NED` |
 | `EXTRA1` | 2 Hz | `ATTITUDE`, `AHRS2`, `PID_TUNING`, **`ESC_TELEMETRY`** |
 | `EXTRA2` | 2 Hz | `VFR_HUD` |
@@ -71,9 +71,58 @@ own timestamps are wall clock and inherit the problem above; `timesync.jsonl` is
 | `RC_CHANNELS` | **0** | `SERVO_OUTPUT_RAW`, `RC_CHANNELS` -- off, so neither is arriving |
 | `RAW_SENSORS` | **0** | off |
 
-`GPS_RTK` is the direct source for RTK correction age and baseline, and it is already being sent --
-better than differencing `GPA.RTCMFU`, which is only in the dataflash and is not populated on every
-firmware we have flown.
+### `GPS_RTK` does not exist on this vehicle, on any channel, at any parameter setting
+
+It is the obvious place to look for RTK correction age, baseline, and ambiguity-resolution state, and
+it is **empty for us and always has been.** It is listed in the `EXT_STAT` stream above because
+ArduPilot puts it there; that does not mean anything is put in it.
+
+`AP_GPS::send_mavlink_gps_rtk()` is gated on `drivers[inst]->supports_mavlink_gps_rtk_message()`
+(`AP_GPS.cpp:1478`). Exactly three drivers override that to `true` -- `AP_GPS_SBF` (Septentrio),
+`AP_GPS_ERB` (Emlid Reach), `AP_GPS_SBP` (Swift Piksi). `AP_GPS_UBLOX` does not, so it inherits the
+base `return false` (`GPS_Backend.h:73`). We fly `GPS1_TYPE=2`, u-blox, confirmed independently by
+`UBX1` records existing in every log -- only the u-blox driver writes those. The same three drivers
+are the only writers of `rtk_age_ms`, `rtk_baseline_*` and `rtk_iar_num_hypotheses`, so those state
+fields are never populated for us either. **`iar_num_hypotheses` in particular has no u-blox source
+at all** -- it is a Piksi concept.
+
+Confirmed on the wire, not only in source: in `260812-hover/ground/260812-hover.tlog`, `GPS_RAW_INT`
+arrives **517** times and `GPS_RTK` **zero** times. The two sit adjacent in the same `EXT_STAT` list
+(`GCS_MAVLink_Parameters.cpp:250-255`), so the stream is being served and the message is simply not
+produced.
+
+**This is not a version gap.** At ArduPilot master head (checked 2026-09-09) the same three drivers
+are still the only ones that override it. Upgrading firmware does not deliver `GPS_RTK`, and no
+parameter turns it on.
+
+So the proxy is what we have: `GPA.RTCMFU` counts RTCM fragments **used**, in the dataflash only, and
+is not populated on every firmware we have flown (see the caveat under *The sortie*). It separates
+"corrections arrived" from "corrections did not" and cannot distinguish either from "corrections
+arrived systematically late."
+
+**What a u-blox rover can be made to give up instead**, none of it via `GPS_RTK`:
+
+* **`GPS_RAW_DATA` != 0** makes the driver request `RXM-RAWX` and log it as `GRXH` (per epoch) and
+  `GRXS` (per satellite: `cno`, **`lock`**, `prD`/`cpD`/`doD`, `trk`). A `lock` that resets to zero
+  *is* a cycle slip, which is one of the three things [#195](https://github.com/symmatree/coordinator/issues/195)
+  names as uninstrumented. Compiled in on this build: `AP_GPS_UBLOX_CFGV2_ENABLED` defaults to `0`,
+  so `UBLOX_RXM_RAW_LOGGING` is unconditionally `1`, and `TBS_LUCID_H7`'s hwdef (2048 KB flash)
+  overrides neither. **The value is a sample count, not a rate** -- it lands in a UBX `CFG-MSG` rate
+  field, which is a divisor of navigation solutions. At `GPS1_RATE_MS=200`, `1` means 5 Hz RAWX
+  (~9.5 KB/s against an 11.5 KB/s `SERIAL2_BAUD=115` budget that already carries NAV traffic) and
+  `5` means 1 Hz.
+* **`UBX1`** is already in every log, at 0.2 Hz, and nothing in `analysis/` reads it: `noisePerMS`,
+  `jamInd`, `agcCnt`, `aPower` -- the receiver's own RF-interference view. Measured across the
+  corpus, `jamInd` tracks the *vehicle's* RF activity (~11-16 pre-arm, ~38-47 airborne, back down on
+  landing) and **does not discriminate RTK Fixed from Float**: 260812-maneuver held Fixed at
+  `jamInd` 38 while 260812-hover never fixed at 37.5, the two lowest-interference flights in the
+  corpus (260705 pair, `jamInd` 7-8) never fixed, and across maneuver's Fixed -> Float transition at
+  t=149.2 s the value reads 38 before and 39 after.
+* **`NAV-RELPOSNED`** would carry `carrSoln`, `diffSoln`, baseline and accuracy, and `refPosMiss` /
+  `refObsMiss` -- correction staleness as a per-epoch flag. `AP_GPS_UBLOX` already has the full
+  struct and flags enum, compiled for moving-baseline yaw. **Unverified:** whether an F9P emits it
+  in plain rover mode against a static base; ArduPilot only ever requests it under `GPS1_MB_TYPE`.
+  Bench-check before writing code.
 
 Mission Planner's Status page is a live view of these same MAVLink fields (its `CurrentState`), plus
 a few values it computes about its own link. That is why it shows things that look absent from the
@@ -294,3 +343,11 @@ Things it would be reasonable to assume and that are **not** established:
 * Whether log naming is fully deterministic on GPS-time-at-file-creation, or whether a marginal race
   exists when lock lands mid-creation. The corpus is consistent with the deterministic reading; the
   marginal case has not been tested.
+* Whether an F9P emits `NAV-RELPOSNED` in plain rover mode against a static base. The message is the
+  best remaining candidate for a live correction-staleness signal (`refObsMiss`) and ArduPilot
+  already parses it, but it is only ever requested under `GPS1_MB_TYPE`. Bench question, not a
+  flight question.
+* **What actually separates RTK Fixed from Float here.** Excluded so far, each on measured data:
+  correction cadence, satellite count, HDOP, ELRS link health, maneuver aggressiveness
+  ([#195](https://github.com/symmatree/coordinator/issues/195)), and now receiver-side RF
+  interference (`UBX1`, above). No candidate has replaced them.

@@ -45,10 +45,17 @@ Endpoints: caster `ntrip.tiles.symmatree.com:2101/ATTIC`, Mission Planner TCP
 
 ## Rates and message set
 
-- **RTCM3 from the base** (set in tiles [PR #516](https://github.com/symmatree/tiles/pull/516)):
-  `1005(10),1074,1084,1094,1124,1230(10)` -- station coords (0.1 Hz), MSM4 for
-  GPS/GLONASS/Galileo/BeiDou (~1 Hz), GLONASS code-phase bias (0.1 Hz). Base position
-  `40.5323232197 -80.0418241688 327.892`.
+- **RTCM3 from the base**, currently `1005(10),1074,1094` -- station coords (0.1 Hz) and MSM4 for
+  **GPS and Galileo only** (~1 Hz). Base position `40.5323232197 -80.0418241688 327.892`. The set
+  is `local_ntripc_msg` in tiles `tanka/environments/ntrip/settings.conf`, which is the source of
+  truth for this line; check it rather than trusting this doc's copy.
+  **This was cut on purpose** (tiles `62beb29`, the experiment in
+  [#199](https://github.com/symmatree/coordinator/issues/199)): it was
+  `1005(10),1074,1084,1094,1124,1230(10)` -- adding GLONASS (1084 + its 1230 biases) and BeiDou
+  (1124) -- measured at 569 B/s payload / ~632 B/s wire against a ~735 B/s uplink budget, i.e.
+  77-86% utilised. Dropping the two takes it to ~333 B/s. **The revert is documented in that file**
+  and should be taken if RTK Fixed does not improve: the constellations are worth more than the
+  headroom if the uplink is not the constraint.
 - **ELRS telemetry budget** (Rekon10 profile): **333 Hz Full, 1:2 telemetry ratio,
   ~13211 baud** reported on the radio. RTCM shares this uplink budget; the MSM4 set
   above is chosen to fit. Keeping the message set lean matters -- a fatter set can
