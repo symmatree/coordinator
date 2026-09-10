@@ -45,27 +45,17 @@
     - vio-ipc-record
   when: sync_repo | bool
 
-# FC serial link for coordinator-mavlink. The router talks to the flight
-# controller over the primary UART (GPIO14/15) at 1.5 Mbaud, which needs the
-# PL011 (ttyAMA0), not the mini-UART -- so disable-bt remaps /dev/serial0 ->
-# /dev/ttyAMA0 and frees a stable high-baud port (trades away onboard Bluetooth).
-# Standard Pi-4 recipe; confirm the alias on the bench. Reboot required.
-- name: Enable PL011 UART for the FC link (config.txt)
-  ansible.builtin.blockinfile:
-    path: /boot/firmware/config.txt
-    marker: "# {mark} COORDINATOR FC UART"
-    block: |
-      enable_uart=1
-      dtoverlay=disable-bt
-  notify: Reboot required
-
-- name: Free the primary UART from the serial console (cmdline.txt)
-  ansible.builtin.replace:
-    path: /boot/firmware/cmdline.txt
-    regexp: '\s*console=(serial0|ttyAMA0|ttyS0),[0-9]+'
-    replace: ''
-  notify: Reboot required
-
+# The coordinator's boot config comes from the IMAGE, not from here:
+# dotfiles-symm pi-image/roles/coordinator/config.append.txt supplies
+# enable_uart=1 + dtoverlay=disable-bt (PL011 on GPIO14/15 for the FC at
+# 1.5 Mbaud, trading away onboard Bluetooth) and dtparam=i2c_arm=on for the
+# front-panel display's I2C bus, and CMDLINE_REMOVE keeps the serial console off
+# that UART so kernel and systemd output is never transmitted into the FC's
+# MAVLink link. This role used to write all three into /boot/firmware on the
+# running device; the image is now the only writer of that partition.
+#
+# Still ours, because neither is /boot/firmware: turning off the serial gettys,
+# and installing i2c-tools.
 - name: Disable serial-getty on the FC UART
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -75,18 +65,6 @@
     - serial-getty@ttyAMA0.service
     - serial-getty@ttyS0.service
   failed_when: false
-
-# On-board ARM I2C bus (i2c-1, GPIO2/3) for the coordinator front-panel display (#115,
-# #110) -- a SEPARATE bus from the FC's I2C (compass): the display lives on the
-# coordinator's own bus and can't repeat the contention that dropped the compass.
-# Enables /dev/i2c-1; reboot required.
-- name: Enable the ARM I2C bus for the front-panel display (config.txt)
-  ansible.builtin.blockinfile:
-    path: /boot/firmware/config.txt
-    marker: "# {mark} COORDINATOR I2C"
-    block: |
-      dtparam=i2c_arm=on
-  notify: Reboot required
 
 - name: Install i2c-tools (i2cdetect for display bring-up / debugging)
   ansible.builtin.apt:
