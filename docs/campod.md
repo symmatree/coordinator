@@ -188,7 +188,7 @@ harness is above the Pi's own logic level.
 
 ### 5. Turn on capture
 
-`stacks/campod/.env` ships `COMPOSE_PROFILES=capture`, so:
+The `capture` profile is the stack default, so:
 
 ```bash
 coord pull                    # ~241 MB compressed for campod-camera
@@ -199,20 +199,20 @@ coord logs -f campod-camera
 Expect, in the log:
 
 ```
-pod: session 2026...Z
+campod: session 2026...Z
 capture: exposure pinned to 5000 us, gain left on AEGC
 capture: node=campod-sw dir=/captures/campod-sw/<session> size=4608x2592 ...
 accel: camera: DEVID ok, self-test PASS (x=+0.99g y=-0.99g z=+1.50g)
 ```
 
-The accelerometer reader is **opt-in and off by default** -- `CAMPOD_ACCEL_DEVICES` is empty
-in `stacks/campod/.env` so a node without sensors wired does not spew retries. Set it (in git,
-see below) to switch it on:
+**There is nothing to switch on.** The reader probes both chip selects every run and logs
+whichever answers -- CE0 is the camera-colocated sensor, CE1 the arm-end one. A campod with
+no sensors wired says so once per run and costs nothing else.
 
-```
-CAMPOD_ACCEL_DEVICES=camera:/dev/spidev0.0,arm:/dev/spidev0.1
-CAMPOD_ACCEL_SEPARATION_M=<measured camera-to-arm baseline>
-```
+The one value that needs setting is a measurement, not a switch:
+`CAMPOD_ACCEL_SEPARATION_M` in `stacks/campod/compose.yaml`, the camera-to-arm-end baseline
+in metres. Differential acceleration over a known separation is the rotational signature,
+and it is meaningless without the number.
 
 Done when a session directory holds frames **and** a continuous accel record over the same
 interval:
@@ -249,7 +249,7 @@ It is idempotent; running it when nothing changed is cheap and safe.
 
 | What changed | What to run |
 |---|---|
-| `stacks/campod/.env`, `compose.yaml` | `git pull && coord start` |
+| `stacks/campod/compose.yaml` | `git pull && coord start` |
 | A container image (new build on `main`) | `coord pull` |
 | `containers/campod-camera/*` merged upstream | `coord pull` (CI builds it; never build on the Zero) |
 | An Ansible role, or anything in `/boot/firmware/config.txt` | `./host/one_time.sh campod`, reboot, re-run |

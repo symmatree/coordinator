@@ -1,4 +1,8 @@
-# Pod stack (Pi Zero 2 W). Installed on the Zero at /opt/stacks/campod/.
+# Campod stack (Pi Zero 2 W). Installed on the Zero at /opt/stacks/campod/.
+#
+# Values live HERE, not in a .env beside it. One file per stack: what you read is
+# what runs, with no second config surface to keep in sync and no interpolation
+# to resolve in your head.
 # Manage with the shared CLI: coord pull | start | stop | status | logs [service]
 #
 # Profiles:
@@ -8,7 +12,7 @@
 
 services:
   campod-camera:
-    image: ghcr.io/symmatree/coordinator-campod-camera:${CAMPOD_CAMERA_VERSION}
+    image: ghcr.io/symmatree/coordinator-campod-camera:main
     container_name: campod_camera
     profiles: [capture, online]
     restart: unless-stopped
@@ -23,8 +27,32 @@ services:
     # dtparam=spi=on for those nodes to exist at all.
     privileged: true
     volumes:
-      - ${CAMPOD_CAPTURES_DIR}:/captures
-      - ${CAMPOD_CONFIG_DIR}:/config:ro
+      # /var/lib/campod is where the image mounts the @data btrfs subvolume; see
+      # docs/campod.md for why that path is load-bearing across two repos.
+      - /var/lib/campod/captures:/captures
+      - /var/lib/campod/config:/config:ro
       - /run/udev:/run/udev:ro
-    env_file:
-      - .env
+    environment:
+      CAMPOD_NODE_NAME: campod-sw
+      CAMPOD_CAPTURE_HZ: "1.0"
+      # 0 = sensor full resolution (IMX708 4608x2592)
+      CAMPOD_CAPTURE_WIDTH: "0"
+      CAMPOD_CAPTURE_HEIGHT: "0"
+      CAMPOD_JPEG_QUALITY: "90"
+      # Cap the shutter so auto-exposure trades to gain instead of a blurring long
+      # exposure; 0 = uncapped. Matches OAK_STILL_MAX_EXPOSURE_US on the
+      # coordinator so the two cameras stay comparable. Blur budget at 5 ms:
+      # hover at 2.5 m is negligible, survey at 25 m and 5 m/s is ~3.5 px of
+      # along-track smear -- drop toward 1500 if survey frames come back soft.
+      CAMPOD_STILL_MAX_EXPOSURE_US: "5000"
+      # Lens position in DIOPTRES (1/metres): 0.0 infinity, 0.5 = 2 m, 2.0 = 0.5 m.
+      # NOT the OAK-D's 0-255 scale. `auto` leaves AF running, which is the default
+      # on purpose: an uncalibrated fixed position is worse than AF.
+      CAMPOD_STILL_FOCUS: auto
+      # off | server | client -- multi-campod sync is #24.
+      CAMPOD_SYNC_MODE: "off"
+      # Camera-to-arm-end baseline in metres, MEASURED per vehicle. Differential
+      # acceleration over a known separation is the rotational signature, and it
+      # is meaningless without this number -- 1 g across 150 mm at 120 Hz is
+      # 0.41 px of image shift. Empty until it is measured on the airframe.
+      CAMPOD_ACCEL_SEPARATION_M: ""
