@@ -2,16 +2,19 @@
 # Auto-start this device's stack on every boot, so it returns to a known-good
 # running state regardless of the last operator command (#97).
 #
-# `restart: unless-stopped` is NOT what guarantees this. That policy deliberately
-# honours an explicit stop, so a container stopped by `coord stop` stays stopped
-# across reboots -- which means a GRACEFUL shutdown would otherwise come back
-# with nothing running. The unconditional `coord start` here is what closes that.
+# What this does and does NOT cover, stated precisely because it is easy to
+# overclaim. `restart: unless-stopped` already handles the common cases on its
+# own: a power yank, or `shutdown -h now` with the stack running, both come back
+# up running. The one case it deliberately does not cover is an EXPLICIT stop --
+# `coord stop` marks containers stopped and that survives reboots. So the gap is
+# narrow: `coord stop`, then a power cycle, equals a device that stays idle.
 #
-# Shared by both roles on purpose. The coordinator had this and the campod did
-# not, so on a campod `coord stop` silently meant "off until a human runs
-# `coord start` again" -- and the sequence that hits it is the ordinary one:
-# shut down cleanly to attach a camera, power back up, nothing capturing. A pod
-# carried to the flight line and connected to a battery has nobody to start it.
+# Narrow but real, and it is #97's point: come back to a known-good running state
+# regardless of the last operator command. A pod stopped for bench work and then
+# carried out and connected to a battery has nobody there to start it.
+#
+# Shared by both roles because the coordinator had it and the campod did not,
+# which was an accident of where the task lived rather than a decision.
 #
 # To deliberately keep the stack down across a reboot, disable THIS unit
 # (`systemctl disable --now {{ coord_stack_name }}-stack.service`), not `coord stop`.
