@@ -2,7 +2,7 @@
 
 Capture container for the Rekon camera pod (Pi Zero 2 W + Camera Module 3 / IMX708). Pulls JPEG stills at a fixed cadence (default 1 Hz) and writes each frame plus a JSON metadata sidecar to the Zero's **local SD card** (never over USB -- the USB 2.0 bus is for commands only; see [`arm-pods.md`](../../docs/rekon10/arm-pods.md)).
 
-**Status: built, pending hardware bring-up (#23).** Image + CI exist; not yet run on a real Zero + camera. Node bring-up and maintenance: [docs/campod.md](../../docs/campod.md).
+**Status: runs on a real Zero as of 2026-09-12; camera path still unproven (#247).** The image was pulled and started on campod-sw with no camera and no sensors attached. What that confirmed: libcamera `v0.5.2` initialises inside the container (so the Raspberry Pi apt archive pairing is right and the "no cameras" container gotcha does not apply), and the ADXL345 reader probes both chip selects and reports what it found. What is still unproven: everything downstream of a camera actually being present -- capture, the exposure cap, the focus control, and the accel data path. Node bring-up and maintenance: [docs/campod.md](../../docs/campod.md).
 
 ## What it does
 
