@@ -1,6 +1,6 @@
 # Bench: VIO estimator (full vision chain)
 
-Second coordinator iteration: prove `vins_fusion` in `vio-estimator` consumes the tracker's IMU + feature streams and publishes pose on `/tmp/chobits_server`. Runs the `bench` profile (tracker + estimator). No FC required. Builds on [bench-tracker.md](bench-tracker.md) (#8).
+Second coordinator iteration: prove `vins_fusion` in `vio-estimator` consumes the tracker's IMU + feature streams and publishes pose on `/tmp/chobits_server`. Runs the vision chain (tracker + estimator) by naming both services. No FC required. Builds on [bench-tracker.md](bench-tracker.md) (#8).
 
 ## Prerequisites
 
@@ -18,8 +18,8 @@ How that refinement gets captured, validated against the GPS trajectory, blessed
 
 ```bash
 # bench profile = vio-tracker + vio-estimator
-COMPOSE_PROFILES=bench coord pull
-COMPOSE_PROFILES=bench coord start
+coord pull
+coord start vio-tracker vio-estimator
 coord status                       # both Up, no restarts
 coord logs -f vio-estimator        # "USE_IMU: 1", "waiting for image and imu...", then init
 ```
@@ -41,7 +41,7 @@ vio-pose-tap --out flight.csv     # also append CSV: t_unix,t_mono,quat(wxyz),po
 
 ## Success criteria
 
-- `COMPOSE_PROFILES=bench coord start` brings up both containers; `coord status` shows both `Up`, no crash loop
+- `coord start vio-tracker vio-estimator` brings up both containers; `coord status` shows both `Up`, no crash loop
 - `vio-estimator` logs show it reading IMU + features and completing VIO initialization (not stuck at "waiting for image and imu...")
 - Pose packets arrive on `/tmp/chobits_server`, and **position/attitude track real motion** when you move the rig
 

@@ -18,8 +18,8 @@
     coord_state_subdirs:
       - config
       - ipc
-      # OAK-D captures (disparity + stills): in-tracker capture and the standalone
-      # oak-still-capture container both bind-mount this as /captures (#72).
+      # OAK-D captures (disparity + stills): the in-tracker capture branch
+      # bind-mounts this as /captures (#72).
       - captures
 
 # Seed the vins_fusion calibration. force: false so a flight-refined oak_d.yaml

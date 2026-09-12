@@ -39,4 +39,4 @@ GHCR images are public; `docker login ghcr.io` is not required for `coord pull`.
 
 Not in these roles yet: chrony/PPS, USB gadget `br0` (see [docs/architecture.md](../docs/architecture.md) and [docs/campod.md](../docs/campod.md)). Dockge was considered and **dropped** (see [docs/deployment-model.md](../docs/deployment-model.md)).
 
-`/opt/stacks/<name>` is a **symlink** to the checkout's `stacks/<name>`, so `git pull` is the deploy -- no copy, no drift, deployed `.env` == repo `.env` by construction ([#48](https://github.com/symmatree/coordinator/issues/48)). The appliance deploy & config model is in [docs/deployment-model.md](../docs/deployment-model.md).
+`/opt/stacks/<name>` is a **symlink** to the checkout's `stacks/<name>`, so `git pull` is the deploy -- no copy, no drift, deployed `compose.yaml` == repo `compose.yaml` by construction ([#48](https://github.com/symmatree/coordinator/issues/48)). The appliance deploy & config model is in [docs/deployment-model.md](../docs/deployment-model.md).

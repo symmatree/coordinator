@@ -118,7 +118,7 @@ be assumed PPS-aligned. See also the no-RTC note in [coordinator-network.md](coo
 
 | Path | Contents |
 |------|----------|
-| `/opt/stacks/coordinator/` | `compose.yaml`, `.env` (git-authoritative; deploy is a symlink to the checkout, not a copy -- see [deployment-model.md](deployment-model.md), [#48](https://github.com/symmatree/coordinator/issues/48)) |
+| `/opt/stacks/coordinator/` | `compose.yaml` -- the whole stack config, values included (git-authoritative; deploy is a symlink to the checkout, not a copy -- see [deployment-model.md](deployment-model.md), [#48](https://github.com/symmatree/coordinator/issues/48)) |
 | `/var/lib/coordinator/config/` | VIO config (`oak_d.yaml`, etc.) mounted read-only |
 | `/var/lib/coordinator/ipc/` | Shared Unix socket dir bind-mounted as `/tmp` in vision + mavlink containers |
 | `/var/lib/coordinator/state/` | Runtime state (reserved; image logs, etc.) |
@@ -151,7 +151,7 @@ USB OAK-D
 | Isolated logs | `coord logs vio-tracker` vs untangling one supervisord stream |
 | Isolated rebuilds | Tracker image changes on depthai / pipeline / recording; estimator stays on a pinned chobitsfan SHA; router rebuilds during FC integration |
 | Isolated restarts | MAVLink router crash does not kill the camera pipeline |
-| Bench without FC | `tracker` profile: OAK-D only; `bench`: tracker + estimator; no serial |
+| Bench without FC | name the services: `coord start vio-tracker` (OAK-D only), or `... vio-tracker vio-estimator`; no serial |
 
 ### IPC volume
 
@@ -171,7 +171,7 @@ Operational notes:
 | `bench` | `vio-tracker`, `vio-estimator` | Desk: full vision chain, no FC ([bench-estimator.md](bench-estimator.md)) |
 | `flight` | above + `coordinator-mavlink` | FC serial mounted |
 
-Startup order is not enforced between tracker and estimator: the tracker tolerates an absent listener (drops packets) and the estimator picks up the continuous stream whenever it binds. (A tracker->estimator `depends_on` is not usable -- the estimator is absent in the `tracker` profile, so it would error "depends on undefined service".) `coordinator-mavlink` consumes pose once the estimator publishes (flight profile).
+Startup order is not enforced between tracker and estimator: the tracker tolerates an absent listener (drops packets) and the estimator picks up the continuous stream whenever it binds. (A tracker->estimator `depends_on` is deliberately absent: ordering is not required, and it would force the estimator up on a tracker-only bench run.) `coordinator-mavlink` consumes pose once the estimator publishes.
 
 ## Rekon goals beyond wiki VIO
 
@@ -192,7 +192,7 @@ Pi Zero relay and obstacle MAVLink can ship after vision bench if complexity war
 
 **Full vision (later):**
 
-1. `COMPOSE_PROFILES=bench` and start tracker + estimator.
+1. `coord start vio-tracker vio-estimator`.
 2. Confirm pose on `/tmp/chobits_server`.
 
 Do not mount FC serial or start `coordinator-mavlink` until an FC is wired.

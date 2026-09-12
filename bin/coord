@@ -55,7 +55,7 @@ Usage: coord <command> [args]
 
 Commands:
   pull              Stop stack, pull images, start stack
-  start             docker compose up -d
+  start [service...] docker compose up -d (no args: the full operational set)
   stop              docker compose stop (containers remain; a boot unit re-ups them)
   teardown          docker compose down (remove containers + networks)
   restart           docker compose restart [service]
@@ -91,8 +91,12 @@ pull)
 	compose up -d
 	;;
 start)
+	# Optional service names select a subset: `coord start vio-tracker` for a
+	# tracker-only bench. With no arguments the stack's full operational set comes
+	# up. (Compose profiles are additive and cannot subtract, so a subset ladder
+	# has to be service names, not profiles -- see stacks/coordinator/compose.yaml.)
 	require_compose_file
-	compose up -d
+	compose up -d "$@"
 	;;
 stop)
 	# `stop`, not `down`: keep the containers so state/metadata survive and the

@@ -33,4 +33,4 @@ All under the shared `${COORDINATOR_IPC_DIR}:/tmp` mount. (`vins_fusion` also of
 
 ## Compose
 
-Service name: `vio-estimator` in `stacks/coordinator/compose.yaml` (`bench` and `flight` profiles). Bench steps: [docs/bench-estimator.md](../../docs/bench-estimator.md).
+Service name: `vio-estimator` in `stacks/coordinator/compose.yaml` (no profile -- part of the operational set). Bench steps: [docs/bench-estimator.md](../../docs/bench-estimator.md).

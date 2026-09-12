@@ -29,12 +29,12 @@ Record outcomes in a new param export in facts when there is something real to c
 
 ## Bench checks
 
-**Vision only (no FC, `bench` profile):**
+**Vision only (no FC -- `coord start vio-tracker vio-estimator`):**
 
 - `vio-tracker` and `vio-estimator` running; OAK-D enumerated on USB.
 - Processes stay up; IMU/features on ipc sockets; pose on `/tmp/chobits_server` (tap or temporary router).
 
-**With FC (`flight` profile):**
+**With FC (the full operational set -- `coord start`):**
 
 - `coordinator-mavlink` on configured UART.
 - Mission Planner or logs show expected traffic before trusting fusion.

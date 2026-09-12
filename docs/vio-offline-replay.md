@@ -110,7 +110,7 @@ share, `analysis/tools/vio_param_sweep.py` drives the same `vins_fusion_offline`
 
 ## Option A — native arm64 (Pi 5 or any arm64 host with Docker)
 
-Bring up **only** the estimator (not the whole `bench` profile — otherwise the live
+Bring up **only** the estimator (`coord start vio-estimator`, not the whole chain — otherwise the live
 `vio-tracker` also writes the input sockets and corrupts the replay):
 
 ```sh

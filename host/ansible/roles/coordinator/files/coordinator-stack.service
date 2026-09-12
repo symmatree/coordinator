@@ -18,7 +18,9 @@ StartLimitBurst=5
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Idempotent: `coord start` = `docker compose up -d` (flight profile via .env).
+# Idempotent: `coord start` = `docker compose up -d`, which brings up the stack's
+# full operational set. No profile and no .env are involved -- the services that
+# make up normal operation carry no compose profile (stacks/coordinator/compose.yaml).
 ExecStart=/usr/local/bin/coord start
 Restart=on-failure
 RestartSec=5s
