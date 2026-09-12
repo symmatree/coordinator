@@ -22,36 +22,11 @@ coordinator | campod) ;;
 	;;
 esac
 
-# /usr ships READ-ONLY on the fleet image, and everything below writes to it: apt
-# for ansible/git, then docker-ce via the playbook. deployment-model.md already
-# specifies a "remount,rw /usr wrapper for maintenance" as part of the convergence
-# tier -- this is that wrapper. Without it the first apt-get install dies with
-# "Read-only file system" partway through an unpack, leaving dpkg half-installed.
-#
-# Only fires when /usr really is its own read-only mount, so a dev box or any
-# non-image install is untouched.
-USR_REMOUNTED=false
-if findmnt -n -o OPTIONS /usr 2>/dev/null | grep -qE '(^|,)ro(,|$)'; then
-	echo "one_time: /usr is read-only; remounting rw for this run."
-	sudo mount -o remount,rw /usr
-	USR_REMOUNTED=true
-fi
-
-# Restore the invariant however we exit, including the reboot-required exit 1
-# below. If it cannot be restored we say so rather than leaving a box that is
-# quietly writable: coordinator#202 records remount,ro returning "busy" when
-# anything holds a writable fd, so this is a real possibility, not a hypothetical.
-restore_usr_ro() {
-	if [[ ${USR_REMOUNTED} == true ]]; then
-		if sudo mount -o remount,ro /usr; then
-			echo "one_time: /usr restored to read-only."
-		else
-			echo "one_time: WARNING /usr could not be restored to read-only and stays writable" >&2
-			echo "one_time: until the next reboot (coordinator#202's 'busy' case)." >&2
-		fi
-	fi
-}
-trap restore_usr_ro EXIT
+# /usr is read-only on the fleet image and the apt calls below write to it.
+# Shared with os_upgrade.sh, which has the same need. See host/lib/usr-rw.sh.
+# shellcheck source=host/lib/usr-rw.sh
+. "${SAVE_DIR}/lib/usr-rw.sh"
+usr_rw_begin
 
 # DEBIAN_FRONTEND must come AFTER sudo. Written before sudo it is set for sudo's
 # own environment, and sudo's default env_reset drops it, so apt never sees it --
@@ -78,8 +53,11 @@ ansible-playbook -v "$SAVE_DIR/ansible/site.yaml" \
 	-e "device_role=${DEVICE_ROLE}" \
 	-e sync_repo=true
 
+# If the hatch was opened, ask for the reboot that closes it again.
+usr_rw_request_reboot
+
 if [[ -f /var/run/reboot-required ]]; then
-	echo "one_time: /var/run/reboot-required still set (kernel/firmware/modules)." >&2
+	echo "one_time: /var/run/reboot-required set (kernel/firmware/modules, or the /usr hatch)." >&2
 	echo "one_time: run ./host/one_time.sh ${DEVICE_ROLE} again after the host is back." >&2
 	exit 1
 fi
