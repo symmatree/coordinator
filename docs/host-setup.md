@@ -9,10 +9,15 @@ OAK-D bench bring-up is separate: [bench-tracker.md](bench-tracker.md).
 ## Constraints that shape everything below
 
 - **The image owns `/boot/firmware`; Ansible does not write it.** The FC UART, the
-  Bluetooth trade, and the front-panel I2C bus all arrive in the flashed image
+  Bluetooth trade, and the front-panel I2C *controller* all arrive in the flashed image
   ([#234](https://github.com/symmatree/coordinator/issues/234),
   [dotfiles-symm#38](https://github.com/symmatree/dotfiles-symm/pull/38)). A change to any
   of them is a **reflash**, not a playbook run.
+- **Device tree comes from the image; loading modules is Ansible's half.** These are two
+  separate jobs and each subsystem needs both. `dtparam=i2c_arm=on` binds the I2C
+  controller but `i2c-dev` is what creates `/dev/i2c-1`; on the campod,
+  `dtoverlay=dwc2` is device tree but `g_ether` is a module. A subsystem with only its
+  image half looks present in `config.txt` and absent in `/dev`.
 - **There is no serial console.** The FC owns the primary UART (GPIO14/15) at 1.5 Mbaud, so
   the image strips `console=serial0,*` from `cmdline.txt` rather than sharing that line.
   **HDMI is the diagnostic** for a boot that does not come up. (The campod is the opposite:
@@ -84,7 +89,7 @@ Re-run it after any reboot it asks for, until it exits clean. It is idempotent.
 ```bash
 newgrp docker          # once, if `docker ps` says permission denied
 coord status           # resolves the sole stack under /opt/stacks
-ls /dev/i2c-1          # front-panel bus (from the image)
+ls /dev/i2c-1          # front-panel bus (needs i2c-dev, loaded by Ansible)
 ls -l /dev/serial0     # -> ttyAMA0, the PL011 (disable-bt, from the image)
 ```
 
@@ -117,7 +122,7 @@ update. Fine on the bench; not something to do on a hot vehicle.
 | `enable_uart=1`, `dtoverlay=disable-bt`, `dtparam=i2c_arm=on`, `console=serial0` removal | **image** (`pi-image/roles/coordinator/config.append.txt`) |
 | btrfs subvolume layout, `/etc/fleet-image` | **image** |
 | Docker, `coord`, `/opt/stacks` symlink, `/var/lib/coordinator/{config,ipc,captures}` | Ansible (`docker-host` + `coord-stack`) |
-| OAK-D udev rules, `oak_d.yaml` seed, host VIO tools, i2c-tools | Ansible (`coordinator` role) |
+| OAK-D udev rules, `oak_d.yaml` seed, host VIO tools, `i2c-tools`, **loading `i2c-dev`** | Ansible (`coordinator` role) |
 | Serial getty disable on the FC UART | Ansible (a unit, not a boot file) |
 | Auto-start on boot, persistent journald | Ansible (`power-resilience.yml`) |
 | `br0` campod bridge, gadget interface enslavement | Ansible (`coordinator` role) |
@@ -134,6 +139,7 @@ update. Fine on the bench; not something to do on a hot vehicle.
 | FC link silent or garbled | `ls -l /dev/serial0` should be `ttyAMA0`; mini-UART garbles because `arm_boost=1` moves the VPU clock |
 | MAVLink stream corrupt on an unknown card | `cat /proc/cmdline` -- `console=serial0` together with `enable_uart=1` puts console bytes on the FC's port. The current image makes this combination impossible |
 | Node is set up but not at head | `cat /etc/fleet-image` -- config converges over SSH, but the image only changes by reflashing |
+| `sh1106-display` will not start | `ls /dev/i2c-1`. If absent, `i2c-dev` is not loaded: the image's `dtparam=i2c_arm=on` binds the controller but not the char-device interface. A compose `devices:` entry for a missing node fails the container, so this presents as a broken display service. `./host/one_time.sh` loads it |
 
 ## Related
 

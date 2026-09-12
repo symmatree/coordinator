@@ -40,5 +40,9 @@ luma/I2C device is only touched in `display.py:main`.
 | `SH1106_REFRESH_SEC` | `1.0` | redraw interval |
 | `SH1106_NODE` | hostname | node label |
 
-Runs whenever the coordinator is up (no profile); needs the i2c bus enabled on the host
-(`dtparam=i2c_arm=on`, done by the coordinator ansible role).
+Runs whenever the coordinator is up (no profile). Needs `/dev/i2c-1` to exist on the host,
+which takes **both** halves: `dtparam=i2c_arm=on` from the image
+(`pi-image/roles/coordinator/config.append.txt`) binds the controller, and the `i2c-dev`
+module -- loaded by the coordinator Ansible role -- provides the char device. The compose
+`devices:` entry fails the container outright if the node is missing, so a missing module
+looks like a broken display.
