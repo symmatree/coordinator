@@ -200,7 +200,7 @@ harness is above the Pi's own logic level.
 
 ### 5. Turn on capture
 
-The `capture` profile is the stack default, so:
+`campod-camera` carries no compose profile -- capture is what the node is for -- so:
 
 ```bash
 coord pull                    # ~241 MB compressed for campod-camera

@@ -5,16 +5,20 @@
 # to resolve in your head.
 # Manage with the shared CLI: coord pull | start | stop | status | logs [service]
 #
-# Profiles:
-#   (default, empty): nothing starts -- host bootstrap only
-#   capture:          campod-camera -- stills to local SD (Phase 2)
-#   online:           capture + control API + alloy -- Phase 4 (services TBD)
+# No profiles. campod-camera is what a campod is for, so `coord start` starts it --
+# there is no useful run of this stack with capture switched off, and the switch
+# cost a silent one: #233 folded the .env in here but COMPOSE_PROFILES=capture was
+# the one key compose reads itself rather than passing to a service, so it had
+# nowhere to land. Every service carried a profile, nothing set one, and
+# `coord start` brought up nothing and said so only by printing no services.
+# A profile earns its place when a service must NOT run alongside the others
+# (see oak-still-capture on the coordinator, which owns the OAK-D exclusively);
+# Phase 4's control API and alloy run *with* capture, so they will not need one.
 
 services:
   campod-camera:
     image: ghcr.io/symmatree/coordinator-campod-camera:main
     container_name: campod_camera
-    profiles: [capture, online]
     restart: unless-stopped
     # libcamera/IMX708 passthrough. privileged populates the container /dev with
     # host devices and lifts the device cgroup (same pattern as vio-tracker);

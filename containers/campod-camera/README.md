@@ -140,7 +140,7 @@ power cut costs one record, not the file. At 3200 Hz with two sensors that is ro
 
 ```bash
 # On the Zero, after host bootstrap (./host/one_time.sh campod).
-# the capture profile is the stack default, so this just works:
+# campod-camera carries no compose profile, so this just works:
 coord pull
 coord start
 coord logs -f campod-camera     # expect: "capture: node=... size=4608x2592 hz=1.0 ..."
