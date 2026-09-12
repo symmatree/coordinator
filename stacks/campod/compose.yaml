@@ -11,9 +11,10 @@
 # the one key compose reads itself rather than passing to a service, so it had
 # nowhere to land. Every service carried a profile, nothing set one, and
 # `coord start` brought up nothing and said so only by printing no services.
-# A profile earns its place when a service must NOT run alongside the others
-# (see oak-still-capture on the coordinator, which owns the OAK-D exclusively);
-# Phase 4's control API and alloy run *with* capture, so they will not need one.
+# A profile would earn its place only for a service that must NOT run alongside
+# the others; there is no such service on either stack now (#242 removed the one
+# that was, oak-still-capture). Phase 4's control API and alloy run *with*
+# capture, so they will not need one either.
 
 services:
   campod-camera:

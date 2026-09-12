@@ -54,8 +54,8 @@
 # MAVLink link. This role used to write all three into /boot/firmware on the
 # running device; the image is now the only writer of that partition.
 #
-# Still ours, because neither is /boot/firmware: turning off the serial gettys,
-# and installing i2c-tools.
+# Still ours, because none of these is /boot/firmware: turning off the serial
+# gettys, installing i2c-tools, and LOADING i2c-dev (below).
 - name: Disable serial-getty on the FC UART
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -72,6 +72,46 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+# i2c-dev is what creates /dev/i2c-N. dtparam=i2c_arm=on (from the image) only
+# enables the CONTROLLER -- it gets i2c_bcm2835 bound and an adapter registered in
+# the kernel, but no character device, because the userspace interface lives in a
+# separate module that nothing autoloads. Observed on the first coordinator flashed
+# from the btrfs image: dtparam present, i2c_bcm2835 loaded, /dev/i2c-* absent.
+#
+# The failure is not subtle but it is misattributed: sh1106-display declares
+# `devices: [/dev/i2c-1:/dev/i2c-1]`, and a devices: entry naming a node that does
+# not exist fails the CONTAINER at start, so it reads as a broken display service
+# rather than a missing host module.
+#
+# Exactly the same image/ansible split as dwc2 + g_ether on the campod: the device
+# tree half has to come from the image, the module-loading half is ours. Stock Pi OS
+# gets here via raspi-config's do_i2c, which appends i2c-dev to /etc/modules -- we do
+# not run raspi-config, so nobody ever did it.
+- name: Load i2c-dev at boot (creates /dev/i2c-N for the front-panel display)
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/coordinator-i2c.conf
+    mode: "0644"
+    content: |
+      # Managed by roles/coordinator. i2c_bcm2835 is bound by dtparam=i2c_arm=on in
+      # the image; this is the userspace char-device interface it does not imply.
+      i2c-dev
+  notify: Reload systemd
+
+# modules-load.d only takes effect at boot, and nothing here touches config.txt, so
+# nothing sets /var/run/reboot-required and one_time.sh exits clean. Without this the
+# bootstrap reports success and the display has no bus until somebody happens to
+# reboot, with no message saying so. Same reasoning as roles/campod loading g_ether
+# in-run rather than leaving it for the next boot.
+- name: Check whether i2c-dev is already loaded
+  ansible.builtin.command: lsmod
+  changed_when: false
+  register: coordinator_lsmod
+
+- name: Load i2c-dev now
+  ansible.builtin.command: modprobe i2c-dev
+  when: "'i2c_dev' not in coordinator_lsmod.stdout"
+  changed_when: true
 
 # Auto-start capturing on boot (#97) + persistent journal / throttle forensics
 # (#100), so the coordinator behaves well across the routine power bounces of
