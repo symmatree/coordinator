@@ -1,161 +1,144 @@
-# Host setup: Pi 4B to coordinator stack
+# Coordinator node setup and maintenance
 
-One-time path from a fresh SD card to a host that can run `coord pull` / `coord start` for the `tracker` profile. OAK-D bench steps live in [bench-tracker.md](bench-tracker.md).
+Blank SD card to a running coordinator (Pi 4B), and the commands for every update after
+that. The campod (Pi Zero 2 W) counterpart is [campod.md](campod.md); the two devices share
+one bootstrap, one CLI, and most of this shape.
 
-Automated host bootstrap: [host/one_time.sh](../host/one_time.sh) (installs Ansible, runs [host/ansible/site.yaml](../host/ansible/site.yaml) with `device_role=coordinator`). Manual narrative below ends at that script; bench bring-up is separate. The campod (Pi Zero) equivalent is [campod.md](campod.md).
+OAK-D bench bring-up is separate: [bench-tracker.md](bench-tracker.md).
 
-## Resolved choices (issue #5)
+## Constraints that shape everything below
 
-| Topic | Decision |
-|-------|----------|
-| Base OS | Stock **Raspberry Pi OS (64-bit)** via Raspberry Pi Imager -- not custom pi-gen ([architecture.md](architecture.md)) |
-| GHCR | `ghcr.io/symmatree/coordinator-vio-tracker` is **public**; no `docker login ghcr.io` for pull |
-| GitHub clone | Repo is **public**; HTTPS clone needs no `gh auth login` |
-| Standalone `docker pull` | **Optional diagnostic only** -- `coord pull` already pulls the image; skip unless debugging registry/network |
-| Install path | Clone repo on Pi, run `host/one_time.sh` (wired with `device_role=coordinator` + `sync_repo=true`) |
-| Reboot | Ansible reboots when `/var/run/reboot-required` is set (a kernel/firmware/module it installed, or after `os_upgrade.sh`) -- **not** for docker group membership. `one_time.sh` no longer `dist-upgrade`s ([#48](https://github.com/symmatree/coordinator/issues/48)) |
-| Repeat until stable | Run `./host/one_time.sh` again after each reboot until it exits without triggering one |
-| Deployer alternative | Run Ansible from a laptop against the Pi inventory instead of installing Ansible on the Pi -- lighter if local bootstrap becomes painful (not needed yet) |
+- **The image owns `/boot/firmware`; Ansible does not write it.** The FC UART, the
+  Bluetooth trade, and the front-panel I2C bus all arrive in the flashed image
+  ([#234](https://github.com/symmatree/coordinator/issues/234),
+  [dotfiles-symm#38](https://github.com/symmatree/dotfiles-symm/pull/38)). A change to any
+  of them is a **reflash**, not a playbook run.
+- **There is no serial console.** The FC owns the primary UART (GPIO14/15) at 1.5 Mbaud, so
+  the image strips `console=serial0,*` from `cmdline.txt` rather than sharing that line.
+  **HDMI is the diagnostic** for a boot that does not come up. (The campod is the opposite:
+  serial is its primary console.)
+- **`/opt/stacks/coordinator` is a symlink into the checkout.** `git pull` *is* the config
+  deploy -- no copy step, no on-box edit
+  ([#48](https://github.com/symmatree/coordinator/issues/48)). Never hand-edit the deployed
+  `.env`; change it in git and pull.
+- **Passwordless sudo works, and bootstrap can be driven non-interactively.** The pinned
+  Bookworm base ships `/etc/sudoers.d/010_pi-nopasswd` (`pi ALL=(ALL) NOPASSWD: ALL`, mode
+  0440, root-owned) and `pi` is in both `adm` and `sudo`. The image build rsyncs the vendor
+  rootfs verbatim (`-aHAX`), so mode and ownership carry, and `firstrun.sh`'s `userconf` call
+  is a no-op when the account is not being renamed. The Pi OS change that removed this
+  default is on the **Trixie** side of the split and does not reach this pin -- current
+  Bookworm `raspberrypi-sys-mods` still ships the file. Relevant to
+  [#236](https://github.com/symmatree/coordinator/issues/236): no sudoers work is needed.
 
-## Imager settings (tracker bench)
+## One-time: blank card to a running node
 
-Use **Raspberry Pi Imager 2.0+** and pick **official Raspberry Pi OS (64-bit)** from the online OS list (not a bare local `.img` file). Nothing beyond 64-bit is required for issue #5; later host work (chrony, USB `br0`) adds boot config in follow-up playbooks.
+### 1. Flash
 
-> The current official image is **Debian 13 "Trixie"**, whose network stack is **NetworkManager** (not `dhcpcd`/`wpa_supplicant`). Provisioning, the headless recovery runbook, and a **Trixie WiFi caveat** (Imager's cloud-init WiFi does not reliably persist — provision via `nmtui`) are in [coordinator-network.md](coordinator-network.md).
+The images are generic and secret-free -- no login, no host keys, no WiFi. Identity is
+injected at flash time, touching only the FAT partition. Full mechanics, including the
+`fleet.env` secrets file and the WSL/UNC-path invocation:
+`dotfiles-symm/pi-image/provision/README.md`.
 
-### Pre-flash configuration (what Imager still supports)
+Get the image from the `build-pi-image` run's artifacts and **extract the zip** -- GitHub
+wraps every artifact, so point the flasher at the inner `.img.xz`, not the `.zip`.
 
-Imager **did not** drop OS customization for official Pi OS images. In [Imager 2.0](https://www.raspberrypi.com/news/a-new-raspberry-pi-imager/) it moved from a hidden "advanced options" dialog into wizard **step 4 -- Configure your system** (hostname, locale, user, WiFi, SSH keys, Raspberry Pi Connect, etc.). That is still pre-imaging configuration baked into the written image.
-
-What **did** change in 2.0 (and may match what you heard):
-
-| Case | Pre-flash customize in Imager? |
-|------|--------------------------------|
-| Official **Raspberry Pi OS** from Imager's online list, Imager **2.0+** | Yes -- wizard step 4 |
-| **Trixie** + Imager **1.9.x** | No -- old Imager cannot apply Trixie's `cloudinit-rpi` format; use Imager 2.0 or skip and use the [first-boot wizard](https://www.raspberrypi.com/documentation/computers/getting-started.html#configuration-on-first-boot) on a display |
-| **Local/custom `.img`** (not from the official list) | No by default -- needs a [custom repository JSON](https://www.raspberrypi.com/news/how-to-add-your-own-images-to-imager/) with the right `init_format` |
-
-For headless bench without Imager step 4: use **Ethernet**, or attach a **display/keyboard once** for the first-boot wizard, or sign in to **Raspberry Pi Connect** during imaging (Imager 2.0).
-
-**Lab WiFi while flashing:** Have the bench/lab WiFi network available when you run Imager step 4 and enter SSID + credentials there. That gives the Pi onboard WiFi on first boot for SSH, `git clone`, and `coord pull` during setup and testing. In flight the coordinator will not rely on upstream WiFi (Pi Zero USB gadget network only); disabling WiFi in flight is a later ops concern, not an Imager step.
-
-| Setting | Recommendation | Why |
-|---------|----------------|-----|
-| OS | Raspberry Pi OS (64-bit), official list entry | Container images are `linux/arm64` |
-| Imager | 2.0 or newer | Matches current Pi OS customization mechanism |
-| Variant | Desktop or Lite | Either works; Lite is fine headless if step 4 sets SSH/WiFi or you use Ethernet |
-| Hostname | e.g. `coordinator` (step 4) | Matches `HOSTNAME` in stack `.env` (cosmetic) |
-| User / password | Your operator account (step 4) | SSH and Docker group membership |
-| SSH | Enable in step 4, or use first-boot wizard / Pi Connect | Headless bring-up |
-| WiFi | **Lab SSID in step 4** (and/or Ethernet on the bench) | Built-in Pi 4B WiFi; no dongle. Useful for prep; not the in-flight network |
-| Storage | Quality SD or USB boot later | Per [virtualization-study](https://github.com/symmatree/fables/blob/main/Drones/coordinator/virtualization-study.md): avoid heavy control-plane IOPS on SD; Docker Compose idle I/O is low |
-
-### Not needed at image install (later host playbooks)
-
-These are **out of scope** for the tracker-only bootstrap and **do not** belong in Imager step 4 or the first `./host/one_time.sh` run:
-
-| Future subsystem | Host change (later playbook) | Imager / first bootstrap OK now? |
-|------------------|------------------------------|----------------------------------|
-| chrony + PPS (DS3234 SQW to GPIO) | `dtoverlay=pps-gpio,gpiopin=18` in `/boot/firmware/config.txt`, chrony on **host** | Yes |
-| Pi Zero USB gadget `br0` | Host bridge + DHCP (NetworkManager or systemd-networkd); `dwc2`/`g_ether` on **Zeros**, not coordinator | Yes |
-| FC MAVLink UART | `enable_uart=1`, serial console off primary UART | Yes (no FC in `tracker` profile) |
-| WiFi AP/station utility | NetworkManager / D-Bus (host or utility container) | Yes |
-| SparkFun Top pHAT 2.4" TFT | Compile `sfe-topphat-overlay.dts` to `.dtbo`, install under `/boot/firmware/overlays/`, add `dtoverlay=rpi-display,...` to `/boot/firmware/config.txt` ([SparkFun guide](https://learn.sparkfun.com/tutorials/sparkfun-top-phat-hookup-guide/24-tft-display-linux-54-update)) | Yes -- add when the pHAT is on the board, not at SD flash time |
-
-The study recommends **stock Pi OS + Docker Compose** with chrony and `br0` on the host kernel -- consistent with Imager defaults plus Ansible, not a custom image.
-
-## 1. Flash and first boot
-
-1. Flash the SD card: Imager 2.0+, official Pi OS (64-bit).
-2. At step 4: username "pi", password from 1password "rpi/pi" item. Hostname "coordinator". Provide house wifi. Enable SSH, provide public key for OnePKey ssh identity.
-2. Boot the Pi 4B, connect power and network (Ethernet, Imager WiFi, or wizard-configured WiFi).
-3. SSH in: `ssh <user>@<hostname>.local` (or the Pi IP from your router).
-
-Optional sanity check:
-
-```bash
-uname -m    # expect aarch64
-lsb_release -a
+```powershell
+Get-Disk | Format-Table Number, FriendlyName, Size, BusType
+.\Flash-Card.ps1 -Hostname coordinator -Disk 2 -Image $HOME\Downloads\coordinator-pi-<YYYYMMDD>.img.xz
 ```
 
-## 2. Clone the coordinator repo
+### 2. First boot
 
-Public repo -- no GitHub CLI or token required for HTTPS:
+Power on. `firstrun.sh` sets the hostname, renames the account, installs the SSH key,
+writes the WiFi connection, then deletes itself and reboots. Expect two boots.
+
+> **A failed first boot powers the board off.** Imager's generated unit carries
+> `FailureAction=exit`, and for PID 1 that is a shutdown -- so a failure looks exactly like a
+> hang: dark ACT LED, nothing on the network. If the node never appears, that is one of the
+> three possibilities (still booting / wrong WiFi / first boot failed and powered off), and
+> HDMI is how you tell them apart.
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git
+ssh pi@coordinator.local
+uname -m            # aarch64
+cat /etc/fleet-image # IMAGE / ROLE / SOURCE / BASE -- which image this card came from
+findmnt -no FSTYPE,OPTIONS /   # btrfs ... subvol=/@
+```
+
+### 3. Clone and bootstrap
+
+The clone is load-bearing: `/opt/stacks/coordinator` points into it, so nothing works until
+it exists. Its absence presents confusingly -- `coord` reports *no stack*, not *no checkout*.
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/symmatree/coordinator.git
 cd coordinator
+./host/one_time.sh              # 'coordinator' is the default role
 ```
 
-Optional: install [GitHub CLI](https://cli.github.com/) and `gh auth login` if you prefer `gh repo clone` or will push from this Pi later. Not required for read-only clone.
+Re-run it after any reboot it asks for, until it exits clean. It is idempotent.
 
-## 3. Run one-time host bootstrap
-
-From the repo root (or from `host/` -- the script resolves its own directory):
+### 4. Check the host
 
 ```bash
-./host/one_time.sh
+newgrp docker          # once, if `docker ps` says permission denied
+coord status           # resolves the sole stack under /opt/stacks
+ls /dev/i2c-1          # front-panel bus (from the image)
+ls -l /dev/serial0     # -> ttyAMA0, the PL011 (disable-bt, from the image)
 ```
 
-What it does:
-
-1. `apt update`, install `ansible` and minimal deps. **Config-only** -- no `dist-upgrade`; for an in-place OS upgrade run `./host/os_upgrade.sh` deliberately ([#48](https://github.com/symmatree/coordinator/issues/48)).
-2. Ansible: Docker CE + Compose plugin, **symlink** `/opt/stacks/coordinator` to this checkout, `/var/lib/coordinator/{config,ipc}`, install `coord` CLI.
-3. If Ansible installed a new kernel, firmware, or module that set `/var/run/reboot-required`, the script **exits non-zero and asks you to reboot** -- it does not reboot itself. Bootstrap runs locally, so `ansible.builtin.reboot` would be rebooting the control node out from under its own play ([#113](https://github.com/symmatree/coordinator/issues/113)).
-
-**Repeat until stable:** run `./host/one_time.sh` again after any reboot until the script prints `one_time: complete (coordinator, no pending kernel/firmware reboot).` Fresh images often need one cycle; idempotent re-runs should not reboot again. (A fresh flash you also want current can get one `./host/os_upgrade.sh` pass first; routine config deploys skip it.)
-
-If bootstrap fails on architecture, the playbook requires **aarch64** (64-bit Pi OS).
-
-## 4. After bootstrap (no OAK-D required yet)
-
-If `docker ps` reports permission denied, run `newgrp docker` once or log out and back in (docker group membership does not trigger a reboot).
-
-Optional registry check (not required when GHCR is public):
+## Every update
 
 ```bash
-docker pull ghcr.io/symmatree/coordinator-vio-tracker:main
-```
-
-Confirm stack files:
-
-```bash
-ls /opt/stacks/coordinator/
-coord status   # may show no containers until start
-```
-
-Default `.env` already sets `VIO_TRACKER_VERSION=main` and `COMPOSE_PROFILES=tracker`.
-
-## 5. Bench: OAK-D + vio-tracker
-
-Attach the OAK-D to a **USB 3** port on the Pi, then:
-
-```bash
-coord pull
+cd ~/coordinator
+git pull
+coord pull                    # new container images
 coord start
-coord logs -f vio-tracker
 ```
 
-Full checklist and failure modes: [bench-tracker.md](bench-tracker.md).
+| What changed | What to run |
+|---|---|
+| `stacks/coordinator/.env` or `compose.yaml` | `git pull && coord start` |
+| A container image (new build on `main`) | `coord pull` |
+| An Ansible role, `bin/coord`, udev, or the boot unit | `./host/one_time.sh`, reboot if asked, re-run |
+| Anything in `config.txt` / `cmdline.txt` | **reflash** -- the image owns it |
+| OS packages | `./host/os_upgrade.sh` -- deliberate, never part of a config deploy |
+
+`coord pull` runs `compose down` first, so it is a full stop of the stack, not a rolling
+update. Fine on the bench; not something to do on a hot vehicle.
+
+**Never build on the Pi.** CI builds arm64 and the Pi pulls.
+
+## What comes from where
+
+| Concern | Source |
+|---|---|
+| `enable_uart=1`, `dtoverlay=disable-bt`, `dtparam=i2c_arm=on`, `console=serial0` removal | **image** (`pi-image/roles/coordinator/config.append.txt`) |
+| btrfs subvolume layout, `/etc/fleet-image` | **image** |
+| Docker, `coord`, `/opt/stacks` symlink, `/var/lib/coordinator/{config,ipc,captures}` | Ansible (`docker-host` + `coord-stack`) |
+| OAK-D udev rules, `oak_d.yaml` seed, host VIO tools, i2c-tools | Ansible (`coordinator` role) |
+| Serial getty disable on the FC UART | Ansible (a unit, not a boot file) |
+| Auto-start on boot, persistent journald | Ansible (`power-resilience.yml`) |
+| `br0` campod bridge, gadget interface enslavement | Ansible (`coordinator` role) |
+| `compose.yaml`, `.env`, container tags | git, through the symlink |
 
 ## Troubleshooting
 
 | Symptom | Check |
-|---------|--------|
-| `exec format error` / wrong arch | 32-bit Pi OS; re-flash **64-bit** image |
+|---|---|
+| Never appears on the network | HDMI. See the first-boot warning above -- it may be powered off, not hung |
+| `exec format error` | 32-bit OS; the fleet images are arm64 |
 | `permission denied` on `docker ps` | `newgrp docker` or re-login (not a reboot) |
-| Script exits 1, reboot-required still set | Run `./host/one_time.sh` again after the host is back |
-| Ansible `apt` / Docker repo errors | Pi has network; `ansible_distribution_release` matches your Pi OS codename |
-| Playbook OK but no `/opt/stacks/coordinator/compose.yaml` | Re-run with `-e sync_repo=true` (default in `one_time.sh`) |
+| `coord: compose file not found` | The checkout is missing -- `/opt/stacks/coordinator` is a symlink into it |
+| FC link silent or garbled | `ls -l /dev/serial0` should be `ttyAMA0`; mini-UART garbles because `arm_boost=1` moves the VPU clock |
+| MAVLink stream corrupt on an unknown card | `cat /proc/cmdline` -- `console=serial0` together with `enable_uart=1` puts console bytes on the FC's port. The current image makes this combination impossible |
+| Node is set up but not at head | `cat /etc/fleet-image` -- config converges over SSH, but the image only changes by reflashing |
 
-## Out of scope (separate issues)
+## Related
 
-- chrony + PPS overlay and config
-- USB gadget `br0` + dnsmasq for Pi Zeros
-- `vio-estimator`, `coordinator-mavlink` images and profiles
-
-(Dockge install/registration was previously listed here; it has been **dropped** -- see [deployment-model.md](deployment-model.md).)
-
-See [architecture.md](architecture.md) and coordinator issue #5 on GitHub.
+- [campod.md](campod.md) -- the Pi Zero counterpart, same bootstrap and CLI
+- [deployment-model.md](deployment-model.md) -- why config is git-authoritative with no on-box override
+- [power-loss-filesystem.md](power-loss-filesystem.md) -- the btrfs substrate the image lays down
+- [architecture.md](architecture.md) -- host vs container split, runtime paths
+- `dotfiles-symm/pi-image/` -- the image build; `provision/` -- per-unit identity injection
