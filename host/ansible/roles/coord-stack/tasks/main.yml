@@ -19,7 +19,7 @@
 
 # Deploy = symlink, not copy. The old copy silently reverted on-box edits and let deployed
 # state diverge from the repo (#48). A symlink makes `git pull` the deploy: the deployed
-# compose/.env IS the repo's, by construction, and coord's /opt/stacks/*/compose.yaml glob
+# compose.yaml IS the repo's, by construction, and coord's /opt/stacks/*/compose.yaml glob
 # resolves through it. `file: state=link` will not replace a non-empty directory, so a stale
 # copied dir from a pre-symlink deploy is removed first.
 - name: Stat the stack path ({{ coord_stack_name }})

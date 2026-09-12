@@ -29,4 +29,4 @@ The FC link needs the Pi's primary UART freed and at high baud — the coordinat
 
 ## Compose
 
-Service `coordinator-mavlink` in `stacks/coordinator/compose.yaml` (`flight` profile): `network_mode: host`, mounts the ipc dir and the serial device, `depends_on: vio-estimator`. FC params and EKF lanes: [docs/ardupilot-vio.md](../../docs/ardupilot-vio.md).
+Service `coordinator-mavlink` in `stacks/coordinator/compose.yaml` (no profile -- part of the operational set): `network_mode: host`, mounts the ipc dir and the serial device, `depends_on: vio-estimator`. FC params and EKF lanes: [docs/ardupilot-vio.md](../../docs/ardupilot-vio.md).

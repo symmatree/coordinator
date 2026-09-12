@@ -20,7 +20,7 @@ OAK-D bench bring-up is separate: [bench-tracker.md](bench-tracker.md).
 - **`/opt/stacks/coordinator` is a symlink into the checkout.** `git pull` *is* the config
   deploy -- no copy step, no on-box edit
   ([#48](https://github.com/symmatree/coordinator/issues/48)). Never hand-edit the deployed
-  `.env`; change it in git and pull.
+  `compose.yaml`; change it in git and pull.
 - **Passwordless sudo works, and bootstrap can be driven non-interactively.** The pinned
   Bookworm base ships `/etc/sudoers.d/010_pi-nopasswd` (`pi ALL=(ALL) NOPASSWD: ALL`, mode
   0440, root-owned) and `pi` is in both `adm` and `sudo`. The image build rsyncs the vendor
@@ -99,7 +99,7 @@ coord start
 
 | What changed | What to run |
 |---|---|
-| `stacks/coordinator/.env` or `compose.yaml` | `git pull && coord start` |
+| `stacks/coordinator/compose.yaml` (config lives in it -- there is no `.env`) | `git pull && coord start` |
 | A container image (new build on `main`) | `coord pull` |
 | An Ansible role, `bin/coord`, udev, or the boot unit | `./host/one_time.sh`, reboot if asked, re-run |
 | Anything in `config.txt` / `cmdline.txt` | **reflash** -- the image owns it |
@@ -121,7 +121,7 @@ update. Fine on the bench; not something to do on a hot vehicle.
 | Serial getty disable on the FC UART | Ansible (a unit, not a boot file) |
 | Auto-start on boot, persistent journald | Ansible (`power-resilience.yml`) |
 | `br0` campod bridge, gadget interface enslavement | Ansible (`coordinator` role) |
-| `compose.yaml`, `.env`, container tags | git, through the symlink |
+| `compose.yaml` (values and container tags included) | git, through the symlink |
 
 ## Troubleshooting
 

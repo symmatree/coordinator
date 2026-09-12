@@ -40,5 +40,5 @@ luma/I2C device is only touched in `display.py:main`.
 | `SH1106_REFRESH_SEC` | `1.0` | redraw interval |
 | `SH1106_NODE` | hostname | node label |
 
-Runs in the `tracker`/`bench`/`flight` profiles; needs the i2c bus enabled on the host
+Runs whenever the coordinator is up (no profile); needs the i2c bus enabled on the host
 (`dtparam=i2c_arm=on`, done by the coordinator ansible role).

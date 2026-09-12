@@ -112,7 +112,6 @@ Two rules make this navigable:
 | Producer | Trigger | Reads | Writes (path) |
 |----------|---------|-------|---------------|
 | **vio-tracker** tee (#78) | in-flight, on the vehicle | live OAK-D | `captures/<MxId>/<session>/<MxId>_<session>.feat` (+ `.feat.json`, `features/*.json`) |
-| **oak-still-capture** (#72) | in-flight / bench | OAK-D RGB | `captures/<MxId>/<session>/stills/<MxId>_<seq>_<ts>.jpg` (+ `.json`) |
 | `bin/vio-ipc-record` (bench) | manual bench | estimator sockets | a capture session (same `captures/...` shape) |
 | **coordinator-mavlink** (#208, #220) | in-flight, on the vehicle | FC MAVLink (MAV2) | `captures/timesync.jsonl`, `captures/vehicle.tlog` |
 | ground station (mavproxy, backpack watch) | in-flight, on the ground | the radio link | `ground/*` -- see [#192](https://github.com/symmatree/coordinator/issues/192) for per-session tlog rotation |

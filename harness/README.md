@@ -71,12 +71,12 @@ back to `--rate` Hz for console-format logs, or `--fast` for bulk/batch replay.
 Regenerate VINS pose from a recorded input fixture. Needs the
 `coordinator-vio-estimator` image; run vins with `multiple_thread: 0` for a
 deterministic, reproducible pose (edit the mounted `oak_d.yaml`). Bring up the
-**estimator alone** -- not the whole `bench` profile -- so the live tracker isn't
+**estimator alone** -- not the whole vision chain -- so the live tracker isn't
 also writing to `chobits_imu`/`chobits_features` and corrupting the replay:
 
 ```sh
 # 1. real vins_fusion only, its input sockets bound (NOT vio-tracker)
-COMPOSE_PROFILES=bench docker compose -f stacks/coordinator/compose.yaml up -d vio-estimator
+docker compose -f stacks/coordinator/compose.yaml up -d vio-estimator
 # 2. tap its pose output to CSV
 vio-pose-tap --out pose-<run>.csv                 # binds /tmp/chobits_server
 # 3. replay the captured inputs into it

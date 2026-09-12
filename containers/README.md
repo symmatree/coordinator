@@ -55,7 +55,6 @@ the app images, never an implicit move.
 |-------|------|--------------|--------------|-------|
 | `vio-tracker` | arm64 | `vio-tracker-base@digest` | `vio-runtime-base@digest` | depthai from the build base, OpenCV from the runtime base; only `feature_tracker` + the small tracker-only libs build here |
 | `vio-estimator` | arm64 + amd64 | `debian@digest` (own Ceres/OpenCV-dev toolchain) | `vio-runtime-base@digest` | a dedicated build base is a possible future CI-time win; the runtime OpenCV is the layer that ships, and it comes from the shared base |
-| `oak-still-capture` | arm64 | -- | `debian@digest` | uses **depthai-python + OpenCV pip wheels**, a different dependency path -- no shared apt/C++ base to factor; just pins Debian |
 | `sh1106-display` | arm64 | -- | `debian@digest` | small; no heavy shared content |
 | `coordinator-mavlink` | arm64 | -- | `debian@digest` | small; no heavy shared content |
 | `campod-camera` | arm64 | -- | `debian@digest` (via `BASE_IMAGE`) | small; adds the Raspberry Pi apt suite for matched `libcamera`/`picamera2` |

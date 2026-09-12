@@ -440,7 +440,7 @@ corollary. (`260613-vertical-bounce` is a fast vertical *climb*, not an oscillat
   [`docs/vio-offline-replay.md`](../docs/vio-offline-replay.md) Options B/C.
 - [ ] **Matrix-build the router (`coordinator-mavlink`).** It sits *in* the all-up loop (regenerated pose
   -> ExtNav -> FC) and is currently arm64-only, so an x86 all-up replay (LA6/S11) needs an amd64 router.
-  (The tracker / oak-still-capture / campod-camera are front-end only, **not** in the replay loop -> amd64
+  (The tracker / campod-camera are front-end only, **not** in the replay loop -> amd64
   is dev-parity nice-to-have, not load-bearing for replay.)
 
 ---

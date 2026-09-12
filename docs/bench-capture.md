@@ -11,7 +11,7 @@ For the **armed / in-flight** case -- same input streams, but the estimator is *
 
 ## Two gotchas that will bite you
 
-1. **The estimator holds the input sockets.** `chobits_imu`/`chobits_features` are single-consumer AF_UNIX dgram sockets; `vio-estimator` binds them in the `bench`/`flight` profiles. The recorder can't bind them until the estimator is stopped. **`coord stop` does *not* stop the estimator** if it's running out of the active profile (it lives in `bench`/`flight`; with `COMPOSE_PROFILES=tracker`, `down` leaves it). Kill it explicitly:
+1. **The estimator holds the input sockets.** `chobits_imu`/`chobits_features` are single-consumer AF_UNIX dgram sockets; `vio-estimator` binds them whenever it is up. The recorder can't bind them until the estimator is stopped. `coord stop` now stops it along with the rest of the operational set, since no service is hidden behind an inactive profile -- the old footgun (`COMPOSE_PROFILES=tracker` left the estimator running and `down` skipped it) is gone with the profiles. To stop just that one:
    ```bash
    docker rm -f coordinator_vio_estimator
    ```

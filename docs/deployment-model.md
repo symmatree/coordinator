@@ -28,12 +28,15 @@ runtime-written data, never hand-tuned config.
 ## Config is git-authoritative -- no on-box override
 
 There is **no per-box config override and no hand-editing on the device.** `compose.yaml`
-and `.env` live in git, ship in the image, and are the only source. A value you want
-different is changed in git and redeployed -- not `nano`-ed on the box (that produces a
+lives in git, ships in the image, and is the only source -- values included, since both
+stacks now carry them inline rather than in a `.env` beside them ([#233](https://github.com/symmatree/coordinator/pull/233)
+folded campod's in; the coordinator's followed). A value you want different is changed in git and redeployed -- not `nano`-ed on the box (that produces a
 snowflake the next deploy reverts, which is exactly the [#48](https://github.com/symmatree/coordinator/issues/48)
 drift trap).
 
 This is a deliberate reversal of the `.env` "edit on each Pi" habit the stack grew up with.
+The `.env` files are now gone outright: a file whose whole purpose is to be copied and
+locally edited is the wrong shape for a fleet nobody develops on interactively.
 The genuine need behind "let me change something easily" is **not** a config file -- see the
 two channels below.
 
@@ -43,14 +46,14 @@ two channels below.
    capture-before-arm vs armed-only, "capturing now?", an exposure-sweep *mode* you fly --
    belong on a **real runtime channel**, MAVLink-payload-shaped, owned by the
    coordinator-mavlink router (architecture.md UC1/UC2: "commanded by intent, reports its
-   own readiness"). This is how you change behaviour without a laptop; it is not `.env`.
+   own readiness"). This is how you change behaviour without a laptop; it is not a config file.
    Tuning params (e.g. still max-exposure) are either exposed here as a mode or are a git
    value you redeploy -- not a live on-box edit.
 
 2. **Cheap, reliable reflection of a merged git change (this doc).** *How* changes are made
    is git; the ask is only that **reflecting** a merged change onto the box be cheap and
    reliable. It decomposes:
-   - **Text** (`compose.yaml`, `.env`, `coord`) is a few KB. The copy -> **symlink** fix
+   - **Text** (`compose.yaml`, `coord`) is a few KB. The copy -> **symlink** fix
      ([#48](https://github.com/symmatree/coordinator/issues/48)) makes `git pull` *be* the
      deploy with zero drift; whether the box carries a git clone or a rendered bundle is
      aesthetic at that size. (Pure no-clone form, if ever wanted: publish the config as a
@@ -67,8 +70,8 @@ two channels below.
   `stacks/<name>/` dir into `/opt/stacks/<name>/` -- two copies of the same bytes, a sync
   ceremony between them, and hand-edits silently reverted. It now **symlinks**
   `/opt/stacks/<name> -> <checkout>/stacks/<name>`, so `git pull` is the deploy and deployed
-  `.env` == repo `.env` by construction. `coord`'s `/opt/stacks/*/compose.yaml` glob resolves
-  through it. (A stale copied dir from a pre-symlink deploy is removed once, on the next run.)
+  `compose.yaml` == repo `compose.yaml` by construction. `coord`'s `/opt/stacks/*/compose.yaml`
+  glob resolves through it. (A stale copied dir from a pre-symlink deploy is removed once, on the next run.)
 - **`dist-upgrade` split out of `one_time.sh`.** A config deploy used to drag a full
   `apt-get dist-upgrade` (network + possible reboot) in front of the playbook. `one_time.sh` is
   now **config-only**; the OS upgrade moved to a deliberate **`host/os_upgrade.sh`**. In the
