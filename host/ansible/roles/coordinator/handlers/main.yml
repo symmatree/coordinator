@@ -6,14 +6,6 @@
 - name: Trigger udev
   ansible.builtin.command: udevadm trigger
 
-- name: Reboot required
-  # Generic: touch the Debian "reboot needed" marker for any config.txt change that
-  # only takes effect at boot (UART remap, i2c_arm, ...).
-  ansible.builtin.file:
-    path: /var/run/reboot-required
-    state: touch
-    mode: "0644"
-
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
