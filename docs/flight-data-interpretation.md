@@ -305,6 +305,7 @@ underlying quantities, different message set and different names.
 | `TSYN` | the FC's own record of TIMESYNC exchanges, **with the peer SysID** and round-trip time (33 exchanges on 260814, RTT median 1007 us). A third, FC-side route to the clock bridge | high-rate work -- it is ~0.1 Hz |
 | colour stills | the mapping product | anything needing their own timestamp -- see above |
 | `mono_rect_left` | the actual VIO input, global shutter and fixed focus | only 260814 has it; capture is off by default from #216 |
+| `PARM` | **the complete parameter set the vehicle actually flew.** 1293 entries on 260814 -- the same count as the FC export, with none missing. The authoritative answer to how the vehicle was configured when this data was recorded | the vehicle's configuration *now*; it is a record of that boot |
 
 **Configuration changes between flights, so cross-flight comparisons need dating.** The clearest
 example: `MAV3_OPTIONS` went to 2 (`NO_FORWARD`, stopping VIO traffic being forwarded onto the ELRS
@@ -312,7 +313,14 @@ link) for the first time on **260814**, and on that same flight every MAV3 strea
 1 to 4 Hz. Measured from the `MAV` counters, the ELRS downlink roughly **doubled** (17.5-19.3 -> 39.6
 pkt/s) despite the forwarding fix. So 260814 is the first post-fix flight, and a measurement taken on
 it verifies that a fix landed -- it is **not** evidence about the condition the fix addressed.
-Check `PARM` for the parameters your question depends on before comparing flights.
+
+**Read the flown value from the log's `PARM`, not from `ardupilot/inputs/`.** The fragments and
+`rekon10-methodi.param` describe the FC as of the repo's HEAD and the last export; neither is dated to
+a flight, and a parameter can be pinned in a fragment, applied to the FC, and re-exported long after
+the flight you are looking at. `PARM` carries the whole set, so the log answers this by itself and
+nothing has to be inferred from commit order. Worked example: `LOG_BITMASK` is `589823` in the export
+(raw IMU, bit 19, applied and round-tripped 2026-09-05) while both 260812 and 260814 flew `65535`
+and contain zero `ISBH`/`ISBD` records -- the flights predate the apply.
 
 **Every `.feat` recorded with the capture overlay running is missing 38-59% of the frames the camera
 produced** (E31, [#156](https://github.com/symmatree/coordinator/issues/156)). Sessions that wrote no
