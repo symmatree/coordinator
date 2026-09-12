@@ -25,25 +25,48 @@ Not a RO-base + overlay (that was the earlier call — superseded 2026-07-12). I
 writes and no custom initramfs:
 
 > [!WARNING]
-> **Read-only `/usr` is NOT actually enforced as built** (verified 2026-08-14 on the first unit, pipboy).
-> The `ro` reaches fstab, the generated `usr.mount` unit, and even the initramfs mounts `/usr` read-only —
-> but `@usr` and `@` are **one btrfs filesystem sharing one superblock**, so when `systemd-remount-fs`
-> remounts `/` **read-write** at boot, `/usr` comes up **`rw`** too, and a live `/usr` can't be flipped
-> back (`remount,ro` → "busy"). Consequences: the "mount `ro` → `remount,rw` for apt → `remount,ro` after"
-> cycle described in the table **cannot complete**, and the *"SD is fine because ro-`/usr` keeps write
-> volume low"* rationale below **does not currently hold** — which matters most for the SD roles
-> (coordinator + campods). Open design question tracked in [#96](https://github.com/symmatree/coordinator/issues/96);
-> full evidence chain in `facts/topics/power-unstable-pi.md` → "Reality check — read-only `/usr` is NOT
-> actually enforced". Candidate fixes: put `@usr` on a **separate btrfs filesystem** (its own superblock,
-> so its `ro` is independent), a late-boot unit that re-asserts `ro` after `systemd-remount-fs`, or drop
-> the live-ro claim and use per-service `ProtectSystem` + snapshots instead.
+> **Read-only `/usr`: contested, and do not design around either answer yet
+> ([#202](https://github.com/symmatree/coordinator/issues/202)).**
+>
+> **Reported unenforced** on 2026-08-14 on the first unit, **pipboy** (Pi 5, NVMe): the `ro` reached
+> fstab, the generated `usr.mount` unit and the initramfs, but the live mount was `rw`. Mechanism
+> offered: `@usr` and `@` are one btrfs filesystem sharing one superblock, so when
+> `systemd-remount-fs` remounts `/` read-write at boot, `/usr`'s read-only flag goes with it — and a
+> live `/usr` cannot be flipped back (`remount,ro` → "busy").
+>
+> **Contradicted on 2026-09-12 on both current SD units.** `/usr` is mounted `ro` *and refuses
+> writes* on the coordinator (Pi 4B) and campod-sw (Zero 2 W), both from the `20260912` images:
+>
+> ```
+> $ findmnt /usr -o OPTIONS --noheadings
+> ro,noatime,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/@usr
+> $ touch /usr/.rotest
+> touch: cannot touch '/usr/.rotest': Read-only file system
+> ```
+>
+> And on both, **`/` is `rw` while `/usr` is `ro` at the same time on the same filesystem**, which is
+> what the shared-superblock mechanism says cannot happen. So `ro` is behaving as a per-mount VFS
+> flag here, as the original design assumed.
+>
+> **Unresolved, which is why #202 is open:** nobody has re-checked **pipboy**, and it is the only
+> device the original finding came from — different SoC, different medium. If it still comes up `rw`
+> the difference is real and interesting rather than the finding being simply wrong. Nor has anyone
+> bisected what moved in the image since August (`/boot/firmware` went `ro` → `rw`, `nofail` was
+> dropped, the initramfs is regenerated differently), and nobody has tested whether
+> `remount,rw` → apt → `remount,ro` completes live on a unit where `ro` *is* holding.
+>
+> Candidate fixes, if it turns out to need one: `@usr` on a **separate** btrfs filesystem (its own
+> superblock, so its `ro` is independent), a late-boot unit re-asserting `ro` after
+> `systemd-remount-fs`, or dropping the live-`ro` claim for per-service `ProtectSystem` + snapshots.
+> Design question tracked in [#96](https://github.com/symmatree/coordinator/issues/96); earlier
+> evidence chain in `facts/topics/power-unstable-pi.md` → "Reality check".
 
 All subvolumes `noatime`; the filesystem is `mkfs.btrfs -m single` (single metadata, no DUP — SD write-amplification). One btrfs FS → one UUID; the `subvol=` mount option differentiates the mounts (in `/etc/fstab`).
 
 | Subvolume | Mount (option) | Contents / why |
 |-----------|----------------|----------------|
 | `@` | `/` (`compress=zstd`) | root. |
-| `@usr` | `/usr` (**`ro`** — ⚠️ *not enforced as built, see warning above*; `compress=zstd`) | the OS binaries/libraries — can't be written mid-cut, so can't corrupt. **Mount-option `ro`** (not the btrfs ro *property*), *intended* so `remount,rw` → apt → `remount,ro` works live for ansible maintenance, no reboot. **In practice `/usr` comes up `rw` (shared superblock); [#96](https://github.com/symmatree/coordinator/issues/96).** |
+| `@usr` | `/usr` (**`ro`** — ⚠️ *contested, see warning above*; `compress=zstd`) | the OS binaries/libraries — can't be written mid-cut, so can't corrupt. **Mount-option `ro`** (not the btrfs ro *property*), *intended* so `remount,rw` → apt → `remount,ro` works live for ansible maintenance, no reboot. **Status: `ro` holds on both current SD units; reported `rw` on pipboy in August, unexplained ([#202](https://github.com/symmatree/coordinator/issues/202)).** |
 | `@var` | `/var` (`compress=zstd`) | `journald`, Docker `data-root` (images survive reboot; `/var/lib/docker` is `chattr +C` / nodatacow — CoW-on-CoW footgun for overlay2), spool. |
 | `@home` | `/home` (`compress=zstd`) | operator home (the checkout, interactive scratch that must survive a reboot). |
 | `@data` | `/var/lib/coordinator` (`compress=zstd`) | config + captures — the precious data; **nests under `/var`** (mount after `@var`). Disarm takes an **RO snapshot** of this (#88). |
@@ -57,12 +80,15 @@ Boot config is **standard, no custom initramfs hook**: `cmdline.txt` carries `ro
 Why btrfs over the overlay: tmpfs-upper overlay costs RAM we can't spare on the 512 MB Zero 2 W campods;
 disk-upper + conditional-reset needs a custom initramfs hook. Subvolumes give ro-where-it-matters +
 CoW crash-consistency + checksums (detect SD FTL rot ext4 serves silently) + snapshots, with only
-standard btrfs-root boot config. **Medium:** SD, and the write-volume argument for it has not held
-up. It was *"SD is fine because ro-`/usr` keeps write volume low"*, and both halves of that failed in
-practice: `ro`-`/usr` is not enforced as built (warning at the top of this section), and compression
-was silently off fleet-wide on whichever units lost a mount-order race (warning below). Both are
-fixed or tracked, but the rationale was never load-bearing on its own -- btrfs is chosen here for
-crash-consistency, checksums and snapshots, and those do not depend on write volume. (btrfs is
+standard btrfs-root boot config. **Medium:** SD. The stated rationale was *"SD is fine because
+ro-`/usr` keeps write volume low"*, and this doc has now had both of its halves wrong, in both
+directions -- so treat the write-volume story as **unsettled** rather than as either established or
+retired. `ro`-`/usr` was reported unenforced in August and holds on both current SD units, mechanism
+unexplained ([#202](https://github.com/symmatree/coordinator/issues/202)). Compression really was off
+on the coordinator, fleet-wide on that card, and is fixed in the image but not on either card until
+reflash (warning below). What does **not** depend on any of it: btrfs is chosen here for
+crash-consistency, checksums and snapshots. Those hold regardless of how the write-volume question
+lands, which is the reason the choice was never actually resting on it. (btrfs is
 unambiguously good on the pipboy's NVMe.)
 
 ## How it's built: mmdebstrap-in-CI (in `dotfiles-symm`)
