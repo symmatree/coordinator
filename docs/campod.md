@@ -271,6 +271,12 @@ It is idempotent; running it when nothing changed is cheap and safe.
 **Never build on the Zero.** CI builds arm64 and the Zero pulls. 512 MB of RAM is the
 binding constraint on this device and a build will not fit.
 
+**Capture comes back by itself after a power-up.** `campod-stack.service` runs `coord start`
+unconditionally on boot (#97), so a pod carried to the flight line and connected to a battery
+starts capturing with nobody to tell it to. `coord stop` is a *temporary* stop -- it stops the
+container now, and the next boot starts it again. To keep a pod deliberately quiet across
+reboots, disable the unit (`systemctl disable --now campod-stack.service`), not `coord stop`.
+
 ---
 
 ## Troubleshooting
@@ -287,6 +293,7 @@ binding constraint on this device and a build will not fit.
 | libcamera reports "no cameras" | **First check the ribbon** -- both ends, contacts toward the board. Confirmed 2026-09-12 that the suite pairing is correct (libcamera `v0.5.2` initialises in-container on the campod image), so a bare node reports "no cameras" for the ordinary reason. The suite-mismatch cause is real but secondary: `RPI_SUITE` tracks **the campod image's pinned suite** (`dotfiles-symm/pi-image/build-image.sh`), not current stock Pi OS -- reading it the other way is what produced [#214](https://github.com/symmatree/coordinator/pull/214). If libcamera prints its version banner at all, the suite is fine and the camera is not attached. |
 | Out-of-memory during bootstrap | expected pressure point on 512 MB; confirm zram/swap is on (Pi OS default) |
 | `coord` picks the wrong stack | only the campod stack belongs under `/opt/stacks/` on a campod |
+| Nothing capturing after a clean power-down and power-up | `systemctl status campod-stack.service`. `coord stop` marks the container explicitly stopped and `restart: unless-stopped` honours that across reboots, so the boot unit is what brings it back. If the unit is disabled, `systemctl enable --now campod-stack.service` |
 | Dead on **first** boot: no network, dark ACT LED, `firstrun.sh` still on the card | was `nofail` on `/boot/firmware` letting the mount lose a race with `kernel-command-line.service`; the board powered itself **off** rather than hanging. Fixed in dotfiles-symm#41 -- if it recurs, check fstab for `nofail` and read the serial console |
 | Captures not landing on the `@data` subvolume | `findmnt /var/lib/campod` -- if it is on `@var`, the image's `DATA_MOUNT` and `coord_state_root` have diverged |
 
