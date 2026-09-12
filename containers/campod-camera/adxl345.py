@@ -50,15 +50,22 @@ matters, because the datasheet specifies no tolerance at all on the part's
 internal clock. Writing derived per-sample timestamps now would bake in a nominal
 rate we have no basis for and lose the evidence needed to correct it.
 
-Configuration (all optional):
-  CAMPOD_ACCEL_DEVICES   comma list of `label:/dev/spidevN.M`; empty disables.
-                      e.g. camera:/dev/spidev0.0,arm:/dev/spidev0.1
-  CAMPOD_ACCEL_ODR_HZ    output data rate (default: 3200)
-  CAMPOD_ACCEL_RANGE_G   2 | 4 | 8 | 16 (default: 16)
-  CAMPOD_ACCEL_SPI_HZ    SPI clock (default: 1500000 -- see POP_NOTE)
-  CAMPOD_ACCEL_POLL_HZ   FIFO poll rate (default: 200)
-  CAMPOD_ACCEL_DIR       output dir (default: /captures)
-  CAMPOD_ACCEL_SEPARATION_M  camera-to-arm baseline, recorded in the manifest
+There is nothing to configure and nothing to enable. SPI has no enumeration: once
+`dtparam=spi=on` is in the image, /dev/spidev0.0 and 0.1 exist on every campod
+whether or not anything is wired to them. So the only way to know a sensor is
+present is to read DEVID and look for 0xE5 -- which the reader has to do anyway.
+Asking an operator to declare what the code can detect is a config point that
+exists only to be forgotten, and forgetting it costs a flight's vibration record.
+
+Chip select IS the identity, by wiring convention: CE0 is the camera-colocated
+sensor, CE1 is the arm-end one. Every other setting is a constant below, with the
+reasoning next to it.
+
+  CAMPOD_ACCEL_SEPARATION_M  camera-to-arm baseline in metres. The one genuine
+                             input: it is a per-vehicle MEASUREMENT, not a tuning
+                             knob, and it is recorded into the run header because
+                             the rotational signature is meaningless without it.
+  CAMPOD_ACCEL_DIR           output dir (default: /captures)
   CAMPOD_NODE_NAME / CAMPOD_SESSION   shared with capture.py
 """
 
@@ -127,6 +134,31 @@ SPI_HZ_NO_POP_DELAY = 1600000
 # Self-test limits, datasheet Table 1: the output change with SELF_TEST set,
 # in g, valid across the whole 2.0-3.6 V supply range. Requires ODR >= 100 Hz.
 SELF_TEST_LIMITS_G = {"x": (0.20, 2.10), "y": (-2.10, -0.20), "z": (0.30, 3.40)}
+
+# Chip select is the identity. CE0 is bonded behind the camera (what the imaging
+# sensor sees, X20); CE1 is at the arm end toward the motor (source spectrum, and
+# the before/after reference for felt on the motors).
+DEVICES = (("camera", "/dev/spidev0.0"), ("arm", "/dev/spidev0.1"))
+
+# The part's native internal rate, so nothing is decimated on the way out; lower
+# ODRs decimate through a filter the datasheet does not characterise.
+ODR_HZ = 3200
+# In FULL_RES the scale factor is a constant 3.9 mg/LSB at every range -- the bit
+# depth grows instead -- so the wide range is free, and the design doc's "tens of
+# microns at ~330 Hz" works out to 4-9 g, close enough to the rail to want it.
+RANGE_G = 16
+# At or below 1.6 MHz the datasheet's 5 us FIFO-pop delay is covered by the
+# register addressing alone, so no CS-deassert dance. Do not raise this.
+SPI_HZ = 1500000
+# The FIFO fills in 32/ODR = 10 ms at 3200 Hz, so this has 2x margin.
+POLL_HZ = 200.0
+
+# Consecutive read failures before a device is dropped from the poll set. The
+# handler used to print and continue inside a loop running at POLL_HZ, so one
+# wire coming off in flight produced POLL_HZ log lines per second -- filling the
+# card and drowning the capture log during exactly the flight worth reading
+# afterwards.
+MAX_CONSECUTIVE_READ_FAILURES = 5
 
 _stop = False
 
@@ -282,30 +314,8 @@ class Writer:
             self.fh.close()
 
 
-def _parse_devices(raw):
-    out = []
-    for item in (raw or "").split(","):
-        item = item.strip()
-        if not item:
-            continue
-        label, _, path = item.partition(":")
-        if not path:
-            print(f"accel: ignoring {item!r} -- expected label:/dev/spidevN.M", flush=True)
-            continue
-        out.append((label.strip(), path.strip()))
-    return out
-
-
 def main():
-    devices = _parse_devices(os.getenv("CAMPOD_ACCEL_DEVICES"))
-    if not devices:
-        print("accel: CAMPOD_ACCEL_DEVICES empty, nothing to log", flush=True)
-        return 0
-
-    odr = _env_int("CAMPOD_ACCEL_ODR_HZ", 3200)
-    range_g = _env_int("CAMPOD_ACCEL_RANGE_G", 16)
-    spi_hz = _env_int("CAMPOD_ACCEL_SPI_HZ", 1500000)
-    poll_hz = _env_float("CAMPOD_ACCEL_POLL_HZ", 200.0)
+    odr, range_g, spi_hz, poll_hz = ODR_HZ, RANGE_G, SPI_HZ, POLL_HZ
     out_dir = Path(os.getenv("CAMPOD_ACCEL_DIR", "/captures"))
     node = os.getenv("CAMPOD_NODE_NAME") or socket.gethostname()
     session = os.getenv("CAMPOD_SESSION") or dt.datetime.now(dt.timezone.utc).strftime(
@@ -341,8 +351,10 @@ def main():
     session_dir.mkdir(parents=True, exist_ok=True)
 
     sensors, writers, counts = [], {}, {}
-    for label, path in devices:
+    for label, path in DEVICES:
         if not os.path.exists(path):
+            # Only reachable if dtparam=spi=on is missing: the nodes are created by
+            # the overlay, not by anything being plugged in.
             print(f"accel: {label}: {path} does not exist -- is dtparam=spi=on set?", flush=True)
             continue
         try:
@@ -351,11 +363,13 @@ def main():
             print(f"accel: {label}: could not open {path}: {exc}", flush=True)
             continue
 
+        # The actual presence test. Nothing on this chip select answers 0xE5 unless
+        # a part is really there and the bus is really working.
         devid = dev.devid()
         if devid != DEVID_EXPECTED:
             print(
-                f"accel: {label}: DEVID 0x{devid:02X}, expected 0x{DEVID_EXPECTED:02X} -- "
-                "wiring, chip select, or SPI mode is wrong. Skipping this device.",
+                f"accel: {label}: nothing answering on {path} "
+                f"(DEVID 0x{devid:02X}, expected 0x{DEVID_EXPECTED:02X})",
                 flush=True,
             )
             dev.close()
@@ -402,7 +416,7 @@ def main():
         counts[label] = 0
 
     if not sensors:
-        print("accel: no usable devices", flush=True)
+        print("accel: no sensors on either chip select; will re-probe", flush=True)
         return 1
 
     print(
@@ -414,6 +428,7 @@ def main():
     interval = 1.0 / poll_hz
     next_tick = time.monotonic()
     overruns = {s.label: 0 for s in sensors}
+    failures = {s.label: 0 for s in sensors}
     try:
         while not _stop:
             now = time.monotonic()
@@ -422,6 +437,7 @@ def main():
                 continue
             next_tick += interval
 
+            dropped = []
             for dev in sensors:
                 # Stamp before the drain: the newest sample in the FIFO is closest
                 # to this instant, and the read itself takes ~1 ms.
@@ -429,8 +445,19 @@ def main():
                 t_mono = time.monotonic_ns()
                 try:
                     samples, entries, overrun = dev.drain()
+                    failures[dev.label] = 0
                 except Exception as exc:  # noqa: BLE001
-                    print(f"accel: {dev.label}: read failed: {exc}", flush=True)
+                    # Bounded, because this loop runs at POLL_HZ: printing on every
+                    # failure turned one detached wire into POLL_HZ log lines a
+                    # second. Drop the device instead and say so once.
+                    failures[dev.label] += 1
+                    if failures[dev.label] >= MAX_CONSECUTIVE_READ_FAILURES:
+                        print(
+                            f"accel: {dev.label}: {failures[dev.label]} consecutive read "
+                            f"failures ({exc}); dropping it for this run",
+                            flush=True,
+                        )
+                        dropped.append(dev)
                     continue
                 if not samples:
                     continue
@@ -451,6 +478,16 @@ def main():
                     }
                 )
                 counts[dev.label] += entries
+
+            for dev in dropped:
+                sensors.remove(dev)
+            if not sensors:
+                # Exiting is the recovery path: the supervisor restarts us in 30 s
+                # and we re-probe both chip selects from scratch. There is no
+                # mid-run rediscovery -- SPI has nothing to enumerate.
+                print("accel: all sensors dropped; exiting so the next run re-probes",
+                      flush=True)
+                break
     finally:
         for dev in sensors:
             try:

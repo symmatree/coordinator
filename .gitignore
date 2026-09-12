@@ -1,5 +1,3 @@
-# Local overrides (stack defaults live in stacks/coordinator/.env)
-stacks/coordinator/.env.local
 
 # Editor / OS
 *~
