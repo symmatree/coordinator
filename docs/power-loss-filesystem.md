@@ -48,7 +48,7 @@ All subvolumes `noatime`; the filesystem is `mkfs.btrfs -m single` (single metad
 | `@home` | `/home` (`compress=zstd`) | operator home (the checkout, interactive scratch that must survive a reboot). |
 | `@data` | `/var/lib/coordinator` (`compress=zstd`) | config + captures — the precious data; **nests under `/var`** (mount after `@var`). Disarm takes an **RO snapshot** of this (#88). |
 | `@snapshots` | `/.snapshots` | snapshot store (incl. the disarm RO-snapshots). |
-| FAT | `/boot/firmware` (**`ro`**) | firmware; `remount,rw` for kernel/eeprom updates. |
+| FAT | `/boot/firmware` (**`rw`**) | firmware. Was `ro` by design; it is **`rw` as built**, and deliberately so: every vendor first-boot mechanism *deletes its own trigger file* from this partition (`firstrun.sh` removes itself; `imager_fixup` rewrites `cmdline.txt`), so `ro` broke all of them. Related: `nofail` here dropped the mount's `Before=local-fs.target` ordering and let `firstrun.sh` race an empty mountpoint ([dotfiles-symm#41](https://github.com/symmatree/dotfiles-symm/pull/41)). |
 | `/tmp`, `/run` | tmpfs | normal, small — the *only* ramdisk. |
 
 Boot config is **standard, no custom initramfs hook**: `cmdline.txt` carries `rootfstype=btrfs rootflags=subvol=@`, and the stock Pi initramfs already has the btrfs module.
