@@ -4,19 +4,10 @@
 # the box (a) always come back capturing after a bounce (#97) and (b) leave a
 # forensic trail that survives the reboot (#100). See docs/power-loss-filesystem.md.
 
-# --- #97: always come up capturing, regardless of the last operator command ---
-- name: Install coordinator-stack boot unit (auto-start capturing)
-  ansible.builtin.copy:
-    src: coordinator-stack.service
-    dest: /etc/systemd/system/coordinator-stack.service
-    mode: "0644"
-  notify: Reload systemd
-
-- name: Enable coordinator-stack on boot
-  ansible.builtin.systemd:
-    name: coordinator-stack.service
-    enabled: true
-    daemon_reload: true
+# #97's auto-start boot unit moved to roles/coord-stack, which both device roles
+# already include -- it was never coordinator-specific, and the campod's lack of
+# it was a real gap rather than a deliberate difference. The unit is still named
+# coordinator-stack.service here, so nothing about this device changes.
 
 # --- #100: persist the journal so the post-bounce forensic trail survives reboot ---
 # Two gotchas, both found on-hardware (bench 2026-07-24), that the first cut missed:

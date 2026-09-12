@@ -1,0 +1,41 @@
+[Unit]
+# Auto-start this device's stack on every boot, so it returns to a known-good
+# running state regardless of the last operator command (#97).
+#
+# What this does and does NOT cover, stated precisely because it is easy to
+# overclaim. `restart: unless-stopped` already handles the common cases on its
+# own: a power yank, or `shutdown -h now` with the stack running, both come back
+# up running. The one case it deliberately does not cover is an EXPLICIT stop --
+# `coord stop` marks containers stopped and that survives reboots. So the gap is
+# narrow: `coord stop`, then a power cycle, equals a device that stays idle.
+#
+# Narrow but real, and it is #97's point: come back to a known-good running state
+# regardless of the last operator command. A pod stopped for bench work and then
+# carried out and connected to a battery has nobody there to start it.
+#
+# Shared by both roles because the coordinator had it and the campod did not,
+# which was an accident of where the task lived rather than a decision.
+#
+# To deliberately keep the stack down across a reboot, disable THIS unit
+# (`systemctl disable --now {{ coord_stack_name }}-stack.service`), not `coord stop`.
+Description=Rekon {{ coord_stack_name }} stack (auto-start on boot)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+# Retry in case the Docker socket is not ready the instant docker.service is up.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Idempotent: `coord start` = `docker compose up -d`, which brings up everything
+# in the stack file. No profile and no .env are involved -- neither stack carries
+# compose profiles any more (#240, #242). `coord` resolves the sole stack under
+# /opt/stacks itself, so this line needs no per-device argument.
+ExecStart=/usr/local/bin/coord start
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

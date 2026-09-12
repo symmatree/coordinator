@@ -46,6 +46,26 @@
     force: true
   when: sync_repo | bool
 
+# Come up running on every boot, both roles (#97). Installed here rather than in
+# roles/coordinator because it is not coordinator-specific: any device whose job
+# starts when it powers on needs it, and the campod not having it meant a clean
+# `coord stop` left capture off across reboots with nobody to turn it back on.
+#
+# daemon_reload on the task rather than a handler notify: coord-stack is reached
+# through include_role from both device roles, and handler resolution across that
+# boundary is not worth relying on for something this small.
+- name: Install the {{ coord_stack_name }}-stack boot unit
+  ansible.builtin.template:
+    src: coord-stack.service.j2
+    dest: "/etc/systemd/system/{{ coord_stack_name }}-stack.service"
+    mode: "0644"
+
+- name: Enable {{ coord_stack_name }}-stack on boot
+  ansible.builtin.systemd:
+    name: "{{ coord_stack_name }}-stack.service"
+    enabled: true
+    daemon_reload: true
+
 - name: Install coord CLI
   ansible.builtin.copy:
     src: "{{ repo_root }}/bin/coord"
