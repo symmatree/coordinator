@@ -240,8 +240,9 @@ ls /var/lib/campod/captures/campod-sw/<session>/
 
 **Config and code are the same thing here.** `/opt/stacks/campod` is a *symlink* into the
 checkout, so `git pull` **is** the config deploy -- there is no copy step and no on-box
-edit to make ([#48](https://github.com/symmatree/coordinator/issues/48)). Never hand-edit
-the deployed `.env`; change it in git and pull.
+edit to make ([#48](https://github.com/symmatree/coordinator/issues/48)). There is no
+`.env`: the values live in `stacks/campod/compose.yaml` beside what reads them
+([#233](https://github.com/symmatree/coordinator/pull/233)). Change one in git and pull.
 
 ```bash
 cd ~/coordinator
