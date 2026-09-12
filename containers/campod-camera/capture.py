@@ -189,6 +189,35 @@ def main():
     session_dir = out_dir / node / session
     session_dir.mkdir(parents=True, exist_ok=True)
 
+    # Say what libcamera can see BEFORE constructing Picamera2(), because
+    # Picamera2() on a node with no camera raises picamera2's own
+    # `IndexError: list index out of range` from inside global_camera_info() --
+    # it indexes an empty list. Observed on campod-sw during bring-up: libcamera
+    # itself initialised fine (v0.5.2), and the only thing in the log was that
+    # traceback, which says nothing about cameras.
+    #
+    # The accelerometer reader beside us already gets this right: it reports what
+    # it probed and what it expected (DEVID 0x00, expected 0xE5) per chip select.
+    # This is the camera half of the same courtesy. On an arm-mounted pod the
+    # likely fault is a badly seated ribbon, not an absent module, and an
+    # operator needs to be able to tell those apart from the log alone.
+    cameras = Picamera2.global_camera_info()
+    if not cameras:
+        print(
+            "capture: libcamera reports NO cameras. Check the ribbon is seated "
+            "(both ends, contacts toward the board) and that this is a campod "
+            "image -- camera_auto_detect=1 comes from the vendor config.",
+            flush=True,
+        )
+        return 1
+    print(
+        "capture: libcamera sees "
+        + ", ".join(
+            f"{c.get('Model', '?')} @ {c.get('Id', '?')}" for c in cameras
+        ),
+        flush=True,
+    )
+
     picam2 = Picamera2()
     size = (width, height) if width and height else picam2.sensor_resolution
     config = picam2.create_still_configuration(main={"size": size})
