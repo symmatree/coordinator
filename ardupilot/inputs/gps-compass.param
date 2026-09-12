@@ -21,6 +21,19 @@ GPS_AUTO_CONFIG,3
 # Antenna lever arm from the FC origin, metres FRD (Z down).  provenance: ca8cd23 2026-07-31
 GPS1_POS_X,-0.082
 GPS1_POS_Z,-0.125
+# Raw GNSS observation logging. Non-zero makes the driver request UBX RXM-RAWX and log it
+#   as GRXH (per epoch: rcvTime, week, leapS, numMeas, recStat) and GRXS (per satellite:
+#   prMes, cpMes, doMes, gnss, sv, freq, lock, cno, prD, cpD, doD, trk).
+#   Why: the only GPS state in the dataflash today is GPS (fix status, NSats, HDop, accuracy),
+#   GPA (accuracy + RTCM fragment counts) and UBX1/UBX2 (RF noise/AGC). None of it is
+#   per-satellite and none of it is carrier phase, so there is nothing to look at when a
+#   question about receiver behaviour comes up. A null result is still worth having.
+#   Why 5: the value is a sample count, not a rate -- it is passed unmodified into the UBX
+#   CFG-MSG rate field, which counts navigation solutions. At GPS1_RATE_MS=200 this gives 1 Hz;
+#   1 would give 5 Hz and five times the UART and dataflash volume for no added resolution.
+#   Requires a reboot.
+#   provenance: db6f872 2026-09-10
+GPS_RAW_DATA,5
 #
 # --- Compass (onboard the F9P, on its I2C) ---
 # Single external compass; 2nd/3rd instances disabled.
