@@ -147,6 +147,14 @@ services:
       - /dev/i2c-1:/dev/i2c-1
     volumes:
       - /var/lib/coordinator/captures:/captures:ro
+    environment:
+      # Named explicitly, like CAMPOD_NODE_NAME on the campod stack. display.py
+      # defaults this to socket.gethostname(), which inside a container is the
+      # container ID -- the first real run showed "node=0ffa68b64574" on the
+      # front panel, a hex string that changes every time the container is
+      # recreated. The panel exists to tell you at a glance which machine you are
+      # looking at, so an unstable ID defeats the whole point.
+      SH1106_NODE: coordinator
     # No environment: display.py reads SH1106_NODE / SH1106_I2C_PORT /
     # SH1106_I2C_ADDR / SH1106_CAPTURES_DIR / SH1106_REFRESH_SEC, and every
     # default is already what we want (hostname, bus 1, 0x3C, /captures, 1.0 s).

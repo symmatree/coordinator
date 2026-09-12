@@ -38,7 +38,7 @@ luma/I2C device is only touched in `display.py:main`.
 | `SH1106_I2C_ADDR` | `0x3C` | SH1106 address |
 | `SH1106_CAPTURES_DIR` | `/captures` | read-only mount of the captures dir |
 | `SH1106_REFRESH_SEC` | `1.0` | redraw interval |
-| `SH1106_NODE` | hostname | node label |
+| `SH1106_NODE` | hostname | node label. **Set it explicitly** -- the default is `socket.gethostname()`, which in a container is the container ID, not the host. `stacks/coordinator/compose.yaml` sets it. |
 
 Runs whenever the coordinator is up (no profile). Needs `/dev/i2c-1` to exist on the host,
 which takes **both** halves: `dtparam=i2c_arm=on` from the image
