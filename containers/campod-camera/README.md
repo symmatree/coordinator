@@ -45,7 +45,7 @@ the same vibration writes **2.4x more bands** here. Binning is a lever if it eve
 | Focus units | `LensPosition` is **dioptres** (1/metres): `0.0` infinity, `0.5` = 2 m, `2.0` = 0.5 m. Deliberately *not* the OAK-D's 0-255 VCM scale -- `OAK_STILL_FOCUS=125` would ask for 8 mm here. Default `auto` because an uncalibrated fixed position is worse than AF (T10). |
 | Build | arm64 in CI ([`.github/workflows/build-campod-camera.yaml`](../../.github/workflows/build-campod-camera.yaml)), pulled on the Zero -- never built on the Zero. |
 
-## Config (env, via `stacks/campod/.env`)
+## Config (in `stacks/campod/compose.yaml`)
 
 | Var | Default | Meaning |
 |-----|---------|---------|
@@ -65,17 +65,24 @@ into the **same session directory** as the frames, on the **same kernel clock** 
 is the whole point: accelerometer and camera share one host, so correlating them needs
 no NTP, no PPS, and no network.
 
-Opt-in via `CAMPOD_ACCEL_DEVICES` (empty disables), supervised separately from the camera
-loop so a missing sensor or an unset `dtparam=spi=on` cannot cost you the frames.
+**Nothing to enable and nothing to configure.** It probes both chip selects and logs
+whichever answers. SPI has no enumeration -- `/dev/spidev0.0` and `0.1` exist on every
+campod once `dtparam=spi=on` is in the image, wired or not -- so a `DEVID` read is the only
+presence test there is, and the reader does it anyway. Chip select is the identity: **CE0 is
+the camera-colocated sensor, CE1 the arm-end one**, by wiring convention.
+
+Supervised separately from the camera loop so a missing sensor or a bad joint cannot cost
+you the frames. The restart is also the recovery path: each run re-probes, so a sensor
+connected mid-session appears within 30 s. There is no mid-run rediscovery.
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `CAMPOD_ACCEL_DEVICES` | *(empty)* | `label:/dev/spidevN.M,...`; empty = off |
-| `CAMPOD_ACCEL_ODR_HZ` | `3200` | output data rate |
-| `CAMPOD_ACCEL_RANGE_G` | `16` | 2 \| 4 \| 8 \| 16 |
-| `CAMPOD_ACCEL_SPI_HZ` | `1500000` | SPI clock |
-| `CAMPOD_ACCEL_POLL_HZ` | `200` | FIFO poll rate |
-| `CAMPOD_ACCEL_SEPARATION_M` | *(empty)* | camera-to-arm baseline, recorded in the header |
+| `CAMPOD_ACCEL_SEPARATION_M` | *(empty)* | camera-to-arm baseline in metres, recorded in the run header. The only input, because it is a per-vehicle **measurement** rather than a tuning knob. |
+
+ODR (3200 Hz), range (±16 g), SPI clock (1.5 MHz) and poll rate (200 Hz) are constants at
+the top of `adxl345.py`, each with the reasoning beside it. They are not knobs: every one is
+derived from the datasheet rather than chosen, and a different value would need the argument
+changed, not the config.
 
 ### Why spidev and not the IIO driver
 
@@ -133,7 +140,7 @@ power cut costs one record, not the file. At 3200 Hz with two sensors that is ro
 
 ```bash
 # On the Zero, after host bootstrap (./host/one_time.sh campod).
-# stacks/campod/.env ships COMPOSE_PROFILES=capture, so this just works:
+# the capture profile is the stack default, so this just works:
 coord pull
 coord start
 coord logs -f campod-camera     # expect: "capture: node=... size=4608x2592 hz=1.0 ..."
