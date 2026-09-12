@@ -121,6 +121,11 @@ Clone to converged: **~13 minutes** (15:57 to 16:10), of which the Docker instal
 it -- `dockerd` first came active at 16:09. The 512 MB RAM did not bite; no OOM, no swap
 thrash, `PLAY RECAP: ok=24 changed=13 failed=0 skipped=16`. The Pi 4B was several times faster.
 
+Then `coord pull`: **4m22s** for `campod-camera` over lab WiFi -- 235 MB compressed, 941 MB on
+disk. That is the number `campod.md`'s "how do updates reach a flying set of nodes" section was
+missing. Note it is one node on an uncontended channel; four campods pulling at once share one
+2.4 GHz radio, so it is a floor rather than an estimate for the fleet.
+
 ### Workaround 1: the filesystem never grew (image bug, blocks everything)
 
 Both cards came up with a **3.24 GB root partition on a 31 GB card**. The coordinator had
@@ -196,6 +201,29 @@ Role-specific, and both are firsts on this image:
 - **campod-sw:** `g_ether` loaded with both MACs pinned from the hostname
   (`dev_addr`/`host_addr` in `/etc/modprobe.d/campod-g_ether.conf`), `usb0` present and `DOWN`
   -- correct, since nothing is plugged into the coordinator yet. That is stage 3.
+
+### Starting the campod stack with nothing attached
+
+Worth recording because it is the state a freshly flashed pod is in, and because two of the
+three things it proves are positive:
+
+- **libcamera works in the container.** `libcamera v0.5.2+99-bfd68f78` initialises. So the
+  Raspberry Pi apt archive pairing is right and the "stock Debian enumerates no cameras"
+  container gotcha does not apply here. This is what `RPI_SUITE`-tracks-the-image
+  ([#219](https://github.com/symmatree/coordinator/pull/219)) buys, confirmed rather than
+  argued.
+- **The ADXL345 reader degrades exactly as designed** ([#233](https://github.com/symmatree/coordinator/pull/233)):
+  probes both chip selects, reports `DEVID 0x00, expected 0xE5` for each, says it will
+  re-probe, exits 1, retries in 30 s. Bounded and legible with no sensors wired.
+- **The camera loop exits and the container cycles**, which is correct -- the entrypoint keeps
+  capture in the foreground so container health is camera health -- but it used to do it by
+  letting picamera2 raise `IndexError: list index out of range` from `global_camera_info()`.
+  Fixed in this change: it now names what libcamera can see, and on an empty list says so and
+  points at the ribbon. It also takes ~109 s to get that far, because the picamera2 import is
+  heavy on a Zero.
+
+Nothing downstream of a camera being present is proven: capture, the exposure cap, the focus
+control and the accel data path all remain untested.
 
 ### Carried into stage 3
 
