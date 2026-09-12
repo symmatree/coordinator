@@ -63,7 +63,7 @@ own timestamps are wall clock and inherit the problem above; `timesync.jsonl` is
 
 | stream | MAV2 rate | carries (subset) |
 |---|---|---|
-| `EXT_STAT` | 2 Hz | `SYS_STATUS`, `POWER_STATUS`, `MCU_STATUS`, `MEMINFO`, `GPS_RAW_INT`, `GPS_RTK` (never generated -- below), `NAV_CONTROLLER_OUTPUT` |
+| `EXT_STAT` | 2 Hz | `SYS_STATUS`, `POWER_STATUS`, `MCU_STATUS`, `MEMINFO`, `GPS_RAW_INT`, `GPS_RTK` (not populated -- below), `NAV_CONTROLLER_OUTPUT` |
 | `POSITION` | 2 Hz | `GLOBAL_POSITION_INT`, `LOCAL_POSITION_NED` |
 | `EXTRA1` | 2 Hz | `ATTITUDE`, `AHRS2`, `PID_TUNING`, **`ESC_TELEMETRY`** |
 | `EXTRA2` | 2 Hz | `VFR_HUD` |
@@ -71,58 +71,66 @@ own timestamps are wall clock and inherit the problem above; `timesync.jsonl` is
 | `RC_CHANNELS` | **0** | `SERVO_OUTPUT_RAW`, `RC_CHANNELS` -- off, so neither is arriving |
 | `RAW_SENSORS` | **0** | off |
 
-### `GPS_RTK` does not exist on this vehicle, on any channel, at any parameter setting
+### `GPS_RTK` is not populated by the u-blox driver
 
-It is the obvious place to look for RTK correction age, baseline, and ambiguity-resolution state, and
-it is **empty for us and always has been.** It is listed in the `EXT_STAT` stream above because
-ArduPilot puts it there; that does not mean anything is put in it.
+`AP_GPS::send_mavlink_gps_rtk()` calls into the backend only if
+`drivers[inst]->supports_mavlink_gps_rtk_message()` returns true (`AP_GPS.cpp:1478`). Three backends
+override it: `AP_GPS_SBF.h:49`, `AP_GPS_ERB.h:38`, `AP_GPS_SBP.h:36`. `AP_GPS_UBLOX` does not, so it
+uses the base implementation, which returns false (`GPS_Backend.h:73`). This vehicle runs
+`GPS1_TYPE=2` (u-blox). The same three backends are the only writers of `rtk_age_ms`,
+`rtk_baseline_*`, `rtk_accuracy` and `rtk_iar_num_hypotheses` (declared `AP_GPS.h:227-236`).
 
-`AP_GPS::send_mavlink_gps_rtk()` is gated on `drivers[inst]->supports_mavlink_gps_rtk_message()`
-(`AP_GPS.cpp:1478`). Exactly three drivers override that to `true` -- `AP_GPS_SBF` (Septentrio),
-`AP_GPS_ERB` (Emlid Reach), `AP_GPS_SBP` (Swift Piksi). `AP_GPS_UBLOX` does not, so it inherits the
-base `return false` (`GPS_Backend.h:73`). We fly `GPS1_TYPE=2`, u-blox, confirmed independently by
-`UBX1` records existing in every log -- only the u-blox driver writes those. The same three drivers
-are the only writers of `rtk_age_ms`, `rtk_baseline_*` and `rtk_iar_num_hypotheses`, so those state
-fields are never populated for us either. **`iar_num_hypotheses` in particular has no u-blox source
-at all** -- it is a Piksi concept.
+Same at ArduPilot master as of 2026-09-09.
 
-Confirmed on the wire, not only in source: in `260812-hover/ground/260812-hover.tlog`, `GPS_RAW_INT`
-arrives **517** times and `GPS_RTK` **zero** times. The two sit adjacent in the same `EXT_STAT` list
-(`GCS_MAVLink_Parameters.cpp:250-255`), so the stream is being served and the message is simply not
-produced.
+Observed: `260812-hover/ground/260812-hover.tlog` contains 517 `GPS_RAW_INT` records and 0 `GPS_RTK`.
+Both message IDs are in the `EXT_STAT` list (`GCS_MAVLink_Parameters.cpp:250-255`).
 
-**This is not a version gap.** At ArduPilot master head (checked 2026-09-09) the same three drivers
-are still the only ones that override it. Upgrading firmware does not deliver `GPS_RTK`, and no
-parameter turns it on.
+The dataflash RTK fields are `GPA.RTCMFU` and `GPA.RTCMFD`, counts of RTCM fragments used and
+discarded. They are counts, not ages or baselines.
 
-So the proxy is what we have: `GPA.RTCMFU` counts RTCM fragments **used**, in the dataflash only, and
-is not populated on every firmware we have flown (see the caveat under *The sortie*). It separates
-"corrections arrived" from "corrections did not" and cannot distinguish either from "corrections
-arrived systematically late."
+### The GPS serial port runs at 230400, not `SERIAL2_BAUD`
 
-**What a u-blox rover can be made to give up instead**, none of it via `GPS_RTK`:
+`AP_GPS` cycles through candidate baud rates and accepts a u-blox only when (`AP_GPS.cpp:771-773`):
 
-* **`GPS_RAW_DATA` != 0** makes the driver request `RXM-RAWX` and log it as `GRXH` (per epoch) and
-  `GRXS` (per satellite: `cno`, **`lock`**, `prD`/`cpD`/`doD`, `trk`). A `lock` that resets to zero
-  *is* a cycle slip, which is one of the three things [#195](https://github.com/symmatree/coordinator/issues/195)
-  names as uninstrumented. Compiled in on this build: `AP_GPS_UBLOX_CFGV2_ENABLED` defaults to `0`,
-  so `UBLOX_RXM_RAW_LOGGING` is unconditionally `1`, and `TBS_LUCID_H7`'s hwdef (2048 KB flash)
-  overrides neither. **The value is a sample count, not a rate** -- it lands in a UBX `CFG-MSG` rate
-  field, which is a divisor of navigation solutions. At `GPS1_RATE_MS=200`, `1` means 5 Hz RAWX
-  (~9.5 KB/s against an 11.5 KB/s `SERIAL2_BAUD=115` budget that already carries NAV traffic) and
-  `5` means 1 Hz.
-* **`UBX1`** is already in every log, at 0.2 Hz, and nothing in `analysis/` reads it: `noisePerMS`,
-  `jamInd`, `agcCnt`, `aPower` -- the receiver's own RF-interference view. Measured across the
-  corpus, `jamInd` tracks the *vehicle's* RF activity (~11-16 pre-arm, ~38-47 airborne, back down on
-  landing) and **does not discriminate RTK Fixed from Float**: 260812-maneuver held Fixed at
-  `jamInd` 38 while 260812-hover never fixed at 37.5, the two lowest-interference flights in the
-  corpus (260705 pair, `jamInd` 7-8) never fixed, and across maneuver's Fixed -> Float transition at
-  t=149.2 s the value reads 38 before and 39 after.
-* **`NAV-RELPOSNED`** would carry `carrSoln`, `diffSoln`, baseline and accuracy, and `refPosMiss` /
-  `refObsMiss` -- correction staleness as a per-epoch flag. `AP_GPS_UBLOX` already has the full
-  struct and flags enum, compiled for moving-baseline yaw. **Unverified:** whether an F9P emits it
-  in plain rover mode against a static base; ArduPilot only ever requests it under `GPS1_MB_TYPE`.
-  Bench-check before writing code.
+```
+(!_auto_config && baud >= 38400) || (baud >= 115200 && UBX_Use115200) || baud == 230400
+```
+
+`GPS_AUTO_CONFIG=3` makes the first clause false. `UBX_Use115200` is `GPS_DRV_OPTIONS` bit 2
+(`AP_GPS.h:629`) and `GPS_DRV_OPTIONS=0`, making the second false. So the port is only accepted at
+230400, and `_initialisation_blob` is `UBLOX_SET_BINARY_230400` (`AP_GPS.cpp:83-85`), which commands
+the receiver to that rate. `SERIAL2_BAUD=115` does not describe this port; the capacity is
+23040 bytes/s per direction.
+
+### `GPS_RAW_DATA` counts samples; `GPS1_RATE_MS` is milliseconds
+
+`GPS_RAW_DATA` is `AP_GROUPINFO("_RAW_DATA", 9, AP_GPS, _raw_data, 0)` -- an `AP_GPS`-level
+parameter, so there is one for all instances. `GPS1_RATE_MS` is in the `AP_GPS::Params` subgroup
+registered as `"1_"` / `"2_"` (`AP_GPS.cpp:280,285`), so it is per-instance.
+
+Neither value is converted. `_raw_data` is passed to `_configure_message_rate()` and written to UBX
+`CFG-MSG.rate` (`AP_GPS_UBLOX.cpp:484`, `1960-1971`), which counts navigation solutions. `rate_ms` is
+written to `CFG-RATE.measure_rate_ms` (`AP_GPS_UBLOX.cpp:2187-2195`), which is milliseconds. At
+`GPS1_RATE_MS=200`, `GPS_RAW_DATA=5` produces one `RXM-RAWX` per second.
+
+`_raw_data` is read differently by different backends: as a boolean (`AP_GPS.h:558-559`), as a mode
+value (`AP_GPS_SBF.cpp:207,232`), and as the CFG-MSG rate (`AP_GPS_UBLOX.cpp:484`). Its parameter
+metadata is a `@Values` list, not `@Units`.
+
+When non-zero on a u-blox it produces `GRXH` (one per epoch) and `GRXS` (one per satellite:
+`prMes`, `cpMes`, `doMes`, `gnss`, `sv`, `freq`, `lock`, `cno`, `prD`, `cpD`, `doD`, `trk` --
+`AP_GPS/LogStructure.h:219-220`). `UBLOX_RXM_RAW_LOGGING` is `1` unless `AP_GPS_UBLOX_CFGV2_ENABLED`,
+which defaults to `0` (`AP_GPS_config.h:100-101`, `AP_GPS_UBLOX.h:62-66`).
+
+### `UART.I` is the `SERIALn` index
+
+`Util::uart_log()` iterates `hal.serial(i)` and logs instance `i`
+(`AP_HAL_ChibiOS/Util.cpp:687-691`); `AP_SerialManager::init()` applies `SERIALi_PROTOCOL` to
+`hal.serial(i)` (`AP_SerialManager.cpp:451-457`). So `UART.I=2` is `SERIAL2`.
+
+`log_stats()` returns early when a port has moved no bytes since the last call
+(`AP_HAL/UARTDriver.cpp:205-209`), so an instance absent from a log is a port with no traffic, not a
+port that does not exist. `Tx`/`Rx` are bytes/s; `RxDp` is received bytes dropped, in bytes/s.
 
 Mission Planner's Status page is a live view of these same MAVLink fields (its `CurrentState`), plus
 a few values it computes about its own link. That is why it shows things that look absent from the
@@ -271,29 +279,16 @@ flight date**: derive that from the `GPS` records, or from `telemetry.jsonl` onc
 
 ## The dataflash is not a MAVLink capture
 
-This is the single most surprising thing in here and it explains a lot of apparent gaps.
-
-The FC `.bin` is **ArduPilot's own binary log format with its own message set** -- `GPA`, `XKF1`,
-`RGPJ`, `RISI`, `MAV`, `TSYN`. MAVLink telemetry is a **separate** message set -- `GPS_RTK`,
+The FC `.bin` is ArduPilot's own binary log format with its own message set -- `GPA`, `XKF1`,
+`RGPJ`, `RISI`, `MAV`, `TSYN`. MAVLink telemetry is a separate message set -- `GPS_RTK`,
 `EKF_STATUS_REPORT`, `VIBRATION`, `SYSTEM_TIME`. They overlap in content but neither contains the
-other, and **nothing on this vehicle has ever recorded the MAVLink side**.
+other. As of 2026-09-10 no MAVLink capture from this vehicle exists on the NAS: no `vehicle.tlog`
+(#220) and no `timesync.jsonl` (#208) under any flight. The ground-side mavproxy tlogs are a
+different observer -- they record what the GCS sent and received, not what the FC did.
 
-Consequences worth knowing before going looking for something:
-
-* **`GPS_RTK` has never been recorded on this aircraft.** It carries `time_last_baseline_ms` --
-  correction *age* -- plus baseline vector, accuracy, and `iar_num_hypotheses`. None of that exists
-  in dataflash in any form. The closest proxy is `GPA.RTCMFU`, a count of RTCM fragments *used*,
-  which tells you whether fragments arrived and nothing about how stale they were. **Corrections
-  arriving systematically late look identical to corrections arriving fine** in everything we have
-  logged to date.
-* Mission Planner's Status page is a live view of the **MAVLink** side (its `CurrentState`), plus a
-  few counters it computes about its own link. That is why it shows things that look absent from the
-  logs: same underlying data, different message set and different names, with the GCS-side link
-  counters genuinely not observable from the vehicle.
-* The fix is unconditional packet logging on both ends -- the coordinator tlog
-  ([#220](https://github.com/symmatree/coordinator/pull/220)) and the ground-side mavproxy tlog
-  ([#192](https://github.com/symmatree/coordinator/issues/192)). Until both are landed and pulled per
-  flight, any question about MAVLink-only fields is unanswerable retrospectively.
+Mission Planner's Status page is a live view of the MAVLink side (its `CurrentState`), plus counters
+it computes about its own link. That is why it shows fields that are absent from the dataflash: same
+underlying quantities, different message set and different names.
 
 ## What each stream is good for
 
@@ -306,6 +301,7 @@ Consequences worth knowing before going looking for something:
 | `XKF1` | truth-ish -- but only while RTK holds (see above) | under canopy |
 | `ESC` | per-motor RPM, **indexed by output channel, not ArduPilot motor number** -- map through `SERVOn_FUNCTION` ([#169](https://github.com/symmatree/coordinator/issues/169) has the table) | reading motor 1/2/3/4 straight off `Instance` -- that mis-sorts a fore/aft split into a diagonal one |
 | `MAV` | **per-MAVLink-channel link health**: rx/tx packet counts, drops, times-full, max gap. `chan` is 0-based and equals the `MAVn` parameter minus 1, so chan1 = MAV2 = the coordinator and chan2 = MAV3 = the ELRS/ground link. On 260814 chan1 ran 17 rx / 41 tx pkt/s with **zero** drops, chan2 190 rx / 47 tx. This is how a ground-link dropout is visible from the vehicle side | identifying *which* messages -- it is counters only |
+| `UART` | per-serial-port `Tx`/`Rx` bytes/s and `RxDp` (received bytes dropped), 1 Hz, `I` = the `SERIALn` index | attributing bytes to a message; it is byte counters only |
 | `TSYN` | the FC's own record of TIMESYNC exchanges, **with the peer SysID** and round-trip time (33 exchanges on 260814, RTT median 1007 us). A third, FC-side route to the clock bridge | high-rate work -- it is ~0.1 Hz |
 | colour stills | the mapping product | anything needing their own timestamp -- see above |
 | `mono_rect_left` | the actual VIO input, global shutter and fixed focus | only 260814 has it; capture is off by default from #216 |
@@ -343,11 +339,3 @@ Things it would be reasonable to assume and that are **not** established:
 * Whether log naming is fully deterministic on GPS-time-at-file-creation, or whether a marginal race
   exists when lock lands mid-creation. The corpus is consistent with the deterministic reading; the
   marginal case has not been tested.
-* Whether an F9P emits `NAV-RELPOSNED` in plain rover mode against a static base. The message is the
-  best remaining candidate for a live correction-staleness signal (`refObsMiss`) and ArduPilot
-  already parses it, but it is only ever requested under `GPS1_MB_TYPE`. Bench question, not a
-  flight question.
-* **What actually separates RTK Fixed from Float here.** Excluded so far, each on measured data:
-  correction cadence, satellite count, HDOP, ELRS link health, maneuver aggressiveness
-  ([#195](https://github.com/symmatree/coordinator/issues/195)), and now receiver-side RF
-  interference (`UBX1`, above). No candidate has replaced them.

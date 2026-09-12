@@ -104,14 +104,26 @@ swapping the card isolates the fault: boots on stock means the image, boots on n
 means the hardware. That preserves the one-candidate-cause property #211 wanted, without
 deferring the image.
 
-> **Known, unexplained, and silent.** On the first card built, the **very first boot hung
-> partway through `firstrun.sh`** -- no network, dark ACT LED, `firstrun.sh` still on the
-> card and `cmdline.txt` still carrying `systemd.run=`. A power cycle got through cleanly
-> and it has not recurred. No explanation. If a campod comes up dead on its first boot,
-> that is the shape to look for, and **it is invisible without the serial console** --
-> which is why `enable_uart=1` + `dtoverlay=disable-bt` are in the image. Both are needed
-> on a Zero 2 W: without them `console=serial0` is silent, because PL011 goes to Bluetooth
-> and the mini-UART is disabled.
+> **First-boot death: diagnosed, fixed, and not a hang.** The first card built died on its
+> very first boot -- no network, dark ACT LED, `firstrun.sh` still on the card and
+> `cmdline.txt` still carrying `systemd.run=`. A power cycle got through cleanly.
+>
+> The cause was **`nofail` on `/boot/firmware` in our fstab**, which the vendor's fstab does
+> not carry. `systemd.mount(5)`: *"With nofail, this mount will be only wanted, not
+> required, by local-fs.target ... Moreover, the mount unit is **not ordered before** these
+> target units."* So `boot-firmware.mount` raced `local-fs.target` -> `sysinit` -> `basic` ->
+> `kernel-command-line.service`, and when it lost, systemd exec'd
+> `/boot/firmware/firstrun.sh` against an empty mountpoint. The unit failed to *start*, and
+> `systemd-run-generator`'s default `FailureAction=exit` powered the board off.
+>
+> So it was never a hang -- the board was **off**, which is why it presented as a dark LED
+> and why a power cycle "fixed" it. Fixed in dotfiles-symm#41 by dropping `nofail`.
+>
+> Kept here because the shape is worth recognising, and because it is the argument for the
+> serial console: **a board that powers itself off during early boot is invisible without
+> one.** `enable_uart=1` + `dtoverlay=disable-bt` are both needed on a Zero 2 W -- without
+> them `console=serial0` is silent, because PL011 goes to Bluetooth and the mini-UART is
+> disabled.
 
 btrfs boot on a Zero 2 W on SD is **proven** as of 2026-09-07 -- `@` and `@usr` both mount,
 the initramfs carries btrfs, and `initramfs8` loads under `auto_initramfs=1`. That was
@@ -274,7 +286,7 @@ binding constraint on this device and a build will not fit.
 | libcamera reports "no cameras" | container/host suite mismatch. `RPI_SUITE` tracks **the campod image's pinned suite** (`dotfiles-symm/pi-image/build-image.sh`), not current stock Pi OS -- reading it the other way is what produced [#214](https://github.com/symmatree/coordinator/pull/214) |
 | Out-of-memory during bootstrap | expected pressure point on 512 MB; confirm zram/swap is on (Pi OS default) |
 | `coord` picks the wrong stack | only the campod stack belongs under `/opt/stacks/` on a campod |
-| Dead on **first** boot: no network, dark ACT LED, `firstrun.sh` still on the card | seen once, unexplained; power-cycle cleared it. Invisible without the serial console (GPIO 14/15) |
+| Dead on **first** boot: no network, dark ACT LED, `firstrun.sh` still on the card | was `nofail` on `/boot/firmware` letting the mount lose a race with `kernel-command-line.service`; the board powered itself **off** rather than hanging. Fixed in dotfiles-symm#41 -- if it recurs, check fstab for `nofail` and read the serial console |
 | Captures not landing on the `@data` subvolume | `findmnt /var/lib/campod` -- if it is on `@var`, the image's `DATA_MOUNT` and `coord_state_root` have diverged |
 
 ---
