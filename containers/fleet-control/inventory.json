@@ -8,10 +8,40 @@
     "into service is a one-word change."
   ],
   "nodes": [
-    { "name": "coordinator", "address": "10.0.99.75", "role": "coordinator", "user": "pi", "enabled": true },
-    { "name": "campod-sw",   "address": "10.0.2.49",  "role": "campod",      "user": "pi", "enabled": true },
-    { "name": "campod-se",   "address": "",           "role": "campod",      "user": "pi", "enabled": false },
-    { "name": "campod-ne",   "address": "",           "role": "campod",      "user": "pi", "enabled": false },
-    { "name": "campod-nw",   "address": "",           "role": "campod",      "user": "pi", "enabled": false }
+    {
+      "name": "coordinator",
+      "address": "10.0.99.75",
+      "role": "coordinator",
+      "user": "pi",
+      "enabled": true
+    },
+    {
+      "name": "campod-sw",
+      "address": "10.0.2.49",
+      "role": "campod",
+      "user": "pi",
+      "enabled": true
+    },
+    {
+      "name": "campod-se",
+      "address": "10.0.5.237",
+      "role": "campod",
+      "user": "pi",
+      "enabled": true
+    },
+    {
+      "name": "campod-ne",
+      "address": "",
+      "role": "campod",
+      "user": "pi",
+      "enabled": false
+    },
+    {
+      "name": "campod-nw",
+      "address": "",
+      "role": "campod",
+      "user": "pi",
+      "enabled": false
+    }
   ]
 }
