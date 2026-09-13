@@ -1,476 +1,199 @@
+# campod Overview
+
+## Overview
+
+Each of the four arms carries some amount of sensing. Currently this is a campod: a pi zero 2 w driving a camera module, collecting from a pair of accelerometers, and
+talking to the coordinator over a gadget network on USB.
+
+Campods are mounted at the **arm-frame junction** (where the arm meets the central frame plates -- the structurally stiffest point of the arm). The mount is a clamshell clamping the arm,
+with the pi zero mounted on the top side and the camera in the lower half, with a gap between the clamshell faces so the arm-faces are compression loaded for friction, as well as
+a certain amount of geometric constraint (the arms are not quite parallel sections in that region). Currently held on with two zipties around the outside, in grooves at each end of the
+mount unit.
+
+Future iteration adds a **vertical ring** of cameras to complement this horizontal (downward-looking) ring. The idea would be to provide **360-degree side-scan**
+in a plane approximately perpendicular to the direction of travel, covering the full azimuthal circle. Combined with the horizontal ring, the vertical ring extends coverage upward from the upper limit of the downward facing camera and provide a full "tunnel" as it travels; target use case for this vertical ring is collection missions in the understory where there are features of interest (trees) as well as lots of
+hazards that we would like to model. We could also potentially use these upward cameras to detect canopy gaps for safely "surfacing" into better GPS coverage as a "logical loop closure".
+
+Intent, not built: Each Zero is responsible for triggering its camera and recording the results locally. USB is used for upstream communication (simulated network device), including low-rate telemetry, NTP, and libcamera sync messages from some pacesetter. The **Coordinator** (the Raspberry Pi 4B that also runs VIO -- see [central-hub.md](central-hub.md)) bridges the USB network to the sibling Zeros and serves NTP for "absolute" time initialization. It also collects telemetry and informationally reports successful captures back through MAVLink. Those capture times can get stamped into the telemetry and dataflash logs. This is NOT a load-bearing timestamp signal, just telemetry for the operator to know the system thinks it is capturing.
+
+### Aim geometry
+
+This discussion was for 8 cameras and "normal" camera modules; the current prototype is using Wide camera modules and only 4 units. So the principles below hold, but the actual tilt angles and
+coverage will be different. The key constraints are that the cameras should capture nadir just above the bottom of the frame (assuming say a 3m flight altitude at a minimum) and should cover a
+complete "bowl" below the device, with enough overlap between cameras that a single "frame" can (generally) be aligned based on shared features. (The alternative is acceptable but worse: having
+insufficient overlap means we can only reconstruct over time, not from a single position. This means we have to trust our extrinsics to be correct and stable, and that we couldn't do any kind of
+point-in-time partial panorama.
+
+#### 8-camera
+
+All 8 cameras are aimed at **-70 degrees depression** (20 degrees from nadir), distributed azimuthally at 45-degree increments offset 22.5 degrees from the flight line. Using compass-point naming (forward = N): **NNE, ENE, ESE, SSE, SSW, WSW, WNW, NNW**.
+
+No camera points straight down. The array captures sides of vertical structures (walls, tree trunks, terrain relief) that a nadir camera cannot see. This is the fundamental design intent -- heightfields and dense point clouds require viewing geometry from many angles, not just overhead.
+
+**Why -70 degrees:** The Camera Module 3 standard has 66 degrees horizontal / 41 degrees vertical FOV (75 degrees diagonal). At -70 degrees depression with 20.5-degree vertical half-FOV:
+
+- **Bottom edge:** -70 - 20.5 = -90.5 degrees. Just past nadir -- by design, the bottom edge kisses straight down. No nadir gap exists in the array.
+- **Top edge:** -70 + 20.5 = -49.5 degrees. Well below horizon; every pixel looks at least 49.5 degrees below horizontal.
+
+The oblique projection at the top edge widens the effective azimuthal footprint: the 66-degree horizontal FOV sweeps approximately 86 degrees of azimuth at the -49.5-degree top edge. With 8 cameras at 45-degree spacing, adjacent cameras overlap by ~41 degrees in the far field -- nearly complete double coverage everywhere. Cameras mirrored through a plane perpendicular to the axis of travel (e.g. ENE and WSW) see opposite sides of the same objects (at different points in time).
+
+### Pod camera assignment
+
+For the 4 camera design, the initial assumption is "outward" facing from each NE / SE / SW / NW pointing direction. The "cross-eyed" alternatives could be considered to either give better nadir coverage, or
+to work around landing gear or other interferenece.
+
+#### 8-camera version
+
+Again, I put a lot of thought into this but i want to get a 4-node version working first (and if it's sufficient, that would be nice!)
+
+Two design constraints govern which cameras share a pod. These are choices imposed for specific benefits, not inherent requirements of the system.
+
+**Constraint 1 -- no angularly-adjacent cameras in the same pod (for baseline):** Adjacent cameras in the azimuthal ring are less than an inch apart if co-located on the same arm. Requiring non-adjacent cameras in each pod guarantees that each adjacent pair has ~4-5 inches of baseline in overlap regions. This baseline is not useful for stereo at 25 m altitude, but could be valuable for nearfield depth (twigs, obstacles).
+
+**Constraint 2 -- each pod holds cameras exactly 90 degrees apart (for mounting simplicity):** This is stricter than constraint 1 and implies it. Each pod holds one "forward/back-ish" and one "side-ish" camera (e.g. NNE + ESE). Benefits: landing/ground-protection feet can stay in camera blind spots and be roughly identical (rotated) across all 4 legs; 90-degree pairs are easier to validate visually and mechanically; more common parts across pods despite arm geometry requiring at least mirroring.
+
+Final angle-to-node assignment is TBD and iterable; these constraints define the feasible set.
+
+## Hardware
+
+### CAD starter library
+
+A first-pass OpenSCAD library of reusable "blank" components now lives at:
+
+- `components/pi-blanks.scad`
+
+It provides starter placeholders for:
+
+- `pi_zero2w_blank(...)` -- fixed board outline and 4-hole pattern, with optional envelope
+- `camera_module3_blank(...)` -- fixed standard CM3 board outline and 4-hole pattern, with optional lens keepout
+
+These are intended as mount-design primitives for the downward pods, vertical ring nodes, and rover nodes before any detailed cosmetic modeling.
+
+### Thermal
+
+These are all unproven claims about load and thermals.
+
+- **Camera Module 3:** Not a thermal concern. Pulling still frames at 1-2 Hz for photogrammetry is very low duty cycle.
+- **Pi Zero 2 W:** The real thermal bottleneck. The quad-core CPU runs very hot under load (chrony, network, USB gadget, SD writes). Will hit 80 degrees C throttling if it can't breathe.
+- **Solution:** Full-length aluminum heatsinks on the Zeros, with the pod design leaving the center channel open for prop-wash cooling.
+- **Hardware sources:** Pi Zero 2 W, Camera Module 3 (standard), ribbon cables, and heatsinks from PiShop.
+
+### Proposed: Signal wiring (PPS timing from DS3234 SQW)
+
+Run a **twisted pair** from the hub PPS buffer (driven by [**SparkFun DeadOn RTC DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW**, typically 1 Hz): signal wire + dedicated signal ground (any GND pin from the Pi header). This keeps the loop area near zero and prevents ESC EMI from corrupting the pulse.
+
+At the Pi side, connect the signal ground through a **100-ohm resistor** to prevent it from becoming a high-current shortcut during a motor failure, while still providing a clean 3.3 V reference.
 
 
-# setup and maintenance
+## Vibration and camera mounting rationale
 
-The **campod** is an arm-mounted Pi Zero 2 W + Camera Module 3 (IMX708) + ADXL345
-vibration sensors. This is the operator doc: how to bring a node up from a blank card, and
-what to run on every update afterwards. It is deliberately command-oriented; the reasoning
-lives in the docs it points at.
+This section documents the analysis and design alternatives so future reviewers don't re-litigate the vibration question from scratch. See also [oak-d-mount.md](oak-d-mount.md) for the OAK-D's current vibration isolation approach (bobbins).
 
-> **Naming.** The device is a **campod**, everywhere: hostnames (`campod-ne` ...), the
-> ansible role, `stacks/campod/`, `/opt/stacks/campod`, `/var/lib/campod`, `CAMPOD_*` env,
-> `one_time.sh campod`, `containers/campod-camera`, and the image role in `dotfiles-symm`.
->
-> A bare "pod" already denoted three other things -- the Kubernetes object, this repo's
-> ansible role, and (per [rekon10/arm-pods.md](rekon10/arm-pods.md)) the physical arm
-> enclosure that holds one or two of these hosts. None of the three is the machine. Where
-> "pod" survives in this repo it means one of those other things and is left alone.
+### Spectrum of isolation approaches
 
-> **Cross-repo tripwire: `/var/lib/campod` is load-bearing.** The image mounts the `@data`
-> btrfs subvolume there **specifically** to match `coord_state_root` in
-> `host/ansible/roles/campod/tasks/main.yml`. Move that path on either side alone and
-> captures land silently on `@var` instead of the capture subvolume -- no error, no warning,
-> and the power-loss properties the subvolume exists for quietly stop applying.
->
-> **This path just moved** (`/var/lib/pod` -> `/var/lib/campod`), so it needs
-> `DATA_MOUNT` in `dotfiles-symm/pi-image/roles/campod.env` to move in the same window.
-> Done now while nothing is deployed and no captures exist; after four units are stamped
-> and capturing it is the divergence above.
->
-> **The role now fails rather than diverging.** `one_time.sh campod` checks whether
-> anything is mounted at `/var/lib/pod` and stops if so, because that means the card was
-> flashed from an image predating the rename while the checkout is from after it. The
-> symptom it prevents is silent: `findmnt /var/lib/campod` showing `@var` instead of
-> `@data`. **Don't mix a pre-rename card with a post-rename checkout** -- reflash, or check
-> out a commit from before the rename.
+**Extreme isolation (gondola/pendulum):** Hang the cameras on a suspended platform below the drone, decoupled from frame vibration by compliant tethers. Cameras stay rigid to each other. Not the preferred path.
 
-| Where the reasoning lives | |
-|---|---|
-| Capture container, ADXL345 reader, SPI settings, readout constant | [containers/campod-camera/README.md](../containers/campod-camera/README.md) |
-| Airframe/payload design, aim geometry, vibration rationale | [rekon10/arm-pods.md](rekon10/arm-pods.md) |
-| Filesystem choice and power-loss behaviour | [power-loss-filesystem.md](power-loss-filesystem.md) |
-| Coordinator equivalent of this doc | [host-setup.md](host-setup.md) |
-| The vibration question the campod exists to answer | [#211](https://github.com/symmatree/coordinator/issues/211) |
+**Moderate isolation (bobbins, like the OAK-D mount):** Elastomeric isolators absorb high-frequency vibration while maintaining macro-scale pose rigidity. This empirically worked to make stills from the OAK-D legible
+but it still has bands of vibration. Equivalent isolation for the pi camera modules would need to account for the much lighter mass of the cameras.
 
----
+**Rigid mounting:** Clamshell around the carbon arm + bolted to frame mounting holes at the arm-frame junction. Cameras become part of the frame's rigid body. This maximizes the available mass to couple to, but
+only if it doesn't decompose into nodes and modes. Empirically this was unusable for the OAK-D; no conclusive cause established due to the "howling nightmare" imagery being hard to decompose into causes.
 
-## Why the campod lives in this repo
+### First-principles displacement analysis: Probably wrong
 
-The campod and the coordinator have to collaborate -- gadget network, time, start/stop,
-status -- so they share one operator model rather than maintaining two parallel copies:
+This is an interesting argument but expected to be wrong in practice. We have 2- and 3-blade props and hover at way under 50% throttle, at present. We will evaluate this logic with a series of instrumented
+flights once the accelerometers are working, but the unusable images from the OAK-D (prior to isolation) and the fact that every single drone I can find details on does SOME kind of soft mounting for its
+cameras makes me think this is an attractive but low-odds analysis. Note that versions of this analysis have tried to defend "why the oak-d is different" but ignore that the key evidence from the oak-d was
+specifically on its usability for still imagery not VIO.
 
-| Shared asset | How it serves both |
-|--------------|--------------------|
-| `bin/coord` | One stack-aware CLI. Each device runs only its own stack under `/opt/stacks/*`; `coord` defaults to the sole installed stack. |
-| `host/ansible/roles/docker-host` | Docker engine, group, state dirs -- identical on Pi 4B and Pi Zero. |
-| `host/one_time.sh [coordinator\|campod]` | One bootstrap entrypoint; the role argument selects the device. |
-| `/opt/stacks/<name>` | Both devices lay their one stack there. |
+The dominant vibration source is the 2-blade props. At hover (~50% throttle), the motors spin at roughly 900 KV * 22 V * 0.5 = ~9900 RPM, giving a 2-per-rev fundamental of ~330 Hz. At this frequency, vibration amplitude on a stiff carbon fiber structure at the arm-frame junction (not the motor end) is expected to be in the tens-of-microns range.
 
-Device-specific code stays small: `roles/campod`, `containers/campod-camera/`, `stacks/campod/`.
+At ~1 cm GSD, one pixel corresponds to ~7.5 mm of camera displacement. Even 0.1 mm (100 microns) of vibration amplitude at the camera = ~0.013 pixels. Millimeter-scale displacement would be needed for visible effects in imagery, and at 330 Hz that would be catastrophically violent -- audible, tactile, and likely destructive.
 
-## Constraints that shape everything below
+The harmonic notch filter (fed by bidirectional DShot RPM telemetry from the AM32 ESCs) removes motor vibration from the FC's control loop, preventing the FC from amplifying vibration through feedback. This doesn't physically reduce frame vibration, but it prevents the control system from making it worse.
 
-- **512 MB of RAM is the binding limit.** Estimate, not measured: Pi OS Lite headless
-  ~100 MB + `dockerd`/`containerd` ~100 MB + one `picamera2`-class container ~100 MB, with
-  zram/swap for spikes. Capture is 1-2 Hz at a very low duty cycle, so steady-state churn
-  is low.
-- **Never build on the Zero.** CI builds arm64 and the Zero pulls. A build will not fit.
-- **Camera passthrough is the fiddly part, not resources.** libcamera in a container needs
-  `/dev/video*`, `/dev/media*`, `/dev/dma_heap`, vchiq and `/run/udev` visible inside;
-  `stacks/campod/compose.yaml` uses `privileged: true` + `/run/udev`, with explicit device
-  mounts as the fallback if enumeration ever fails.
-- **Thermal is handled in hardware**, not by the runtime -- full-length heatsinks and an
-  open centre channel for prop-wash. See [rekon10/arm-pods.md](rekon10/arm-pods.md).
+**Cantilever mode shape (first bending):** A carbon arm is roughly a **cantilever**: the **motor end** is an **antinode** for the lowest bending mode (large transverse motion); the **bolted root** is near a **displacement node** for that same mode. Pods at the **arm-frame junction** therefore see **less** of that mode's tip flapping than pods at mid-arm or at the motor would. This is **not** isolation from **all** motion: the root is not a perfect clamp, **higher-order** bending modes and **torsion** still move the junction, and **whole-body** attitude motion moves the hub and arms together.
 
----
+**Control-loop coupling (separate from prop-line resonance):** Vibration can appear on **gyros**; the attitude loop can then **command torque** at frequencies where **phase margin** is thin, adding energy into the airframe. That is a real failure mode in FPV tuning lore, but blaming **D alone** at a fixed **30-80 Hz** is oversimplified -- **P, I, D, filters, and delays** set the limit-cycle frequency together. **Harmonic notch** (above) targets **blade-pass** from **RPM**; **gyro low-pass**, **D-term filtering**, **gain discipline**, and the **FC soft mount** are the other usual mitigations. For sinusoidal motion, **peak acceleration ~ amplitude * (2*pi*f)^2** -- **1 mm** at **50 Hz** is **~10 g** peak (the formula Gemini used is correct). Whether the **hub** ever reaches **1 mm** at those frequencies in your build is an empirical question; it would be **obvious** in flight and in logs long before "mythical" extremes. **Whole-hub** motion at **smaller** amplitude or **lower** frequency can still matter for stills before anything that dramatic.
 
-## One-time: blank card to a running node
+### Autofocus voice coil (VCM) vs whole-body vibration
 
-### 1. Flash
-
-**Campods boot the btrfs image, not stock Pi OS Lite.** This reverses the "SD image" row
-in [#211](https://github.com/symmatree/coordinator/issues/211)'s settled table -- see the
-[owner decision of 2026-09-06](https://github.com/symmatree/coordinator/issues/211#issuecomment-5559432953).
-Reasoning: validating the stack on one storage layout and then switching means validating a
-stack you throw away.
-
-The image and its per-unit provisioning live in **`dotfiles-symm/pi-image`**, not here:
-
-- `roles/campod.env` -- Zero 2 W / SD knobs: `DATA_MOUNT=/var/lib/campod`, `METADATA=single`,
-  and a `config.append.txt` carrying `enable_uart=1` + `dtoverlay=disable-bt` (serial
-  console) and `dtoverlay=dwc2,dr_mode=peripheral` (gadget net, device tree, must come
-  from the image).
-- `pi-image/provision/` -- `firstrun.sh` template + `Flash-Card.ps1`. Per-unit identity
-  (hostname, user, SSH key, WiFi) is injected onto the FAT partition **at flash time**;
-  secrets stay in a gitignored `fleet.env` on the operator's machine, so the image itself
-  stays secret-free.
-
-**Do not use Imager's step 4 for this.** rpi-imager offers no customisation for a
-locally-selected `.img.xz` (`OSSelectionStep.qml`: *"For custom images, customization is
-not supported"*), so the wizard path that works for stock Pi OS does not apply. Provision
-via `pi-image/provision/` instead.
-
-**Stage the rollout.** Flash **one** campod with the btrfs image and prove it boots before
-touching the rest, and keep that unit's stock Pi OS Lite card. If it doesn't come up,
-swapping the card isolates the fault: boots on stock means the image, boots on neither
-means the hardware. That preserves the one-candidate-cause property #211 wanted, without
-deferring the image.
-
-> **First-boot death: diagnosed, fixed, and not a hang.** The first card built died on its
-> very first boot -- no network, dark ACT LED, `firstrun.sh` still on the card and
-> `cmdline.txt` still carrying `systemd.run=`. A power cycle got through cleanly.
->
-> The cause was **`nofail` on `/boot/firmware` in our fstab**, which the vendor's fstab does
-> not carry. `systemd.mount(5)`: *"With nofail, this mount will be only wanted, not
-> required, by local-fs.target ... Moreover, the mount unit is **not ordered before** these
-> target units."* So `boot-firmware.mount` raced `local-fs.target` -> `sysinit` -> `basic` ->
-> `kernel-command-line.service`, and when it lost, systemd exec'd
-> `/boot/firmware/firstrun.sh` against an empty mountpoint. The unit failed to *start*, and
-> `systemd-run-generator`'s default `FailureAction=exit` powered the board off.
->
-> So it was never a hang -- the board was **off**, which is why it presented as a dark LED
-> and why a power cycle "fixed" it. Fixed in dotfiles-symm#41 by dropping `nofail`.
->
-> Kept here because the shape is worth recognising, and because it is the argument for the
-> serial console: **a board that powers itself off during early boot is invisible without
-> one.** `enable_uart=1` + `dtoverlay=disable-bt` are both needed on a Zero 2 W -- without
-> them `console=serial0` is silent, because PL011 goes to Bluetooth and the mini-UART is
-> disabled.
-
-btrfs boot on a Zero 2 W on SD is **proven** as of 2026-09-07 -- `@` and `@usr` both mount,
-the initramfs carries btrfs, and `initramfs8` loads under `auto_initramfs=1`. That was
-[#96](https://github.com/symmatree/coordinator/issues/96)'s standing gate.
-
-### 2. Clone and bootstrap
-
-```bash
-ssh <user>@campod-sw.local
-uname -m                      # expect aarch64
-
-sudo apt-get update && sudo apt-get install -y git
-git clone https://github.com/symmatree/coordinator.git
-cd coordinator
-./host/one_time.sh campod
-```
-
-`one_time.sh campod` installs Ansible, then runs the shared playbook with
-`device_role=campod`:
-
-1. `docker-host` role -- Docker CE + Compose plugin, docker group, service enabled.
-2. `campod` role -- `/var/lib/campod/{config,captures}`, **symlinks** `/opt/stacks/campod` to this
-   checkout's `stacks/campod/`, and installs the `coord` CLI. It deliberately writes nothing
-   under `/boot/firmware`: device tree comes from the image (see below).
-
-It does **not** reboot itself ([#113](https://github.com/symmatree/coordinator/issues/113)
-removed that -- it runs locally, so it cannot reboot out from under its own play). It exits
-non-zero while `/var/run/reboot-required` is set. **Re-run it after each reboot until it
-exits clean.** With device tree coming from the image there is nothing here that forces a
-reboot by itself, so a clean card should normally go through in one pass.
-
-**SPI0 comes from the image**, not from ansible: `dtparam=spi=on` lives in
-`dotfiles-symm/pi-image/roles/campod/config.append.txt` alongside the serial console and
-`dtoverlay=dwc2`. It is device tree, it is inert with nothing on the bus, and keeping
-ansible out of `/boot/firmware` matters more than it looks -- that partition is FAT on an
-SD card in a vehicle that loses power abruptly, with none of the checksumming or CoW the
-btrfs subvolumes give the rest of the disk.
-
-> **Cards flashed before that line landed do not have it.** `ls /dev/spidev*` is the check
-> in the next section. If it is empty, the card predates the change: reflash from a current
-> image (clean), or add `dtparam=spi=on` to `/boot/firmware/config.txt` by hand and reboot
-> (fast, and a stopgap rather than a pattern -- the image is the source of truth).
-
-### 3. Check the host
-
-```bash
-newgrp docker                 # or re-login, if `docker ps` says permission denied
-docker ps
-ls -l /opt/stacks/campod/        # symlink into the checkout
-ls /dev/spidev*               # expect spidev0.0 and spidev0.1
-coord status                  # empty until `coord start`
-```
-
-`/dev/spidev0.*` missing means the card's `config.txt` has no `dtparam=spi=on` -- see the
-note above. Re-running `one_time.sh campod` will not fix it; that line comes from the image.
-
-### 4. Wire the sensors
-
-Full pin table, connector and harness guidance: `#211` and
-[containers/campod-camera/README.md](../containers/campod-camera/README.md). Everything lives in
-one contiguous 2x5 block on the Zero's 40-pin header:
-
-| odd | | even | |
-|---|---|---|---|
-| **17** | 3V3 | **18** | GPIO24 (spare -- INT) |
-| **19** | GPIO10 MOSI -> `SDA` | **20** | Ground |
-| **21** | GPIO9 MISO -> `SDO` | **22** | GPIO25 (spare -- INT) |
-| **23** | GPIO11 SCLK -> `SCL` | **24** | GPIO8 CE0 -> camera `CS` |
-| **25** | Ground | **26** | GPIO7 CE1 -> arm `CS` |
-
-Power the breakout from **3V3 (pin 17)**, not 5 V: the ADXL345 draws 145 uA, where an LDO's
-dropout is millivolts, so the regulator passes 3.3 V straight through and nothing on the
-harness is above the Pi's own logic level.
-
-### 5. Turn on capture
-
-`campod-camera` carries no compose profile -- capture is what the node is for -- so:
-
-```bash
-coord pull                    # ~241 MB compressed for campod-camera
-coord start
-coord logs -f campod-camera
-```
-
-Expect, in the log:
-
-```
-campod: session 2026...Z
-capture: exposure pinned to 5000 us, gain left on AEGC
-capture: node=campod-sw dir=/captures/campod-sw/<session> size=4608x2592 ...
-accel: camera: DEVID ok, self-test PASS (x=+0.99g y=-0.99g z=+1.50g)
-```
-
-**There is nothing to switch on.** The reader probes both chip selects every run and logs
-whichever answers -- CE0 is the camera-colocated sensor, CE1 the arm-end one. A campod with
-no sensors wired says so once per run and costs nothing else.
-
-The one value that needs setting is a measurement, not a switch:
-`CAMPOD_ACCEL_SEPARATION_M` in `stacks/campod/compose.yaml`, the camera-to-arm-end baseline
-in metres. Differential acceleration over a known separation is the rotational signature,
-and it is meaningless without the number.
-
-Done when a session directory holds frames **and** a continuous accel record over the same
-interval:
-
-```bash
-ls /var/lib/campod/captures/campod-sw/<session>/
-# campod-sw_00000000_...jpg  campod-sw_00000000_...json  accel-camera.jsonl  accel-arm.jsonl
-```
+The body of this section is pre-flight analysis, and should be viewed with caution. And the distinctions between "lens glued in place", "lens held in place by VCM", and "auto-focus algo actively running" must be
+kept sharper than presented here. Autofocus in flight is likely to be massively compromised by vibration reading as defocus.
 
 ---
 
-## Every update
+Camera Module 3 autofocus uses a **voice coil motor (VCM)**: the focusing lens group is suspended and translated axially relative to the sensor package. It is not a rigidly locked cine lens. That adds an **internal** mechanical degree of freedom in addition to rigid-body motion of the pod.
 
-**Config and code are the same thing here.** `/opt/stacks/campod` is a *symlink* into the
-checkout, so `git pull` **is** the config deploy -- there is no copy step and no on-box
-edit to make ([#48](https://github.com/symmatree/coordinator/issues/48)). There is no
-`.env`: the values live in `stacks/campod/compose.yaml` beside what reads them
-([#233](https://github.com/symmatree/coordinator/pull/233)). Change one in git and pull.
+This is a **different failure mode** from rolling shutter geometry:
 
-```bash
-cd ~/coordinator
-git pull
-coord pull                    # new container images
-coord start
-```
+- **Rolling shutter shear / line-time jello** come from **rigid-body** motion (and readout order) during exposure. The first-principles argument above is about **whole-camera** displacement at the arm-frame junction; it does not bound motion **inside** the lens stack.
+- **VCM-related blur** would come from **axial** (focus) drift or small **relative** motion of the lens group **with respect to the sensor** during integration. That widens the point spread (defocus-like or generalized blur). **Micron-scale** axial error can hurt sharpness before millimeter-scale whole-body motion dominates the RS discussion.
 
+**Why this is expected to be benign at operating RPM:** Phone-class VCM actuators (the CM3 uses the same construction) have a mechanical resonance set by the lens mass and leaf-spring stiffness, typically in the **80-200 Hz** range. The prop fundamental at hover (~330 Hz for 2-blade, higher for 3-blade) sits **above** that resonance by roughly 2-4x. Above resonance, transmissibility **rolls off** -- the lens group is too heavy to follow the housing, so the VCM suspension acts as a **passive lowpass filter** at operating RPM. The lens stays relatively still while the housing vibrates around it. During motor spinup the RPM sweeps **through** resonance transiently, but mapping captures do not happen during spinup.
 
-Re-run the bootstrap only when the **host** changes -- a new role task, a new config.txt
-entry, a Docker or Ansible bump:
+**Survivability:** The VCM will not be physically damaged by frame vibration at these amplitudes. Phone cameras with the same actuator architecture survive walking, pocket vibration, car rides, and drop impacts -- environments with far more energy at far more problematic (low) frequencies than a carbon fiber frame at ~330 Hz and tens-of-microns amplitude. Tens of microns of axial lens shift also produce no detectable defocus at mapping altitudes (depth of field at 25 m AGL is meters deep). "Destroy the VCM" or "overwhelm its ability to hold focus" would require energy orders of magnitude beyond what the arm-frame junction delivers.
 
-```bash
-./host/one_time.sh campod        # re-run after any reboot it asks for, until clean
-```
+Whether prop-band vibration actually excites the VCM suspension enough to cause **subtle** image softness on this mount remains an **empirical** question. The **Pod-integrated vibration logging** plan ties mechanical spectra **at the camera load path** to image quality (sharpness, AF behavior) so this is testable rather than hand-waved.
 
-It is idempotent; running it when nothing changed is cheap and safe.
+**Mitigations if tests show a problem:** Prefer **fixed-focus** mapping captures -- lock lens position after one AF cycle, or use a constant-focus / manual mode in software so the VCM is not hunting while the shutter is open; avoid AF moves immediately before each shot on a vibrating airframe.
 
-| What changed | What to run |
-|---|---|
-| `stacks/campod/compose.yaml` | `git pull && coord start` |
-| A container image (new build on `main`) | `coord pull` |
-| `containers/campod-camera/*` merged upstream | `coord pull` (CI builds it; never build on the Zero) |
-| An Ansible role, or anything in `/boot/firmware/config.txt` | `./host/one_time.sh campod`, reboot, re-run |
-| OS packages | `./host/os_upgrade.sh` -- deliberate, not part of a config deploy |
+### What we don't know
 
-**Never build on the Zero.** CI builds arm64 and the Zero pulls. 512 MB of RAM is the
-binding constraint on this device and a build will not fit.
-
-**Capture comes back by itself after a power-up.** Mostly this is just
-`restart: unless-stopped`: a power yank or a `shutdown -h now` with the stack running both
-return to capturing on their own. The exception is an *explicit* `coord stop`, which marks the
-container stopped in a way that survives reboots -- `campod-stack.service` runs `coord start`
-unconditionally on boot (#97) so that case recovers too. So `coord stop` is a *temporary* stop:
-it stops the container now, and the next boot starts it again. To keep a pod deliberately quiet
-across reboots, disable the unit (`systemctl disable --now campod-stack.service`), not
-`coord stop`.
+- **Actual vibration amplitudes.** The first-principles estimate above is reasonable but unverified. The FC has floating-hole isolator mounts, but its accelerometer and gyro data will still be useful for characterizing frame vibration when the motors first spin up.
+- **2-blade vs 3-blade props.** 3-blade props shift the fundamental to 3x RPM (potentially different amplitude and frequency). Comparing FC vibration data between 2-blade and 3-blade configurations would be informative.
+- **Resonant modes of the pod itself.** The clamshell pod has its own structural dynamics. If a pod resonance happens to coincide with the prop frequency, local amplification could occur. Test imagery will reveal this.
+- **VCM suspension at prop-band frequencies.** Whether the floating lens group picks up enough relative motion during a still exposure to soften imagery is unknown without correlation between **pod-path accel** logs and sharpness / AF state.
 
 ---
 
-## Troubleshooting
+## Rolling shutter considerations
 
-| Symptom | Check |
-|---------|-------|
-| `exec format error` | wrong artifact flashed -- confirm it is the campod image, not a stock card. (The campod image is always arm64, so this cannot come from picking a 32-bit variant; there isn't one.) |
-| `permission denied` on `docker ps` | `newgrp docker` or re-login (not a reboot) |
-| `one_time.sh` exits 1, reboot-required set | reboot, run it again -- expected at least once on a fresh card |
-| `accel: ... does not exist -- is dtparam=spi=on set?` | `ls /dev/spidev*`; if empty, reboot and re-run `one_time.sh campod` |
-| `accel: DEVID 0x00, expected 0xE5` | wiring, chip select, or SPI mode -- the bus is reaching nothing |
-| `accel: self-test FAIL` | sensor is talking but not moving: cold joint on a supply pin, or a dead part |
-| `capture: WARNING could not pin exposure` | container libcamera predates the exposure/gain mode split (needs >= 0.4). Check `RPI_SUITE` matches **the campod image's pinned suite** -- `dotfiles-symm/pi-image/build-image.sh`, currently Bookworm -- not whatever Pi OS ships today |
-| libcamera reports "no cameras" | **First check the ribbon** -- both ends, contacts toward the board. Confirmed 2026-09-12 that the suite pairing is correct (libcamera `v0.5.2` initialises in-container on the campod image), so a bare node reports "no cameras" for the ordinary reason. The suite-mismatch cause is real but secondary: `RPI_SUITE` tracks **the campod image's pinned suite** (`dotfiles-symm/pi-image/build-image.sh`), not current stock Pi OS -- reading it the other way is what produced [#214](https://github.com/symmatree/coordinator/pull/214). If libcamera prints its version banner at all, the suite is fine and the camera is not attached. |
-| Out-of-memory during bootstrap | expected pressure point on 512 MB; confirm zram/swap is on (Pi OS default) |
-| `coord` picks the wrong stack | only the campod stack belongs under `/opt/stacks/` on a campod |
-| Nothing capturing after a power cycle | Only happens if the last command was an explicit `coord stop` -- that marks the container stopped and `restart: unless-stopped` honours it across reboots. `systemctl status campod-stack.service`; if the unit is disabled, `systemctl enable --now campod-stack.service`. A plain `shutdown -h now` or a power yank does not need the unit |
-| Dead on **first** boot: no network, dark ACT LED, `firstrun.sh` still on the card | was `nofail` on `/boot/firmware` letting the mount lose a race with `kernel-command-line.service`; the board powered itself **off** rather than hanging. Fixed in dotfiles-symm#41 -- if it recurs, check fstab for `nofail` and read the serial console |
-| Captures not landing on the `@data` subvolume | `findmnt /var/lib/campod` -- if it is on `@var`, the image's `DATA_MOUNT` and `coord_state_root` have diverged |
+The Camera Module 3 uses the Sony IMX708, which is an **electronic rolling shutter** sensor. It reads out line-by-line from top to bottom, not all at once. This section distinguishes between "has a rolling shutter sensor" (a hardware fact) and "exhibits rolling shutter problems" (an empirical question that depends on speed, vibration, and processing).
 
-# Software in flight
+### "Has RS" vs "has RS problems"
 
+The DJI Mini 3 Pro also has a rolling shutter sensor. It was flown at 5.6 m/s (20 km/h) at 25 m AGL for house-mapping experiments documented in [experiments-house-model.md](https://github.com/symmatree/fables/blob/main/Datasets/experiments-house-model.md). The best result (house-2) reconstructed 400/446 shots with 0.86 px reprojection error, **without rolling shutter correction enabled in ODM**. The problems identified exhaustively in that document -- autofocus locking on treetops, nearfield parallax, turnaround gimbal instability, boundary tuning -- are not rolling shutter artifacts. RS correction was never enabled because there was no evidence it was needed.
 
-Most of the below is forward looking, pending PPS hardware integration, and everything beyond simple capture on the software side.
+The Rekon array at 3-5 m/s with similar or shorter readout times should have less forward-flight RS displacement than the DJI at 5.6 m/s.
 
-### Time coordination
+### Forward-flight displacement
 
-Following pieces of [Microsecond accurate NTP with a Raspberry Pi and PPS GPS](https://austinsnerdythings.com/2021/04/19/microsecond-accurate-ntp-with-a-raspberry-pi-and-pps-gps/) (pattern applies to **RTC SQW** as the PPS source, not a GPS PPS pin) it looks like `chrony` running on the Zeros to get NTP from the Coordinator.
+At 3-5 m/s with ~26 ms readout (approximate for the IMX708 in 12 MP mode -- needs confirmation from datasheet or measurement): 7.8-13 cm of physical camera displacement during readout. At ~1 cm GSD this is 8-13 pixels of systematic affine shear (parallelogram distortion). This is predictable, not random, and is exactly what ODM's rolling shutter correction models.
 
-### Capture sync
+### Look-angle geometry
 
-### Software sync only
+The simple "v * t_readout" is the naive worst case. Actual RS displacement per pixel depends on the angle between the velocity vector and each camera's line of sight.
 
-The Camera Module 3 does not have XVS hardware trigger pins. The build uses **software-based timing sync for all cameras**.
+With all 8 cameras at -70 degrees depression, the depression is steep enough that the geometry is still nadir-like: the cos^2 correction factor ranges from 0.88 (near-along-track cameras like NNE) to ~0.94 (cross-track cameras like ENE). The cross-track cameras (ENE, ESE, WSW, WNW) see the most RS because forward velocity is nearly perpendicular to their line of sight. The along-track cameras (NNE, SSE, SSW, NNW) see ~6% less RS because some velocity is along their line of sight.
 
-All cameras use interpolated timestamping: capture timestamps (locked to the **shared RTC time base** via DS3234 SQW + PPS + chrony) are matched against ArduPilot's high-frequency pose logs (50-100 Hz) during post-processing (PPK-style interpolation). Even at 10 m/s (a worst-case for the timing math, not a planned survey speed) with 1 ms sync, positional error is only ~1 cm -- acceptable for photogrammetry. libcamera claims less than 10 microseconds.
+The DJI comparison is slightly conservative: the DJI at -70 forward-facing had its velocity partially along the LOS, giving it ~12% less RS than pure nadir. The Rekon's cross-track cameras are modestly worse off. Net: the DJI at 5.6 m/s forward-facing likely saw comparable or slightly less RS distortion per pixel than the Rekon's worst-case cross-track cameras at 3-5 m/s. The DJI produced usable photogrammetry without RS correction. The Rekon should too -- but enabling RS correction in ODM is free accuracy, especially for the cross-track cameras.
 
-**Planned survey speed:** 3-5 m/s for overhead mapping transects, slower under canopy. At 3 m/s with the same 1 ms sync budget, positional error is ~3 mm.
+### Vibration-induced jello vs forward-flight shear
 
-**Overlap targets:** >75% forward overlap, 60-70% lateral overlap for mapping transects. High overlap serves both rolling shutter correction (dense feature matching) and general photogrammetry quality. The multi-camera geometry provides additional inter-camera overlap that a single-camera platform cannot match.
+Two distinct RS artifacts with different signatures:
 
-### Time distribution: chrony + PPS
+- **Forward-flight shear:** Systematic parallelogram distortion from camera translation during readout. Predictable, correctable given readout time. Signature: consistent lean of vertical lines in the direction of flight.
+- **Vibration jello:** Periodic waviness from camera oscillation during readout. Requires millimeter-scale lateral displacement at the camera (see Vibration section above for why this is unlikely at ~330 Hz on a rigid carbon frame). Signature: sinusoidal waviness in lines that should be straight.
+- **Internal lens motion (VCM):** Camera Module 3 autofocus suspends the lens on a voice coil. Relative axial or lateral motion of the lens group during integration causes **defocus-like or generalized blur**, which is **not** the same artifact as RS shear or line-time jello. See **Autofocus voice coil (VCM) vs whole-body vibration** under *Vibration and camera mounting rationale*.
 
-Standard NTP over USB gadget mode has 2-10 ms of jitter due to USB polling, which at 10 m/s translates to 2-10 cm of positional error -- enough to throw away the RTK advantage. The fix is hardware PPS.
+### Processing: ODM rolling shutter correction
 
-**Architecture:**
+ODM supports `--rolling-shutter` with a readout time parameter. Document the IMX708 readout time once confirmed (approximately 26 ms for 12 MP mode based on similar quad-bayer sensors). Enabling RS correction is a free accuracy improvement -- it models the affine shear and removes it from the bundle adjustment.
 
-1. **One DS3234** at the coordinator hub outputs **SQW** (1 Hz) into the PPS buffer tree ([central-hub.md](central-hub.md)). Primary need: **local agreement** across Pis, not strict absolute UTC on every flight.
-2. **The Coordinator** runs NTP on the USB gadget network and can **discipline** the DS3234 from GNSS time (u-center / MAVLink / logged fixes) when sky view is good.
-3. **Each Zero** gets "rough" time from the Coordinator over USB (accurate to the correct second, but sloppy by 5-15 ms).
-4. **A physical PPS wire** (buffered SQW) runs to a GPIO pin on every Pi Zero.
-5. **Chrony** on each Zero uses both sources: network time for the second boundary, **phase-lock to the hardware PPS interrupt** for sub-microsecond alignment. USB jitter is eliminated.
+### Multi-camera spatial advantage
 
-When libcamera saves a frame, the timestamp comes from CLOCK_MONOTONIC, phase-locked to the shared RTC epoch. Post-processing interpolates against ArduPilot pose logs (GPS/VIO **TimeUS**); GNSS provides georeferencing, not the pod PPS wire.
+8 cameras with inter-camera overlap provide the dense feature matching that RS correction models rely on. This is coverage a single-camera platform cannot match.
 
-See central-hub.md for signal buffering details.
+### Multi-camera temporal advantage
 
-### Image storage
+This is arguably the most important advantage of the synchronized array.
 
-Images are written locally to each Pi Zero's SD card (not streamed over the shared USB 2.0 bus, which would bottleneck at 480 Mbps). The Coordinator uses the USB network only for commands (start/stop recording) where a few ms of latency doesn't matter.
+With PPS-synchronized capture (microsecond alignment via chrony), all 8 cameras freeze the scene at the same instant. A single camera (like the DJI) doing two crosshatch passes captures the same area minutes apart -- shadows shift, leaves move, twigs change position between passes.
 
----
+The matching problems identified in the DJI experiments (nearfield parallax, "parallax soup," wind-induced twig movement, inconsistent features across captures) are fundamentally **single-camera sequential problems**. With synchronized multi-camera capture:
 
-## Open: how updates reach a flying set of nodes
-
-Everything above assumes the node has its own route to GitHub and GHCR, which is true on
-the bench over lab WiFi and false in the field. The options, with the numbers that matter:
-
-- **campod-camera is ~241 MB compressed.** Five nodes pulling independently is ~1.2 GB of WAN
-  traffic per image bump; one coordinator pull plus local distribution is 241 MB of WAN and
-  ~1 GB over USB.
-- **The USB gadget link is not the constraint.** An image update is an occasional bulk
-  transfer with no latency requirement, not a stream -- capture data never leaves the
-  node's own SD by design. Even a pessimistic few MB/s finishes in minutes.
-- **A transparent registry mirror does not work for GHCR.** Docker's `registry-mirrors` is
-  Docker Hub only -- *"It's currently not possible to mirror another private registry. Only
-  the central Hub can be mirrored."* Serving images locally therefore means either a
-  registry on the coordinator plus a registry-prefix in the image ref, or
-  `docker save | ssh | docker load`.
-
-Not decided. Related: [#12](https://github.com/symmatree/coordinator/issues/12) (coordinator
-bridge), [#24](https://github.com/symmatree/coordinator/issues/24) (campod gadget net).
-
-## Gadget network, campod side
-
-**What comes from where.** The image supplies exactly one thing: the
-`dtoverlay=dwc2,dr_mode=peripheral` line, because it is device tree and nothing in userspace
-can substitute for it. Everything else is `roles/campod`, applied by `one_time.sh campod` -- so a
-gadget-net change is a `git pull` and a bootstrap re-run, not a reflash.
-
-The bootstrap loads `g_ether` itself rather than leaving it for the next boot, so the link
-comes up in the same run. Both ends need their own bootstrap: `one_time.sh campod` on each
-campod, `one_time.sh` on the coordinator for the bridge. The coordinator side needs no
-reboot -- the handler reloads NetworkManager.
-
-Everything in userspace is `roles/campod`:
-
-| | |
-|---|---|
-| `/etc/modules-load.d/campod-gadget.conf` | loads `dwc2` + `g_ether` at boot |
-| `/etc/modprobe.d/campod-g_ether.conf` | pins both MACs, derived from the hostname (below) |
-| `/etc/NetworkManager/system-connections/campod-gadget.nmconnection` | static address on `usb0`, no DHCP (#211) |
-
-Addresses live in `host/ansible/vars/gadget-net.yml` as a map, not a derivation -- a MAC
-collision is improbable and harmless, an IP collision is neither. That file is the contract
-**both** roles read, on purpose: the subnet and the coordinator's address have to agree
-across two devices, and two definitions is how they end up disagreeing. A node whose
-hostname is not in the map gets no address and says so.
-
-Neither side sets a gateway, and both set `never-default`. This is a link-local segment
-between two boxes, not a route to anywhere. Naming the coordinator as a gateway would put a
-default route on `usb0`, and NM's per-type metrics rank ethernet (100) ahead of WiFi (600)
--- so a campod would try to reach the internet through a coordinator that neither forwards nor
-NATs, and lose the WiFi path it currently uses for updates. Adding forwarding + NAT later is
-a deliberate change on the coordinator, not something to fall into.
-
-## Gadget network, coordinator side
-
-All campods land on one bridge (`br0`, `10.55.0.1/24`), so the coordinator holds one address
-rather than one per campod and the campods share an L2 segment. `stp=false` and `forward-delay=0`:
-it is a star of point-to-point USB links with no possible loop, and 30 s of
-listening/learning on every campod reboot would cost something for nothing.
-
-Membership is dynamic -- campods appear when they boot -- and is handled by one NM profile with
-`multi-connect=3`, which lets a single profile be active on every matching device at once.
-No per-campod profile, no udev glue.
-
-**It matches on driver, not interface name.** systemd will generate an `enx<mac>` identifier
-for our pinned MACs -- `names_mac()` only skips non-permanent addresses and has no
-locally-administered guard -- but `99-default.link` ships
-`NamePolicy=keep kernel database onboard slot path`, with `mac` only in
-`AlternativeNamesPolicy`. So `enx<mac>` is an *alternative* name and the primary is
-path-based (`enp1s0u1u2`), which identifies the hub port rather than the campod. Matching a
-name glob would be matching cabling; the driver is the invariant.
-
-No DHCP and no dnsmasq (#211). #12's title says DHCP and predates that decision.
-
-**A laptop at the other end is a debugging tool, not a validation path.** With a static
-address on `usb0` you can reach a campod over its inner micro-USB from a laptop, which is
-worth having when something is broken and you want to dummy out one end. It does not
-substitute for the real pairing: a success there does not predict a Pi 4B host, and a
-failure there indicts the laptop as readily as the campod. Different host controller,
-different scheduler -- and against Windows, `g_ether` presents RNDIS rather than the
-CDC-ECM a Linux host binds through `cdc_ether`, so it is not even the same protocol. If you
-do reach for one, a **Linux** laptop at least shares the driver with the coordinator.
-
-Throughput and stability over the gadget link are unmeasured, and the only measurement that
-means anything is Pi 4B host to Zero 2 W gadget through the real hub.
-
-Set `campod_gadget_enabled: false` to leave a node exactly as it was.
-
-## Open: seams with the coordinator
-
-Each of these has to be agreed on both sides, and each is owned by a pair of issues.
-
-| Contract | Campod side | Coordinator side | Must agree on |
-|----------|-------------|------------------|---------------|
-| Gadget-net reachability | [#24](https://github.com/symmatree/coordinator/issues/24) | [#12](https://github.com/symmatree/coordinator/issues/12) | subnet, static vs DHCP, per-node address (see the `g_ether` MAC note below) |
-| Time | [#24](https://github.com/symmatree/coordinator/issues/24) | [#11](https://github.com/symmatree/coordinator/issues/11) | NTP server address, shared epoch. No PPS is wired anywhere on this vehicle, so this is not on the path for #211 |
-| Control + status | [#25](https://github.com/symmatree/coordinator/issues/25) | [#10](https://github.com/symmatree/coordinator/issues/10) | start/stop and status wire format and transport |
-
-### Verified in passing: `g_ether` really does randomise its MAC every boot
-
-Worth recording before the gadget net gets built, because it looks exactly like a flaky
-link. From the kernel source (`drivers/usb/gadget/function/u_ether.{c,h}`, rpi-6.12.y):
-`USB_ETHERNET_MODULE_PARAMETERS()` declares `dev_addr` and `host_addr` as `charp` params
-defaulting to NULL, and `get_ether_addr()` falls straight through to `eth_random_addr()`
-when its string argument is NULL. **Both** ends randomise, not just one.
-
-Harmless with a single campod; with four on a bridge it means DHCP reservations never stick
-and NetworkManager creates a fresh connection profile per boot.
-
-**Implemented in `roles/campod`:** `options g_ether dev_addr=... host_addr=...` in
-`/etc/modprobe.d/campod-g_ether.conf`, both computed as `02:` + the first five bytes of
-`sha256("<salt>" + hostname)` -- different salts for the two ends so they cannot collide.
-That is deterministic, stable across reboots, unique per unit, and computable by ansible
-from the hostname it already has, so the per-unit provisioning surface stays **one** value
-instead of three and there is no registry to drift out of sync with reality. Deriving from
-the hostname rather than the board serial is deliberate: identity should follow the logical
-node, so a card swapped into a different Zero keeps its address (which is exactly the #211
-rollback plan).
-
-`02:` is what makes it valid: locally-administered bit set, multicast bit clear. That
-matters more than it sounds, because `get_ether_addr()` silently falls back to a random
-address for anything `is_valid_ether_addr()` refuses -- a bad value looks identical to not
-having set one. Checked over the node names: 8 addresses, all valid, no
-collisions; birthday odds across five bytes at this fleet size are ~1e-10.
-
-Note the packaged `rpi-usb-gadget` does **not** do this for you: it pins the USB
-VID/PID/serial strings in `/usr/lib/modprobe.d/g_ether.conf` but leaves both MACs
-unspecified.
+- **Twig features are frozen** at one physical position across all 8 images. Within a single synchronized capture, even transient nearfield objects are perfectly stable features.
+- **Intra-pod stereo baseline** (~4-5 inches between cameras in the same pod) produces small, manageable parallax even for nearfield objects, vs meters of baseline between sequential single-camera captures.
+- **Forward-and-back cameras** capture opposite sides of a tree within seconds of passing overhead, vs a lawnmower grid where front and back come from different passes (a full track-width of lateral displacement, minutes apart).
+- **Feature tracks** may not extend across captures taken seconds later (wind moves things), but within each synchronized burst the stitching web should be far more robust than sequential grids.
