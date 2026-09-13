@@ -9,7 +9,10 @@
 #
 # Refs are auto-discovered from the Dockerfiles (allowlisted registries / official images),
 # so adding a new base -- e.g. the internal ghcr.io/.../coordinator-vio-*-base once an app
-# image consumes it -- needs no edit here.
+# image consumes it -- needs no edit here. An official (single-word) image DOES need adding to
+# the allowlist below, because it has no '/' to recognise it by: `node` is there for
+# containers/fleet-control. Without it the ref is skipped SILENTLY, so that image's pin quietly
+# stops being maintained -- which is the drift this script exists to prevent.
 #
 # Requires `docker buildx` (imagetools is a registry client; no running daemon needed).
 set -euo pipefail
@@ -26,7 +29,7 @@ for f in "${dockerfiles[@]}"; do
 		ref="${ref%% *}"                # drop ` AS builder`
 		ref="${ref%@sha256:*}"          # drop existing @digest
 		[[ $ref == *'$'* ]] && continue # ${VAR}
-		if [[ $ref == */* || $ref =~ ^(debian|ubuntu|alpine|python):.+$ ]]; then
+		if [[ $ref == */* || $ref =~ ^(debian|ubuntu|alpine|python|node):.+$ ]]; then
 			refs["$ref"]=1
 		fi
 	done < <(grep -hoE '^(FROM |ARG BASE_IMAGE=)[^ ]+( AS [A-Za-z0-9_-]+)?' "$f" |

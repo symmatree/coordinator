@@ -1,0 +1,153 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>rekon10 fleet</title>
+<style>
+  :root { --bg:#12141a; --card:#1c1f28; --fg:#e8eaf0; --dim:#8b93a7; --line:#2b3040;
+          --ok:#3ddc97; --warn:#ffb454; --bad:#ff6b6b; --busy:#5aa9ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif;
+         padding:max(12px, env(safe-area-inset-top)) 12px 24px; }
+  h1 { font-size:1.1rem; margin:8px 0 16px; color:var(--dim); font-weight:600;
+       letter-spacing:.04em; text-transform:uppercase; }
+  .node { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:14px; margin-bottom:12px; }
+  .head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .name { font-weight:700; font-size:1.05rem; }
+  .stage { font-size:.78rem; padding:3px 9px; border-radius:999px; border:1px solid currentColor; }
+  .s-running{color:var(--ok)} .s-bootstrapped{color:var(--busy)} .s-partial{color:var(--warn)}
+  .s-blank{color:var(--dim)} .s-unreachable{color:var(--bad)} .s-unknown{color:var(--dim)}
+  .meta { color:var(--dim); font-size:.82rem; margin-top:8px; word-break:break-word; }
+  .warn { color:var(--warn); }
+  .btns { display:flex; gap:10px; margin-top:12px; }
+  button { flex:1; min-height:56px; font-size:1rem; font-weight:650; border-radius:10px;
+           border:1px solid var(--line); background:#242938; color:var(--fg); cursor:pointer; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { background:#25406b; border-color:#375d99; }
+  pre { background:#0d0f14; border:1px solid var(--line); border-radius:8px; padding:10px;
+        max-height:260px; overflow:auto; font-size:.76rem; margin:12px 0 0; white-space:pre-wrap; }
+  .err { color:var(--bad); }
+  .banner { background:#3a2a12; border:1px solid var(--warn); color:var(--warn);
+            padding:10px 12px; border-radius:8px; margin-bottom:14px; font-size:.85rem; }
+</style>
+<h1>rekon10 fleet</h1>
+<div id="banner"></div>
+<div id="fleet">loading...</div>
+<script type="module">
+  const $ = (h) => Object.assign(document.createElement('div'), h);
+  const state = new Map();
+
+  async function j(url, opts) {
+    const r = await fetch(url, opts);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? r.statusText);
+    return r.json();
+  }
+
+  async function loadStatus() {
+    const s = await j('/status');
+    const b = document.getElementById('banner');
+    // Surfaced, not buried: with an ephemeral store every restart is a fresh first-contact,
+    // so host-key verification is protecting nothing and the operator should know.
+    b.innerHTML = s.hostKeys.ephemeral
+      ? '<div class="banner">Host-key store is not persistent -- key changes will not be detected across a restart.</div>'
+      : '';
+    return s;
+  }
+
+  function render(nodes) {
+    const root = document.getElementById('fleet');
+    root.textContent = '';
+    for (const n of nodes) {
+      const st = state.get(n.name) ?? {};
+      const p = st.probe ?? {};
+      const stage = p.stage ?? 'unknown';
+      const card = $({ className: 'node' });
+
+      const head = $({ className: 'head' });
+      head.append(
+        $({ className: 'name', textContent: n.name }),
+        $({ className: `stage s-${stage}`, textContent: stage }),
+        $({ className: 'meta', textContent: n.address || '(no address)' }),
+      );
+      card.append(head);
+
+      const bits = [];
+      if (p.fleetImage?.IMAGE) bits.push(`image ${p.fleetImage.IMAGE}`);
+      if (p.checkoutHead) bits.push(`checkout ${p.checkoutHead}${p.checkoutDirty ? ' (dirty)' : ''}`);
+      if (p.containers?.length) bits.push(p.containers.map((c) => `${c.name}: ${c.status}`).join(', '));
+      if (bits.length) card.append($({ className: 'meta', textContent: bits.join(' -- ') }));
+
+      if (p.unexpectedFailedUnits?.length)
+        card.append($({ className: 'meta warn', textContent: `failed units: ${p.unexpectedFailedUnits.join(', ')}` }));
+      if (p.rebootRequired)
+        card.append($({ className: 'meta warn', textContent: 'reboot pending' }));
+      if (stage === 'running')
+        card.append($({ className: 'meta', textContent: 'Containers are up. This does NOT mean capture works -- verify separately.' }));
+      if (p.error) card.append($({ className: 'meta err', textContent: p.error }));
+
+      const btns = $({ className: 'btns' });
+      const mk = (label, action, primary) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        if (primary) b.className = 'primary';
+        b.disabled = !n.enabled || !!st.busy;
+        b.onclick = () => run(n.name, action);
+        return b;
+      };
+      btns.append(mk('Update', 'update', true), mk('Bootstrap', 'bootstrap', false));
+      card.append(btns);
+
+      if (st.log?.length) {
+        const pre = document.createElement('pre');
+        pre.textContent = st.log.join('\n');
+        card.append(pre);
+      }
+      root.append(card);
+    }
+  }
+
+  async function refresh(nodes) {
+    await Promise.all(
+      nodes.filter((n) => n.enabled).map(async (n) => {
+        const st = state.get(n.name) ?? {};
+        try { st.probe = await j(`/nodes/${n.name}/probe`); }
+        catch (e) { st.probe = { stage: 'unreachable', error: e.message }; }
+        state.set(n.name, st);
+      }),
+    );
+    render(nodes);
+  }
+
+  async function run(name, action) {
+    const st = state.get(name) ?? {};
+    st.busy = true; st.log = [`starting ${action}...`];
+    state.set(name, st);
+    render(await j('/nodes'));
+    let id;
+    try { ({ id } = await j(`/nodes/${name}/${action}`, { method: 'POST' })); }
+    catch (e) { st.busy = false; st.log.push(`error: ${e.message}`); state.set(name, st); return render(await j('/nodes')); }
+
+    const es = new EventSource(`/runs/${id}/stream`);
+    es.onmessage = async (ev) => {
+      const l = JSON.parse(ev.data);
+      st.log.push(l.line);
+      if (st.log.length > 400) st.log.splice(0, st.log.length - 400);
+      render(await j('/nodes'));
+      if (l.line.startsWith('[fleet-control] run ')) {
+        es.close();
+        st.busy = false;
+        await refresh(await j('/nodes'));
+      }
+    };
+    es.onerror = () => { es.close(); st.busy = false; };
+  }
+
+  const nodes = await j('/nodes');
+  await loadStatus();
+  render(nodes);
+  await refresh(nodes);
+  setInterval(async () => {
+    if ([...state.values()].some((s) => s.busy)) return;
+    await refresh(await j('/nodes'));
+  }, 30000);
+</script>

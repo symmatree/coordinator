@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "Static address mapping for the rekon10 fleet. Addresses, not names: the house DHCP hands",
+    "out a rotating DNS list rather than an ordered fallback, so a runtime lookup of the",
+    "internal *.local.symmatree.com names succeeds or fails by luck of the draw. See",
+    "src/inventory.ts for the full reasoning.",
+    "Addresses observed 2026-09-13. These are DHCP leases, so they can move -- when one does,",
+    "this file is the one place to change.",
+    "The three unflashed campods are listed with enabled:false so the fleet roster is complete",
+    "and adding a unit is a one-word change rather than a new entry."
+  ],
+  "nodes": [
+    { "name": "coordinator", "address": "10.0.99.75", "role": "coordinator", "user": "pi", "enabled": true },
+    { "name": "campod-sw",   "address": "10.0.2.49",  "role": "campod",      "user": "pi", "enabled": true },
+    { "name": "campod-ne",   "address": "",           "role": "campod",      "user": "pi", "enabled": false },
+    { "name": "campod-se",   "address": "",           "role": "campod",      "user": "pi", "enabled": false },
+    { "name": "campod-nw",   "address": "",           "role": "campod",      "user": "pi", "enabled": false }
+  ]
+}

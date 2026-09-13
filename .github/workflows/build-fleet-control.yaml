@@ -1,0 +1,78 @@
+name: build-fleet-control
+on:
+  push:
+    branches: [main]
+    paths:
+      - containers/fleet-control/**
+      - .github/workflows/build-fleet-control.yaml
+  pull_request:
+    paths:
+      - containers/fleet-control/**
+      - .github/workflows/build-fleet-control.yaml
+  workflow_dispatch: {}
+
+jobs:
+  # Typecheck and test before building: this is the first TypeScript image in the repo, and a
+  # type error is cheaper to find here than in a failing container.
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: containers/fleet-control/package-lock.json
+      - run: npm ci
+        working-directory: containers/fleet-control
+      - run: npm run typecheck
+        working-directory: containers/fleet-control
+      - run: npm test
+        working-directory: containers/fleet-control
+
+  build-fleet-control:
+    needs: check
+    # amd64, not the arm64 the Pi images use: this one runs on the cluster.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      IMAGE_NAME: ghcr.io/symmatree/coordinator-fleet-control
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: docker-metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=branch
+            type=ref,event=tag
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: containers/fleet-control
+          file: containers/fleet-control/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.docker-metadata.outputs.tags }}
+          labels: ${{ steps.docker-metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
