@@ -71,53 +71,56 @@ converged; transcript and raw output on
 
 This is the stage [#236](https://github.com/symmatree/coordinator/issues/236) automates. The
 first run was deliberately done by hand so this section records what happened rather than what
-a service was assumed to do -- and it needed **two workarounds that the runbooks did not
-predict**, both written up below, because a service that does not handle them will fail the way
-we did.
+a service was assumed to do.
 
-### The sequence, as actually run
+### The sequence
 
 ```bash
-# 0. HISTORICAL: the filesystem had to be grown by hand. The image does this
-#    itself now (dotfiles-symm#46, grow-rootfs.sh on first boot), so skip this on
-#    any card built after that. Check `df -h /` shows ~30G, not 3.1G.
-sudo /sbin/sfdisk -F /dev/mmcblk0                  # confirm free space follows p2
-printf "yes\n" | sudo /sbin/parted ---pretend-input-tty /dev/mmcblk0 \
-     u s resizepart 2 <last-sector>
-sudo btrfs filesystem resize max /
-
-# 1. Get the repo onto the device. /usr ships read-only, so installing anything
-#    needs the remount first. This is the one step one_time.sh cannot do for you,
-#    for the ordinary reason that you do not have it yet.
+# 1. /usr ships read-only, so installing anything needs the remount first. This
+#    is the only step one_time.sh cannot do for you, for the ordinary reason that
+#    you do not have it yet.
 sudo mount -o remount,rw /usr
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git
 
-# 2. Clone and converge.
+# 2. Clone and converge. one_time.sh does the rest behind the same remount --
+#    ansible, then docker-ce via the playbook. Exits 0; /usr is already rw from
+#    step 1, so the script's own hatch never opens and never asks for a reboot.
 git clone https://github.com/symmatree/coordinator.git
 cd coordinator && ./host/one_time.sh <coordinator|campod>
 
-# 3. Reboot if it asks (it will, on a card whose /usr started read-only), then
-#    re-run. The re-run is a no-op that exits 0.
+# 3. Reboot. Nothing asks for this, and it is still the right way to finish: a
+#    reboot is the only thing that returns /usr to read-only (`remount,ro` on a
+#    live system is refused -- `mount point is busy`, exit 32, measured), and it
+#    doubles as the test that the stack comes back up on its own.
 sudo systemctl reboot
 ```
 
+Not git-specific: `/usr` is read-only for every package and git is simply the first one needed.
+Not a defect either -- it is the ordering consequence of the device bootstrapping itself, so a
+driver coming in from outside ([#236](https://github.com/symmatree/coordinator/issues/236)'s
+service, or any machine) performs step 1 as an ordinary step rather than inheriting a problem.
+Whether to move the Ansible control node off the device is the open question there.
+
 ### What the reboot loop actually did
 
-Nothing to do with kernels or firmware -- **no package ever set
-`/var/run/reboot-required`** on either unit. The only thing that asked for a reboot was the
-`/usr` hatch: `one_time.sh` remounts `/usr` read-write to install anything, `remount,ro` can
-never succeed on a running system (`mount point is busy`, exit 32, measured), and a reboot is
-what restores it. So the script flags `reboot-required` itself and exits 1 telling you to
-reboot and run again ([#253](https://github.com/symmatree/coordinator/pull/253)).
+**Nothing** -- and that is the finding. No package on either unit ever set
+`/var/run/reboot-required`; no kernel, firmware or module install happened. `one_time.sh` asks
+for a reboot only when *it* had to open the `/usr` hatch, which in the sequence above it never
+does, because step 1 already left `/usr` writable.
 
-- **Coordinator:** exited 1 with the hatch flag set. Rebooted; `/usr` came back
-  `ro,noatime,compress=zstd:3,...,subvol=/@usr` and refused writes. One pass plus one reboot.
-- **campod-sw:** exited **0** with no reboot asked for -- but only because the manual remount in
-  step 1 had already left `/usr` writable, so the hatch saw `rw` and never fired. Its `/usr` is
-  therefore still `rw` and needs a reboot to close. **A card converged without that manual
-  remount takes the coordinator's path, not this one** -- so the coordinator's run is the
-  representative one.
+So the "reboot and re-run until clean" loop the script documents did not occur, and the reboot
+in step 3 is there to close the hatch rather than because anything demanded it.
+
+The coordinator's run did exit 1 and take a second pass, but only because I had deliberately
+rebooted it first to restore `ro` and test the wrapper in isolation
+([#253](https://github.com/symmatree/coordinator/pull/253)) -- that is a test artifact, not a
+second path through bring-up.
+
+**Consequence worth knowing:** after convergence `/usr` is left writable, and the script says
+nothing about it, because its flag fires on "did I remount" rather than "is this rw when it
+should be ro". Finishing with a reboot is what makes the device match the invariant it shipped
+with.
 
 ### Timing, Zero 2 W
 
@@ -129,90 +132,6 @@ Then `coord pull`: **4m22s** for `campod-camera` over lab WiFi -- 235 MB compres
 disk. That is the number `campod.md`'s "how do updates reach a flying set of nodes" section was
 missing. Note it is one node on an uncontended channel; four campods pulling at once share one
 2.4 GHz radio, so it is a floor rather than an estimate for the fleet.
-
-### Workaround 1: the filesystem never grew (image bug, blocks everything)
-
-Both cards came up with a **3.24 GB root partition on a 31 GB card**. The coordinator had
-59 MB free and died mid-`docker-ce` install; the campod had 725 MB, which would have survived
-the install and then run out during `coord pull`. Docker alone wants 323 MB.
-
-The failure is badly disguised. apt reports a full disk as:
-
-```
-E: Write error - write (28: No space left on device)
-E: IO Error saving source cache
-E: The package lists or status file could not be parsed or opened.
-```
-
-which reads like a corrupt apt database. **Anything automating this stage should check free
-space itself rather than trust that text.**
-
-Cause: the vendor's resize is two stages and this image loses both.
-`init=/usr/lib/raspi-config/init_resize.sh` grows the partition, and our `cmdline.txt` carries
-no `init=` at all, so it never runs. `resize2fs_once` then grows the filesystem, and it is
-`resize2fs $(findmnt / -o source -n)` -- which on this layout is handed `/dev/mmcblk0p2[/@]`,
-btrfs subvolume notation, and fails. Its `&&` chain means it never removes itself either, so it
-re-fails every boot and is the entry in `systemctl --failed` on an otherwise healthy unit.
-
-Worked around by hand on both units. Three things learned that the eventual fix needs:
-
-- **`parted -m` refuses on a live mounted root** (`Partition /dev/mmcblk0p2 is being used`,
-  exit 1) because `-m` cannot prompt without a tty. The vendor only gets away with a bare
-  `resizepart` because `init_resize.sh` runs with `/` mounted read-only. `---pretend-input-tty`
-  with `yes` piped in is `init_resize.sh`'s own idiom for this and works.
-- **`partx -u` is not needed.** parted's BLKPG ioctl updated the live kernel view even with the
-  partition mounted, on both units.
-- **btrfs grows online**, so none of the vendor's two-stage-plus-reboot dance is required --
-  that split exists only because `resize2fs` could not grow a mounted ext4 root.
-
-The image-side fix is `dotfiles-symm`'s, and the hand version proves the *mechanism* only, not
-the unit (ordering, the already-grown no-op check, self-disable, failure handling).
-
-### The one step outside the script: getting the repo there
-
-`one_time.sh` handles the read-only `/usr` itself -- `usr_rw_begin` remounts it, and everything
-the script installs (`ansible`, `git`, then `docker-ce` via the playbook) goes in behind that.
-This works, on both devices, today.
-
-The only thing outside it is getting the checkout onto the device in the first place, because
-you cannot run the script that installs `git` before you have the script. That is two commands
--- remount, `apt-get install git` -- and then the clone, and then the script does the rest.
-
-**Two ways NOT to read this.** It is not git-specific: `/usr` is read-only for every package,
-and git is simply the first one needed. And it is not a defect to work around -- it is the
-ordering consequence of the device bootstrapping itself, so a driver coming in from outside
-(the cluster, [#236](https://github.com/symmatree/coordinator/issues/236)'s service, any
-machine) performs those two as ordinary steps rather than inheriting a problem. Whether to move
-the Ansible control node off the device is the open question there; putting `git` in the image
-would fix one instance of a general thing and is not the answer.
-
-Everything else Ansible needs on a virgin card is already there -- `python3` 3.11.2, `sudo`
-with passwordless, `ca-certificates`, `curl`, sshd.
-
-### Done when -- and what it looked like
-
-Both units reported the same shape:
-
-| check | coordinator | campod-sw |
-|---|---|---|
-| `docker --version` / active | 29.8.0, Compose v5.5.1 | 29.8.0 |
-| `/opt/stacks/<role>` | symlink into the checkout | symlink into the checkout |
-| `coord` on PATH | yes (+ `vio-pose-tap`, `vio-ipc-record`) | yes |
-| state dirs | `captures config ipc` | `captures config` |
-| `pi` in `docker` | yes | yes |
-| free space | 26G of 29G | 27G of 30G |
-
-Role-specific, and both are firsts on this image:
-
-- **Coordinator:** `/dev/i2c-1` now exists and survives a reboot
-  ([#246](https://github.com/symmatree/coordinator/pull/246) -- the image supplies
-  `dtparam=i2c_arm=on`, which binds the controller but not the char device; loading `i2c-dev`
-  is the Ansible half and was simply never written). `coordinator-stack.service` enabled, and it
-  auto-started the whole stack on the next boot with no prompting: tracker, estimator, router
-  and display all up, tracker emitting real feature counts against the OAK-D.
-- **campod-sw:** `g_ether` loaded with both MACs pinned from the hostname
-  (`dev_addr`/`host_addr` in `/etc/modprobe.d/campod-g_ether.conf`), `usb0` present and `DOWN`
-  -- correct, since nothing is plugged into the coordinator yet. That is stage 3.
 
 ### Starting the campod stack with nothing attached
 
