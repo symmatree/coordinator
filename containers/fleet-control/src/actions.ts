@@ -1,16 +1,12 @@
 // The two things this service does to a node.
 //
-// `update` is the repeatable path: `git pull && coord pull && coord start`. No sudo, no apt,
-// no Ansible. This is the one that currently needs a keyboard, SSH keys and a remembered
-// command, and it is most of the day-to-day value (coordinator#223).
+// `bootstrap` runs ONCE PER CARD, after flash and first boot. `update` runs EVERY TIME a
+// merged change needs to reach a node that is already set up. They are the same SSH-and-run;
+// the operator knows which they want, so the service does not guess.
 //
-// `bootstrap` is the first-time path: clone, then `one_time.sh <role>` until it completes.
-// It is slower and heavier -- on a 512 MB Zero 2 W the Ansible install alone is minutes.
-//
-// PROVENANCE: the bootstrap sequence below is written from docs/host-setup.md and
-// docs/campod.md. The authoritative sequence is the one that comes out of the first hand-run
-// bringup; when that produces a happy-path script, this should call it rather than restate
-// it, so there is one source of truth instead of two that can drift.
+// The bootstrap sequence is the one recorded in docs/fleet-bringup.md stage 2, from the
+// bring-up that actually happened on 2026-09-12 -- not reconstructed from the per-device docs.
+// Where the two disagree, that doc wins, because it is a transcript.
 
 import type { FleetNode } from './inventory.js';
 import type { LineSink, SessionOptions } from './ssh.js';
@@ -19,9 +15,6 @@ import { probeNode } from './probe.js';
 
 const REPO = 'https://github.com/symmatree/coordinator.git';
 const CHECKOUT = '$HOME/coordinator';
-
-/** How many one_time.sh -> reboot cycles before we call it a loop rather than progress. */
-const MAX_BOOTSTRAP_PASSES = 5;
 
 export class ActionError extends Error {}
 
@@ -46,10 +39,11 @@ async function must(
 }
 
 /**
- * The repeatable path. Fails loudly if the node was never bootstrapped rather than producing
- * `coord`'s confusing "no stack" message, which sends you looking in the wrong place: the
- * real cause is a missing checkout, because /opt/stacks/<role> is a symlink into it
- * (coordinator#48).
+ * Every time. Bring an already-set-up node to the merged state of the repo.
+ *
+ * Fails loudly if the node was never bootstrapped rather than letting `coord` report *no
+ * stack*, which sends you looking in the wrong place: the real cause is a missing checkout,
+ * because /opt/stacks/<role> is a symlink into it (#48).
  */
 export async function update(
   node: FleetNode,
@@ -57,47 +51,54 @@ export async function update(
   sink?: LineSink,
 ): Promise<void> {
   const before = await probeNode(node, opts);
-  if (before.stage === 'unreachable') throw new ActionError(before.error ?? `${node.name} unreachable`);
+  if (before.stage === 'unreachable') {
+    throw new ActionError(before.error ?? `${node.name} unreachable`);
+  }
   if (!before.checkoutPresent) {
     throw new ActionError(
       `${node.name}: no checkout at ~/coordinator, so there is nothing to update and no stack ` +
-        `to start -- /opt/stacks/${node.role} is a symlink into it. Run bootstrap first.`,
+        `to start. This node has not been bootstrapped.`,
     );
   }
-
-  note(sink, `updating ${node.name} (was at ${before.checkoutHead ?? 'unknown'})`);
   if (before.checkoutDirty) {
-    // Config is git-authoritative with no on-box override (docs/deployment-model.md). A dirty
-    // tree means someone hand-edited the device, which `git pull` may now refuse or silently
-    // clobber. Say so rather than deciding for them.
+    // Config is git-authoritative with no on-box override (docs/deployment-model.md), so a
+    // dirty tree is either a hand-edit that belongs in git or something unexpected. Either
+    // way it is the operator's call, not ours to clobber.
     throw new ActionError(
-      `${node.name}: the checkout has uncommitted changes. Config on these devices is ` +
-        `git-authoritative and there is no on-box override, so this is either a hand-edit that ` +
-        `needs to go into git, or something unexpected. Resolve it on the device before updating.`,
+      `${node.name}: the checkout has uncommitted changes. Config here is git-authoritative ` +
+        `with no on-box override, so resolve this on the device before updating.`,
     );
   }
 
+  note(sink, `updating ${node.name} (at ${before.checkoutHead ?? 'unknown'})`);
   await must(node, opts, `git -C ${CHECKOUT} pull --ff-only`, sink, 'git pull');
-  // `coord pull` runs `compose down` first -- a full stop of the stack, not a rolling update.
+  // `coord pull` runs `compose down` first, so this is a full stop of the stack rather than a
+  // rolling update. Measured at 4m22s for campod-camera on one node over lab WiFi (235 MB
+  // compressed); four campods share one 2.4 GHz radio, so expect worse across the fleet.
   await must(node, opts, 'coord pull', sink, 'coord pull');
   await must(node, opts, 'coord start', sink, 'coord start');
 
   const after = await probeNode(node, opts);
-  note(sink, `${node.name} is now ${after.stage} at ${after.checkoutHead ?? 'unknown'}`);
-  if (after.stage !== 'running') {
-    // Not thrown: the commands succeeded. But `coord start` starting nothing is a real and
-    // recently-live failure mode (coordinator#240 -- a campod stack whose only service carried
-    // an inactive compose profile started nothing and said so only by printing no services).
-    note(sink, `WARNING: ${node.name} is '${after.stage}', expected 'running' -- no containers are up.`);
+  note(sink, `${node.name}: now at ${after.checkoutHead ?? 'unknown'}, ${after.containers?.length ?? 0} container(s) up`);
+  if ((after.containers?.length ?? 0) === 0) {
+    // Not thrown -- the commands succeeded. But `coord start` starting nothing is a real and
+    // recently-live failure mode (#240), and its only signal is printing no services.
+    note(sink, `WARNING: no containers are running after 'coord start'.`);
   }
 }
 
 /**
- * The first-time path: blank card to a node running its stack.
+ * Once per card. Flashed-and-booted to a node running its stack.
  *
- * `one_time.sh` exits 1 when a reboot is pending. THAT IS A NORMAL PATH, NOT A FAILURE --
- * treating it as an error makes a working bootstrap look broken. So this loops: run, and if
- * it asks for a reboot, reboot and run again, until it completes.
+ * The sequence is docs/fleet-bringup.md stage 2. The two non-obvious steps:
+ *
+ *  - `/usr` ships READ-ONLY, so installing anything needs the remount first. This is not
+ *    git-specific and not a defect -- it is the ordering consequence of a device bootstrapping
+ *    itself, and a driver coming in from outside (this service) just performs it as a step.
+ *  - The run ends with a REBOOT. `remount,ro` is refused on a live system (`mount point is
+ *    busy`, exit 32), so a reboot is the only thing that returns `/usr` to the read-only
+ *    invariant the image shipped with. It doubles as the test that the stack comes back on
+ *    its own.
  */
 export async function bootstrap(
   node: FleetNode,
@@ -105,19 +106,23 @@ export async function bootstrap(
   sink?: LineSink,
 ): Promise<void> {
   const before = await probeNode(node, opts);
-  if (before.stage === 'unreachable') throw new ActionError(before.error ?? `${node.name} unreachable`);
-  note(sink, `bootstrapping ${node.name} (role ${node.role}, currently ${before.stage})`);
+  if (before.stage === 'unreachable') {
+    throw new ActionError(before.error ?? `${node.name} unreachable`);
+  }
+  note(sink, `bootstrapping ${node.name} as role '${node.role}' (currently ${before.stage})`);
 
   if (before.fleetImage?.ROLE && before.fleetImage.ROLE !== node.role) {
     throw new ActionError(
       `${node.name}: inventory says role '${node.role}' but the card was flashed as ` +
-        `'${before.fleetImage.ROLE}' (/etc/fleet-image). One of the two is wrong; bootstrapping ` +
-        `with the wrong role lays down the wrong stack and the wrong data mount.`,
+        `'${before.fleetImage.ROLE}' (/etc/fleet-image). Bootstrapping with the wrong role lays ` +
+        `down the wrong stack and the wrong data mount.`,
     );
   }
 
+  note(sink, 'remounting /usr rw (it ships read-only; every package install needs this)');
+  await must(node, opts, 'sudo -n mount -o remount,rw /usr', sink, 'remount /usr rw');
+
   if (!before.checkoutPresent) {
-    note(sink, 'no checkout -- installing git and cloning');
     await must(node, opts, 'sudo -n apt-get update', sink, 'apt-get update');
     await must(
       node, opts,
@@ -126,61 +131,49 @@ export async function bootstrap(
     );
     await must(node, opts, `git clone ${REPO} ${CHECKOUT}`, sink, 'git clone');
   } else {
-    note(sink, `checkout present at ${before.checkoutHead ?? 'unknown'} -- pulling before bootstrap`);
+    note(sink, `checkout already present at ${before.checkoutHead ?? 'unknown'} -- pulling`);
     await must(node, opts, `git -C ${CHECKOUT} pull --ff-only`, sink, 'git pull');
   }
 
-  for (let pass = 1; pass <= MAX_BOOTSTRAP_PASSES; pass++) {
-    note(sink, `one_time.sh pass ${pass}/${MAX_BOOTSTRAP_PASSES}`);
-    const bootId = await withSession(node, opts, (s) => s.bootId());
-    const r = await withSession(node, opts, (s) =>
+  // ~13 minutes on a Zero 2 W, most of it the Docker install. The 512 MB did not bite.
+  note(sink, 'running one_time.sh (about 13 minutes on a Zero 2 W)');
+  const bootId = await withSession(node, opts, (s) => s.bootId());
+  const r = await withSession(node, opts, (s) =>
+    s.exec(`cd ${CHECKOUT} && ./host/one_time.sh ${node.role}`, sink),
+  );
+
+  if (r.code === 1) {
+    // Exit 1 means "I opened the /usr hatch, reboot me and run me again". In the sequence
+    // above it should not happen, because step 1 already left /usr writable -- the one
+    // observed instance was a deliberate test artifact (#260). Handled because the script
+    // documents it, not because it is expected.
+    note(sink, 'one_time.sh exited 1 (asked for a reboot) -- rebooting and running it once more');
+    await rebootAndWait(node, opts, bootId, sink);
+    const second = await withSession(node, opts, (s) => s.bootId());
+    const r2 = await withSession(node, opts, (s) =>
       s.exec(`cd ${CHECKOUT} && ./host/one_time.sh ${node.role}`, sink),
     );
-
-    if (r.code === 0) {
-      note(sink, `one_time.sh completed on pass ${pass}`);
-      // A NEW connection, deliberately. Ansible adds `pi` to the docker group, and group
-      // membership only lands in a new login session -- this is the non-interactive
-      // equivalent of the `newgrp docker` step in docs/host-setup.md. Reusing the session
-      // here makes every subsequent `coord` call fail on docker permissions.
-      const after = await probeNode(node, opts);
-      if (!after.inDockerGroup) {
-        throw new ActionError(
-          `${node.name}: bootstrap finished but ${node.user} still cannot talk to docker on a ` +
-            `fresh login. Expected the docker group to be in effect by now.`,
-        );
-      }
-      note(sink, 'docker group is in effect on a fresh session; starting the stack');
-      await must(node, opts, 'coord pull', sink, 'coord pull');
-      await must(node, opts, 'coord start', sink, 'coord start');
-      const final = await probeNode(node, opts);
-      note(sink, `${node.name} is now '${final.stage}'`);
-      if (final.stage !== 'running') {
-        note(sink, `WARNING: expected 'running', got '${final.stage}' -- no containers are up.`);
-      }
-      // Reachable is not working: nothing in the campod capture path has ever run on real
-      // hardware, so a running container is not evidence that frames are landing.
-      note(sink, 'NOTE: containers running means deployed, not that capture works -- verify separately.');
-      return;
+    if (r2.code !== 0) {
+      throw new ActionError(`${node.name}: one_time.sh exited ${r2.code} on its second pass.\n${r2.stderr.trim()}`);
     }
-
-    if (r.code === 1) {
-      const probe = await probeNode(node, opts);
-      if (probe.rebootRequired) {
-        note(sink, 'one_time.sh asked for a reboot (exit 1 + reboot-required) -- this is normal');
-        await rebootAndWait(node, opts, bootId, sink);
-        continue;
-      }
-    }
-
-    throw new ActionError(
-      `${node.name}: one_time.sh exited ${r.code} on pass ${pass} without a pending reboot, so ` +
-        `this is a real failure rather than the normal reboot path.\n${r.stderr.trim()}`,
-    );
+    void second;
+  } else if (r.code !== 0) {
+    throw new ActionError(`${node.name}: one_time.sh exited ${r.code}.\n${r.stderr.trim()}`);
   }
+  note(sink, 'one_time.sh complete');
 
-  throw new ActionError(
-    `${node.name}: one_time.sh still wanted a reboot after ${MAX_BOOTSTRAP_PASSES} passes. ` +
-      `It is meant to converge; something is reinstalling a kernel/firmware change every pass.`,
-  );
+  // Reboot before pulling images: it closes the /usr hatch, and it means `coord pull` runs
+  // against the device in the state it is actually meant to be in.
+  const beforeFinalBoot = await withSession(node, opts, (s) => s.bootId());
+  await rebootAndWait(node, opts, beforeFinalBoot, sink);
+
+  await must(node, opts, 'coord pull', sink, 'coord pull');
+  await must(node, opts, 'coord start', sink, 'coord start');
+
+  const after = await probeNode(node, opts);
+  note(sink, `${node.name}: stage '${after.stage}', ${after.containers?.length ?? 0} container(s) up`);
+  // Reachable is not working. Nothing downstream of a camera being present is proven --
+  // capture, the exposure cap, the focus control and the accel path are all untested
+  // (docs/fleet-bringup.md stage 2).
+  note(sink, 'NOTE: containers running means deployed, NOT that capture works.');
 }

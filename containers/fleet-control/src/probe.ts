@@ -1,41 +1,22 @@
-// Read-only node probe: what state is this node actually in?
+// Read-only node probe.
 //
-// The point of this file is the `stage` it derives. "Reachable" is not the useful question --
-// a node can answer SSH while being blank, half-bootstrapped, bootstrapped-but-stopped, or
-// running. Those need four different next actions, and telling them apart by hand is exactly
-// the keyboard-and-remembered-commands work coordinator#236 exists to remove.
+// Runs ON DEMAND ONLY -- when the operator is already asking to do something, so the answer
+// can be shown in the confirmation step. Nothing here polls: a Zero 2 W has better things to
+// do than answer a dashboard, and the service should not touch the machines uninvited.
 //
-// Two things this deliberately does NOT do:
+// `stage` exists to answer one question -- does this node need bootstrapping, or updating? --
+// and to say plainly when it cannot be reached. It is not a health model, and `ready` means
+// deployed, not that capture works: nothing downstream of a camera being present has run on
+// real hardware.
 //
-//  - It does not claim the capture path works. Nothing in the campod-camera image has ever
-//    run on real hardware, so `running` here means containers are up, not that frames are
-//    landing. `stage` is about deployment state; capture health is a separate question and
-//    must not be implied by this one.
-//  - It writes nothing. Every command below is a read. This runs against a node that may be
-//    mid-flight or that someone else is working on.
+// It writes nothing. Every command is a read.
 
 import { readFileSync } from 'node:fs';
 import type { FleetNode } from './inventory.js';
 import type { SessionOptions } from './ssh.js';
 import { withSession, HostKeyMismatchError } from './ssh.js';
 
-/**
- * Units that are failed on a healthy fleet node, and are not a fault.
- *
- * `resize2fs_once.service` is a vendor leftover: it feeds btrfs subvolume notation to an
- * ext-only tool, so it fails on every card this fleet flashes. Observed failed on both
- * `coordinator` and `campod-sw` on 2026-09-13, on freshly-flashed images. Being masked in the
- * image; listed here so that a health check does not report a whole fleet broken on day one,
- * and so that removing it from the image does not require a change here.
- */
-export const EXPECTED_FAILED_UNITS = new Set(['resize2fs_once.service']);
-
-export type Stage =
-  | 'unreachable'
-  | 'blank'
-  | 'partial'
-  | 'bootstrapped'
-  | 'running';
+export type Stage = 'unreachable' | 'blank' | 'partial' | 'ready';
 
 export interface FleetImage {
   IMAGE?: string;
@@ -74,8 +55,6 @@ export interface NodeProbe {
   containers?: ContainerState[];
 
   failedUnits?: string[];
-  /** Failed units minus the known-expected ones -- the list worth reacting to. */
-  unexpectedFailedUnits?: string[];
   rebootRequired?: boolean;
   dataMount?: string;
 }
@@ -99,12 +78,13 @@ export function parse(out: string): Record<string, string[]> {
 const one = (m: Record<string, string[]>, k: string): string | undefined => m[k]?.[0];
 const bool = (m: Record<string, string[]>, k: string): boolean => one(m, k) === '1';
 
+/** blank -> bootstrap it. partial -> bootstrap it again. ready -> update it. */
 export function deriveStage(p: Omit<NodeProbe, 'stage'>): Stage {
   if (!p.dockerInstalled && !p.checkoutPresent) return 'blank';
-  // Docker without a checkout, or a checkout without docker, both mean an interrupted
-  // bootstrap -- `one_time.sh` installs docker and lays the /opt/stacks symlink together.
+  // Docker without a checkout, or a checkout without docker, means an interrupted bootstrap:
+  // one_time.sh installs docker and lays the /opt/stacks symlink in the same run.
   if (!p.dockerInstalled || !p.checkoutPresent || (p.stacks?.length ?? 0) === 0) return 'partial';
-  return (p.containers?.length ?? 0) > 0 ? 'running' : 'bootstrapped';
+  return 'ready';
 }
 
 export async function probeNode(node: FleetNode, opts: SessionOptions): Promise<NodeProbe> {
@@ -161,7 +141,6 @@ export function interpret(
     inDockerGroup: bool(m, 'docker_group'),
     containers,
     failedUnits,
-    unexpectedFailedUnits: failedUnits.filter((u) => !EXPECTED_FAILED_UNITS.has(u)),
     rebootRequired: bool(m, 'reboot_required'),
     dataMount: one(m, 'data_mount'),
   };

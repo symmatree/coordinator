@@ -1,11 +1,11 @@
 // Who is in the fleet, and how to reach them.
 //
-// Addresses are STATIC and configured, not resolved at runtime. The house DHCP hands out a
-// rotating DNS list rather than an ordered fallback, so only some of the servers in it know
-// the internal `*.local.symmatree.com` names -- a runtime lookup therefore succeeds or fails
-// by luck of the draw, and the failure presents as an unreachable node rather than as a DNS
-// problem. A fixed mapping removes that variable entirely; when a node moves, the mapping is
-// a config change, which is visible, rather than a resolver behaviour, which is not.
+// Addresses are STATIC and configured, not resolved at runtime -- the owner's call, and there
+// is known DNS instability on this network. What was observed directly (2026-09-13): the
+// coordinator resolves consistently by name, and no campod resolved at all in the same
+// window. No cause for that is established here, and the service should not depend on it
+// being fixed. A fixed mapping makes a moved node a visible config change rather than a
+// resolver behaviour.
 //
 // Refs: coordinator#236 (this service), coordinator#223 (the epic).
 
@@ -50,8 +50,7 @@ export function parseInventory(raw: unknown): Inventory {
     seen.add(name);
 
     // An address is required only for a node we will actually contact. A not-yet-flashed
-    // unit is listed so the roster is complete and enabling it later is a one-word change,
-    // and it has no address to give until DHCP hands it one.
+    // unit is listed so the roster is complete and enabling it later is a one-word change.
     const enabled = o.enabled === undefined ? true : o.enabled === true;
     const address = typeof o.address === 'string' ? o.address : '';
     if (enabled && address.length === 0) {

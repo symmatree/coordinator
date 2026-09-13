@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { interpret, deriveStage, EXPECTED_FAILED_UNITS } from '../src/probe.js';
+import { interpret, deriveStage } from '../src/probe.js';
 
 const base = { node: 'campod-sw', address: '10.0.2.49', role: 'campod' };
 const t = (k: string, v: string) => `${k}\t${v}`;
@@ -47,9 +47,8 @@ describe('interpret -- a freshly flashed, un-bootstrapped node', () => {
     assert.deepEqual(p.containers, []);
   });
 
-  it('sees resize2fs_once failed but does not call it a fault', () => {
+  it('reports failed units as information, without judging them', () => {
     assert.deepEqual(p.failedUnits, ['resize2fs_once.service']);
-    assert.deepEqual(p.unexpectedFailedUnits, []);
   });
 
   it('confirms the data subvolume is the btrfs @data mount, not a dir on @var', () => {
@@ -57,15 +56,10 @@ describe('interpret -- a freshly flashed, un-bootstrapped node', () => {
   });
 });
 
-describe('interpret -- a real failure is still surfaced', () => {
-  it('separates an unexpected failed unit from the known-benign one', () => {
+describe('interpret -- multiple failed units', () => {
+  it('collects them all', () => {
     const p = interpret(base, FRESHLY_FLASHED + '\n' + t('failed_unit', 'docker.service'));
     assert.deepEqual(p.failedUnits, ['resize2fs_once.service', 'docker.service']);
-    assert.deepEqual(p.unexpectedFailedUnits, ['docker.service']);
-  });
-
-  it('keeps resize2fs_once as the only expected failure', () => {
-    assert.deepEqual([...EXPECTED_FAILED_UNITS], ['resize2fs_once.service']);
   });
 });
 
@@ -110,22 +104,9 @@ describe('deriveStage', () => {
     assert.equal(s({ dockerInstalled: true, checkoutPresent: true, stacks: [] }), 'partial');
   });
 
-  it('bootstrapped: ready, but nothing running', () => {
-    assert.equal(
-      s({ dockerInstalled: true, checkoutPresent: true, stacks: ['campod'], containers: [] }),
-      'bootstrapped',
-    );
-  });
-
-  it('running: containers are up', () => {
-    assert.equal(
-      s({
-        dockerInstalled: true,
-        checkoutPresent: true,
-        stacks: ['campod'],
-        containers: [{ name: 'campod-camera', status: 'Up 1 minute' }],
-      }),
-      'running',
-    );
+  it('ready: bootstrapped, so update is the action -- running or not', () => {
+    const args = { dockerInstalled: true, checkoutPresent: true, stacks: ['campod'] };
+    assert.equal(s({ ...args, containers: [] }), 'ready');
+    assert.equal(s({ ...args, containers: [{ name: 'campod-camera', status: 'Up 1m' }] }), 'ready');
   });
 });

@@ -29,13 +29,39 @@
   .err { color:var(--bad); }
   .banner { background:#3a2a12; border:1px solid var(--warn); color:var(--warn);
             padding:10px 12px; border-radius:8px; margin-bottom:14px; font-size:.85rem; }
+  dialog { background:var(--card); color:var(--fg); border:1px solid var(--line);
+           border-radius:14px; padding:20px; max-width:min(92vw,420px); }
+  dialog::backdrop { background:rgba(0,0,0,.65); }
+  dialog h2 { margin:0 0 10px; font-size:1.05rem; }
+  dialog .what { color:var(--dim); font-size:.86rem; margin-bottom:14px; }
+  dialog .state { font-size:.82rem; margin-bottom:14px; }
 </style>
 <h1>rekon10 fleet</h1>
 <div id="banner"></div>
 <div id="fleet">loading...</div>
+<dialog id="confirm">
+  <h2 id="cTitle"></h2>
+  <div class="what" id="cWhat"></div>
+  <div class="state" id="cState">checking the node...</div>
+  <div class="btns">
+    <button id="cNo">Cancel</button>
+    <button id="cYes" class="primary">Yes, do it</button>
+  </div>
+</dialog>
 <script type="module">
   const $ = (h) => Object.assign(document.createElement('div'), h);
   const state = new Map();
+  const dlg = document.getElementById('confirm');
+
+  const WHAT = {
+    update:
+      'Runs on the node: git pull, coord pull, coord start. ' +
+      'This STOPS the stack while images are pulled -- coord pull runs compose down first.',
+    bootstrap:
+      'Runs on the node: remount /usr rw, install git, clone the repo, ./host/one_time.sh, ' +
+      'then reboot and start the stack. Once per card, after flashing. Takes roughly 15-20 ' +
+      'minutes on a Zero 2 W.',
+  };
 
   async function j(url, opts) {
     const r = await fetch(url, opts);
@@ -45,13 +71,9 @@
 
   async function loadStatus() {
     const s = await j('/status');
-    const b = document.getElementById('banner');
-    // Surfaced, not buried: with an ephemeral store every restart is a fresh first-contact,
-    // so host-key verification is protecting nothing and the operator should know.
-    b.innerHTML = s.hostKeys.ephemeral
+    document.getElementById('banner').innerHTML = s.hostKeys.ephemeral
       ? '<div class="banner">Host-key store is not persistent -- key changes will not be detected across a restart.</div>'
       : '';
-    return s;
   }
 
   function render(nodes) {
@@ -76,13 +98,6 @@
       if (p.checkoutHead) bits.push(`checkout ${p.checkoutHead}${p.checkoutDirty ? ' (dirty)' : ''}`);
       if (p.containers?.length) bits.push(p.containers.map((c) => `${c.name}: ${c.status}`).join(', '));
       if (bits.length) card.append($({ className: 'meta', textContent: bits.join(' -- ') }));
-
-      if (p.unexpectedFailedUnits?.length)
-        card.append($({ className: 'meta warn', textContent: `failed units: ${p.unexpectedFailedUnits.join(', ')}` }));
-      if (p.rebootRequired)
-        card.append($({ className: 'meta warn', textContent: 'reboot pending' }));
-      if (stage === 'running')
-        card.append($({ className: 'meta', textContent: 'Containers are up. This does NOT mean capture works -- verify separately.' }));
       if (p.error) card.append($({ className: 'meta err', textContent: p.error }));
 
       const btns = $({ className: 'btns' });
@@ -91,7 +106,7 @@
         b.textContent = label;
         if (primary) b.className = 'primary';
         b.disabled = !n.enabled || !!st.busy;
-        b.onclick = () => run(n.name, action);
+        b.onclick = () => confirmThen(n.name, action);
         return b;
       };
       btns.append(mk('Update', 'update', true), mk('Bootstrap', 'bootstrap', false));
@@ -106,16 +121,47 @@
     }
   }
 
-  async function refresh(nodes) {
-    await Promise.all(
-      nodes.filter((n) => n.enabled).map(async (n) => {
-        const st = state.get(n.name) ?? {};
-        try { st.probe = await j(`/nodes/${n.name}/probe`); }
-        catch (e) { st.probe = { stage: 'unreachable', error: e.message }; }
-        state.set(n.name, st);
-      }),
-    );
-    render(nodes);
+  /**
+   * Every action goes through this. It exists so an accidental bump on a phone screen cannot
+   * start anything -- there is always a deliberate second tap.
+   *
+   * The node is probed HERE and only here: the service does not touch the machines uninvited,
+   * so the current state is fetched at the moment you are already asking to act on it.
+   */
+  async function confirmThen(name, action) {
+    document.getElementById('cTitle').textContent = `${action} ${name}?`;
+    document.getElementById('cWhat').textContent = WHAT[action];
+    const stateEl = document.getElementById('cState');
+    stateEl.textContent = 'checking the node...';
+    stateEl.className = 'state';
+    dlg.showModal();
+
+    let probe = null;
+    try {
+      probe = await j(`/nodes/${name}/probe`);
+      const st = state.get(name) ?? {};
+      st.probe = probe;
+      state.set(name, st);
+      render(await j('/nodes'));
+      if (probe.stage === 'unreachable') {
+        stateEl.textContent = probe.error;
+        stateEl.className = 'state err';
+      } else if (action === 'bootstrap' && probe.stage === 'ready') {
+        stateEl.textContent = 'This node is already set up. Bootstrap is for a freshly flashed card -- you probably want Update.';
+        stateEl.className = 'state warn';
+      } else if (action === 'update' && probe.stage !== 'ready') {
+        stateEl.textContent = `This node is '${probe.stage}' -- it has not been bootstrapped, so there is nothing to update.`;
+        stateEl.className = 'state warn';
+      } else {
+        stateEl.textContent = `Node is '${probe.stage}'.`;
+      }
+    } catch (e) {
+      stateEl.textContent = `could not reach it: ${e.message}`;
+      stateEl.className = 'state err';
+    }
+
+    document.getElementById('cYes').onclick = () => { dlg.close(); run(name, action); };
+    document.getElementById('cNo').onclick = () => dlg.close();
   }
 
   async function run(name, action) {
@@ -125,7 +171,10 @@
     render(await j('/nodes'));
     let id;
     try { ({ id } = await j(`/nodes/${name}/${action}`, { method: 'POST' })); }
-    catch (e) { st.busy = false; st.log.push(`error: ${e.message}`); state.set(name, st); return render(await j('/nodes')); }
+    catch (e) {
+      st.busy = false; st.log.push(`error: ${e.message}`); state.set(name, st);
+      return render(await j('/nodes'));
+    }
 
     const es = new EventSource(`/runs/${id}/stream`);
     es.onmessage = async (ev) => {
@@ -136,18 +185,17 @@
       if (l.line.startsWith('[fleet-control] run ')) {
         es.close();
         st.busy = false;
-        await refresh(await j('/nodes'));
+        // One probe at the end, so the card reflects the result of what you just ran.
+        try { st.probe = await j(`/nodes/${name}/probe`); } catch { /* leave the last known */ }
+        state.set(name, st);
+        render(await j('/nodes'));
       }
     };
     es.onerror = () => { es.close(); st.busy = false; };
   }
 
-  const nodes = await j('/nodes');
+  // Render the roster from config alone. NOTHING is probed until you ask for an action --
+  // the Zeros are not here to answer a dashboard.
   await loadStatus();
-  render(nodes);
-  await refresh(nodes);
-  setInterval(async () => {
-    if ([...state.values()].some((s) => s.busy)) return;
-    await refresh(await j('/nodes'));
-  }, 30000);
+  render(await j('/nodes'));
 </script>
