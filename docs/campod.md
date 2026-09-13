@@ -1,4 +1,6 @@
-# Campod node setup and maintenance
+
+
+# setup and maintenance
 
 The **campod** is an arm-mounted Pi Zero 2 W + Camera Module 3 (IMX708) + ADXL345
 vibration sensors. This is the operator doc: how to bring a node up from a blank card, and
@@ -251,6 +253,7 @@ coord pull                    # new container images
 coord start
 ```
 
+
 Re-run the bootstrap only when the **host** changes -- a new role task, a new config.txt
 entry, a Docker or Ansible bump:
 
@@ -299,6 +302,47 @@ across reboots, disable the unit (`systemctl disable --now campod-stack.service`
 | Nothing capturing after a power cycle | Only happens if the last command was an explicit `coord stop` -- that marks the container stopped and `restart: unless-stopped` honours it across reboots. `systemctl status campod-stack.service`; if the unit is disabled, `systemctl enable --now campod-stack.service`. A plain `shutdown -h now` or a power yank does not need the unit |
 | Dead on **first** boot: no network, dark ACT LED, `firstrun.sh` still on the card | was `nofail` on `/boot/firmware` letting the mount lose a race with `kernel-command-line.service`; the board powered itself **off** rather than hanging. Fixed in dotfiles-symm#41 -- if it recurs, check fstab for `nofail` and read the serial console |
 | Captures not landing on the `@data` subvolume | `findmnt /var/lib/campod` -- if it is on `@var`, the image's `DATA_MOUNT` and `coord_state_root` have diverged |
+
+# Software in flight
+
+
+Most of the below is forward looking, pending PPS hardware integration, and everything beyond simple capture on the software side.
+
+### Time coordination
+
+Following pieces of [Microsecond accurate NTP with a Raspberry Pi and PPS GPS](https://austinsnerdythings.com/2021/04/19/microsecond-accurate-ntp-with-a-raspberry-pi-and-pps-gps/) (pattern applies to **RTC SQW** as the PPS source, not a GPS PPS pin) it looks like `chrony` running on the Zeros to get NTP from the Coordinator.
+
+### Capture sync
+
+### Software sync only
+
+The Camera Module 3 does not have XVS hardware trigger pins. The build uses **software-based timing sync for all cameras**.
+
+All cameras use interpolated timestamping: capture timestamps (locked to the **shared RTC time base** via DS3234 SQW + PPS + chrony) are matched against ArduPilot's high-frequency pose logs (50-100 Hz) during post-processing (PPK-style interpolation). Even at 10 m/s (a worst-case for the timing math, not a planned survey speed) with 1 ms sync, positional error is only ~1 cm -- acceptable for photogrammetry. libcamera claims less than 10 microseconds.
+
+**Planned survey speed:** 3-5 m/s for overhead mapping transects, slower under canopy. At 3 m/s with the same 1 ms sync budget, positional error is ~3 mm.
+
+**Overlap targets:** >75% forward overlap, 60-70% lateral overlap for mapping transects. High overlap serves both rolling shutter correction (dense feature matching) and general photogrammetry quality. The multi-camera geometry provides additional inter-camera overlap that a single-camera platform cannot match.
+
+### Time distribution: chrony + PPS
+
+Standard NTP over USB gadget mode has 2-10 ms of jitter due to USB polling, which at 10 m/s translates to 2-10 cm of positional error -- enough to throw away the RTK advantage. The fix is hardware PPS.
+
+**Architecture:**
+
+1. **One DS3234** at the coordinator hub outputs **SQW** (1 Hz) into the PPS buffer tree ([central-hub.md](central-hub.md)). Primary need: **local agreement** across Pis, not strict absolute UTC on every flight.
+2. **The Coordinator** runs NTP on the USB gadget network and can **discipline** the DS3234 from GNSS time (u-center / MAVLink / logged fixes) when sky view is good.
+3. **Each Zero** gets "rough" time from the Coordinator over USB (accurate to the correct second, but sloppy by 5-15 ms).
+4. **A physical PPS wire** (buffered SQW) runs to a GPIO pin on every Pi Zero.
+5. **Chrony** on each Zero uses both sources: network time for the second boundary, **phase-lock to the hardware PPS interrupt** for sub-microsecond alignment. USB jitter is eliminated.
+
+When libcamera saves a frame, the timestamp comes from CLOCK_MONOTONIC, phase-locked to the shared RTC epoch. Post-processing interpolates against ArduPilot pose logs (GPS/VIO **TimeUS**); GNSS provides georeferencing, not the pod PPS wire.
+
+See central-hub.md for signal buffering details.
+
+### Image storage
+
+Images are written locally to each Pi Zero's SD card (not streamed over the shared USB 2.0 bus, which would bottleneck at 480 Mbps). The Coordinator uses the USB network only for commands (start/stop recording) where a few ms of latency doesn't matter.
 
 ---
 

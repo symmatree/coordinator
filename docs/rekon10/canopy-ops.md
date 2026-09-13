@@ -219,3 +219,57 @@ Popping above the canopy through a narrow gap may not give a full-sky view. Tree
 - **Accept Float or 3D-only for the safety breakout.** Getting above the canopy with any GPS fix is enough to prevent getting lost. PPK will refine the position later.
 - **If RTK Fixed is needed** (e.g., to anchor a critical survey endpoint), hold longer or reposition to a wider opening. Budget 30-60 seconds for worst-case convergence in a narrow gap.
 - **RTCM must flow continuously** even under canopy (via ELRS). If the F9P loses RTCM input, RTK convergence after breakout takes much longer because the receiver needs to rebuild the differential corrections from scratch. Keep the ELRS link active and RTCM injecting at all times. How corrections reach the FC, and the leading theory for what silently stops them: coordinator [`docs/rtk-corrections-path.md`](../../docs/rtk-corrections-path.md).
+
+
+## Upward-looking gap detection
+
+Canopy gap detection for the ice-hole operations pattern ([canopy-ops.md](canopy-ops.md)) requires an upward-facing camera and a way to get images or status to the pilot. Two implementation phases let the first canopy missions fly before the vertical-ring pods are built.
+
+### Phase 1: Pixel Fold as interim gap-detection camera
+
+Strap a Pixel Fold to the top of the frame, camera pointed up. The phone is **completely disconnected from the flight system** -- no USB to the Coordinator, no data integration, no WiFi required during flight. The drone does not know the phone exists.
+
+- **Power:** USB-C pigtail from the 5 V stripboard rail (same approach as the Coordinator's power feed). ~500 mA without negotiation keeps the phone alive for the duration of a flight. Even this is optional -- the phone's own battery will outlast the flight pack.
+- **Mounting:** A simple printed bracket on top of the frame, aimed upward. Secure against vibration (VHB + strap or bolted cradle).
+- **Operation:** The pilot uses FPV to position under a candidate gap, then checks the Pixel Fold's upward view on a ground device (via hotspot, or via the phone's screen after landing if the gap evaluation can wait). When satisfied, the pilot commands a vertical climb manually. The drone simply sees a climb stick input -- no autonomous gap-detection logic in the loop.
+- **WiFi (optional):** If the pilot wants live upward imagery during flight, connect a ground phone to the Pixel Fold's hotspot. Range through canopy is marginal (~30 m line-of-sight, less through foliage) but improves as the drone ascends. This is a convenience, not a requirement.
+
+This gets canopy missions flying without designing, printing, and integrating another set of pods on top of the OAK-D mount, GPS mast, and arm pods.
+
+### Phase 2: Permanent vertical-ring pair (NNW + NNE)
+
+The first two cameras from the planned **vertical ring** (see *Overview* above). These are the topmost members of that ring -- the near-zenith pair. Primary role: **canopy gap detection** with onboard algorithmic assessment. Secondary role: **canopy-from-below photogrammetry** data (crown architecture, branch density) when running at full resolution. When the rest of the vertical ring is populated, these two cameras become its zenith segment with no changes.
+
+Replaces the Pixel Fold once the vertical-ring pods are built. Advantages over the phone: no separate device to manage, integrated into the Coordinator's PPS/USB/telemetry system, onboard gap-detection algorithm feeds a MAVLink OSD flag at full ELRS range, and the cameras contribute photogrammetric data.
+
+### Aim geometry (upward pair)
+
+Each camera is a standard Camera Module 3 (66 x 41 degree FOV) mounted **rotated 90 degrees** so the 66-degree axis is in **elevation** and the 41-degree axis is in **azimuth**. Aimed at **+70 degrees elevation** (20 degrees from zenith):
+
+- **Upper edge:** +70 + 33 = +103 degrees -- past zenith by 13 degrees. Both cameras' upper edges cross the zenith pole.
+- **Lower edge:** +70 - 33 = +37 degrees -- well above horizon, well clear of the prop disc in level flight.
+
+NNW is at -22.5 degrees azimuth from forward, NNE at +22.5 degrees. Near zenith, projection geometry widens azimuthal coverage substantially, so the two cameras **overlap around the zenith pole** by roughly 20-25 degrees. Together they cover the straight-overhead region plus ~20 degrees to either side -- the corridor that matters for vertical ascent through a canopy gap.
+
+**Prop clearance:** At +37 degrees (lower FOV edge), the camera looks well above the prop plane in level flight. When the drone pitches forward at survey speed, the prop plane tilts toward the camera. Verify clearance with a bench photo at maximum expected pitch angle (~15-20 degrees). If the prop tip enters the FOV, raise the aim angle or crop the lower edge in software.
+
+**Protection:** Top-mounted cameras are exposed to rain, debris, and (in theory) descending prop wash from above in wind. A clear polycarbonate dome or recessed mount is recommended.
+
+### Gap detection mode
+
+**When active:** Only during under-canopy missions, commanded by the Coordinator or pilot. In open-sky mapping, these cameras either capture full-resolution frames for canopy-from-below photogrammetry or stay idle.
+
+**Capture parameters:** Low resolution (640x480 or 320x240), **0.5 Hz** (one frame every 2 seconds). This is trivial load on the Pi Zero compared to full-resolution mapping captures.
+
+**Detection algorithm:** The problem is easy. Looking straight up through canopy, branches and leaves are **dark silhouettes against bright sky** -- the highest-contrast scene in nature. Start with a simple brightness threshold:
+
+1. Capture a low-res frame.
+2. Extract the zenith region (center of the overlapping FOV, roughly +/- 15-20 degrees from vertical).
+3. Compute the fraction of pixels above a brightness threshold (or a histogram bimodality metric).
+4. If the bright fraction exceeds a tuned threshold, report "gap candidate." Otherwise "obstructed."
+
+No ML required for V1. The Pi Zero runs this locally and reports a binary flag to the Coordinator over USB. The Coordinator aggregates the two cameras (NNW and NNE must both agree on "clear" in their overlap region) and relays a **gap-status telemetry flag** to the FC via MAVLink.
+
+**Bias the algorithm conservative:** A false "clear" (reports gap when branches are present) is dangerous -- the drone flies into an obstruction. A false "obstructed" (reports blocked when a gap exists) only wastes time. Tune the threshold to **favor false negatives** (miss a gap) over false positives (miss a branch). The pilot retains final authority.
+
+**Incremental confidence during ascent:** As the drone creeps upward through a candidate gap (0.5-1 m/s climb), the upward cameras re-evaluate every 1-2 seconds. The gap assessment **improves with altitude** -- parallax decreases, thin branches resolve better, and the cameras see deeper into the gap. The first frame from the ground is the least trustworthy; the frame from halfway through the gap is much better.
