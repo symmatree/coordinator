@@ -78,14 +78,17 @@ we did.
 ### The sequence, as actually run
 
 ```bash
-# 0. WORKAROUND: grow the filesystem. Not in any runbook -- see below.
+# 0. HISTORICAL: the filesystem had to be grown by hand. The image does this
+#    itself now (dotfiles-symm#46, grow-rootfs.sh on first boot), so skip this on
+#    any card built after that. Check `df -h /` shows ~30G, not 3.1G.
 sudo /sbin/sfdisk -F /dev/mmcblk0                  # confirm free space follows p2
 printf "yes\n" | sudo /sbin/parted ---pretend-input-tty /dev/mmcblk0 \
      u s resizepart 2 <last-sector>
 sudo btrfs filesystem resize max /
 
-# 1. WORKAROUND: /usr is read-only and git is not in the image, so this one
-#    remount cannot come from the repo -- the repo is what you need git to clone.
+# 1. Get the repo onto the device. /usr ships read-only, so installing anything
+#    needs the remount first. This is the one step one_time.sh cannot do for you,
+#    for the ordinary reason that you do not have it yet.
 sudo mount -o remount,rw /usr
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git
@@ -112,8 +115,9 @@ reboot and run again ([#253](https://github.com/symmatree/coordinator/pull/253))
   `ro,noatime,compress=zstd:3,...,subvol=/@usr` and refused writes. One pass plus one reboot.
 - **campod-sw:** exited **0** with no reboot asked for -- but only because the manual remount in
   step 1 had already left `/usr` writable, so the hatch saw `rw` and never fired. Its `/usr` is
-  therefore still `rw` and needs a reboot to close. **A card where step 1 is not needed
-  (i.e. once `git` ships in the image) will take the coordinator's path, not this one.**
+  therefore still `rw` and needs a reboot to close. **A card converged without that manual
+  remount takes the coordinator's path, not this one** -- so the coordinator's run is the
+  representative one.
 
 ### Timing, Zero 2 W
 
@@ -164,15 +168,23 @@ Worked around by hand on both units. Three things learned that the eventual fix 
 The image-side fix is `dotfiles-symm`'s, and the hand version proves the *mechanism* only, not
 the unit (ordering, the already-grown no-op check, self-disable, failure handling).
 
-### Workaround 2: one remount that cannot come from this repo
+### The one step outside the script: getting the repo there
 
-`git` is not in the image, and `/usr` is read-only. So the **first** `apt-get install git` on a
-fresh card needs a manual `mount -o remount,rw /usr` -- and the helper that would do it
-(`host/lib/usr-rw.sh`) lives in the repo you need `git` to clone. Every other remount in the
-flow is handled by `one_time.sh`; this one structurally cannot be.
+`one_time.sh` handles the read-only `/usr` itself -- `usr_rw_begin` remounts it, and everything
+the script installs (`ansible`, `git`, then `docker-ce` via the playbook) goes in behind that.
+This works, on both devices, today.
 
-Shipping `git` in the image removes it: the clone is load-bearing and universal, so with `git`
-present there is no pre-clone apt and therefore no pre-clone remount. Not yet filed.
+The only thing outside it is getting the checkout onto the device in the first place, because
+you cannot run the script that installs `git` before you have the script. That is two commands
+-- remount, `apt-get install git` -- and then the clone, and then the script does the rest.
+
+**Two ways NOT to read this.** It is not git-specific: `/usr` is read-only for every package,
+and git is simply the first one needed. And it is not a defect to work around -- it is the
+ordering consequence of the device bootstrapping itself, so a driver coming in from outside
+(the cluster, [#236](https://github.com/symmatree/coordinator/issues/236)'s service, any
+machine) performs those two as ordinary steps rather than inheriting a problem. Whether to move
+the Ansible control node off the device is the open question there; putting `git` in the image
+would fix one instance of a general thing and is not the answer.
 
 Everything else Ansible needs on a virgin card is already there -- `python3` 3.11.2, `sudo`
 with passwordless, `ca-certificates`, `curl`, sshd.
