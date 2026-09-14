@@ -76,3 +76,37 @@
     dest: /usr/local/bin/coord
     mode: "0755"
   when: sync_repo | bool
+
+# Fetch the images as part of convergence, not as a step somebody has to remember
+# afterwards. This is what makes `coord start --pull never` safe: a converged node
+# has its images by definition, so a missing one at boot means something is wrong
+# rather than merely absent, and the boot unit can fail fast instead of starting an
+# unattended fetch on a vehicle that may have no network (#269).
+#
+# `docker compose pull` rather than `coord pull`: coord pull is down -> pull -> up,
+# which would tear down a running stack on every converge. This only fetches. The
+# start below brings up anything not already running, idempotently.
+#
+# Slow and that is expected -- 4m22s measured for campod-camera on a Zero 2 W over
+# WiFi, ~364 MB for the coordinator's four images.
+#
+# changed_when is a HEURISTIC on compose's progress output, which is not a stable
+# interface. Nothing depends on it -- the reboot condition in site.yaml keys on the
+# apt registers, not on these -- so a wrong reading here is cosmetic noise in the
+# recap rather than a behaviour change. Said out loud so nobody later builds on it.
+- name: Pull the stack images
+  ansible.builtin.command:
+    cmd: docker compose -f /opt/stacks/{{ coord_stack_name }}/compose.yaml pull
+  register: coord_stack_pull
+  changed_when: "'Pulled' in coord_stack_pull.stderr or 'Pulled' in coord_stack_pull.stdout"
+  when: sync_repo | bool
+
+- name: Start the stack
+  # Idempotent: up -d on an already-running stack does nothing. Uses the same
+  # never-pull path the boot unit takes, so a converge exercises exactly what a
+  # power-up will do rather than a more forgiving variant of it.
+  ansible.builtin.command:
+    cmd: /usr/local/bin/coord start
+  register: coord_stack_start
+  changed_when: "'Started' in coord_stack_start.stderr or 'Created' in coord_stack_start.stderr"
+  when: sync_repo | bool
