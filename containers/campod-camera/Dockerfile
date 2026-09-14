@@ -72,6 +72,8 @@ RUN chmod +x /opt/campod/entrypoint.sh
 # against a fake spidev -- a broken reader fails the build instead of a flight.
 COPY test_adxl345.py /opt/campod/test_adxl345.py
 RUN cd /opt/campod && python3 test_adxl345.py && rm test_adxl345.py
+COPY test_capture_wait.py /opt/campod/test_capture_wait.py
+RUN cd /opt/campod && python3 test_capture_wait.py && rm test_capture_wait.py
 
 # Flush logs immediately so `coord logs -f campod-camera` is live (cf. the
 # vio-tracker stdbuf line-buffering fix).

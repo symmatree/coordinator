@@ -16,10 +16,17 @@ echo "campod: session ${CAMPOD_SESSION}"
 # tells you anything, and the reader has to do that regardless.
 #
 # Supervised separately on purpose: a missing sensor, an unset dtparam=spi=on, or
-# a bad solder joint must never cost us the frames. capture stays in the
-# foreground so the container's health is the camera's health. The restart is also
-# the only recovery path -- each run re-probes, so a sensor connected mid-session
-# is picked up within 30 s.
+# a bad solder joint must never cost us the frames. The restart is also the only
+# recovery path -- each run re-probes, so a sensor connected mid-session is picked
+# up within 30 s.
+#
+# The converse now holds too, which it did not before: capture is still exec'd in
+# the foreground, so the container lives and dies with it, but a missing CAMERA no
+# longer kills it -- capture.py waits and re-probes on the same 30 s cadence
+# instead of exiting. Before that, an absent camera restarted the container every
+# couple of minutes and took these accelerometers down with it. The consequence to
+# know: the container being Up no longer implies the camera is present. The log
+# says which, and says it once a miss plus a heartbeat, not on a loop.
 (
 	while true; do
 		python3 /opt/campod/adxl345.py || echo "accel: exited $?, retrying in 30s"
