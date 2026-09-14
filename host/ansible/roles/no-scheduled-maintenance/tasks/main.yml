@@ -1,0 +1,62 @@
+---
+# This device is an appliance. The OS is a property of the flashed image (#96) and
+# os_upgrade.sh is the deliberate in-place alternative; nothing updates or maintains
+# itself on a schedule. One rule, one exception, stated below.
+#
+# WHY. These are flight devices with a duty cycle measured in minutes -- powered up
+# to fly, to push software, or to pull logs, then cut at the wall. Debian's periodic
+# maintenance assumes an always-on box, and every scheduled window is therefore a
+# MISSED window. Every vendor timer here carries Persistent=true, which is systemd's
+# anacron: a missed window fires after boot instead. So the entire backlog lands in
+# the few minutes the device is up, which is exactly when it is about to fly.
+#
+# Observed on campod-se, on a card flashed the night before (boot ~08:16):
+#
+#   apt-daily-upgrade.service   ran 08:39:44   <- ~23 min in, unattended apt upgrade
+#   fstrim.service              ran 08:48:46
+#   apt-daily.service           ran 09:33:55
+#   man-db.service              ran 10:00:30
+#
+# apt-daily-upgrade is the dangerous one: it installs packages, and a power cut
+# mid-dpkg leaves a half-configured database on a box whose /usr is meant to be
+# read-only. man-db and dpkg-db-backup are the reliable ones -- daily with NO
+# RandomizedDelaySec, so with Persistent=true they fire promptly on essentially
+# every power-up, spending CPU and SD writes on a man page index nobody will read.
+#
+# ONE RULE, not a curated list. Masking only the timers that currently cost
+# something means a reader has to reconstruct why each one is in or out, and every
+# Debian point release that adds a timer needs re-adjudicating. "This appliance runs
+# nothing on a schedule" is less to hold, and it pre-empts timers from packages not
+# installed yet -- masking an absent unit is legal and keeps the decision made.
+#
+# THE EXCEPTION: systemd-tmpfiles-clean.timer stays. It is the only thing enforcing
+# the collectd retention rule from roles/metrics, it is `static` rather than enabled,
+# and it runs boot+15min rather than on a calendar -- so it does not accumulate a
+# backlog and it does fire within a normal session. Masking it would quietly turn
+# that retention bound into decoration.
+#
+# MASK, not disable. `disable` is undone the next time a package upgrade re-applies
+# the systemd preset; a mask is a symlink to /dev/null and survives. Debian's
+# deb-systemd-invoke checks for masked units and skips them, so postinst scripts do
+# not error on these.
+#
+# This leaves a legible system rather than a broken-looking one: masked timers drop
+# out of `systemctl list-timers` entirely, show as `masked` in `list-unit-files`,
+# and never appear in `systemctl --failed`.
+- name: Mask the vendor maintenance timers (appliance runs nothing on a schedule)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    masked: true
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+    - man-db.timer
+    - dpkg-db-backup.timer
+    - logrotate.timer
+    - e2scrub_all.timer
+    - fstrim.timer
+  # The package set varies by role and by base image, and `state: stopped` errors on
+  # a unit that is not installed. Masking one that is absent still succeeds and is
+  # the point -- the decision is made before the package arrives.
+  failed_when: false
