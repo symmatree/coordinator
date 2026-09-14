@@ -29,10 +29,17 @@ StartLimitBurst=5
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Idempotent: `coord start` = `docker compose up -d`, which brings up everything
-# in the stack file. No profile and no .env are involved -- neither stack carries
-# compose profiles any more (#240, #242). `coord` resolves the sole stack under
-# /opt/stacks itself, so this line needs no per-device argument.
+# Idempotent: `coord start` = `docker compose up -d --pull never`, which brings up
+# everything in the stack file using only images already on disk. It will NOT fetch
+# -- a power-up must need no network (deployment-model.md), and this unit runs
+# unattended on a vehicle that may have none. Convergence ends with a pull, so a
+# converged node has its images and a missing one means something is wrong rather
+# than merely absent -- the unit then fails in seconds with a missing-image error
+# instead of stalling on a fetch nobody is watching.
+#
+# No profile and no .env are involved -- neither stack carries compose profiles any
+# more (#240, #242). `coord` resolves the sole stack under /opt/stacks itself, so
+# this line needs no per-device argument.
 ExecStart=/usr/local/bin/coord start
 Restart=on-failure
 RestartSec=5s

@@ -55,7 +55,7 @@ Usage: coord <command> [args]
 
 Commands:
   pull [args]       Stop stack, pull images (args go to `compose pull`), start stack
-  start [service...] docker compose up -d (no args: the full operational set)
+  start [service...] Start what is on the box; never pulls (no args: the full set)
   stop              docker compose stop (containers remain; a boot unit re-ups them)
   teardown          docker compose down (remove containers + networks)
   restart           docker compose restart [service]
@@ -97,8 +97,25 @@ start)
 	# tracker-only bench. With no arguments the stack's full operational set comes
 	# up. (Compose profiles are additive and cannot subtract, so a subset ladder
 	# has to be service names, not profiles -- see stacks/coordinator/compose.yaml.)
+	#
+	# --pull never: start runs WHAT IS ON THE BOX and never fetches. Without it,
+	# `compose up` pulls anything missing, which made the boot unit (#256) capable
+	# of spending minutes on an unattended fetch -- on a vehicle that may have no
+	# network at all, at the moment it is being powered up to fly.
+	#
+	# This is what deployment-model.md already required: "A normal power-up must
+	# need no network and no `coord pull`." Upgrades are explicit, and `coord pull`
+	# is where they happen.
+	#
+	# "But then a node with no images fails at boot" -- that state is not reachable
+	# once convergence ends with a pull, which is the other half of this change
+	# (#263). A converged node has its images by definition. If the two land apart
+	# there is a window where a node converged by the old path and then rebooted
+	# fails instead of self-healing; it fails in seconds with a missing-image error
+	# rather than stalling for minutes, which is the better of the two, but the
+	# window is the reason these belong together.
 	require_compose_file
-	compose up -d "$@"
+	compose up -d --pull never "$@"
 	;;
 stop)
 	# `stop`, not `down`: keep the containers so state/metadata survive and the
