@@ -38,6 +38,7 @@
         force_apt_get: true
       environment:
         DEBIAN_FRONTEND: noninteractive
+      register: os_upgrade_dist
 
     - name: Remove packages no longer required
       ansible.builtin.apt:
@@ -63,4 +64,6 @@
         # after the device is already converged -- so the play would report failure
         # on a device that is fine. Skip instead and say so below.
         - ansible_connection | default('ssh') != 'local'
-        - os_upgrade_reboot_required.stat.exists or (bootstrap_usr_remount is defined and bootstrap_usr_remount is changed)
+        - >-
+          os_upgrade_reboot_required.stat.exists
+          or (os_upgrade_dist is defined and os_upgrade_dist is changed)

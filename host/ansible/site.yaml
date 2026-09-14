@@ -140,6 +140,17 @@
         path: /var/run/reboot-required
       register: bootstrap_reboot_required
 
+    # Reboot only when this run actually did something.
+    #
+    # The naive condition was "reboot if we remounted /usr", and /usr is read-only
+    # on every boot, so that fires on EVERY run -- meaning a re-run against an
+    # already-converged device would change nothing and then bounce the hardware.
+    # For something a pre-flight button triggers, that is the wrong default.
+    #
+    # So: reboot if a package asked for one (reboot-required), or if we opened the
+    # /usr hatch AND something was actually installed behind it. A genuine no-op
+    # run leaves /usr writable until the next boot, which is the lesser cost --
+    # and the next boot closes it regardless of whether anyone asks.
     - name: Reboot and wait for the device to come back
       ansible.builtin.reboot:
         msg: Rekon bootstrap -- applying kernel/firmware/module changes and restoring read-only /usr
@@ -150,14 +161,24 @@
         # after the device is already converged -- so the play would report failure
         # on a device that is fine. Skip instead and say so below.
         - ansible_connection | default('ssh') != 'local'
-        - bootstrap_reboot_required.stat.exists or (bootstrap_usr_remount is defined and bootstrap_usr_remount is changed)
+        - >-
+          bootstrap_reboot_required.stat.exists
+          or (
+            (bootstrap_usr_remount is defined and bootstrap_usr_remount is changed)
+            and (
+              (bootstrap_prereqs is defined and bootstrap_prereqs is changed)
+              or (docker_host_pkgs is defined and docker_host_pkgs is changed)
+            )
+          )
 
     - name: Report what the device ended up in
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }} converged (device_role={{ device_role }}).
           {% if allow_reboot | bool and ansible_connection | default('ssh') != 'local' %}
-          Rebooted if anything required it; the boot unit brings the stack back up.
+          Rebooted if anything actually changed or a package asked for it; the boot
+          unit brings the stack back up. A no-op run does NOT reboot, and leaves
+          /usr writable until the next boot.
           {% else %}
           NOT rebooted{% if ansible_connection | default('ssh') == 'local' %} (connection is local, so ansible will not
           reboot its own control node){% endif %} -- reboot manually if /usr must return to

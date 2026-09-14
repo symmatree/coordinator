@@ -68,6 +68,10 @@
     update_cache: true
     cache_valid_time: 3600
   when: ansible_os_family == "Debian"
+  # Registered so site.yaml's reboot can key on whether anything was actually
+  # installed. Registered vars are host facts for the whole play, so they are
+  # visible from post_tasks even though they are set inside a role.
+  register: bootstrap_prereqs
 
 # --- the checkout ------------------------------------------------------------
 # /opt/stacks/<role> is a symlink into this, so it has to exist on the device and

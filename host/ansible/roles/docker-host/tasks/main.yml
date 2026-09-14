@@ -47,6 +47,9 @@
     state: present
     update_cache: true
   when: ansible_os_family == "Debian"
+  # See the note on bootstrap_prereqs: site.yaml's reboot keys on whether this
+  # run actually installed anything.
+  register: docker_host_pkgs
 
 - name: Ensure docker group exists
   ansible.builtin.group:
