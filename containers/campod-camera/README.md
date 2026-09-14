@@ -139,7 +139,7 @@ power cut costs one record, not the file. At 3200 Hz with two sensors that is ro
 ## Runtime
 
 ```bash
-# On the Zero, after host bootstrap (./host/one_time.sh campod).
+# On the Zero, after host bootstrap (site.yaml run against it with device_role=campod).
 # campod-camera carries no compose profile, so this just works:
 coord pull
 coord start

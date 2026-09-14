@@ -1,21 +1,25 @@
 # Host provisioning
 
-Ansible and a one-time shell entrypoint for Rekon devices (Docker, stack paths, `coord` CLI). One shared playbook serves both the **coordinator** (Pi 4B) and the **campod** (Pi Zero 2 W); `device_role` selects the device.
+Ansible for Rekon devices (Docker, stack paths, `coord` CLI). One shared playbook serves both the **coordinator** (Pi 4B) and the **campod** (Pi Zero 2 W); `device_role` selects the device.
 
-## First-time Pi setup
+**Driven from another machine, over SSH.** There is no bootstrap script on the device and nothing to install there first: `python3`, `sudo` with passwordless and sshd all ship in the image, so a freshly flashed card is manageable as-is. `host/one_time.sh` and `host/lib/usr-rw.sh` are gone -- they existed only because a device bootstrapping *itself* cannot use ansible to install ansible, so the remount-then-apt ordering had to be survived in bash first.
 
-Full narratives: coordinator [docs/host-setup.md](../docs/host-setup.md), campod [docs/campod.md](../docs/campod.md).
+## First-time setup
 
-After clone on the device:
+Full narratives: coordinator [docs/host-setup.md](../docs/host-setup.md), campod [docs/campod-software.md](../docs/campod-software.md).
 
 ```bash
-./host/one_time.sh              # coordinator (Pi 4B), default
-./host/one_time.sh campod       # campod (Pi Zero 2 W)
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
+  -e device_role=coordinator -e sync_repo=true -e manage_checkout=true
 ```
 
-That installs Ansible and runs [ansible/site.yaml](ansible/site.yaml) with `sync_repo=true` and the chosen `device_role` to converge config. It is a **config-only** deploy -- it does **not** `dist-upgrade` the OS (run [os_upgrade.sh](os_upgrade.sh) for that; [#48](https://github.com/symmatree/coordinator/issues/48)). Ansible still reboots if a kernel/firmware/module change it installs requires it; repeat until the script completes without rebooting.
+A bare `'<addr>,'` is a valid inventory, so no inventory file and no DNS are needed for one device; pass a real `-i` for more. `manage_checkout=true` creates the on-device clone that `/opt/stacks/<role>` symlinks into -- leave it off against a device someone is editing on, or it resets their working tree.
 
-Then bench: coordinator tracker [docs/bench-tracker.md](../docs/bench-tracker.md); campod [docs/campod.md](../docs/campod.md).
+The play remounts `/usr` read-write (it ships read-only), installs prerequisites, converges config, and **reboots and waits** if a kernel/firmware change or the `/usr` hatch requires it. Driving from outside is what makes that possible: [#113](https://github.com/symmatree/coordinator/issues/113) had to remove auto-reboot because the play ran locally, where ansible refuses to reboot its own control node.
+
+It is a **config-only** deploy -- it does not `dist-upgrade`. That is a separate deliberate playbook, [ansible/os-upgrade.yaml](ansible/os-upgrade.yaml) ([#48](https://github.com/symmatree/coordinator/issues/48)).
+
+Then bench: coordinator tracker [docs/bench-tracker.md](../docs/bench-tracker.md); campod [docs/campod-software.md](../docs/campod-software.md).
 
 ## site.yaml and roles
 
@@ -23,16 +27,18 @@ Then bench: coordinator tracker [docs/bench-tracker.md](../docs/bench-tracker.md
 
 | Role | Scope |
 |------|-------|
-| `docker-host` | **Shared** -- Docker Engine + Compose plugin, docker group, service, kernel/firmware reboot loop |
+| `bootstrap` | **Shared** -- the `/usr` read-write hatch, prerequisites (`git`), and optionally the on-device checkout |
+| `docker-host` | **Shared** -- Docker Engine + Compose plugin, docker group, service |
 | `coord-stack` | **Shared** -- symlinks `/opt/stacks/<name>` to the checkout (`git pull` is the deploy, [#48](https://github.com/symmatree/coordinator/issues/48)), state dirs, installs `coord` |
 | `coordinator` | OAK-D udev rules; coordinator stack (`/var/lib/coordinator/{config,ipc}`) |
 | `campod` | campod stack (`/var/lib/campod/{config,captures}`); Phase 3 adds `dwc2`/`g_ether` + PPS overlays |
 
-Manual run (without `one_time.sh`):
+Both roles, and the in-place OS upgrade:
 
 ```bash
-ansible-playbook host/ansible/site.yaml -e device_role=coordinator -e sync_repo=true
-ansible-playbook host/ansible/site.yaml -e device_role=campod -e sync_repo=true
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi -e device_role=coordinator -e sync_repo=true
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi -e device_role=campod      -e sync_repo=true
+ansible-playbook host/ansible/os-upgrade.yaml -i '<addr>,' -u pi
 ```
 
 GHCR images are public; `docker login ghcr.io` is not required for `coord pull`.

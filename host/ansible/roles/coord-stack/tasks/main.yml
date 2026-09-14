@@ -2,7 +2,11 @@
 # Shared stack installer used by both device roles. Creates the device state dirs and, when
 # sync_repo is true, **symlinks** /opt/stacks/<name> to the checkout so `git pull` is the
 # deploy (no copy, no drift -- #48), and installs the shared coord CLI. Caller sets
-# coord_stack_name, coord_state_root, coord_state_subdirs. repo_root is the checkout root.
+# coord_stack_name, coord_state_root, coord_state_subdirs.
+#
+# TWO checkout paths, and the distinction is load-bearing: repo_src is the CONTROL
+# NODE's checkout (copy: src reads from there and pushes), coord_checkout is the
+# DEVICE's (the /opt/stacks symlink must point at a path that exists on the device).
 
 - name: Create {{ coord_stack_name }} state directories
   ansible.builtin.file:
@@ -41,7 +45,7 @@
 - name: Symlink /opt/stacks/{{ coord_stack_name }} to the checkout
   ansible.builtin.file:
     path: "/opt/stacks/{{ coord_stack_name }}"
-    src: "{{ repo_root }}/stacks/{{ coord_stack_name }}"
+    src: "{{ coord_checkout }}/stacks/{{ coord_stack_name }}"
     state: link
     force: true
   when: sync_repo | bool
@@ -68,7 +72,7 @@
 
 - name: Install coord CLI
   ansible.builtin.copy:
-    src: "{{ repo_root }}/bin/coord"
+    src: "{{ repo_src }}/bin/coord"
     dest: /usr/local/bin/coord
     mode: "0755"
   when: sync_repo | bool

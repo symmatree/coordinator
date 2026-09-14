@@ -72,11 +72,11 @@ two channels below.
   `/opt/stacks/<name> -> <checkout>/stacks/<name>`, so `git pull` is the deploy and deployed
   `compose.yaml` == repo `compose.yaml` by construction. `coord`'s `/opt/stacks/*/compose.yaml`
   glob resolves through it. (A stale copied dir from a pre-symlink deploy is removed once, on the next run.)
-- **`dist-upgrade` split out of `one_time.sh`.** A config deploy used to drag a full
-  `apt-get dist-upgrade` (network + possible reboot) in front of the playbook. `one_time.sh` is
-  now **config-only**; the OS upgrade moved to a deliberate **`host/os_upgrade.sh`**. In the
+- **`dist-upgrade` split out of the config deploy.** It used to drag a full
+  `apt-get dist-upgrade` (network + possible reboot) in front of the playbook. `site.yaml` is
+  **config-only**; the OS upgrade is a deliberate separate playbook, **`host/ansible/os-upgrade.yaml`**. In the
   appliance model the OS version is normally a property of the image (#96), upgraded by reflash;
-  `os_upgrade.sh` is the in-place alternative. A field config deploy no longer touches the OS.
+  `os-upgrade.yaml` is the in-place alternative. A field config deploy no longer touches the OS.
 
 ## Boot without a network
 
@@ -162,7 +162,8 @@ Dockge itself does not.
 | Dockge dropped | **decided** |
 | btrfs subvolume substrate ([#41](https://github.com/symmatree/coordinator/issues/41)/[#96](https://github.com/symmatree/coordinator/issues/96)) | decided; **not built** (only the pipboy NVMe layout exists in `dotfiles-symm/pi-storage`) |
 | Copy -> symlink deploy ([#48](https://github.com/symmatree/coordinator/issues/48)) | **built** |
-| Split `dist-upgrade` out of `one_time.sh` (`host/os_upgrade.sh`) | **built** |
+| Split `dist-upgrade` out of the config deploy (`host/ansible/os-upgrade.yaml`) | **built** |
+| Convergence driven from another machine over SSH; `one_time.sh` and its `/usr` shell helper deleted | **built** |
 | Pin bases + `vio-tracker-base` (depthai) + `vio-runtime-base` (OpenCV) -- layer-cache fix ([#145](https://github.com/symmatree/coordinator/issues/145)) | **built** (#146 pins, #147 pin script, #148 tracker build-base, #151 runtime base + both VIO images rewired onto it) |
 | Baked images / boot-without-network ([#90](https://github.com/symmatree/coordinator/issues/90)) | decided; **not built** (auto-start [#97](https://github.com/symmatree/coordinator/issues/97) is done) |
 

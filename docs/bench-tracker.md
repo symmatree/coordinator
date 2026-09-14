@@ -5,7 +5,7 @@ First coordinator iteration: prove `feature_tracker` runs in `vio-tracker` with 
 ## Prerequisites
 
 - Raspberry Pi 4B with USB 3 port for the OAK-D
-- Host bootstrap complete ([host-setup.md](host-setup.md) -- `./host/one_time.sh`)
+- Host bootstrap complete ([host-setup.md](host-setup.md) -- `host/ansible/site.yaml` run against the device)
 - Stack at `/opt/stacks/coordinator/` and `coord` on `PATH`
 - `/var/lib/coordinator/ipc` created (playbook does this)
 

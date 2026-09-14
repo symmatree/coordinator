@@ -12,7 +12,7 @@ On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and 
 | `containers/campod-camera/` | Campod capture image (arm64; Phase 2, placeholder) |
 | `bin/coord` | Shared operator CLI; auto-detects the device's stack under `/opt/stacks/*` |
 | `host/ansible/` | Shared bootstrap: `site.yaml` + roles (`docker-host`, `coord-stack`, `coordinator`, `campod`) |
-| `host/one_time.sh` | One-time apt + Ansible entrypoint; `one_time.sh [coordinator\|campod]` |
+| `host/ansible/site.yaml` | Host bootstrap + config convergence, driven over SSH from any machine; `-e device_role=coordinator\|campod` |
 | `docs/` | Architecture, bench runbooks, campod bringup, references |
 
 ## Vision stack
@@ -41,7 +41,7 @@ Per-service logs: `coord logs vio-tracker`, etc.
 
 ## Quick start (Pi + OAK-D)
 
-1. One-time host setup: [docs/host-setup.md](docs/host-setup.md) (`./host/one_time.sh` after clone).
+1. One-time host setup: [docs/host-setup.md](docs/host-setup.md) (run `host/ansible/site.yaml` against the device).
 2. Attach OAK-D, then `coord pull`, `coord start vio-tracker` (the tracker alone; bare `coord start` brings up the whole operational stack).
 3. `coord logs -f vio-tracker` -- expect USB speed, `imu ok`, `N features`.
 

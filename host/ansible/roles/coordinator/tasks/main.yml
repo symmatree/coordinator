@@ -37,7 +37,7 @@
 # Gated on sync_repo like the coord CLI.
 - name: Install host VIO tools
   ansible.builtin.copy:
-    src: "{{ repo_root }}/bin/{{ item }}"
+    src: "{{ repo_src }}/bin/{{ item }}"
     dest: "/usr/local/bin/{{ item }}"
     mode: "0755"
   loop:
@@ -99,7 +99,7 @@
   notify: Reload systemd
 
 # modules-load.d only takes effect at boot, and nothing here touches config.txt, so
-# nothing sets /var/run/reboot-required and one_time.sh exits clean. Without this the
+# nothing here sets /var/run/reboot-required and the play does not reboot. Without this the
 # bootstrap reports success and the display has no bus until somebody happens to
 # reboot, with no message saying so. Same reasoning as roles/campod loading g_ether
 # in-run rather than leaving it for the next boot.

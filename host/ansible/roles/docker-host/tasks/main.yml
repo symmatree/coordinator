@@ -66,8 +66,9 @@
     state: started
     enabled: true
 
-# No auto-reboot task here, on purpose. This bootstrap only ever runs locally on the
-# device (one_time.sh, connection=local), where ansible.builtin.reboot refuses to run
-# at all -- it would reboot the control node out from under the running play. A pending
-# reboot is surfaced to the operator instead: the site.yaml post-task and one_time.sh's
-# reboot-required exit both tell them to reboot and re-run. (#113)
+# No reboot task here: site.yaml's post_tasks own it, and now actually perform it.
+# #113 had to remove auto-reboot because the play ran locally on the device, where
+# ansible.builtin.reboot refuses outright rather than rebooting its own control node.
+# Driven from another machine that constraint is gone -- the play reboots and waits,
+# so a pending kernel/firmware change is applied within the run instead of being
+# reported to someone who has to come back and finish it.
