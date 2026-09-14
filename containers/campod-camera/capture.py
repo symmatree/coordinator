@@ -38,7 +38,9 @@ _stop = False
 def _request_stop(signum, _frame):
     global _stop
     _stop = True
-    print(f"capture: received signal {signum}, stopping after current frame", flush=True)
+    # Not "after current frame": this also fires while waiting for a camera,
+    # when there is no frame in flight and never has been.
+    print(f"capture: received signal {signum}, stopping", flush=True)
 
 
 def _env_int(name, default):
@@ -163,6 +165,91 @@ def _maybe_apply_sync(picam2, mode):
         return None
 
 
+# A campod with no camera waits for one; it does not exit. Exiting means docker's
+# `restart: unless-stopped` brings us straight back, and every restart re-pays the
+# picamera2 import only to rediscover the same absent camera. Measured on campod-se
+# with no camera attached: 60 restarts in two hours -- one every ~2 min -- at a
+# sustained load average of ~8. The Zero 2 W is quad-core, so that is roughly 2x
+# oversubscribed rather than 8x, but it is 2x oversubscribed doing nothing.
+#
+# Worse, the entrypoint runs the accelerometer reader as a child and `exec`s us in
+# the foreground, so the container's life is our life. A missing camera was
+# therefore killing a working pair of ADXL345s every couple of minutes, chopping
+# their record into fragments (~70 s, on the one session captured off that node).
+# The entrypoint states the principle for the other half -- "a missing sensor must
+# never cost us the frames" -- and this is the converse it did not cover.
+#
+# Waiting also makes the camera hot-pluggable, which the accelerometer reader
+# already is: each probe is a fresh look, so a ribbon reseated on the bench is
+# picked up without a restart. The 30 s cadence is the accelerometer retry's, for
+# no stronger reason than that one operator-visible retry period beats two.
+CAMERA_PROBE_INTERVAL_S = 30.0
+# Log cadence while waiting, in probes. The first miss prints immediately; after
+# that a heartbeat every 10th probe (5 min) keeps the journal honest about a pod
+# that is up but blind, without spamming it.
+CAMERA_WAIT_HEARTBEAT_PROBES = 10
+
+
+def _wait_for_camera():
+    """Return libcamera's camera list, blocking until one appears.
+
+    Returns None if a stop signal arrives while waiting.
+
+    Probing BEFORE constructing Picamera2() is load-bearing: Picamera2() on a node
+    with no camera raises picamera2's own `IndexError: list index out of range`
+    from inside global_camera_info() -- it indexes an empty list. Observed on
+    campod-sw during bring-up, where libcamera itself initialised fine (v0.5.2)
+    and the only thing in the log was that traceback, which says nothing about
+    cameras. The accelerometer reader beside us already reports what it probed and
+    what it expected (DEVID 0x00, expected 0xE5) per chip select; this is the
+    camera half of the same courtesy. On an arm-mounted pod the likely fault is a
+    badly seated ribbon, not an absent module, and an operator needs to tell those
+    apart from the log alone.
+    """
+    cameras = Picamera2.global_camera_info()
+    if cameras:
+        return cameras
+
+    print(
+        "capture: libcamera reports NO cameras. Check the ribbon is seated "
+        "(both ends, contacts toward the board) and that this is a campod "
+        "image -- camera_auto_detect=1 comes from the vendor config. Waiting "
+        f"for a camera, re-probing every {CAMERA_PROBE_INTERVAL_S:.0f}s; "
+        "the accelerometer reader keeps running.",
+        flush=True,
+    )
+
+    probes = 0
+    waited_start = time.monotonic()
+    while not _stop:
+        # Sleep in slices so SIGTERM stops us promptly rather than up to a full
+        # probe interval later -- docker stop's grace period is 10 s.
+        deadline = time.monotonic() + CAMERA_PROBE_INTERVAL_S
+        while not _stop and time.monotonic() < deadline:
+            time.sleep(0.25)
+        if _stop:
+            break
+
+        cameras = Picamera2.global_camera_info()
+        probes += 1
+        if cameras:
+            print(
+                "capture: camera appeared after "
+                f"{time.monotonic() - waited_start:.0f}s of waiting",
+                flush=True,
+            )
+            return cameras
+        if probes % CAMERA_WAIT_HEARTBEAT_PROBES == 0:
+            print(
+                "capture: still no camera after "
+                f"{(time.monotonic() - waited_start) / 60:.0f} min",
+                flush=True,
+            )
+
+    print("capture: stop requested while waiting for a camera", flush=True)
+    return None
+
+
 def main():
     node = os.getenv("CAMPOD_NODE_NAME") or socket.gethostname()
     out_dir = Path(os.getenv("CAMPOD_CAPTURE_DIR", "/captures"))
@@ -189,27 +276,9 @@ def main():
     session_dir = out_dir / node / session
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    # Say what libcamera can see BEFORE constructing Picamera2(), because
-    # Picamera2() on a node with no camera raises picamera2's own
-    # `IndexError: list index out of range` from inside global_camera_info() --
-    # it indexes an empty list. Observed on campod-sw during bring-up: libcamera
-    # itself initialised fine (v0.5.2), and the only thing in the log was that
-    # traceback, which says nothing about cameras.
-    #
-    # The accelerometer reader beside us already gets this right: it reports what
-    # it probed and what it expected (DEVID 0x00, expected 0xE5) per chip select.
-    # This is the camera half of the same courtesy. On an arm-mounted pod the
-    # likely fault is a badly seated ribbon, not an absent module, and an
-    # operator needs to be able to tell those apart from the log alone.
-    cameras = Picamera2.global_camera_info()
-    if not cameras:
-        print(
-            "capture: libcamera reports NO cameras. Check the ribbon is seated "
-            "(both ends, contacts toward the board) and that this is a campod "
-            "image -- camera_auto_detect=1 comes from the vendor config.",
-            flush=True,
-        )
-        return 1
+    cameras = _wait_for_camera()
+    if cameras is None:  # SIGTERM while waiting
+        return 0
     print(
         "capture: libcamera sees "
         + ", ".join(
