@@ -13,7 +13,7 @@ System overview, mission context, and design rationale: **[rekon-design.md](reko
 | System overview, mission, mapping payload | [rekon-design.md](rekon-design.md) |
 | Canopy ops doctrine (ice-hole pattern, gap detection, map building, VIO risks) | [canopy-ops.md](canopy-ops.md) |
 | OAK-D forehead mount | [oak-d-mount.md](oak-d-mount.md) |
-| Arm pods (Pi Zero + cameras; multicamera sync, DS3234 PPS, chrony, upward gap-detect pair) | [arm-pods.md](arm-pods.md) |
+| Arm pods (Pi Zero + cameras; multicamera sync, DS3234 PPS, chrony, upward gap-detect pair) | [campod.md](../campod.md) |
 | Mapping pipeline (PPK interpolation, ODM, rolling-shutter correction) | [mapping.md](mapping.md) |
 | Central hub, power, pod harness | [central-hub.md](central-hub.md) |
 | Flight platform (as-built hardware, wiring, stack recipe) | [flight-platform.md](flight-platform.md) |

@@ -2,7 +2,7 @@
 
 [Back to index](README.md)
 
-Mission doctrine for flying under tree canopy: the "ice-hole" navigation pattern, gap detection, incremental map building, error budgets, VIO risks, and fallback procedures. Hardware details for gap detection live in [arm-pods.md](arm-pods.md) (*Upward-looking gap detection*); navigation sensors and VIO in [rekon-design.md](rekon-design.md).
+Mission doctrine for flying under tree canopy: the "ice-hole" navigation pattern, gap detection, incremental map building, error budgets, VIO risks, and fallback procedures. Hardware details for gap detection live in [campod.md](../campod.md) (*Upward-looking gap detection*); navigation sensors and VIO in [rekon-design.md](rekon-design.md).
 
 > **Measured evidence (2026-07-07).** Several error-budget and VIO-risk items below were *assumptions*
 > when written. Some now have data from two 2026-07-05 flights, reprocessed through a tracked,
@@ -29,7 +29,7 @@ PPK post-processing also benefits: each under-canopy leg starts and ends with a 
 
 ### Planning interval
 
-**Target: ~60-90 seconds between GPS re-acquisitions**, corresponding to roughly 60-180 m of path at under-canopy speeds (1-2 m/s -- obstacle avoidance keeps you slower than the 3-5 m/s survey speed). This is a **planning target, not a rigid timer**. Some forests have convenient gaps every 30 m; dense closed canopy might not offer one for 200 m. The system should support **opportunistic gap-finding** driven by an upward-looking camera (see [arm-pods.md](arm-pods.md), *Upward-looking gap detection*) and pilot judgment, not a countdown.
+**Target: ~60-90 seconds between GPS re-acquisitions**, corresponding to roughly 60-180 m of path at under-canopy speeds (1-2 m/s -- obstacle avoidance keeps you slower than the 3-5 m/s survey speed). This is a **planning target, not a rigid timer**. Some forests have convenient gaps every 30 m; dense closed canopy might not offer one for 200 m. The system should support **opportunistic gap-finding** driven by an upward-looking camera (see [campod.md](../campod.md), *Upward-looking gap detection*) and pilot judgment, not a countdown.
 
 Over 60-90 seconds of flight, VIO drift should remain in the tens-of-cm range -- acceptable for photogrammetry and well within what PPK endpoint constraints can absorb.
 
@@ -43,7 +43,7 @@ Over 60-90 seconds of flight, VIO drift should remain in the tens-of-cm range --
 
 ### Ascent / hold / descent procedure
 
-1. **Identify gap.** In **phase 1** (Pixel Fold strapped to frame, disconnected from flight system), the pilot uses FPV to position under a candidate gap and checks the phone's upward view for confirmation -- purely human-in-the-loop, no autonomous gap logic. In **phase 2** (permanent NNW + NNE vertical-ring pair), an onboard algorithm reports a gap-status flag on the OSD, with WiFi image confirmation available as a secondary channel. See [arm-pods.md](arm-pods.md), *Upward-looking gap detection*.
+1. **Identify gap.** In **phase 1** (Pixel Fold strapped to frame, disconnected from flight system), the pilot uses FPV to position under a candidate gap and checks the phone's upward view for confirmation -- purely human-in-the-loop, no autonomous gap logic. In **phase 2** (permanent NNW + NNE vertical-ring pair), an onboard algorithm reports a gap-status flag on the OSD, with WiFi image confirmation available as a secondary channel. See [campod.md](../campod.md), *Upward-looking gap detection*.
 2. **Position below gap.** Fly to center beneath the candidate gap. FPV gives forward/lateral context; upward camera gives zenith-region confirmation.
 3. **Slow vertical ascent.** Creep straight up, capturing upward frames periodically (every 1-2 s) and re-evaluating clearance. The first penetration of a new gap must be cautious -- the upward camera provides an assessment from below, but parallax and thin branches can fool a camera looking through foliage. Speed: ~0.5-1 m/s climb, pausing if the picture changes.
 4. **Clear sky -- hold.** Once above canopy with open sky, hold position and wait for the **F9P to re-acquire RTK Fixed** and the **ArduPilot EKF to settle back onto the GPS lane** (`EKF_STATUS_REPORT` flags). Do not rush back down on Float. Expected hold time: **5-15 seconds** with warm almanac and continuous RTCM; up to **30-60 seconds** if the F9P lost satellite tracking entirely during a long under-canopy leg. This hold directly costs mission time and battery but is non-negotiable for navigation integrity.
@@ -101,7 +101,7 @@ The photogrammetric map does not care that VIO drifted 30 cm during a leg. ODM's
 
 - **Enough image overlap** within and between bursts. The 8-camera array provides massive intra-burst overlap; forward travel at 1-2 m/s with 1-2 Hz capture provides inter-burst overlap.
 - **GPS-anchored endpoints** to constrain the solution. Each ice-hole breakout provides one. PPK interpolation fills in the legs between them.
-- **Stable features** (trunks, ground, rocks) for cross-burst feature matching. Twigs and leaves move between bursts; the DJI-era filtering strategies ([arm-pods.md](arm-pods.md), *Multi-camera temporal advantage*) apply to the cross-burst problem.
+- **Stable features** (trunks, ground, rocks) for cross-burst feature matching. Twigs and leaves move between bursts; the DJI-era filtering strategies ([campod.md](../campod.md), *Multi-camera temporal advantage*) apply to the cross-burst problem.
 
 A safety breakout also counts as a GPS endpoint for PPK -- the "safety" maneuver retroactively fixes mapping drift for the leg that preceded it. There is no wasted motion.
 

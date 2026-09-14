@@ -18,7 +18,7 @@ The primary operational challenge is flying under tree canopy where RTK GPS sign
 
 - **GNSS + compass:** Single **Holybro F9P Rover Lite** (ZED-F9P + integrated compass) on the mast; RTCM from a ground base station.
 - **VIO role:** **OAK-D** stereo+IMU module paired with the **Raspberry Pi 4B** Coordinator computing position estimates for GPS-degraded and under-canopy flight. Detail: [oak-d-mount.md](oak-d-mount.md), [central-hub.md](central-hub.md).
-- **Payload time base:** Shared [**DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW** (1 Hz) for multicamera PPS distribution -- local time agreement, disciplined from GNSS when available ([central-hub.md](central-hub.md), [arm-pods.md](arm-pods.md)).
+- **Payload time base:** Shared [**DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW** (1 Hz) for multicamera PPS distribution -- local time agreement, disciplined from GNSS when available ([central-hub.md](central-hub.md), [campod.md](../campod.md)).
 
 ## Mapping payload architecture
 
@@ -28,11 +28,11 @@ The mapping payload is a **synchronized multi-camera array** organized as two co
 - **Vertical ring (future build):** 360-degree side-scan perpendicular to travel, extending coverage from mid-elevation up through horizontal and above.
 - **Current build also pulls forward** a near-zenith pair from the vertical ring for **canopy gap detection** during under-canopy missions.
 
-All camera geometry (aim angles, pod assignment, FOV overlap, vibration analysis, DS3234 PPS wiring) lives in [arm-pods.md](arm-pods.md). Hub/power/Coordinator detail lives in [central-hub.md](central-hub.md). Post-processing pipeline lives in [mapping.md](mapping.md).
+All camera geometry (aim angles, pod assignment, FOV overlap, vibration analysis, DS3234 PPS wiring) lives in [campod.md](../campod.md). Hub/power/Coordinator detail lives in [central-hub.md](central-hub.md). Post-processing pipeline lives in [mapping.md](mapping.md).
 
 ### Key rationale: synchronized capture
 
-The fundamental design bet is that **bursts of simultaneous images across many cameras** produce better photogrammetric feature matching than repeated passes with a single camera, because transient scene features (moving twigs and leaves, shifting shadows) are identical across a synchronized burst but differ minutes apart across passes. This is the principal response to the single-camera limitations documented in the [DJI experiments](https://github.com/symmatree/fables/blob/main/Datasets/experiments-house-model.md). Timing mechanisms and measured / assumed precision live in [arm-pods.md](arm-pods.md); the corresponding post-processing path lives in [mapping.md](mapping.md).
+The fundamental design bet is that **bursts of simultaneous images across many cameras** produce better photogrammetric feature matching than repeated passes with a single camera, because transient scene features (moving twigs and leaves, shifting shadows) are identical across a synchronized burst but differ minutes apart across passes. This is the principal response to the single-camera limitations documented in the [DJI experiments](https://github.com/symmatree/fables/blob/main/Datasets/experiments-house-model.md). Timing mechanisms and measured / assumed precision live in [campod.md](../campod.md); the corresponding post-processing path lives in [mapping.md](mapping.md).
 
 ## Operational requirements
 

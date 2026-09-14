@@ -12,7 +12,7 @@ lives in the docs it points at.
 > `one_time.sh campod`, `containers/campod-camera`, and the image role in `dotfiles-symm`.
 >
 > A bare "pod" already denoted three other things -- the Kubernetes object, this repo's
-> ansible role, and (per [rekon10/arm-pods.md](rekon10/arm-pods.md)) the physical arm
+> ansible role, and (per [campod.md](campod.md)) the physical arm
 > enclosure that holds one or two of these hosts. None of the three is the machine. Where
 > "pod" survives in this repo it means one of those other things and is left alone.
 
@@ -37,7 +37,7 @@ lives in the docs it points at.
 | Where the reasoning lives | |
 |---|---|
 | Capture container, ADXL345 reader, SPI settings, readout constant | [containers/campod-camera/README.md](../containers/campod-camera/README.md) |
-| Airframe/payload design, aim geometry, vibration rationale | [rekon10/arm-pods.md](rekon10/arm-pods.md) |
+| Airframe/payload design, aim geometry, vibration rationale | [campod.md](campod.md) |
 | Filesystem choice and power-loss behaviour | [power-loss-filesystem.md](power-loss-filesystem.md) |
 | Coordinator equivalent of this doc | [host-setup.md](host-setup.md) |
 | The vibration question the campod exists to answer | [#211](https://github.com/symmatree/coordinator/issues/211) |
@@ -70,7 +70,7 @@ Device-specific code stays small: `roles/campod`, `containers/campod-camera/`, `
   `stacks/campod/compose.yaml` uses `privileged: true` + `/run/udev`, with explicit device
   mounts as the fallback if enumeration ever fails.
 - **Thermal is handled in hardware**, not by the runtime -- full-length heatsinks and an
-  open centre channel for prop-wash. See [rekon10/arm-pods.md](rekon10/arm-pods.md).
+  open centre channel for prop-wash. See [campod.md](campod.md).
 
 ---
 
@@ -330,7 +330,7 @@ Standard NTP over USB gadget mode has 2-10 ms of jitter due to USB polling, whic
 
 **Architecture:**
 
-1. **One DS3234** at the coordinator hub outputs **SQW** (1 Hz) into the PPS buffer tree ([central-hub.md](central-hub.md)). Primary need: **local agreement** across Pis, not strict absolute UTC on every flight.
+1. **One DS3234** at the coordinator hub outputs **SQW** (1 Hz) into the PPS buffer tree ([central-hub.md](rekon10/central-hub.md)). Primary need: **local agreement** across Pis, not strict absolute UTC on every flight.
 2. **The Coordinator** runs NTP on the USB gadget network and can **discipline** the DS3234 from GNSS time (u-center / MAVLink / logged fixes) when sky view is good.
 3. **Each Zero** gets "rough" time from the Coordinator over USB (accurate to the correct second, but sloppy by 5-15 ms).
 4. **A physical PPS wire** (buffered SQW) runs to a GPIO pin on every Pi Zero.

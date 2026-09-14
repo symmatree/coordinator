@@ -103,7 +103,7 @@ Telemetry keys and screens live in **`model01.yml`** (e.g. **RSNR**, **FM**, RSS
 * `GPS1_TYPE` / `GPS1_COM_PORT` / `SERIAL2_*`: match bench and FC wiring (RTK integration threads -- bench-baud thread **A**, tracker not yet written).
 * `COMPASS_*`: integrated compass on the F9P I2C bus; `COMPASS_ORIENT` after outdoor cal (**E**). M100-era **Yaw270** / `COMPASS_ORIENT = 6` in export is **historical** only.
 
-**Wall clock / RTC:** Do not rely on ArduPilot learning UTC from this GNSS path alone (same class of issue as M100 bench -- [flight-platform-build-log.md](flight-platform-build-log.md)). Payload cameras use the shared **DS3234** SQW PPS ([arm-pods.md](arm-pods.md), [central-hub.md](central-hub.md)); steering that RTC from GNSS time when fixes are good is a separate integration task.
+**Wall clock / RTC:** Do not rely on ArduPilot learning UTC from this GNSS path alone (same class of issue as M100 bench -- [flight-platform-build-log.md](flight-platform-build-log.md)). Payload cameras use the shared **DS3234** SQW PPS ([campod.md](../campod.md), [central-hub.md](central-hub.md)); steering that RTC from GNSS time when fixes are good is a separate integration task.
 
 ## Battery monitoring
 
