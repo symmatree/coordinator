@@ -11,10 +11,18 @@
 # for #97's auto-start unit: "it was never coordinator-specific, and the campod's
 # lack of it was a real gap rather than a deliberate difference."
 #
-# Names are left alone on purpose. The journald drop-in is still 95-coordinator.conf
-# and the timer is still coordinator-throttle.timer, exactly as #97's unit stayed
-# coordinator-stack.service: renaming would strand the old files on every deployed
-# coordinator to buy nothing. The names are historical, not a scope claim.
+# Renamed with the move: 95-fleet-journal.conf and pi-throttle.{service,timer}. The
+# old names (95-coordinator.conf, coordinator-throttle.*) described where the code
+# lived rather than what it does, and a campod running something called
+# "coordinator-throttle" is a puzzle for whoever reads systemctl next.
+#
+# No cleanup task for the old names. There is exactly one deployed coordinator and
+# it is reflashed near-daily, so a stale unit outlives the rename by at most one
+# card -- and the old drop-in sorts before the new one anyway, so even overlapping
+# they do not fight.
+#
+# The 95- prefix IS load-bearing and survives the rename -- it has to sort after RPi
+# OS's 40-rpi-volatile-storage.conf to win journald's last-value drop-in merge.
 
 # --- #100: persist the journal so the post-bounce forensic trail survives reboot ---
 # Two gotchas, both found on-hardware (bench 2026-07-24), that the first cut missed:
@@ -32,7 +40,7 @@
 
 - name: Persist journald (bounded; 95- so it beats RPi OS's 40-rpi-volatile-storage.conf)
   ansible.builtin.copy:
-    dest: /etc/systemd/journald.conf.d/95-coordinator.conf
+    dest: /etc/systemd/journald.conf.d/95-fleet-journal.conf
     content: |
       # Post-crash/bounce forensics (#100). Bounded so persistence does not grow SD
       # write volume without limit. 95- sorts after RPi OS's 40-rpi-volatile-storage.conf
@@ -74,8 +82,8 @@
         dest: "/etc/systemd/system/{{ item }}"
         mode: "0644"
       loop:
-        - coordinator-throttle.service
-        - coordinator-throttle.timer
+        - pi-throttle.service
+        - pi-throttle.timer
       # No notify: the next task runs daemon_reload immediately, whereas a handler
       # would not fire until the end of the play. It was always the daemon_reload
       # below doing the work, and dropping the notify keeps this role from having to
@@ -83,7 +91,7 @@
 
     - name: Enable throttle timer
       ansible.builtin.systemd:
-        name: coordinator-throttle.timer
+        name: pi-throttle.timer
         enabled: true
         state: started
         daemon_reload: true
