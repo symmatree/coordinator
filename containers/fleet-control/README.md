@@ -62,7 +62,7 @@ One action per node at a time; a second `POST` against a busy node is a `409`.
 | env | default | |
 |---|---|---|
 | `FLEET_INVENTORY` | *(required)* | path to the roster |
-| `FLEET_SSH_KEY` | `/secrets/ssh/id` | private key |
+| `FLEET_SSH_KEY` | `/secrets/ssh/id` | private key, in a format ssh2 accepts |
 | `FLEET_HOSTKEYS` | `/state/hostkeys.json` | recorded host keys |
 | `FLEET_REPO_URL` | the coordinator repo | what `bootstrap` clones |
 | `FLEET_CHECKOUT_PATH` | `$HOME/coordinator` | where it clones to |
@@ -83,6 +83,10 @@ The roster: `host` is optional and defaults to `name`, so named hosts need no ad
 
 Host keys follow OpenSSH: recorded on first sight, rejected if they change, and cleared by
 `bootstrap`, since a reflashed card has new ones.
+
+The private key is checked at **startup**, so an unusable one stops the service starting
+instead of failing on the operator's first press -- nothing else touches the key until an
+action runs.
 
 ## Develop
 

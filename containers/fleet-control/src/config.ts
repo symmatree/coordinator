@@ -1,6 +1,7 @@
 // Configuration, all from the environment.
 import { HostKeyStore } from './hostkeys.js';
 import { loadInventory, type Inventory } from './inventory.js';
+import { loadPrivateKey } from './keys.js';
 import type { SessionOptions } from './ssh.js';
 
 export interface Config {
@@ -25,11 +26,15 @@ function required(name: string): string {
 
 export function loadConfig(): Config {
   const inventory = loadInventory(required('FLEET_INVENTORY'));
+  const privateKeyPath = env('FLEET_SSH_KEY', '/secrets/ssh/id');
+  // Read it now. Nothing else touches the key until an action runs, so without this a pod
+  // with an unusable key comes up Ready and fails much later, on the operator's first press.
+  loadPrivateKey(privateKeyPath);
   return {
     inventory,
     ssh: {
       user: inventory.user,
-      privateKeyPath: env('FLEET_SSH_KEY', '/secrets/ssh/id'),
+      privateKeyPath,
       hostKeys: new HostKeyStore(env('FLEET_HOSTKEYS', '/state/hostkeys.json')),
       timeoutMs: Number(env('FLEET_SSH_TIMEOUT_MS', '15000')),
     },
