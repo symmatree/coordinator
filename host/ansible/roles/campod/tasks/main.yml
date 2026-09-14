@@ -51,6 +51,14 @@
       - config
       - captures
 
+# Same avionics rail, same yank, same SD card as the coordinator -- so the same
+# persistent journal and undervoltage trail (#100). Until now this ran only on the
+# coordinator, which meant a campod's journal lived in /run and did not survive the
+# power cut that ends every flight.
+- name: Configure power-bounce resilience
+  ansible.builtin.include_role:
+    name: power-resilience
+
 # ---------------------------------------------------------------------------
 # USB gadget network -- the userspace half (#24).
 #

@@ -1,6 +1,6 @@
 [Unit]
 # Record the Pi's undervoltage/throttle state to the journal for post-bounce
-# forensics (#100). Fired by coordinator-throttle.timer.
+# forensics (#100). Fired by pi-throttle.timer.
 Description=Record Pi power/throttle state to the journal
 
 [Service]
