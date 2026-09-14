@@ -85,6 +85,19 @@
   register: vcgencmd_check
   changed_when: false
   failed_when: false
+  # check_mode: false is load-bearing, not tidiness. A command/shell task SKIPPED
+  # by --check still registers a success value -- rc: 0 alongside skipped: true and
+  # "Command would have run if not in check mode" -- so `when: vcgencmd_check.rc == 0`
+  # below is unconditionally TRUE under --check, and the run claims it would install
+  # the throttle timer even on a host with no vcgencmd. Reproduced in isolation, both
+  # shapes side by side: without this line the guard passes for a binary that does
+  # not exist; with it the probe really runs and the guard correctly skips.
+  #
+  # Real runs were never wrong -- these are Pis and vcgencmd exists -- but --check
+  # output that claims changes which would not happen is worse than useless, because
+  # the point of --check is to be believed. `command -v` writes nothing, so running
+  # it under check mode is also the honest reading of what check mode is for.
+  check_mode: false
 
 - name: Install throttle forensics timer (only where vcgencmd exists)
   when: vcgencmd_check.rc == 0
