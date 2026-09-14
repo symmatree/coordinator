@@ -9,10 +9,17 @@ cluster on linux/amd64. Child of
 
 | | what runs on the node | when |
 |---|---|---|
-| **bootstrap** | remount `/usr` rw, install git, clone, `./host/one_time.sh <role>`, reboot, `coord pull -q && coord start` | a freshly flashed card |
+| **bootstrap** | remount `/usr` rw, install git, clone, `./host/one_time.sh <role>`, `coord pull -q`, reboot, `coord start` | a freshly flashed card |
 | **update** | `git pull --ff-only && coord pull -q && coord start` | to bring a set-up node to the merged state of the repo, including a dependency or OS refresh via `one_time.sh` |
 
 The operator picks; the service does not guess.
+
+The images are pulled before the closing reboot. `one_time.sh` installs a boot unit that runs
+`coord start` on every boot ([#256](https://github.com/symmatree/coordinator/pull/256)), so on
+a card that has never pulled, rebooting first would start an unattended multi-minute fetch --
+and `coord pull` runs `compose down` first, so pulling afterwards would tear down what that
+unit was starting. Pulling first also means the reboot needs no network, and checks that the
+stack comes back on its own.
 
 `/usr` ships read-only, so it is remounted before anything is installed. That cannot move
 into `one_time.sh`'s playbook, because the remount has to precede installing git and git is
