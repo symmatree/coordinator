@@ -81,7 +81,7 @@ so this runs against a virgin unit:
 
 ```bash
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
-  -e device_role=<coordinator|campod> -e sync_repo=true -e manage_checkout=true
+  -e device_role=<coordinator|campod> -e manage_checkout=true
 ```
 
 A bare `'<addr>,'` is a valid inventory, so no inventory file and no DNS are needed. The play

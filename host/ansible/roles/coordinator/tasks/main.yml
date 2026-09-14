@@ -34,7 +34,6 @@
 
 # Host-side VIO tools: vio-pose-tap (decode chobits_server pose to CSV) and
 # vio-ipc-record (raw multi-socket capture of chobits_* streams for replay, #35).
-# Gated on sync_repo like the coord CLI.
 - name: Install host VIO tools
   ansible.builtin.copy:
     remote_src: true
@@ -44,7 +43,6 @@
   loop:
     - vio-pose-tap
     - vio-ipc-record
-  when: sync_repo | bool
 
 # The coordinator's boot config comes from the IMAGE, not from here:
 # dotfiles-symm pi-image/roles/coordinator/config.append.txt supplies

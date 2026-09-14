@@ -10,7 +10,7 @@ Full narratives: coordinator [docs/host-setup.md](../docs/host-setup.md), campod
 
 ```bash
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
-  -e device_role=coordinator -e sync_repo=true -e manage_checkout=true
+  -e device_role=coordinator -e manage_checkout=true
 ```
 
 A bare `'<addr>,'` is a valid inventory, so no inventory file and no DNS are needed for one device; pass a real `-i` for more. `manage_checkout=true` creates the on-device clone that `/opt/stacks/<role>` symlinks into -- leave it off against a device someone is editing on, or it resets their working tree.
@@ -36,8 +36,8 @@ Then bench: coordinator tracker [docs/bench-tracker.md](../docs/bench-tracker.md
 Both roles, and the in-place OS upgrade:
 
 ```bash
-ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi -e device_role=coordinator -e sync_repo=true
-ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi -e device_role=campod      -e sync_repo=true
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi -e device_role=coordinator
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi -e device_role=campod
 ansible-playbook host/ansible/os-upgrade.yaml -i '<addr>,' -u pi
 ```
 

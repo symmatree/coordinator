@@ -7,7 +7,7 @@
 # image -- so this works against a virgin unit:
 #
 #   ansible-playbook host/ansible/site.yaml -i '10.0.2.49,' -u pi \
-#     -e device_role=campod -e manage_checkout=true -e sync_repo=true
+#     -e device_role=campod -e manage_checkout=true
 #
 # A bare "address," is a valid inventory, so no inventory file and no DNS are
 # required to run it. Pass a real -i inventory when driving more than one device.
@@ -29,7 +29,6 @@
     - vars/gadget-net.yml
   vars:
     device_role: coordinator
-    sync_repo: false
 
     # Only the PLAYBOOK comes from the control node. Everything else -- bin/coord,
     # the VIO tools, coord-throttle-log -- is copied from the TARGET's own checkout

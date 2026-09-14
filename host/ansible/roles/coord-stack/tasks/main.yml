@@ -1,8 +1,17 @@
 ---
-# Shared stack installer used by both device roles. Creates the device state dirs and, when
-# sync_repo is true, **symlinks** /opt/stacks/<name> to the checkout so `git pull` is the
-# deploy (no copy, no drift -- #48), and installs the shared coord CLI. Caller sets
-# coord_stack_name, coord_state_root, coord_state_subdirs.
+# Shared stack installer used by both device roles. Creates the device state dirs,
+# **symlinks** /opt/stacks/<name> to the checkout so `git pull` is the deploy (no copy,
+# no drift -- #48), and installs the shared coord CLI. Caller sets coord_stack_name,
+# coord_state_root, coord_state_subdirs.
+#
+# None of this is optional. It used to hang off a sync_repo flag, from when these were
+# copies out of the CONTROL NODE's repo and a box without that repo needed them off.
+# Everything here now reads the DEVICE's own checkout with remote_src, so the flag's
+# reason went away with repo_src and only the footgun was left: it defaulted to false,
+# nothing set it once one_time.sh was deleted, and a converge that forgot it installed
+# docker and collectd and then silently skipped the CLI, the symlink, the image pull and
+# the start. A half-converged device is not a state worth having a flag for. If
+# coord_checkout is missing these fail loudly, which is the correct outcome.
 #
 # coord_checkout is the DEVICE's checkout. Both the /opt/stacks symlink and the
 # coord CLI come from it, so the CLI can never drift from the stack config it
@@ -30,14 +39,12 @@
   ansible.builtin.stat:
     path: "/opt/stacks/{{ coord_stack_name }}"
   register: coord_stack_path
-  when: sync_repo | bool
 
 - name: Remove a stale copied stack directory ({{ coord_stack_name }})
   ansible.builtin.file:
     path: "/opt/stacks/{{ coord_stack_name }}"
     state: absent
   when:
-    - sync_repo | bool
     - coord_stack_path.stat.exists | default(false)
     - coord_stack_path.stat.isdir | default(false)
     - not (coord_stack_path.stat.islnk | default(false))
@@ -48,7 +55,6 @@
     src: "{{ coord_checkout }}/stacks/{{ coord_stack_name }}"
     state: link
     force: true
-  when: sync_repo | bool
 
 # Come up running on every boot, both roles (#97). Installed here rather than in
 # roles/coordinator because it is not coordinator-specific: any device whose job
@@ -76,7 +82,6 @@
     src: "{{ coord_checkout }}/bin/coord"
     dest: /usr/local/bin/coord
     mode: "0755"
-  when: sync_repo | bool
 
 # Fetch the images as part of convergence, not as a step somebody has to remember
 # afterwards. This is what makes `coord start --pull never` safe: a converged node
@@ -100,7 +105,6 @@
     cmd: docker compose -f /opt/stacks/{{ coord_stack_name }}/compose.yaml pull
   register: coord_stack_pull
   changed_when: "'Pulled' in coord_stack_pull.stderr or 'Pulled' in coord_stack_pull.stdout"
-  when: sync_repo | bool
 
 - name: Start the stack
   # Idempotent: up -d on an already-running stack does nothing. Uses the same
@@ -110,4 +114,3 @@
     cmd: /usr/local/bin/coord start
   register: coord_stack_start
   changed_when: "'Started' in coord_stack_start.stderr or 'Created' in coord_stack_start.stderr"
-  when: sync_repo | bool
