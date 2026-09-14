@@ -22,6 +22,59 @@
     repo_root: "{{ playbook_dir | dirname | dirname }}"
     docker_users:
       - "{{ lookup('env', 'USER') }}"
+  pre_tasks:
+    # Stop data collection before converging, and let the converge have the
+    # device to itself. A software update is a bench operation on wall power, so
+    # the capture gap is intentional.
+    #
+    # Capture and convergence contend for the two things a Pi has least of. They
+    # write to the same SD card -- the payload at ~1 Hz full-resolution JPEG plus
+    # the accelerometer's 1 Hz fsync, against an image pull measured at 4m22s for
+    # campod-camera alone -- and on a Zero 2 W they contend for CPU as well. A
+    # campod converge that should take minutes took over an hour with the capture
+    # container crash-looping beside it (#278).
+    #
+    # Nothing has to remember to put it back. `coord stop` is not a sticky off:
+    # the boot unit's ExecStart=/usr/local/bin/coord start is unconditional (#256),
+    # and both callers already end with a start of their own -- coord-stack's
+    # final task, and fleet-control's actions.ts. So a converge that dies partway
+    # leaves collection down only until the next power-up, and there is a power
+    # cycle between bench and flight by construction. A sticky off would be the
+    # wrong shape anyway: with no way to turn it back on, the failure mode is a
+    # flight that silently recorded nothing.
+    #
+    # Skipped on a first converge -- the CLI and the stack symlink are installed
+    # by the coord-stack role further down, and nothing is running to stop yet.
+    - name: Stat the coord CLI
+      ansible.builtin.stat:
+        path: /usr/local/bin/coord
+      register: coord_cli
+
+    - name: Stat the stack compose file
+      ansible.builtin.stat:
+        path: "/opt/stacks/{{ device_role }}/compose.yaml"
+      register: coord_stack_compose
+
+    # COORD_STACK is passed explicitly rather than relying on coord's
+    # sole-stack-under-/opt/stacks fallback, so this cannot start acting on the
+    # wrong stack if a device ever has two installed.
+    #
+    # changed_when reads compose's progress output, which is not a stable
+    # interface; a misread here is cosmetic recap noise only. Nothing keys on it,
+    # and in particular the reboot decision does not.
+    - name: Stop data collection for the duration of the converge
+      ansible.builtin.command:
+        cmd: /usr/local/bin/coord stop
+      environment:
+        COORD_STACK: "{{ device_role }}"
+      register: coord_stack_quiesced
+      changed_when: >-
+        'Stopping' in coord_stack_quiesced.stderr
+        or 'Stopped' in coord_stack_quiesced.stderr
+      when:
+        - coord_cli.stat.exists
+        - coord_stack_compose.stat.exists
+
   roles:
     - role: docker-host
     # Unconditional, like docker-host: both device roles sit on the same power
