@@ -28,26 +28,45 @@
 # Two gotchas, both found on-hardware (bench 2026-07-24), that the first cut missed:
 #  1. /etc/systemd/journald.conf.d does not exist by default here, and `copy` won't
 #     create a dest's parent dir -- ensure it first or the task fails.
-#  2. Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf
-#     forcing Storage=volatile (to spare the SD). Drop-ins merge in lexicographic order,
-#     so ours must sort AFTER 40- to win -- hence the 95- prefix. journald creates
-#     /var/log/journal itself once persistent wins, so we don't manage that dir.
+#  2. Raspberry Pi OS forces Storage=volatile to spare the SD. It does that in the
+#     MAIN file, /etc/systemd/journald.conf -- NOT in a drop-in. An earlier version of
+#     this comment claimed a /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf
+#     and that file does not exist: the pinned base image's SBOM lists
+#     etc/systemd/journald.conf and no usr/lib/systemd/journald.conf.d at all, which
+#     matches what is on campod-se.
+#
+#     We win anyway, and for a stronger reason than sort order: any drop-in under
+#     /etc/systemd/journald.conf.d/ overrides the main file outright ("Those drop-ins
+#     have higher precedence and override the main configuration file" --
+#     systemd.syntax(7)). The 95- prefix only decides order against OTHER drop-ins, of
+#     which this image has none. Keeping it is convention, not mechanism.
+#
+#     journald creates /var/log/journal itself once persistent wins, so we don't
+#     manage that dir.
 - name: Ensure journald drop-in directory exists
   ansible.builtin.file:
     path: /etc/systemd/journald.conf.d
     state: directory
     mode: "0755"
 
-- name: Persist journald (bounded; 95- so it beats RPi OS's 40-rpi-volatile-storage.conf)
+- name: Persist journald (bounded; a drop-in here overrides the vendor's Storage=volatile)
   ansible.builtin.copy:
     dest: /etc/systemd/journald.conf.d/95-fleet-journal.conf
     content: |
       # Post-crash/bounce forensics (#100). Bounded so persistence does not grow SD
-      # write volume without limit. 95- sorts after RPi OS's 40-rpi-volatile-storage.conf
-      # (Storage=volatile), so this wins the last-value merge.
+      # write volume without limit. The vendor sets Storage=volatile in the main
+      # /etc/systemd/journald.conf; a drop-in in journald.conf.d/ overrides the main
+      # file, so this wins regardless of its numeric prefix.
+      #
+      # SyncIntervalSec is the window of log messages a power cut can take with it.
+      # systemd defaults it to 5 minutes and exempts only CRIT/ALERT/EMERG, so ERR and
+      # below sit in page cache until the timer fires -- on a fleet where every
+      # shutdown is a yank, that is the forensic trail dying with the event that
+      # caused it. See this role's defaults for the sizing argument.
       [Journal]
       Storage=persistent
-      SystemMaxUse=200M
+      SystemMaxUse={{ power_resilience_journal_max_use }}
+      SyncIntervalSec={{ power_resilience_journal_sync_interval }}
     mode: "0644"
   notify: Restart journald
 
