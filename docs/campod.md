@@ -14,7 +14,7 @@ Future iteration adds a **vertical ring** of cameras to complement this horizont
 in a plane approximately perpendicular to the direction of travel, covering the full azimuthal circle. Combined with the horizontal ring, the vertical ring extends coverage upward from the upper limit of the downward facing camera and provide a full "tunnel" as it travels; target use case for this vertical ring is collection missions in the understory where there are features of interest (trees) as well as lots of
 hazards that we would like to model. We could also potentially use these upward cameras to detect canopy gaps for safely "surfacing" into better GPS coverage as a "logical loop closure".
 
-Intent, not built: Each Zero is responsible for triggering its camera and recording the results locally. USB is used for upstream communication (simulated network device), including low-rate telemetry, NTP, and libcamera sync messages from some pacesetter. The **Coordinator** (the Raspberry Pi 4B that also runs VIO -- see [central-hub.md](central-hub.md)) bridges the USB network to the sibling Zeros and serves NTP for "absolute" time initialization. It also collects telemetry and informationally reports successful captures back through MAVLink. Those capture times can get stamped into the telemetry and dataflash logs. This is NOT a load-bearing timestamp signal, just telemetry for the operator to know the system thinks it is capturing.
+Intent, not built: Each Zero is responsible for triggering its camera and recording the results locally. USB is used for upstream communication (simulated network device), including low-rate telemetry, NTP, and libcamera sync messages from some pacesetter. The **Coordinator** (the Raspberry Pi 4B that also runs VIO -- see [central-hub.md](rekon10/central-hub.md)) bridges the USB network to the sibling Zeros and serves NTP for "absolute" time initialization. It also collects telemetry and informationally reports successful captures back through MAVLink. Those capture times can get stamped into the telemetry and dataflash logs. This is NOT a load-bearing timestamp signal, just telemetry for the operator to know the system thinks it is capturing.
 
 ### Aim geometry
 
@@ -87,7 +87,7 @@ At the Pi side, connect the signal ground through a **100-ohm resistor** to prev
 
 ## Vibration and camera mounting rationale
 
-This section documents the analysis and design alternatives so future reviewers don't re-litigate the vibration question from scratch. See also [oak-d-mount.md](oak-d-mount.md) for the OAK-D's current vibration isolation approach (bobbins).
+This section documents the analysis and design alternatives so future reviewers don't re-litigate the vibration question from scratch. See also [oak-d-mount.md](rekon10/oak-d-mount.md) for the OAK-D's current vibration isolation approach (bobbins).
 
 ### Spectrum of isolation approaches
 

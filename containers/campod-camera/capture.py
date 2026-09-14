@@ -100,7 +100,7 @@ def _apply_focus(picam2, focus):
     """Fix the lens, or leave autofocus running.
 
     The CM3 focuses with a voice coil, so AF can hunt mid-flight and the lens is
-    free to move under vibration (fables arm-pods.md: prefer a locked lens, and
+    free to move under vibration (docs/campod.md: prefer a locked lens, and
     do not let AF move right before a shot on a vibrating airframe).
 
     Units are NOT the OAK-D's 0-255 lens scale: libcamera LensPosition is in

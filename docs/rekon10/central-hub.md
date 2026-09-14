@@ -11,7 +11,7 @@ Central power and data distribution, built around the **Coordinator** (Raspberry
 * Data to/from Pi Zeros (camera logical sync, NTP, telemetry)
 * Power to Pi Zeros (from barrel jack, doesn't load down the Coordinator)
 
-Currently I only have one unit but we need to plan for 2x just for the horizontal ring of 8 cameras, plus the upward pair from the vertical ring (see [arm-pods.md](arm-pods.md)).
+Currently I only have one unit but we need to plan for 2x just for the horizontal ring of 8 cameras, plus the upward pair from the vertical ring (see [campod.md](../campod.md)).
 
 Powered USB 3.0 4-port hub: Amazon Basics B00DQFGH80.
 
@@ -23,7 +23,7 @@ Powered USB 3.0 4-port hub: Amazon Basics B00DQFGH80.
 
 **Idea:** Use small bare-PCB 4-port USB 2.0 hub boards (DIY / AliExpress class), remove the Type-A sockets, and run **D+, D-, and GND** only to each Pi Zero's USB data path. Deliver **5 V + power GND** separately (GPIO 5 V pins on the Zero, or a short parallel harness), fed from the same **stripboard / UBEC** budget you already plan. The hub still needs **one** 5 V feed at its own input for the hub IC and terminations; that can be soldered to the stripboard rail instead of a barrel jack if you want to drop barrel pigtails.
 
-**Why it can fit this design:** You are **not** on a single-cable-per-Zero model today. Each pod already needs a **PPS + signal-ground** pair from the hub area ([arm-pods.md](arm-pods.md)), so adding explicit **5 V + power GND** (or reusing a careful common ground strategy at the pod) does not explode connector count the way it would for a "USB only" airframe.
+**Why it can fit this design:** You are **not** on a single-cable-per-Zero model today. Each pod already needs a **PPS + signal-ground** pair from the hub area ([campod.md](../campod.md)), so adding explicit **5 V + power GND** (or reusing a careful common ground strategy at the pod) does not explode connector count the way it would for a "USB only" airframe.
 
 **What you might actually save:** Mostly **mass and volume** of retail USB cables and hub output connectors, and **one failure mode** (floppy micro-USB plugs in vibration) if you replace them with soldered pigtails or board-to-board links. You might also delete **barrel-to-hub** adapters by wiring hub VIN straight to the distribution board. You do **not** remove the need for **four** logical USB 2.0 trees if you stay with one Coordinator host (four 4-port hubs for 16 Zeros, or two for the current 8-camera ring).
 
@@ -64,7 +64,7 @@ TODO: I'd like to get voltage off its output and current from the input. The mat
 Uses a buffer IC in DIP package to remove load on the [**DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW** line (1 Hz), not the GNSS module.
 
 - **Camera pod connectors:** 2-wire JST SM (20 AWG): signal ground, 3.3 V PPS (from buffer). JST SM housings must be **zip-tied/anchored to the frame** to prevent pendulum vibration from fatiguing wires.
-- **Upward pair (NNW + NNE):** Two additional PPS outputs needed for the early vertical-ring cameras ([arm-pods.md](arm-pods.md), *Upward-looking cameras*). The SN74AHC125N is a **quad** buffer; the horizontal-ring 8 Zeros already need **two** buffer chips (or the Coordinator shares the raw line and 8 buffered outputs go to 8 Zeros). The upward pair adds 2 more buffered outputs -- plan for a total of **10 Zero PPS lines + 1 raw Coordinator line**, requiring **three** quad buffer ICs (12 outputs, 2 spare) or **two** hex buffers.
+- **Upward pair (NNW + NNE):** Two additional PPS outputs needed for the early vertical-ring cameras ([campod.md](../campod.md), *Upward-looking cameras*). The SN74AHC125N is a **quad** buffer; the horizontal-ring 8 Zeros already need **two** buffer chips (or the Coordinator shares the raw line and 8 buffered outputs go to 8 Zeros). The upward pair adds 2 more buffered outputs -- plan for a total of **10 Zero PPS lines + 1 raw Coordinator line**, requiring **three** quad buffer ICs (12 outputs, 2 spare) or **two** hex buffers.
 - **Hub ports:** The upward pair gets the **first vertical-ring USB hub** -- a small 4-port unit with two ports used now and two spare for future vertical-ring cameras. This hub's upstream port connects to a free USB 2.0 port on the Coordinator.
 
 ### 5V distribution board
