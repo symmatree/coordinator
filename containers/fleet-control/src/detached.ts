@@ -16,12 +16,28 @@
 
 import type { FleetNode } from './inventory.js';
 import type { LineSink, SessionOptions } from './ssh.js';
-import { withSession } from './ssh.js';
+import { withSession, HostKeyMismatchError } from './ssh.js';
+import { makeProgressCollapser } from './progress.js';
 
 /** Scratch, not state: /tmp is the right home and a reboot legitimately ends any run. */
 const RUNDIR = '/tmp/fleet-control';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export interface Limits {
+  /**
+   * How long the node may be UNREACHABLE before we stop following, ms.
+   *
+   * Tolerating this is the entire point of detaching. The work belongs to the node, so a
+   * dropped link, a WiFi flap or a reboot is survivable -- failing on the first missed poll
+   * would throw away exactly the property we detached to get. Observed 2026-09-13: campod-se
+   * went unreachable mid-`coord pull`; the earlier inline implementation hung forever rather
+   * than recovering or failing.
+   */
+  unreachableToleranceMs?: number;
+  /** Overall ceiling for the command, ms. Something has to bound this. */
+  deadlineMs?: number;
+}
 
 export interface DetachedResult {
   code: number;
@@ -52,6 +68,7 @@ export async function runDetached(
   sink?: LineSink,
   pollMs = 5_000,
   runner?: Runner,
+  limits: Limits = {},
 ): Promise<DetachedResult> {
   const run: Runner = runner ?? sshRunner(node, opts);
   const dir = `${RUNDIR}/${name}`;
@@ -79,15 +96,53 @@ fi`,
   }
   sink?.('stdout', `[fleet-control] ${attached ? 'attached to running' : 'started'} '${name}' on ${node.name} (detached)`);
 
+  const tolerance = limits.unreachableToleranceMs ?? 10 * 60_000;
+  const ceilingMs = limits.deadlineMs ?? 60 * 60_000;
+  const deadline = Date.now() + ceilingMs;
+
   let offset = 0;
+  let unreachableSince: number | null = null;
+  // Docker emits one line per progress redraw when there is no TTY; collapse them so real
+  // output is not buried. See src/progress.ts.
+  const collapse = makeProgressCollapser();
   for (;;) {
     await sleep(pollMs);
+
+    if (Date.now() > deadline) {
+      throw new Error(
+        `${node.name}: '${name}' is still going past its ${Math.round(ceilingMs / 60_000)} minute ` +
+          `ceiling. It has NOT been stopped -- it is detached and still on the node. Probe the ` +
+          `node and decide; do not assume it failed.`,
+      );
+    }
     // One short connection per poll: read new bytes, then ask whether it finished. Order
     // matters -- read first, so a command that exits between the two calls does not lose its
     // final lines.
-    const tick = await run(
-      `tail -c +${offset + 1} ${dir}/log 2>/dev/null; echo "___FC_EOF___"; cat ${dir}/status 2>/dev/null`,
-    );
+    let tick;
+    try {
+      tick = await run(
+        `tail -c +${offset + 1} ${dir}/log 2>/dev/null; echo "___FC_EOF___"; cat ${dir}/status 2>/dev/null`,
+      );
+      if (unreachableSince !== null) {
+        sink?.('stdout', `[fleet-control] ${node.name} is answering again; the work kept running`);
+        unreachableSince = null;
+      }
+    } catch (err) {
+      if (err instanceof HostKeyMismatchError) throw err; // never transient
+      const now = Date.now();
+      unreachableSince ??= now;
+      const downFor = Math.round((now - unreachableSince) / 1000);
+      if (now - unreachableSince > tolerance) {
+        throw new Error(
+          `${node.name}: unreachable for ${downFor}s while '${name}' was running, past the ` +
+            `${Math.round(tolerance / 60_000)} minute tolerance. The command was detached, so it ` +
+            `may have finished, may still be running, or may have died with the node -- its state ` +
+            `is UNKNOWN. Probe the node before acting on it. (${(err as Error).message})`,
+        );
+      }
+      sink?.('stdout', `[fleet-control] ${node.name} not answering (${downFor}s) -- work is detached, still waiting`);
+      continue;
+    }
 
     const marker = tick.stdout.indexOf('___FC_EOF___');
     const chunk = marker === -1 ? tick.stdout : tick.stdout.slice(0, marker);
@@ -95,8 +150,10 @@ fi`,
 
     if (chunk.length > 0) {
       offset += Buffer.byteLength(chunk, 'utf8');
-      for (const line of chunk.split('\n')) {
-        if (line.length > 0) sink?.('stdout', line.replace(/\r$/, ''));
+      for (const raw of chunk.split('\n')) {
+        if (raw.length === 0) continue;
+        const line = collapse(raw.replace(/\r$/, ''));
+        if (line !== null) sink?.('stdout', line);
       }
     }
 

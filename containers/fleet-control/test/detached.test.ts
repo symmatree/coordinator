@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { runDetached, type Runner } from '../src/detached.js';
+import { HostKeyMismatchError } from '../src/ssh.js';
 import type { FleetNode } from '../src/inventory.js';
 import type { SessionOptions } from '../src/ssh.js';
 
@@ -89,5 +90,65 @@ describe('runDetached', () => {
     };
     assert.equal((await runDetached(node, opts, 'x', 'true', undefined, 1, runner)).code, 0);
     assert.equal(polls, 3);
+  });
+});
+
+describe('runDetached -- surviving a lost link', () => {
+  // The reason for detaching at all: the work belongs to the node, so losing the connection
+  // must not fail the run. Failing on the first missed poll would give up the property we
+  // detached to get.
+  const flaky = (failures: number, then: string[]): Runner => {
+    let started = false;
+    let failed = 0;
+    let i = 0;
+    return async (command) => {
+      if (!started) { started = true; return { code: 0, stdout: 'STARTED\n', stderr: '' }; }
+      if (command.includes('kill -0')) return { code: 0, stdout: 'ALIVE\n', stderr: '' };
+      if (failed < failures) { failed += 1; throw new Error('Timed out while waiting for handshake'); }
+      return { code: 0, stdout: then[Math.min(i++, then.length - 1)]!, stderr: '' };
+    };
+  };
+
+  it('keeps waiting through a transient outage and recovers', async () => {
+    const seen: string[] = [];
+    const r = await runDetached(
+      node, opts, 'one-time', 'true', (_s, l) => seen.push(l), 1,
+      flaky(3, ['done\n___FC_EOF___0']), { unreachableToleranceMs: 60_000 },
+    );
+    assert.equal(r.code, 0);
+    assert.ok(seen.some((l) => l.includes('not answering')), 'should report the outage');
+    assert.ok(seen.some((l) => l.includes('answering again')), 'should report recovery');
+    assert.ok(seen.includes('done'), 'should still deliver the output');
+  });
+
+  it('gives up once the outage passes the tolerance, and says the state is UNKNOWN', async () => {
+    await assert.rejects(
+      () => runDetached(node, opts, 'x', 'true', undefined, 1, flaky(999, []), { unreachableToleranceMs: 5 }),
+      /unreachable for .* past the .* tolerance[\s\S]*UNKNOWN/,
+    );
+  });
+
+  it('never retries past a host-key mismatch', async () => {
+    let started = false;
+    const runner: Runner = async () => {
+      if (!started) { started = true; return { code: 0, stdout: 'STARTED\n', stderr: '' }; }
+      throw new HostKeyMismatchError('campod-se', 'SHA256:new', 'SHA256:old');
+    };
+    await assert.rejects(
+      () => runDetached(node, opts, 'x', 'true', undefined, 1, runner, { unreachableToleranceMs: 60_000 }),
+      /host key changed/,
+    );
+  });
+
+  it('stops at the deadline, and says the work was NOT stopped', async () => {
+    const runner: Runner = async (command) => ({
+      code: 0,
+      stdout: command.includes('setsid') ? 'STARTED\n' : '___FC_EOF___',
+      stderr: '',
+    });
+    await assert.rejects(
+      () => runDetached(node, opts, 'x', 'true', undefined, 1, runner, { deadlineMs: 5 }),
+      /has NOT been stopped/,
+    );
   });
 });
