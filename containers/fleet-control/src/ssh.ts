@@ -50,6 +50,8 @@ export interface SessionOptions {
   hostKeys: HostKeyStore;
   /** Connect timeout, ms. */
   timeoutMs?: number;
+  /** Non-standard SSH port. Defaults to 22. */
+  port?: number;
 }
 
 /** One live SSH connection to one node. */
@@ -60,12 +62,16 @@ export class NodeSession {
     readonly hostKey: VerifyOutcome,
   ) {}
 
+  /** Last socket-level error, if the peer dropped the connection under us. */
+  private socketError?: Error;
+
   static async open(node: FleetNode, opts: SessionOptions): Promise<NodeSession> {
     const ssh = new NodeSSH();
     let outcome: VerifyOutcome | undefined;
 
     await ssh.connect({
       host: hostOf(node),
+      port: opts.port ?? 22,
       username: opts.user,
       privateKeyPath: opts.privateKeyPath,
       readyTimeout: opts.timeoutMs ?? 15_000,
@@ -84,7 +90,18 @@ export class NodeSession {
       throw new Error(`${node.name}: host key was never presented for verification`);
     }
 
-    return new NodeSession(node, ssh, outcome);
+    const session = new NodeSession(node, ssh, outcome);
+
+    // The ssh2 client emits 'error' on its own emitter when the peer resets the connection,
+    // asynchronously and after any pending promise has already settled. In Node an 'error'
+    // event with no listener terminates the PROCESS. `bootstrap` reboots the node on purpose,
+    // so this fires on every bootstrap: a try/catch around the reboot command covers the
+    // promise, not the emitter. Record it and let the exec promises report failure themselves.
+    ssh.connection?.on('error', (err: Error) => {
+      session.socketError = err;
+    });
+
+    return session;
   }
 
   /** Run a command. Never throws on a nonzero exit -- the code is the answer. */
@@ -92,10 +109,18 @@ export class NodeSession {
     const outSplit = lineSplitter((l) => onLine?.('stdout', l));
     const errSplit = lineSplitter((l) => onLine?.('stderr', l));
 
-    const res = await this.ssh.execCommand(command, {
-      onStdout: (c) => outSplit.push(c),
-      onStderr: (c) => errSplit.push(c),
-    });
+    let res;
+    try {
+      res = await this.ssh.execCommand(command, {
+        onStdout: (c) => outSplit.push(c),
+        onStderr: (c) => errSplit.push(c),
+      });
+    } catch (err) {
+      outSplit.end();
+      errSplit.end();
+      // Prefer the socket error: "read ECONNRESET" says more than execCommand's wrapper.
+      throw this.socketError ?? err;
+    }
     outSplit.end();
     errSplit.end();
 
