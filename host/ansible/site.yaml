@@ -24,6 +24,10 @@
       - "{{ lookup('env', 'USER') }}"
   roles:
     - role: docker-host
+    # Unconditional, like docker-host: both device roles sit on the same power
+    # rail and the same SD medium, so neither has a reason to be blind. Metrics
+    # are written locally and copied off after a flight -- nothing scrapes them.
+    - role: metrics
     - role: coordinator
       when: device_role == 'coordinator'
     - role: campod

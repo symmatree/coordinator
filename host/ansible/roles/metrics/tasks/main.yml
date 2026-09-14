@@ -1,0 +1,71 @@
+---
+# System metrics for post-flight forensics (#25, #41). Applies to every Rekon
+# device: the coordinator and the campods run off the same avionics 5 V rail, off
+# the same kind of SD card, and lose power the same way.
+#
+# WHY collectd AND NOT AN EXPORTER. An exporter only exposes; something has to
+# scrape and store it, and on-vehicle that store is the expensive half -- a
+# Prometheus/Mimir on a 512 MB Zero is not on the table. collectd is one C daemon
+# that samples and writes, which is the whole job here.
+#
+# WHY NOT THE NETWORK. The vehicle drops wifi in flight on purpose: connectivity
+# must not be able to destabilise VIO (an unattended apt during a flight is the
+# concrete worry). The gadget net that could carry metrics off a pod is #12/#24 and
+# is not stood up. So this writes locally and nothing scrapes it -- the samples are
+# a per-flight artifact, copied off afterwards the way the journal already is.
+#
+# WHY CSV AND NOT RRD. collectd's usual pairing is RRD, and RRD is the wrong shape
+# twice over here. Its round-robin design solves "keep years of history in fixed
+# space on a long-lived box"; what we want is full resolution for one flight, then
+# copied off. And it updates in place, small and random, which is the pathological
+# write pattern on CoW btrfs -- every update forks an extent plus metadata. Appends
+# are sequential, need no nodatacow exemption, and compress under the zstd already
+# on @var. They are also a plain text file that drops into flights/<id>/ next to
+# ground/backpack-link.jsonl, which is already the per-flight artifact convention.
+
+- name: Install collectd
+  ansible.builtin.apt:
+    # collectd-core, NOT collectd: the metapackage pulls rrdtool and the full plugin
+    # dependency set for plugins this config never loads. We are not writing RRD.
+    name: collectd-core
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create collectd data directory
+  ansible.builtin.file:
+    path: /var/log/collectd
+    state: directory
+    mode: "0755"
+
+# Age-based cleanup rather than logrotate: the csv plugin already writes one file
+# per type per day, so there is nothing to rotate -- only old days to drop.
+- name: Bound the on-card sample history
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/collectd-csv.conf
+    content: |
+      # Managed by ansible (roles/metrics). Drop sample files older than the
+      # retention window; systemd-tmpfiles recurses, and collectd recreates the
+      # per-host/per-plugin subdirectories on its next write.
+      d /var/log/collectd 0755 root root {{ metrics_retention }}
+    mode: "0644"
+
+# collectd-core ships NO /etc/collectd/collectd.conf -- only an example under
+# /usr/share/doc. Its unit carries ConditionPathExists=/etc/collectd/collectd.conf,
+# so without this file the service does not fail, it silently does not run: enabled,
+# no error, no samples. Hence config before enable, never the other way round.
+# (Read out of collectd-core_5.12.0-14_arm64.deb; ExecStartPre runs ,
+# so a malformed config does fail loudly rather than running on defaults.)
+- name: Configure collectd
+  ansible.builtin.template:
+    src: collectd.conf.j2
+    dest: /etc/collectd/collectd.conf
+    mode: "0644"
+  notify: Restart collectd
+
+- name: Enable collectd
+  ansible.builtin.systemd:
+    name: collectd
+    enabled: true
+    state: started
+    daemon_reload: true
