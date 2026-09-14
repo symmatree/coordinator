@@ -167,9 +167,10 @@ def _maybe_apply_sync(picam2, mode):
 
 # A campod with no camera waits for one; it does not exit. Exiting means docker's
 # `restart: unless-stopped` brings us straight back, and every restart re-pays the
-# picamera2 import on a single-core Pi Zero only to rediscover the same absent
-# camera. Measured on campod-se with no camera attached: 60 restarts in two hours
-# -- one every ~2 min -- at a sustained load average of ~8 on one core.
+# picamera2 import only to rediscover the same absent camera. Measured on campod-se
+# with no camera attached: 60 restarts in two hours -- one every ~2 min -- at a
+# sustained load average of ~8. The Zero 2 W is quad-core, so that is roughly 2x
+# oversubscribed rather than 8x, but it is 2x oversubscribed doing nothing.
 #
 # Worse, the entrypoint runs the accelerometer reader as a child and `exec`s us in
 # the foreground, so the container's life is our life. A missing camera was

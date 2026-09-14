@@ -12,7 +12,7 @@ that only an absent camera produces can be exercised on a build machine --
 
 The regression this guards is the crash loop: capture.py used to `return 1` on an
 absent camera, docker restarted it, and each restart re-paid the picamera2 import
-on a single-core Pi Zero -- 60 restarts in two hours on campod-se at load ~8,
+-- 60 restarts in two hours on campod-se at load ~8 on a quad-core,
 which also killed the accelerometer reader the entrypoint runs beside us.
 
 picamera2 is stubbed rather than imported for real on purpose: the real import is
