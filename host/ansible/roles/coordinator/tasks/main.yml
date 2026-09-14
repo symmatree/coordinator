@@ -117,7 +117,8 @@
 # (#100), so the coordinator behaves well across the routine power bounces of
 # the avionics 5 V rail.
 - name: Configure power-bounce resilience
-  ansible.builtin.include_tasks: power-resilience.yml
+  ansible.builtin.include_role:
+    name: power-resilience
 
 # ---------------------------------------------------------------------------
 # USB gadget network -- coordinator half (#12).

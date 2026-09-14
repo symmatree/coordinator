@@ -124,7 +124,7 @@ update. Fine on the bench; not something to do on a hot vehicle.
 | Docker, `coord`, `/opt/stacks` symlink, `/var/lib/coordinator/{config,ipc,captures}` | Ansible (`docker-host` + `coord-stack`) |
 | OAK-D udev rules, `oak_d.yaml` seed, host VIO tools, `i2c-tools`, **loading `i2c-dev`** | Ansible (`coordinator` role) |
 | Serial getty disable on the FC UART | Ansible (a unit, not a boot file) |
-| Auto-start on boot, persistent journald | Ansible (`power-resilience.yml`) |
+| Auto-start on boot, persistent journald, undervoltage/throttle trail | Ansible (`power-resilience` role -- shared, runs on campods too) |
 | `br0` campod bridge, gadget interface enslavement | Ansible (`coordinator` role) |
 | `compose.yaml` (values and container tags included) | git, through the symlink |
 
