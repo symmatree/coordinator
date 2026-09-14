@@ -1,0 +1,135 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>rekon10 fleet</title>
+<style>
+  :root { --bg:#12141a; --card:#1c1f28; --fg:#e8eaf0; --dim:#8b93a7; --line:#2b3040;
+          --ok:#3ddc97; --warn:#ffb454; --bad:#ff6b6b; --busy:#5aa9ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif;
+         padding:max(12px, env(safe-area-inset-top)) 12px 24px; }
+  h1 { font-size:1.1rem; margin:8px 0 16px; color:var(--dim); font-weight:600;
+       letter-spacing:.04em; text-transform:uppercase; }
+  .node { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:14px; margin-bottom:12px; }
+  .head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .name { font-weight:700; font-size:1.05rem; }
+  .meta { color:var(--dim); font-size:.82rem; margin-top:8px; word-break:break-word; }
+  .warn { color:var(--warn); }
+  .btns { display:flex; gap:10px; margin-top:12px; }
+  button { flex:1; min-height:56px; font-size:1rem; font-weight:650; border-radius:10px;
+           border:1px solid var(--line); background:#242938; color:var(--fg); cursor:pointer; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { background:#25406b; border-color:#375d99; }
+  pre { background:#0d0f14; border:1px solid var(--line); border-radius:8px; padding:10px;
+        max-height:260px; overflow:auto; font-size:.76rem; margin:12px 0 0; white-space:pre-wrap; }
+  .err { color:var(--bad); }
+  dialog { background:var(--card); color:var(--fg); border:1px solid var(--line);
+           border-radius:14px; padding:20px; max-width:min(92vw,420px); }
+  dialog::backdrop { background:rgba(0,0,0,.65); }
+  dialog h2 { margin:0 0 10px; font-size:1.05rem; }
+  dialog .what { color:var(--dim); font-size:.86rem; margin-bottom:14px; }
+  dialog .state { font-size:.82rem; margin-bottom:14px; }
+</style>
+<h1>rekon10 fleet</h1>
+<div id="fleet">loading...</div>
+<dialog id="confirm">
+  <h2 id="cTitle"></h2>
+  <div class="what" id="cWhat"></div>
+  <div class="btns">
+    <button id="cNo">Cancel</button>
+    <button id="cYes" class="primary">Yes, do it</button>
+  </div>
+</dialog>
+<script type="module">
+  const $ = (h) => Object.assign(document.createElement('div'), h);
+  const state = new Map();
+  const dlg = document.getElementById('confirm');
+
+  const WHAT = {
+    update: 'git pull, coord pull, coord start. The stack stops while images are pulled.',
+    bootstrap:
+      'For a freshly flashed card: install git, clone, run host/one_time.sh, reboot, start the ' +
+      'stack. Around 20 minutes on a Zero 2 W.',
+  };
+
+  async function j(url, opts) {
+    const r = await fetch(url, opts);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? r.statusText);
+    return r.json();
+  }
+
+  function render(nodes) {
+    const root = document.getElementById('fleet');
+    root.textContent = '';
+    for (const n of nodes) {
+      const st = state.get(n.name) ?? {};
+      const card = $({ className: 'node' });
+
+      const head = $({ className: 'head' });
+      head.append(
+        $({ className: 'name', textContent: n.name }),
+        $({ className: 'meta', textContent: `${n.role}${n.host ? ' -- ' + n.host : ''}` }),
+      );
+      card.append(head);
+
+      const btns = $({ className: 'btns' });
+      const mk = (label, action, primary) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        if (primary) b.className = 'primary';
+        b.disabled = !!st.busy;
+        b.onclick = () => confirmThen(n.name, action);
+        return b;
+      };
+      btns.append(mk('Update', 'update', true), mk('Bootstrap', 'bootstrap', false));
+      card.append(btns);
+
+      if (st.log?.length) {
+        const pre = document.createElement('pre');
+        pre.textContent = st.log.join('\n');
+        card.append(pre);
+      }
+      root.append(card);
+    }
+  }
+
+  /** Every action confirms first, so a bump on a phone screen cannot start anything. */
+  async function confirmThen(name, action) {
+    document.getElementById('cTitle').textContent = `${action} ${name}?`;
+    document.getElementById('cWhat').textContent = WHAT[action];
+    dlg.showModal();
+    document.getElementById('cYes').onclick = () => { dlg.close(); run(name, action); };
+    document.getElementById('cNo').onclick = () => dlg.close();
+  }
+
+  async function run(name, action) {
+    const st = state.get(name) ?? {};
+    st.busy = true; st.log = [`starting ${action}...`];
+    state.set(name, st);
+    render(await j('/nodes'));
+    let id;
+    try { ({ id } = await j(`/nodes/${name}/${action}`, { method: 'POST' })); }
+    catch (e) {
+      st.busy = false; st.log.push(`error: ${e.message}`); state.set(name, st);
+      return render(await j('/nodes'));
+    }
+
+    const es = new EventSource(`/runs/${id}/stream`);
+    es.onmessage = async (ev) => {
+      const l = JSON.parse(ev.data);
+      st.log.push(l.line);
+      if (st.log.length > 400) st.log.splice(0, st.log.length - 400);
+      render(await j('/nodes'));
+      if (l.line.startsWith('[fleet-control] run ')) {
+        es.close();
+        st.busy = false;
+        state.set(name, st);
+        render(await j('/nodes'));
+      }
+    };
+    es.onerror = () => { es.close(); st.busy = false; };
+  }
+
+  render(await j('/nodes'));
+</script>
