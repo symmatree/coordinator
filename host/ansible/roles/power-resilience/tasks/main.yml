@@ -45,9 +45,16 @@
       # Post-crash/bounce forensics (#100). Bounded so persistence does not grow SD
       # write volume without limit. 95- sorts after RPi OS's 40-rpi-volatile-storage.conf
       # (Storage=volatile), so this wins the last-value merge.
+      #
+      # SyncIntervalSec is the window of log messages a power cut can take with it.
+      # systemd defaults it to 5 minutes and exempts only CRIT/ALERT/EMERG, so ERR and
+      # below sit in page cache until the timer fires -- on a fleet where every
+      # shutdown is a yank, that is the forensic trail dying with the event that
+      # caused it. See this role's defaults for the sizing argument.
       [Journal]
       Storage=persistent
-      SystemMaxUse=200M
+      SystemMaxUse={{ power_resilience_journal_max_use }}
+      SyncIntervalSec={{ power_resilience_journal_sync_interval }}
     mode: "0644"
   notify: Restart journald
 

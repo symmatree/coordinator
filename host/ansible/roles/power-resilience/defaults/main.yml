@@ -1,0 +1,17 @@
+---
+# Journal size cap. Persistence must not grow SD write volume without limit.
+power_resilience_journal_max_use: 200M
+
+# How long a log message may sit in page cache before journald fsyncs it.
+#
+# systemd's default is 5 minutes, and it applies to ERR, WARNING, NOTICE, INFO and
+# DEBUG -- only CRIT, ALERT and EMERG sync immediately (journald.conf(5), v252).
+# On this fleet every shutdown is a battery yank, so that default means up to five
+# minutes of the most interesting messages die with the power. A wifi firmware halt
+# logs at ERR; the mmc/bus messages around it are lower still. All in the deferred
+# set.
+#
+# 10s is not the dominant write term here: the campod accel writer already fsyncs at
+# 1 Hz (containers/campod-camera/adxl345.py) and the still path fsyncs per image, so
+# this is an order of magnitude below traffic the payload already generates.
+power_resilience_journal_sync_interval: 10s
