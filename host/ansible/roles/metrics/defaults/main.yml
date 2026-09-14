@@ -1,0 +1,11 @@
+---
+# Sampling interval, seconds. 10s resolves a thermal ramp or an iowait spike across
+# a short flight; coordinator-throttle.timer runs at 30s, so throttle events land on
+# a coarser timeline than the temperature that caused them. Raising this is the first
+# knob to reach for if the write volume turns out to matter.
+metrics_interval: 10
+
+# How long samples stay on the card. These are flight forensics: once a flight's
+# window has been copied off, the on-device copy is a convenience. Bounded so the
+# card cannot fill -- the failure mode this fleet has already hit once.
+metrics_retention: 7d

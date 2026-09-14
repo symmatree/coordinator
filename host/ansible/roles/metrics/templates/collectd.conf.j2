@@ -1,0 +1,63 @@
+# Managed by ansible (roles/metrics). Local changes will be overwritten.
+#
+# System metrics for post-flight forensics. Deliberately small: the four families
+# worth the write volume on an SD card in a vehicle, and nothing else. Adding a
+# plugin is cheap to type and not cheap to carry -- every one is more cardinality,
+# more lines per interval, and more card wear, forever.
+
+# No DNS at startup. The vehicle drops wifi in flight by design and the gadget net
+# has no resolver, so an FQDN lookup here is a hang waiting to happen for a value
+# we do not use -- the CSV tree is keyed by hostname either way.
+FQDNLookup false
+Interval {{ metrics_interval }}
+
+LoadPlugin cpu
+LoadPlugin memory
+LoadPlugin disk
+LoadPlugin thermal
+LoadPlugin csv
+
+<Plugin cpu>
+  # Per-core and per-state. On a 4-core Zero 2 W that is the difference between
+  # "busy" and "one core pinned in iowait while three idle", which is the actual
+  # question when capture stutters.
+  ReportByCpu true
+  ReportByState true
+  # Raw jiffy counters, not percentages -- see StoreRates below.
+  ValuesPercentage false
+</Plugin>
+
+<Plugin memory>
+  # Absolute bytes per category (used/buffered/cached/free/slab). "Ideally a few
+  # categories" is the whole point on a 512 MB Zero: total-used cannot tell you
+  # whether you are about to OOM or just have a warm page cache.
+  ValuesAbsolute true
+  ValuesPercentage false
+</Plugin>
+
+<Plugin disk>
+  # Whole disks only, not partitions. Queue depth is a property of the device;
+  # per-partition rows would triple the cardinality and answer nothing. This also
+  # picks up pending_operations, which is the in-flight request count from
+  # /proc/diskstats -- the io-queue-depth signal.
+  Disk "/^mmcblk[0-9]+$/"
+  Disk "/^nvme[0-9]+n[0-9]+$/"
+  IgnoreSelected false
+</Plugin>
+
+<Plugin thermal>
+  # All thermal zones; on a Pi that is the SoC sensor.
+  # NOTE: this is temperature only. Whether the SoC was actually throttled or
+  # under-volted is a Pi-specific bit vector from `vcgencmd get_throttled`, which
+  # no collectd plugin reads -- coordinator-throttle.timer already logs that to the
+  # journal every 30s. The two are complementary: this says how hot, that says
+  # whether it cost us anything.
+</Plugin>
+
+<Plugin csv>
+  DataDir "/var/log/collectd"
+  # Raw counters, not rates. Counters are lossless: a gap across a power cut is
+  # visible and the rate is still derivable afterwards. Pre-computed rates throw
+  # that away, and the analysis side is where the arithmetic belongs anyway.
+  StoreRates false
+</Plugin>

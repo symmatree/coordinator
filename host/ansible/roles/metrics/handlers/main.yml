@@ -1,0 +1,6 @@
+---
+- name: Restart collectd
+  ansible.builtin.systemd:
+    name: collectd
+    state: restarted
+    daemon_reload: true
