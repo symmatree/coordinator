@@ -37,7 +37,8 @@
 # Gated on sync_repo like the coord CLI.
 - name: Install host VIO tools
   ansible.builtin.copy:
-    src: "{{ repo_src }}/bin/{{ item }}"
+    remote_src: true
+    src: "{{ coord_checkout }}/bin/{{ item }}"
     dest: "/usr/local/bin/{{ item }}"
     mode: "0755"
   loop:

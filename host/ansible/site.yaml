@@ -31,19 +31,21 @@
     device_role: coordinator
     sync_repo: false
 
-    # repo_root used to serve two purposes with one value, and only one of them
-    # survives a remote run:
+    # Only the PLAYBOOK comes from the control node. Everything else -- bin/coord,
+    # the VIO tools, coord-throttle-log -- is copied from the TARGET's own checkout
+    # with remote_src, so it can never be shipped independently of the stack config
+    # it manages.
     #
-    #   * SOURCE for `copy` tasks (bin/coord, the VIO tools), which read from the
-    #     CONTROL NODE. Remotely this is better, not merely fine -- the CLIs get
-    #     pushed from the driver's checkout rather than depending on whatever the
-    #     device happens to have cloned.
-    #   * SYMLINK TARGET for /opt/stacks/<role>, which must be a path that exists
-    #     ON THE DEVICE. With one value a remote run points /opt/stacks/coordinator
-    #     at a directory on the driver.
+    # The asymmetry is irreducible rather than untidy: you cannot fetch the playbook
+    # from a target you have not cloned yet, and the playbook is what does the
+    # cloning. Everything after the clone can and should come from the target.
     #
-    # So they are two variables now.
-    repo_src: "{{ playbook_dir | dirname | dirname }}"
+    # This also means the control node needs only host/ansible/**, not the repo --
+    # which is what the cluster container has to carry.
+    #
+    # coord_repo_version is the hook for pinning: it floats at main today, and when
+    # there are named releases worth pinning to, the control node clones a specified
+    # version rather than whatever main happens to be.
     coord_checkout: "/home/{{ ansible_user | default('pi') }}/coordinator"
 
     # Creating the checkout is what removes the last bootstrap ordering problem.

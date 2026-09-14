@@ -4,9 +4,9 @@
 # deploy (no copy, no drift -- #48), and installs the shared coord CLI. Caller sets
 # coord_stack_name, coord_state_root, coord_state_subdirs.
 #
-# TWO checkout paths, and the distinction is load-bearing: repo_src is the CONTROL
-# NODE's checkout (copy: src reads from there and pushes), coord_checkout is the
-# DEVICE's (the /opt/stacks symlink must point at a path that exists on the device).
+# coord_checkout is the DEVICE's checkout. Both the /opt/stacks symlink and the
+# coord CLI come from it, so the CLI can never drift from the stack config it
+# manages -- they are the same tree, at the same commit, by construction.
 
 - name: Create {{ coord_stack_name }} state directories
   ansible.builtin.file:
@@ -72,7 +72,8 @@
 
 - name: Install coord CLI
   ansible.builtin.copy:
-    src: "{{ repo_src }}/bin/coord"
+    remote_src: true
+    src: "{{ coord_checkout }}/bin/coord"
     dest: /usr/local/bin/coord
     mode: "0755"
   when: sync_repo | bool
