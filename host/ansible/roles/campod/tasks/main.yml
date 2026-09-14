@@ -75,6 +75,39 @@
     name: power-resilience
 
 # ---------------------------------------------------------------------------
+# Serial console: a log stream, not a login.
+#
+# The image already points the console at the UART on purpose -- roles/campod.env
+# drops the vendor's leading console=serial0 and re-appends it LAST, so /dev/console
+# resolves to serial rather than tty1, and strips `quiet` so systemd's status output
+# is actually readable there.
+#
+# Then systemd-getty-generator sees a serial console and spawns a login on it, which
+# undoes the point: the moment you most want the port is when the node has stopped
+# talking, and that is exactly when it is showing a login prompt instead of saying
+# what happened. Kernel messages keep flowing to the port regardless -- printk and
+# the getty are independent -- so turning the getty off costs nothing and leaves the
+# stream.
+#
+# Same three lines the coordinator role already runs, for a different reason (its
+# UART is the FC link). Net effect is that no device in the fleet ends its serial
+# console at a prompt.
+#
+# ttyS0 as well as ttyAMA0: disable-bt hands the PL011 to GPIO 14/15, but a unit
+# booted without it would land the console on the mini-UART instead, and a getty
+# there would be the same problem with a different name. failed_when covers the
+# instance that does not exist on a given board.
+- name: Disable serial-getty so the console keeps streaming instead of prompting
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - serial-getty@ttyAMA0.service
+    - serial-getty@ttyS0.service
+  failed_when: false
+
+# ---------------------------------------------------------------------------
 # USB gadget network -- the userspace half (#24).
 #
 # The dwc2 overlay is device tree and comes from the campod image; it cannot come
