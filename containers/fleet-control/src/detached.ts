@@ -142,12 +142,29 @@ fi`,
       return { code, attached };
     }
 
-    // The process is gone but no status was written: the node rebooted, was killed, or the
-    // work died in a way that skipped the trailing `echo $?`. Say that, rather than polling
-    // forever against a file nothing will ever update.
+    // No status yet. Check whether the process is still there -- but the two reads are
+    // separate round trips, so it may have finished in between: read the status again in the
+    // same breath, and believe that over the liveness check. Getting this wrong reports a
+    // successful run as a vanished one, which is what happened on a loaded Zero.
     const alive = await run(
-      `[ -f ${dir}/pid ] && kill -0 "$(cat ${dir}/pid)" 2>/dev/null && echo ALIVE || echo GONE`,
+      `[ -f ${dir}/pid ] && kill -0 "$(cat ${dir}/pid)" 2>/dev/null && echo ALIVE || echo GONE; ` +
+        `echo "___FC_EOF___"; cat ${dir}/status 2>/dev/null`,
     );
+    const aliveMark = alive.stdout.indexOf('___FC_EOF___');
+    const lateStatus =
+      aliveMark === -1 ? '' : alive.stdout.slice(aliveMark + '___FC_EOF___'.length).trim();
+    if (lateStatus !== '') {
+      const code = Number(lateStatus);
+      if (!Number.isFinite(code)) {
+        throw new Error(`${node.name}: '${name}' wrote an unreadable status: ${JSON.stringify(lateStatus)}`);
+      }
+      // Drain whatever it printed after our last read before returning.
+      const tail = await run(`tail -c +${offset + 1} ${dir}/log 2>/dev/null`);
+      for (const raw of tail.stdout.split('\n')) {
+        if (raw.length > 0) sink?.('stdout', raw.replace(/\r$/, ''));
+      }
+      return { code, attached };
+    }
     if (alive.stdout.includes('GONE')) {
       throw new Error(
         `${node.name}: '${name}' vanished without writing an exit status -- the node rebooted, ` +

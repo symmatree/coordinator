@@ -150,3 +150,43 @@ describe('runDetached -- surviving a lost link', () => {
     );
   });
 });
+
+describe('runDetached -- the status/liveness race', () => {
+  // Observed on campod-se at load average 7.8: the command finished between our status read
+  // and the liveness check that follows it, so a SUCCESSFUL run was reported as "vanished
+  // without writing an exit status". The two reads are separate round trips; the second one
+  // has to re-read the status rather than trusting the pid alone.
+  it('believes a status that appears during the liveness check', async () => {
+    const responses = [
+      'STARTED\n',
+      'working\n___FC_EOF___',      // poll: output, no status yet
+      'GONE\n___FC_EOF___0',        // liveness: pid gone, but status is there now
+      'done\n',                      // drain of remaining output
+    ];
+    let i = 0;
+    const seen: string[] = [];
+    const runner: Runner = async () => ({
+      code: 0,
+      stdout: responses[Math.min(i++, responses.length - 1)]!,
+      stderr: '',
+    });
+    const r = await runDetached(node, opts, 'apt-git', 'true', (_s, l) => seen.push(l), 1, runner);
+    assert.equal(r.code, 0);
+    assert.ok(seen.includes('working'), 'output before the race must survive');
+    assert.ok(seen.includes('done'), 'output written after the last poll must be drained');
+  });
+
+  it('still reports a genuine vanish -- pid gone AND no status', async () => {
+    const responses = ['STARTED\n', '___FC_EOF___', 'GONE\n___FC_EOF___'];
+    let i = 0;
+    const runner: Runner = async () => ({
+      code: 0,
+      stdout: responses[Math.min(i++, responses.length - 1)]!,
+      stderr: '',
+    });
+    await assert.rejects(
+      () => runDetached(node, opts, 'x', 'true', undefined, 1, runner),
+      /vanished without writing an exit status/,
+    );
+  });
+});

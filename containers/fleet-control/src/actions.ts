@@ -95,7 +95,16 @@ export async function bootstrap(
       'sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git',
     sink, 'apt-get install git',
   );
-  await must(node, ctx, `git clone ${ctx.repoUrl} ${ctx.checkoutPath}`, sink, 'git clone');
+  // Clone or pull, in one command, so `bootstrap` is safe to re-run. There is no probe on
+  // this side that knows which state the node is in, and letting the node decide also removes
+  // the gap between checking and acting.
+  await must(
+    node, ctx,
+    `if [ -d "${ctx.checkoutPath}/.git" ]; then ` +
+      `git -C "${ctx.checkoutPath}" pull --ff-only; ` +
+      `else git clone ${ctx.repoUrl} "${ctx.checkoutPath}"; fi`,
+    sink, 'clone or update the checkout',
+  );
 
   const bootId = await withSession(node, ctx.ssh, (s) => s.bootId());
   const r = await runDetached(
