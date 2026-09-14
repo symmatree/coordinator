@@ -1,39 +1,22 @@
-// Run a long command on a node DETACHED from the SSH session that started it.
+// Run a long command on a node detached from the SSH session that starts it.
 //
-// Why this is not optional. `one_time.sh` takes ~13 minutes and `coord pull` ~4; this service
-// is a pod, and a pod gets evicted, rescheduled and rolled. If the command is a child of the
-// SSH channel, losing the pod sends SIGHUP into the middle of an apt transaction or an Ansible
-// run, and "the script is re-runnable" is a hope rather than a property -- a half-applied
-// package install is not a state any re-run is guaranteed to fix.
-//
-// So: the node owns the work. `setsid` puts the command in its own session with its output on
-// a file, and the SSH exec that launched it returns immediately. The service then *follows*
-// that file over short-lived connections. Nothing long-running is held open, which also means
-// no SSH keepalive is needed and a quiet command cannot idle the link out.
-//
-// The same mechanism gives re-attach for free: a fresh pod finds the run still going and
-// picks up the log where it left off, instead of starting a second one on top of the first.
+// `one_time.sh` takes ~13 minutes and `coord pull` a few; this service is a pod, so the
+// process that launched them can go away. `setsid` puts the command in its own session with
+// its output on a file, and we follow that file over short connections -- so nothing
+// long-running is held open, a lost link is survivable, and a replacement pod re-attaches to
+// the running job instead of starting a second one.
 
 import type { FleetNode } from './inventory.js';
 import type { LineSink, SessionOptions } from './ssh.js';
 import { withSession, HostKeyMismatchError } from './ssh.js';
-import { makeProgressCollapser } from './progress.js';
 
-/** Scratch, not state: /tmp is the right home and a reboot legitimately ends any run. */
+/** Scratch; a reboot legitimately ends any run. */
 const RUNDIR = '/tmp/fleet-control';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface Limits {
-  /**
-   * How long the node may be UNREACHABLE before we stop following, ms.
-   *
-   * Tolerating this is the entire point of detaching. The work belongs to the node, so a
-   * dropped link, a WiFi flap or a reboot is survivable -- failing on the first missed poll
-   * would throw away exactly the property we detached to get. Observed 2026-09-13: campod-se
-   * went unreachable mid-`coord pull`; the earlier inline implementation hung forever rather
-   * than recovering or failing.
-   */
+  /** How long the node may be unreachable before we stop following, ms. */
   unreachableToleranceMs?: number;
   /** Overall ceiling for the command, ms. Something has to bound this. */
   deadlineMs?: number;
@@ -45,7 +28,7 @@ export interface DetachedResult {
   attached: boolean;
 }
 
-/** One short command on the node. Injected so the follow loop is testable without a network. */
+/** One short command on the node. Injected so the follow loop is testable. */
 export type Runner = (command: string) => Promise<{ code: number | null; stdout: string; stderr: string }>;
 
 const sshRunner =
@@ -72,7 +55,7 @@ export async function runDetached(
 ): Promise<DetachedResult> {
   const run: Runner = runner ?? sshRunner(node, opts);
   const dir = `${RUNDIR}/${name}`;
-  // base64 so the command crosses two shells without any quoting rules applying to it.
+  // base64 so the command crosses two shells untouched by quoting.
   const b64 = Buffer.from(command, 'utf8').toString('base64');
 
   const start = await run(
@@ -102,9 +85,6 @@ fi`,
 
   let offset = 0;
   let unreachableSince: number | null = null;
-  // Docker emits one line per progress redraw when there is no TTY; collapse them so real
-  // output is not buried. See src/progress.ts.
-  const collapse = makeProgressCollapser();
   for (;;) {
     await sleep(pollMs);
 
@@ -115,9 +95,8 @@ fi`,
           `node and decide; do not assume it failed.`,
       );
     }
-    // One short connection per poll: read new bytes, then ask whether it finished. Order
-    // matters -- read first, so a command that exits between the two calls does not lose its
-    // final lines.
+    // Read the log before checking for the status file, so a command that exits between the
+    // two does not lose its final lines.
     let tick;
     try {
       tick = await run(
@@ -128,7 +107,7 @@ fi`,
         unreachableSince = null;
       }
     } catch (err) {
-      if (err instanceof HostKeyMismatchError) throw err; // never transient
+      if (err instanceof HostKeyMismatchError) throw err;
       const now = Date.now();
       unreachableSince ??= now;
       const downFor = Math.round((now - unreachableSince) / 1000);
@@ -151,9 +130,7 @@ fi`,
     if (chunk.length > 0) {
       offset += Buffer.byteLength(chunk, 'utf8');
       for (const raw of chunk.split('\n')) {
-        if (raw.length === 0) continue;
-        const line = collapse(raw.replace(/\r$/, ''));
-        if (line !== null) sink?.('stdout', line);
+        if (raw.length > 0) sink?.('stdout', raw.replace(/\r$/, ''));
       }
     }
 

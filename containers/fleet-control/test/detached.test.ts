@@ -7,9 +7,7 @@ import type { SessionOptions } from '../src/ssh.js';
 
 // The follow-loop contract, exercised without a network: incremental reads, the status
 // handshake, re-attach, and the vanished-process case.
-const node: FleetNode = {
-  name: 'campod-se', address: '10.0.5.237', role: 'campod', user: 'pi', enabled: true,
-};
+const node: FleetNode = { name: 'campod-se', host: '10.0.5.237', role: 'campod' };
 const opts = {} as SessionOptions;
 
 /** A node whose shell returns a scripted sequence, recording what it was asked. */

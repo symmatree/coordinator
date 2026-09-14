@@ -1,12 +1,13 @@
-// Service configuration, all from the environment so the tanka env owns it.
+// Configuration, all from the environment.
 import { HostKeyStore } from './hostkeys.js';
 import { loadInventory, type Inventory } from './inventory.js';
 import type { SessionOptions } from './ssh.js';
 
 export interface Config {
   inventory: Inventory;
-  inventoryPath: string;
   ssh: SessionOptions;
+  repoUrl: string;
+  checkoutPath: string;
   port: number;
   host: string;
 }
@@ -16,17 +17,24 @@ function env(name: string, fallback: string): string {
   return v === undefined || v === '' ? fallback : v;
 }
 
+function required(name: string): string {
+  const v = process.env[name];
+  if (v === undefined || v === '') throw new Error(`${name} is required`);
+  return v;
+}
+
 export function loadConfig(): Config {
-  const inventoryPath = env('FLEET_INVENTORY', '/config/inventory.json');
-  const hostKeysPath = env('FLEET_HOSTKEYS', '/state/hostkeys.json');
+  const inventory = loadInventory(required('FLEET_INVENTORY'));
   return {
-    inventoryPath,
-    inventory: loadInventory(inventoryPath),
+    inventory,
     ssh: {
+      user: inventory.user,
       privateKeyPath: env('FLEET_SSH_KEY', '/secrets/ssh/id'),
-      hostKeys: new HostKeyStore(hostKeysPath),
+      hostKeys: new HostKeyStore(env('FLEET_HOSTKEYS', '/state/hostkeys.json')),
       timeoutMs: Number(env('FLEET_SSH_TIMEOUT_MS', '15000')),
     },
+    repoUrl: env('FLEET_REPO_URL', 'https://github.com/symmatree/coordinator.git'),
+    checkoutPath: env('FLEET_CHECKOUT_PATH', '$HOME/coordinator'),
     port: Number(env('PORT', '8080')),
     host: env('HOST', '0.0.0.0'),
   };

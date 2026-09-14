@@ -1,55 +1,27 @@
-// The route surface. The UI is one client of this, not the only way in -- the test that
-// matters is whether `curl` can run pre-flight (coordinator#223: three named trigger surfaces
-// already exist -- the phone UI, hardwired buttons, and the pocketterm -- so the actions are
-// the thing and the buttons are a skin).
+// The route surface. The UI is one client of it; anything the page can do, curl can do.
 
 import { readFileSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
-import { enabledNodes, findNode } from './inventory.js';
-import { probeAll, probeNode } from './probe.js';
+import { findNode } from './inventory.js';
 import { RunRegistry, sinkFor } from './runs.js';
-import { bootstrap, update } from './actions.js';
+import { bootstrap, update, type ActionContext } from './actions.js';
 
 export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInstance {
   const app = Fastify({ logger: true });
+  const ctx: ActionContext = {
+    inventory: cfg.inventory,
+    ssh: cfg.ssh,
+    repoUrl: cfg.repoUrl,
+    checkoutPath: cfg.checkoutPath,
+  };
 
   app.get('/healthz', async () => ({ ok: true }));
 
-  // The UI is served from here, but it is just another client of the routes below: no
-  // server-rendered state, no private endpoints. Anything the page can do, curl can do.
   const indexHtml = readFileSync(new URL('../ui/index.html', import.meta.url), 'utf8');
   app.get('/', async (_req, reply) => reply.type('text/html; charset=utf-8').send(indexHtml));
 
-  /** Service status, including whether host-key trust actually survives a restart. */
-  app.get('/status', async () => ({
-    ok: true,
-    inventoryPath: cfg.inventoryPath,
-    nodes: cfg.inventory.nodes.map((n) => ({ name: n.name, role: n.role, enabled: n.enabled })),
-    hostKeys: {
-      known: cfg.ssh.hostKeys.all(),
-      // Surfaced rather than left to be discovered: if the store is ephemeral, every restart
-      // is a fresh first-contact and host-key verification protects nothing.
-      ephemeral: cfg.ssh.hostKeys.ephemeral,
-    },
-  }));
-
   app.get('/nodes', async () => cfg.inventory.nodes);
-
-  app.get('/probe', async () => probeAll(enabledNodes(cfg.inventory), cfg.ssh));
-
-  app.get<{ Params: { name: string } }>('/nodes/:name/probe', async (req, reply) => {
-    const node = findNode(cfg.inventory, req.params.name);
-    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-    return probeNode(node, cfg.ssh);
-  });
-
-  /** Forget a node's recorded host key. The operation to run when you reflash that card. */
-  app.delete<{ Params: { name: string } }>('/nodes/:name/hostkey', async (req, reply) => {
-    const node = findNode(cfg.inventory, req.params.name);
-    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-    return { forgotten: cfg.ssh.hostKeys.forget(node.name) };
-  });
 
   const ACTIONS = { update, bootstrap } as const;
 
@@ -60,13 +32,8 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
       if (!fn) return reply.code(404).send({ error: `no such action: ${req.params.action}` });
       const node = findNode(cfg.inventory, req.params.name);
       if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-      if (!node.enabled) {
-        return reply.code(409).send({ error: `${node.name} is not enabled in the inventory` });
-      }
       try {
-        const run = runs.start(req.params.action, node.name, (emit) =>
-          fn(node, cfg.ssh, sinkFor(emit)),
-        );
+        const run = runs.start(req.params.action, node.name, (emit) => fn(node, ctx, sinkFor(emit)));
         return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
       } catch (err) {
         return reply.code(409).send({ error: (err as Error).message });

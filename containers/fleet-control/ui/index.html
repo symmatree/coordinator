@@ -14,9 +14,6 @@
           padding:14px; margin-bottom:12px; }
   .head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .name { font-weight:700; font-size:1.05rem; }
-  .stage { font-size:.78rem; padding:3px 9px; border-radius:999px; border:1px solid currentColor; }
-  .s-running{color:var(--ok)} .s-bootstrapped{color:var(--busy)} .s-partial{color:var(--warn)}
-  .s-blank{color:var(--dim)} .s-unreachable{color:var(--bad)} .s-unknown{color:var(--dim)}
   .meta { color:var(--dim); font-size:.82rem; margin-top:8px; word-break:break-word; }
   .warn { color:var(--warn); }
   .btns { display:flex; gap:10px; margin-top:12px; }
@@ -27,8 +24,6 @@
   pre { background:#0d0f14; border:1px solid var(--line); border-radius:8px; padding:10px;
         max-height:260px; overflow:auto; font-size:.76rem; margin:12px 0 0; white-space:pre-wrap; }
   .err { color:var(--bad); }
-  .banner { background:#3a2a12; border:1px solid var(--warn); color:var(--warn);
-            padding:10px 12px; border-radius:8px; margin-bottom:14px; font-size:.85rem; }
   dialog { background:var(--card); color:var(--fg); border:1px solid var(--line);
            border-radius:14px; padding:20px; max-width:min(92vw,420px); }
   dialog::backdrop { background:rgba(0,0,0,.65); }
@@ -37,12 +32,10 @@
   dialog .state { font-size:.82rem; margin-bottom:14px; }
 </style>
 <h1>rekon10 fleet</h1>
-<div id="banner"></div>
 <div id="fleet">loading...</div>
 <dialog id="confirm">
   <h2 id="cTitle"></h2>
   <div class="what" id="cWhat"></div>
-  <div class="state" id="cState">checking the node...</div>
   <div class="btns">
     <button id="cNo">Cancel</button>
     <button id="cYes" class="primary">Yes, do it</button>
@@ -54,13 +47,10 @@
   const dlg = document.getElementById('confirm');
 
   const WHAT = {
-    update:
-      'Runs on the node: git pull, coord pull, coord start. ' +
-      'This STOPS the stack while images are pulled -- coord pull runs compose down first.',
+    update: 'git pull, coord pull, coord start. The stack stops while images are pulled.',
     bootstrap:
-      'Runs on the node: remount /usr rw, install git, clone the repo, ./host/one_time.sh, ' +
-      'then reboot and start the stack. Once per card, after flashing. Takes roughly 15-20 ' +
-      'minutes on a Zero 2 W.',
+      'For a freshly flashed card: install git, clone, run host/one_time.sh, reboot, start the ' +
+      'stack. Around 20 minutes on a Zero 2 W.',
   };
 
   async function j(url, opts) {
@@ -69,43 +59,26 @@
     return r.json();
   }
 
-  async function loadStatus() {
-    const s = await j('/status');
-    document.getElementById('banner').innerHTML = s.hostKeys.ephemeral
-      ? '<div class="banner">Host-key store is not persistent -- key changes will not be detected across a restart.</div>'
-      : '';
-  }
-
   function render(nodes) {
     const root = document.getElementById('fleet');
     root.textContent = '';
     for (const n of nodes) {
       const st = state.get(n.name) ?? {};
-      const p = st.probe ?? {};
-      const stage = p.stage ?? 'unknown';
       const card = $({ className: 'node' });
 
       const head = $({ className: 'head' });
       head.append(
         $({ className: 'name', textContent: n.name }),
-        $({ className: `stage s-${stage}`, textContent: stage }),
-        $({ className: 'meta', textContent: n.address || '(no address)' }),
+        $({ className: 'meta', textContent: `${n.role}${n.host ? ' -- ' + n.host : ''}` }),
       );
       card.append(head);
-
-      const bits = [];
-      if (p.fleetImage?.IMAGE) bits.push(`image ${p.fleetImage.IMAGE}`);
-      if (p.checkoutHead) bits.push(`checkout ${p.checkoutHead}${p.checkoutDirty ? ' (dirty)' : ''}`);
-      if (p.containers?.length) bits.push(p.containers.map((c) => `${c.name}: ${c.status}`).join(', '));
-      if (bits.length) card.append($({ className: 'meta', textContent: bits.join(' -- ') }));
-      if (p.error) card.append($({ className: 'meta err', textContent: p.error }));
 
       const btns = $({ className: 'btns' });
       const mk = (label, action, primary) => {
         const b = document.createElement('button');
         b.textContent = label;
         if (primary) b.className = 'primary';
-        b.disabled = !n.enabled || !!st.busy;
+        b.disabled = !!st.busy;
         b.onclick = () => confirmThen(n.name, action);
         return b;
       };
@@ -121,45 +94,11 @@
     }
   }
 
-  /**
-   * Every action goes through this. It exists so an accidental bump on a phone screen cannot
-   * start anything -- there is always a deliberate second tap.
-   *
-   * The node is probed HERE and only here: the service does not touch the machines uninvited,
-   * so the current state is fetched at the moment you are already asking to act on it.
-   */
+  /** Every action confirms first, so a bump on a phone screen cannot start anything. */
   async function confirmThen(name, action) {
     document.getElementById('cTitle').textContent = `${action} ${name}?`;
     document.getElementById('cWhat').textContent = WHAT[action];
-    const stateEl = document.getElementById('cState');
-    stateEl.textContent = 'checking the node...';
-    stateEl.className = 'state';
     dlg.showModal();
-
-    let probe = null;
-    try {
-      probe = await j(`/nodes/${name}/probe`);
-      const st = state.get(name) ?? {};
-      st.probe = probe;
-      state.set(name, st);
-      render(await j('/nodes'));
-      if (probe.stage === 'unreachable') {
-        stateEl.textContent = probe.error;
-        stateEl.className = 'state err';
-      } else if (action === 'bootstrap' && probe.stage === 'ready') {
-        stateEl.textContent = 'This node is already set up. Bootstrap is for a freshly flashed card -- you probably want Update.';
-        stateEl.className = 'state warn';
-      } else if (action === 'update' && probe.stage !== 'ready') {
-        stateEl.textContent = `This node is '${probe.stage}' -- it has not been bootstrapped, so there is nothing to update.`;
-        stateEl.className = 'state warn';
-      } else {
-        stateEl.textContent = `Node is '${probe.stage}'.`;
-      }
-    } catch (e) {
-      stateEl.textContent = `could not reach it: ${e.message}`;
-      stateEl.className = 'state err';
-    }
-
     document.getElementById('cYes').onclick = () => { dlg.close(); run(name, action); };
     document.getElementById('cNo').onclick = () => dlg.close();
   }
@@ -185,8 +124,6 @@
       if (l.line.startsWith('[fleet-control] run ')) {
         es.close();
         st.busy = false;
-        // One probe at the end, so the card reflects the result of what you just ran.
-        try { st.probe = await j(`/nodes/${name}/probe`); } catch { /* leave the last known */ }
         state.set(name, st);
         render(await j('/nodes'));
       }
@@ -194,8 +131,5 @@
     es.onerror = () => { es.close(); st.busy = false; };
   }
 
-  // Render the roster from config alone. NOTHING is probed until you ask for an action --
-  // the Zeros are not here to answer a dashboard.
-  await loadStatus();
   render(await j('/nodes'));
 </script>

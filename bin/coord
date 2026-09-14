@@ -54,7 +54,7 @@ usage() {
 Usage: coord <command> [args]
 
 Commands:
-  pull              Stop stack, pull images, start stack
+  pull [args]       Stop stack, pull images (args go to `compose pull`), start stack
   start [service...] docker compose up -d (no args: the full operational set)
   stop              docker compose stop (containers remain; a boot unit re-ups them)
   teardown          docker compose down (remove containers + networks)
@@ -85,9 +85,11 @@ shift || true
 
 case "${cmd}" in
 pull)
+	# Extra args go to `compose pull` (e.g. `coord pull -q` from an unattended driver: with no
+	# TTY compose re-emits the whole progress display several times a second).
 	require_compose_file
 	compose down
-	compose pull
+	compose pull "$@"
 	compose up -d
 	;;
 start)

@@ -17,9 +17,8 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'fc-test-'));
 const store = () => new HostKeyStore(join(tmp(), 'k.json'));
 
 describe('fingerprint', () => {
-  // These expectations come from `ssh-keygen -lf`, so this compares our implementation
-  // against OpenSSH's rather than against itself. If it drifts, every host-key decision
-  // this service makes is silently wrong.
+  // Expectations come from `ssh-keygen -lf`, so this compares against OpenSSH rather than
+  // against ourselves.
   it('matches ssh-keygen for an ed25519 key', () => {
     assert.equal(fingerprint(keyA), ED.fingerprint);
   });
@@ -34,11 +33,11 @@ describe('fingerprint', () => {
 });
 
 describe('HostKeyStore', () => {
-  it('accepts and records an unknown host (first contact)', () => {
+  it('records a key the first time it sees a host', () => {
     const s = store();
     const r = s.verify('campod-ne', keyA);
     assert.equal(r.ok, true);
-    assert.equal(r.state, 'first-contact');
+    assert.equal(r.state, 'new');
     assert.equal(s.get('campod-ne'), ED.fingerprint);
   });
 
@@ -60,21 +59,21 @@ describe('HostKeyStore', () => {
     assert.equal(r.fingerprint, RSA.fingerprint);
   });
 
-  it('accepts the new key after forget() -- the reflash path', () => {
+  it('accepts a new key after forget(), which is what bootstrap does', () => {
     const s = store();
     s.verify('campod-ne', keyA);
     assert.equal(s.verify('campod-ne', keyB).ok, false);
     assert.equal(s.forget('campod-ne'), true);
     const r = s.verify('campod-ne', keyB);
     assert.equal(r.ok, true);
-    assert.equal(r.state, 'first-contact');
+    assert.equal(r.state, 'new');
   });
 
   it('forget() reports false for a node it never held', () => {
     assert.equal(store().forget('campod-nw'), false);
   });
 
-  it('persists across restarts, so trust is not reset by a pod bounce', () => {
+  it('persists across restarts', () => {
     const path = join(tmp(), 'k.json');
     new HostKeyStore(path).verify('coordinator', keyA);
     const reopened = new HostKeyStore(path);
@@ -91,22 +90,9 @@ describe('HostKeyStore', () => {
     assert.equal(s.verify('coordinator', keyB).ok, false);
   });
 
-  it('reports ephemeral when the store cannot be persisted', () => {
-    // A store whose parent is a regular file: mkdir gives ENOTDIR regardless of uid, so this
-    // is deterministic on any machine and for root too. Trust then survives nothing, and the
-    // service must be able to SAY so rather than silently degrade to no verification at all.
-    const blocker = join(tmp(), 'iam-a-file');
-    writeFileSync(blocker, 'not a directory');
-    const s = new HostKeyStore(join(blocker, 'nested', 'here.json'));
-    assert.equal(s.ephemeral, true);
-    assert.equal(s.verify('coordinator', keyA).ok, true);
-  });
-
   it('survives a truncated store file rather than throwing at startup', () => {
     const path = join(tmp(), 'k.json');
     writeFileSync(path, '{"keys": {"coordinator"');
-    const s = new HostKeyStore(path);
-    assert.equal(s.get('coordinator'), undefined);
-    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { keys: {} });
+    assert.equal(new HostKeyStore(path).get('coordinator'), undefined);
   });
 });

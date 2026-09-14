@@ -1,17 +1,10 @@
-// SSH transport: connect to a fleet node, run a command, stream its output, get its exit code.
+// SSH transport: connect to a node, run a command, stream its output, return its exit code.
 //
-// Exit codes are the interface, not a detail. `host/one_time.sh` exits 1 to mean "I installed
-// a kernel/firmware change, reboot me and run me again" -- a NORMAL path, not a failure. Any
-// layer that collapses that to "nonzero means broken" makes a working bootstrap look broken,
-// which is the specific failure coordinator#236 calls out. So `exec` returns the code and
-// lets the caller decide.
-//
-// Output streams. `coord pull` moves hundreds of MB and takes minutes; buffering it until the
-// process exits gives the operator nothing to watch and no way to tell "slow" from "stuck".
-// Every exec emits lines as they arrive.
+// `exec` returns the code rather than throwing on nonzero: `one_time.sh` uses exit 1 to ask
+// for a reboot, so the caller decides what a code means.
 
 import { NodeSSH } from 'node-ssh';
-import type { FleetNode } from './inventory.js';
+import { hostOf, type FleetNode } from './inventory.js';
 import type { HostKeyStore, VerifyOutcome } from './hostkeys.js';
 
 export interface ExecResult {
@@ -24,10 +17,7 @@ export type LineSink = (stream: 'stdout' | 'stderr', line: string) => void;
 
 export class HostKeyMismatchError extends Error {
   constructor(readonly node: string, readonly presented: string, readonly expected: string) {
-    super(
-      `${node}: host key changed (presented ${presented}, expected ${expected}). ` +
-        `If you reflashed this card, forget its recorded key and retry; otherwise stop and investigate.`,
-    );
+    super(`${node}: host key changed (presented ${presented}, expected ${expected}).`);
     this.name = 'HostKeyMismatchError';
   }
 }
@@ -54,6 +44,8 @@ function lineSplitter(emit: (line: string) => void): { push(chunk: Buffer): void
 }
 
 export interface SessionOptions {
+  /** Login account, fleet-wide. */
+  user: string;
   privateKeyPath: string;
   hostKeys: HostKeyStore;
   /** Connect timeout, ms. */
@@ -73,11 +65,10 @@ export class NodeSession {
     let outcome: VerifyOutcome | undefined;
 
     await ssh.connect({
-      host: node.address,
-      username: node.user,
+      host: hostOf(node),
+      username: opts.user,
       privateKeyPath: opts.privateKeyPath,
       readyTimeout: opts.timeoutMs ?? 15_000,
-      // Sync verifier: ssh2 hands us the raw public-key blob and we answer yes/no.
       hostVerifier: (key: Buffer) => {
         outcome = opts.hostKeys.verify(node.name, key);
         return outcome.ok;
@@ -89,8 +80,6 @@ export class NodeSession {
       throw new HostKeyMismatchError(node.name, outcome.fingerprint, outcome.expected);
     }
     if (!outcome) {
-      // hostVerifier not invoked means we did not actually check. Fail rather than proceed
-      // on an assumption about ssh2's internals.
       ssh.dispose();
       throw new Error(`${node.name}: host key was never presented for verification`);
     }
@@ -151,12 +140,8 @@ export async function reachable(node: FleetNode, opts: SessionOptions): Promise<
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Reboot a node and wait for it to come back as a DIFFERENT boot.
- *
- * `priorBootId` closes the race that makes naive "wait for ssh" loops flaky: for the first
- * seconds after the reboot command the old system is still up and still answering, so a
- * reconnect can succeed against the host we are trying to restart and report success without
- * a reboot having happened. Comparing boot ids makes the check positive rather than temporal.
+ * Reboot and wait for the node to come back as a different boot. Comparing boot ids avoids
+ * reconnecting to the old system, which is still answering for a few seconds after the call.
  */
 export async function rebootAndWait(
   node: FleetNode,
@@ -191,9 +176,6 @@ export async function rebootAndWait(
     }
   }
   throw new Error(
-    `${node.name}: did not come back within ${Math.round(timeoutMs / 1000)}s of the reboot. ` +
-      `It may still be booting, or the boot may have failed -- a failed first boot powers the ` +
-      `board off (coordinator#236), which looks identical to a hang from here. Check HDMI on the ` +
-      `coordinator, serial on a campod.`,
+    `${node.name}: did not come back within ${Math.round(timeoutMs / 1000)}s of the reboot.`,
   );
 }
