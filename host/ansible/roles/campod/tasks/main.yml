@@ -97,10 +97,22 @@
 # booted without it would land the console on the mini-UART instead, and a getty
 # there would be the same problem with a different name. failed_when covers the
 # instance that does not exist on a given board.
-- name: Disable serial-getty so the console keeps streaming instead of prompting
+# MASK, not disable. `enabled: false` does not hold here and was the bug in the
+# first cut: systemd-getty-generator creates the want from console=ttyAMA0 in the
+# cmdline, in /run, at every boot AND every daemon-reload -- so it reappeared during
+# the very converge that disabled it. Verified on campod-se afterwards:
+#
+#   /run/systemd/generator.../getty.target.wants/serial-getty@ttyAMA0.service -> ...
+#   UnitFileState: enabled-runtime
+#
+# `systemctl disable` cannot remove a generator's want; there is no persistent
+# symlink to delete. A mask is a symlink to /dev/null that the generator's want
+# cannot override, which is why the same tool is right here as for the vendor
+# timers in roles/no-scheduled-maintenance.
+- name: Mask serial-getty so the console keeps streaming instead of prompting
   ansible.builtin.systemd:
     name: "{{ item }}"
-    enabled: false
+    masked: true
     state: stopped
   loop:
     - serial-getty@ttyAMA0.service
