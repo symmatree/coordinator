@@ -116,8 +116,16 @@ export async function bootstrap(
     throw new ActionError(`${node.name}: one_time.sh exited ${r.code}. Output above.`);
   }
 
-  await rebootAndWait(node, ctx.ssh, await withSession(node, ctx.ssh, (s) => s.bootId()), sink);
+  // Pull BEFORE the reboot. `one_time.sh` installs a boot unit that runs `coord start` on
+  // every boot (#256), which on a card that has never pulled fetches the whole set --
+  // unattended, and taking minutes. Pulling afterwards would race it, and `coord pull` runs
+  // `compose down` first, so it would tear down what the boot unit was mid-way through
+  // starting. Doing it here keeps the fetch attributable to this step.
   await mustDetached(node, ctx, 'coord-pull', 'coord pull -q', sink, 'coord pull');
+
+  // The closing reboot returns /usr to read-only, and now also checks that the stack comes
+  // back on its own -- with the images already local it needs no network.
+  await rebootAndWait(node, ctx.ssh, await withSession(node, ctx.ssh, (s) => s.bootId()), sink);
   await must(node, ctx, 'coord start', sink, 'coord start');
   note(sink, `${node.name} bootstrapped`);
 }

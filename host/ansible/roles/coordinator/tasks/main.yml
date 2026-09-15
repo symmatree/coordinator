@@ -55,10 +55,25 @@
 #
 # Still ours, because none of these is /boot/firmware: turning off the serial
 # gettys, installing i2c-tools, and LOADING i2c-dev (below).
-- name: Disable serial-getty on the FC UART
+# MASK, not disable -- and here the stakes are higher than on a campod. This UART
+# is the FC link. A getty on it does not just occupy the port, it WRITES: a login
+# banner and prompt injected into the MAVLink stream the flight controller is
+# reading. `enabled: false` is a persistent symlink removal, and two things defeat
+# it. A package upgrade re-applying the systemd preset can put it back, the same
+# way it would for a timer. And if a console= ever returns to this cmdline -- a
+# debugging session, a role change -- systemd-getty-generator creates the want in
+# /run at every boot and daemon-reload, which no `disable` can remove. That is not
+# hypothetical: it is exactly what happened on campod-se, where the generator
+# recreated the want during the same converge that disabled it.
+#
+# Today the generator has nothing to act on here, because roles/coordinator.env
+# sets CMDLINE_REMOVE=console=serial0,* with no append, so a coordinator card has
+# no serial console at all. Masking costs nothing and does not depend on that
+# staying true.
+- name: Mask serial-getty on the FC UART
   ansible.builtin.systemd:
     name: "{{ item }}"
-    enabled: false
+    masked: true
     state: stopped
   loop:
     - serial-getty@ttyAMA0.service
