@@ -250,8 +250,29 @@ def _wait_for_camera():
     return None
 
 
+def _node_name():
+    """The node this is running on.
+
+    NOT socket.gethostname() first: in a container that is the container ID, which changes on
+    every recreate -- so captures would scatter across directories instead of collecting under
+    one name. /etc/host-hostname is the host's own, bind-mounted read-only by the stack file.
+    The env var stays as an override; gethostname is a last resort that only applies outside a
+    container.
+    """
+    override = os.getenv("CAMPOD_NODE_NAME")
+    if override:
+        return override
+    try:
+        name = Path("/etc/host-hostname").read_text(encoding="utf-8").strip()
+        if name:
+            return name
+    except OSError:
+        pass
+    return socket.gethostname()
+
+
 def main():
-    node = os.getenv("CAMPOD_NODE_NAME") or socket.gethostname()
+    node = _node_name()
     out_dir = Path(os.getenv("CAMPOD_CAPTURE_DIR", "/captures"))
     hz = _env_float("CAMPOD_CAPTURE_HZ", 1.0)
     width = _env_int("CAMPOD_CAPTURE_WIDTH", 0)

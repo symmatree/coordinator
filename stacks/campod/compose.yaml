@@ -37,8 +37,12 @@ services:
       - /var/lib/campod/captures:/captures
       - /var/lib/campod/config:/config:ro
       - /run/udev:/run/udev:ro
+      # The node's own name. A container's hostname is its container ID, which is both
+      # meaningless and different after every recreate, so the readers cannot just ask.
+      # Mounting this makes the host the single source of truth and is identical on all four
+      # pods -- there is no per-unit value in this file to get wrong, which was the bug.
+      - /etc/hostname:/etc/host-hostname:ro
     environment:
-      CAMPOD_NODE_NAME: campod-sw
       CAMPOD_CAPTURE_HZ: "1.0"
       # 0 = sensor full resolution (IMX708 4608x2592)
       CAMPOD_CAPTURE_WIDTH: "0"

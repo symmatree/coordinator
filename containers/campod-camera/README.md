@@ -49,7 +49,7 @@ the same vibration writes **2.4x more bands** here. Binning is a lever if it eve
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `CAMPOD_NODE_NAME` | hostname | label in filenames + metadata |
+| `CAMPOD_NODE_NAME` | the **host's** name, read from `/etc/host-hostname` | label in filenames + metadata. Not the container's hostname, which is its container ID and changes on every recreate -- the stack file bind-mounts the host's `/etc/hostname` so both readers can see it |
 | `CAMPOD_CAPTURE_DIR` | `/captures` | output dir (bind of `/var/lib/campod/captures`) |
 | `CAMPOD_CAPTURE_HZ` | `1.0` | captures per second |
 | `CAMPOD_CAPTURE_WIDTH` / `_HEIGHT` | `0` | `0` = sensor full resolution (4608x2592) |

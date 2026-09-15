@@ -28,6 +28,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -58,6 +59,20 @@ func envInt(k string, def int) int {
 	return def
 }
 
+// nodeName is the host's name, not the container's. os.Hostname() in a container returns the
+// container ID, which changes on every recreate, so captures would scatter across directories
+// instead of collecting under one name. /etc/host-hostname is bind-mounted read-only by the
+// stack file; os.Hostname is a last resort that only applies outside a container.
+func nodeName() string {
+	if b, err := os.ReadFile("/etc/host-hostname"); err == nil {
+		if n := strings.TrimSpace(string(b)); n != "" {
+			return n
+		}
+	}
+	h, _ := os.Hostname()
+	return h
+}
+
 func loadConfig() config {
 	c := config{
 		dir:       os.Getenv("CAMPOD_ACCEL_DIR"),
@@ -73,8 +88,7 @@ func loadConfig() config {
 		c.dir = "/captures"
 	}
 	if c.node == "" {
-		h, _ := os.Hostname()
-		c.node = h
+		c.node = nodeName()
 	}
 	if c.session == "" {
 		c.session = time.Now().UTC().Format("20060102T150405Z")
