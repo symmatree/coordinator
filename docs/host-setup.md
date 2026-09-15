@@ -79,7 +79,9 @@ it exists. Its absence presents confusingly -- `coord` reports *no stack*, not *
 sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/symmatree/coordinator.git
 cd coordinator
-./host/one_time.sh              # 'coordinator' is the default role
+# from any machine that can reach it; 'coordinator' is the default role
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
+  -e device_role=coordinator -e manage_checkout=true
 ```
 
 Re-run it after any reboot it asks for, until it exits clean. It is idempotent.
@@ -106,9 +108,9 @@ coord start
 |---|---|
 | `stacks/coordinator/compose.yaml` (config lives in it -- there is no `.env`) | `git pull && coord start` |
 | A container image (new build on `main`) | `coord pull` |
-| An Ansible role, `bin/coord`, udev, or the boot unit | `./host/one_time.sh`, reboot if asked, re-run |
+| An Ansible role, `bin/coord`, udev, or the boot unit | re-run `site.yaml` against the device; it reboots and waits if anything needs it |
 | Anything in `config.txt` / `cmdline.txt` | **reflash** -- the image owns it |
-| OS packages | `./host/os_upgrade.sh` -- deliberate, never part of a config deploy |
+| OS packages | `host/ansible/os-upgrade.yaml` -- deliberate, never part of a config deploy |
 
 `coord pull` runs `compose down` first, so it is a full stop of the stack, not a rolling
 update. Fine on the bench; not something to do on a hot vehicle.
@@ -139,7 +141,7 @@ update. Fine on the bench; not something to do on a hot vehicle.
 | FC link silent or garbled | `ls -l /dev/serial0` should be `ttyAMA0`; mini-UART garbles because `arm_boost=1` moves the VPU clock |
 | MAVLink stream corrupt on an unknown card | `cat /proc/cmdline` -- `console=serial0` together with `enable_uart=1` puts console bytes on the FC's port. The current image makes this combination impossible |
 | Node is set up but not at head | `cat /etc/fleet-image` -- config converges over SSH, but the image only changes by reflashing |
-| `sh1106-display` will not start | `ls /dev/i2c-1`. If absent, `i2c-dev` is not loaded: the image's `dtparam=i2c_arm=on` binds the controller but not the char-device interface. A compose `devices:` entry for a missing node fails the container, so this presents as a broken display service. `./host/one_time.sh` loads it |
+| `sh1106-display` will not start | `ls /dev/i2c-1`. If absent, `i2c-dev` is not loaded: the image's `dtparam=i2c_arm=on` binds the controller but not the char-device interface. A compose `devices:` entry for a missing node fails the container, so this presents as a broken display service. Running `site.yaml` loads it |
 
 ## Related
 

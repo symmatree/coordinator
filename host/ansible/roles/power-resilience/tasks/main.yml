@@ -104,7 +104,8 @@
   block:
     - name: Install coord-throttle-log helper
       ansible.builtin.copy:
-        src: "{{ repo_root }}/bin/coord-throttle-log"
+        remote_src: true
+        src: "{{ coord_checkout }}/bin/coord-throttle-log"
         dest: /usr/local/bin/coord-throttle-log
         mode: "0755"
 

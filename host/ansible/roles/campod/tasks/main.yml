@@ -144,9 +144,11 @@
   # is_valid_ether_addr() rejects, so a malformed value is indistinguishable from
   # not having set one.
   #
-  # ansible_hostname, NOT inventory_hostname: this playbook runs with
-  # `-i localhost, --connection=local`, so inventory_hostname is "localhost" on
-  # every unit and would hand the whole fleet the same address.
+  # ansible_hostname, NOT inventory_hostname. ansible_hostname is a fact gathered
+  # FROM THE TARGET, so it is the device's real hostname however the play is
+  # driven. inventory_hostname is whatever the inventory called it, which for an
+  # ad-hoc `-i '10.0.2.49,'` run is an IP address -- and hashing an IP into the
+  # gadget MACs would make a card's identity depend on its DHCP lease.
   ansible.builtin.set_fact:
     campod_dev_addr: >-
       02:{{ (('campod-dev:' + ansible_hostname) | hash('sha256'))[0:10]
@@ -214,7 +216,8 @@
   notify: Reload NetworkManager connections
 
 # modules-load.d only takes effect at boot, and nothing here touches config.txt,
-# so nothing sets /var/run/reboot-required and one_time.sh exits clean. Without
+# so nothing here sets /var/run/reboot-required and the play does not reboot.
+# Without
 # this the bootstrap reports success and the gadget link is simply not up until
 # somebody happens to reboot -- with no message saying so. Load it now instead.
 #

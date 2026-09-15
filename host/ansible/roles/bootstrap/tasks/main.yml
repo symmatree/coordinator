@@ -1,0 +1,90 @@
+---
+# Get a device from "freshly flashed and reachable by SSH" to "ready for the rest
+# of this playbook". This used to be host/one_time.sh, in bash, because ansible
+# could not be the thing that installed ansible.
+#
+# It is a role now because the control node is no longer the device. Everything
+# ansible needs on a virgin card is already in the image -- python3, sudo with
+# passwordless, sshd -- so a just-flashed unit is manageable over SSH with nothing
+# installed on it first, and the bootstrap ordering problem stops existing rather
+# than being worked around.
+
+# --- /usr read-write ---------------------------------------------------------
+# /usr ships read-only and every apt task in this playbook writes to it. That is
+# correct for almost the whole life of a card: the device runs off the avionics
+# 5 V rail where every shutdown is a yank, and an unwritable /usr cannot be
+# corrupted mid-cut. Installing packages is the rare exception.
+#
+# Ordering is why this belongs here rather than in a shell script. In bash these
+# steps had to be survived in sequence; declared as tasks, the hatch simply comes
+# before the things that need it.
+- name: Read the /usr mount options
+  ansible.builtin.command: findmnt -n -o OPTIONS /usr
+  register: bootstrap_usr_opts
+  changed_when: false
+  failed_when: false
+  # Runs in --check too: it is a read-only probe, and without this the register is
+  # unset under --check and every task keyed on it errors -- which would make a dry
+  # run impossible for the one thing most worth dry-running (#236's service).
+  check_mode: false
+
+- name: Remount /usr read-write
+  # A dpkg unpack against a read-only /usr fails PARTWAY THROUGH and leaves
+  # packages half-installed (iHR), so this is not a clean refusal to recover from.
+  # Measured on the coordinator during bring-up.
+  ansible.builtin.command: mount -o remount,rw /usr
+  when: bootstrap_usr_opts.stdout is search('(^|,)ro(,|$)')
+  changed_when: true
+  register: bootstrap_usr_remount
+
+- name: Note that /usr is left writable until a reboot
+  # `remount,ro` cannot succeed on a running system -- "mount point is busy",
+  # exit 32, measured on the coordinator. A reboot is the only thing that closes
+  # it, and the reboot at the end of this play is what does so. Said out loud
+  # because a silently-writable /usr is exactly the kind of drift nobody notices.
+  ansible.builtin.debug:
+    msg: >-
+      /usr was remounted read-write for this run and cannot be set back while the
+      system runs. The reboot at the end of this play restores it.
+  when: bootstrap_usr_remount is changed
+
+# --- prerequisites -----------------------------------------------------------
+# git is the only one of these missing from the image, and it is needed because
+# /opt/stacks/<role> symlinks into a git checkout -- `git pull` IS the config
+# deploy (#48). ca-certificates and curl are already present; named so a different
+# base cannot quietly drop them.
+#
+# Note what is NOT here: ansible. With the control node off the device there is
+# nothing to bootstrap it onto, which is what removed the last ordering problem --
+# previously `apt install git` had to precede the clone, while the helper that
+# made /usr writable lived inside the repo that clone produced.
+- name: Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - git
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == "Debian"
+  # Registered so site.yaml's reboot can key on whether anything was actually
+  # installed. Registered vars are host facts for the whole play, so they are
+  # visible from post_tasks even though they are set inside a role.
+  register: bootstrap_prereqs
+
+# --- the checkout ------------------------------------------------------------
+# /opt/stacks/<role> is a symlink into this, so it has to exist on the device and
+# `git pull` is how a merged change reaches the box (#48).
+#
+# Defaulted OFF. An operator mid-edit on the device would have their working tree
+# reset without being asked, which is the rudest thing this playbook could do. Turn
+# it on for a fresh card: -e manage_checkout=true
+- name: Ensure the checkout exists
+  ansible.builtin.git:
+    repo: "{{ coord_repo_url }}"
+    dest: "{{ coord_checkout }}"
+    version: "{{ coord_repo_version }}"
+    update: true
+  become: false
+  when: manage_checkout | bool

@@ -9,7 +9,7 @@ lives in the docs it points at.
 
 > **Naming.** The device is a **campod**, everywhere: hostnames (`campod-ne` ...), the
 > ansible role, `stacks/campod/`, `/opt/stacks/campod`, `/var/lib/campod`, `CAMPOD_*` env,
-> `one_time.sh campod`, `containers/campod-camera`, and the image role in `dotfiles-symm`.
+> `device_role=campod`, `containers/campod-camera`, and the image role in `dotfiles-symm`.
 >
 > A bare "pod" already denoted three other things -- the Kubernetes object, this repo's
 > ansible role, and (per [campod.md](campod.md)) the physical arm
@@ -27,7 +27,7 @@ lives in the docs it points at.
 > Done now while nothing is deployed and no captures exist; after four units are stamped
 > and capturing it is the divergence above.
 >
-> **The role now fails rather than diverging.** `one_time.sh campod` checks whether
+> **The role now fails rather than diverging.** The campod role checks whether
 > anything is mounted at `/var/lib/pod` and stops if so, because that means the card was
 > flashed from an image predating the rename while the checkout is from after it. The
 > symptom it prevents is silent: `findmnt /var/lib/campod` showing `@var` instead of
@@ -53,7 +53,7 @@ status -- so they share one operator model rather than maintaining two parallel 
 |--------------|--------------------|
 | `bin/coord` | One stack-aware CLI. Each device runs only its own stack under `/opt/stacks/*`; `coord` defaults to the sole installed stack. |
 | `host/ansible/roles/docker-host` | Docker engine, group, state dirs -- identical on Pi 4B and Pi Zero. |
-| `host/one_time.sh [coordinator\|campod]` | One bootstrap entrypoint; the role argument selects the device. |
+| `host/ansible/site.yaml` | One playbook, driven over SSH; `-e device_role=` selects the device. |
 | `/opt/stacks/<name>` | Both devices lay their one stack there. |
 
 Device-specific code stays small: `roles/campod`, `containers/campod-camera/`, `stacks/campod/`.
@@ -140,10 +140,12 @@ uname -m                      # expect aarch64
 sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/symmatree/coordinator.git
 cd coordinator
-./host/one_time.sh campod
+# from any machine that can reach it
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
+  -e device_role=campod -e manage_checkout=true
 ```
 
-`one_time.sh campod` installs Ansible, then runs the shared playbook with
+The playbook runs with
 `device_role=campod`:
 
 1. `docker-host` role -- Docker CE + Compose plugin, docker group, service enabled.
@@ -180,7 +182,7 @@ coord status                  # empty until `coord start`
 ```
 
 `/dev/spidev0.*` missing means the card's `config.txt` has no `dtparam=spi=on` -- see the
-note above. Re-running `one_time.sh campod` will not fix it; that line comes from the image.
+note above. Re-running the playbook will not fix it; that line comes from the image.
 
 ### 4. Wire the sensors
 
@@ -258,7 +260,7 @@ Re-run the bootstrap only when the **host** changes -- a new role task, a new co
 entry, a Docker or Ansible bump:
 
 ```bash
-./host/one_time.sh campod        # re-run after any reboot it asks for, until clean
+# re-run the playbook; it reboots and waits if anything needs it
 ```
 
 It is idempotent; running it when nothing changed is cheap and safe.
@@ -268,8 +270,9 @@ It is idempotent; running it when nothing changed is cheap and safe.
 | `stacks/campod/compose.yaml` | `git pull && coord start` |
 | A container image (new build on `main`) | `coord pull` |
 | `containers/campod-camera/*` merged upstream | `coord pull` (CI builds it; never build on the Zero) |
-| An Ansible role, or anything in `/boot/firmware/config.txt` | `./host/one_time.sh campod`, reboot, re-run |
-| OS packages | `./host/os_upgrade.sh` -- deliberate, not part of a config deploy |
+| An Ansible role | re-run `site.yaml` against the device |
+| Anything in `/boot/firmware/config.txt` | reflash -- the image is the only writer of that partition |
+| OS packages | `host/ansible/os-upgrade.yaml` -- deliberate, not part of a config deploy |
 
 **Never build on the Zero.** CI builds arm64 and the Zero pulls. 512 MB of RAM is the
 binding constraint on this device and a build will not fit.
@@ -291,8 +294,8 @@ across reboots, disable the unit (`systemctl disable --now campod-stack.service`
 |---------|-------|
 | `exec format error` | wrong artifact flashed -- confirm it is the campod image, not a stock card. (The campod image is always arm64, so this cannot come from picking a 32-bit variant; there isn't one.) |
 | `permission denied` on `docker ps` | `newgrp docker` or re-login (not a reboot) |
-| `one_time.sh` exits 1, reboot-required set | reboot, run it again -- expected at least once on a fresh card |
-| `accel: ... does not exist -- is dtparam=spi=on set?` | `ls /dev/spidev*`; if empty, reboot and re-run `one_time.sh campod` |
+| Play reports it rebooted the device | expected on a fresh card -- the `/usr` hatch and any kernel change both need one, and the play waits for the device to return |
+| `accel: ... does not exist -- is dtparam=spi=on set?` | `ls /dev/spidev*`; if empty the card predates that image line -- reflash |
 | `accel: DEVID 0x00, expected 0xE5` | wiring, chip select, or SPI mode -- the bus is reaching nothing |
 | `accel: self-test FAIL` | sensor is talking but not moving: cold joint on a supply pin, or a dead part |
 | `capture: WARNING could not pin exposure` | container libcamera predates the exposure/gain mode split (needs >= 0.4). Check `RPI_SUITE` matches **the campod image's pinned suite** -- `dotfiles-symm/pi-image/build-image.sh`, currently Bookworm -- not whatever Pi OS ships today |
@@ -370,12 +373,12 @@ bridge), [#24](https://github.com/symmatree/coordinator/issues/24) (campod gadge
 
 **What comes from where.** The image supplies exactly one thing: the
 `dtoverlay=dwc2,dr_mode=peripheral` line, because it is device tree and nothing in userspace
-can substitute for it. Everything else is `roles/campod`, applied by `one_time.sh campod` -- so a
+can substitute for it. Everything else is `roles/campod`, applied by the playbook -- so a
 gadget-net change is a `git pull` and a bootstrap re-run, not a reflash.
 
 The bootstrap loads `g_ether` itself rather than leaving it for the next boot, so the link
-comes up in the same run. Both ends need their own bootstrap: `one_time.sh campod` on each
-campod, `one_time.sh` on the coordinator for the bridge. The coordinator side needs no
+comes up in the same run. Both ends need their own run: `device_role=campod` against each
+campod, `device_role=coordinator` for the bridge. The coordinator side needs no
 reboot -- the handler reloads NetworkManager.
 
 Everything in userspace is `roles/campod`:

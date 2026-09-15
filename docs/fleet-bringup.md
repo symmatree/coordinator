@@ -75,39 +75,31 @@ a service was assumed to do.
 
 ### The sequence
 
+Driven from any machine that can reach the device. A freshly flashed card needs nothing
+installed on it first -- `python3`, `sudo` with passwordless and sshd are all in the image --
+so this runs against a virgin unit:
+
 ```bash
-# 1. /usr ships read-only, so installing anything needs the remount first. This
-#    is the only step one_time.sh cannot do for you, for the ordinary reason that
-#    you do not have it yet.
-sudo mount -o remount,rw /usr
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git
-
-# 2. Clone and converge. one_time.sh does the rest behind the same remount --
-#    ansible, then docker-ce via the playbook. Exits 0; /usr is already rw from
-#    step 1, so the script's own hatch never opens and never asks for a reboot.
-git clone https://github.com/symmatree/coordinator.git
-cd coordinator && ./host/one_time.sh <coordinator|campod>
-
-# 3. Reboot. Nothing asks for this, and it is still the right way to finish: a
-#    reboot is the only thing that returns /usr to read-only (`remount,ro` on a
-#    live system is refused -- `mount point is busy`, exit 32, measured), and it
-#    doubles as the test that the stack comes back up on its own.
-sudo systemctl reboot
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
+  -e device_role=<coordinator|campod> -e manage_checkout=true
 ```
 
-Not git-specific: `/usr` is read-only for every package and git is simply the first one needed.
-Not a defect either -- it is the ordering consequence of the device bootstrapping itself, so a
-driver coming in from outside ([#236](https://github.com/symmatree/coordinator/issues/236)'s
-service, or any machine) performs step 1 as an ordinary step rather than inheriting a problem.
-Whether to move the Ansible control node off the device is the open question there.
+A bare `'<addr>,'` is a valid inventory, so no inventory file and no DNS are needed. The play
+remounts `/usr` read-write, installs the prerequisites, creates the checkout, converges the
+device, and reboots and waits if anything requires it.
+
+**This replaced `host/one_time.sh`, which no longer exists.** That script was necessary only
+because a device bootstrapping *itself* cannot use ansible to install ansible, so the
+remount-then-apt ordering had to be survived in bash before the playbook could start. Driving
+from outside removes the ordering problem rather than working around it, and removed
+`host/lib/usr-rw.sh` with it -- the `/usr` hatch is a task in `roles/bootstrap` now, ordered
+before the things that need it.
 
 ### What the reboot loop actually did
 
 **Nothing** -- and that is the finding. No package on either unit ever set
-`/var/run/reboot-required`; no kernel, firmware or module install happened. `one_time.sh` asks
-for a reboot only when *it* had to open the `/usr` hatch, which in the sequence above it never
-does, because step 1 already left `/usr` writable.
+`/var/run/reboot-required`; no kernel, firmware or module install happened. The only thing that
+wanted a reboot was the `/usr` hatch, which cannot be closed on a running system.
 
 So the "reboot and re-run until clean" loop the script documents did not occur, and the reboot
 in step 3 is there to close the hatch rather than because anything demanded it.

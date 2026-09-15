@@ -1,16 +1,27 @@
 ---
-# Shared host bootstrap for Rekon devices. One entry point; device_role selects
-# the device-specific role layered on top of the shared docker-host role.
+# Host bootstrap and config convergence for Rekon devices. One entry point;
+# device_role selects the device-specific role layered on the shared docker-host.
 #
-#   Coordinator (Pi 4B):  ansible-playbook host/ansible/site.yaml -e device_role=coordinator
-#   Campod (Pi Zero 2 W):    ansible-playbook host/ansible/site.yaml -e device_role=campod
+# DRIVEN FROM ANOTHER MACHINE, over SSH. A freshly flashed card needs nothing
+# installed on it first -- python3, sudo with passwordless and sshd are all in the
+# image -- so this works against a virgin unit:
 #
-# Normally invoked via host/one_time.sh [coordinator|campod] (sets sync_repo=true).
-# Coordinator behavior is identical to the former install-coordinator.yaml.
+#   ansible-playbook host/ansible/site.yaml -i '10.0.2.49,' -u pi \
+#     -e device_role=campod -e manage_checkout=true
+#
+# A bare "address," is a valid inventory, so no inventory file and no DNS are
+# required to run it. Pass a real -i inventory when driving more than one device.
+#
+# This replaced host/one_time.sh. That script existed because a device bootstrapping
+# ITSELF cannot use ansible to install ansible, so the remount-then-apt ordering had
+# to be survived in bash first. Driving from outside deletes that problem rather
+# than working around it, which also removed host/lib/usr-rw.sh -- the /usr hatch is
+# now a task in roles/bootstrap, ordered before the things that need it.
+#
+# In-place OS upgrade is a separate deliberate playbook: host/ansible/os-upgrade.yaml.
 
 - name: Rekon host bootstrap
-  hosts: localhost
-  connection: local
+  hosts: all
   become: true
   vars_files:
     # The gadget-net contract, read by both device roles so the two halves cannot
@@ -18,11 +29,69 @@
     - vars/gadget-net.yml
   vars:
     device_role: coordinator
-    sync_repo: false
-    repo_root: "{{ playbook_dir | dirname | dirname }}"
+
+    # Only the PLAYBOOK comes from the control node. Everything else -- bin/coord,
+    # the VIO tools, coord-throttle-log -- is copied from the TARGET's own checkout
+    # with remote_src, so it can never be shipped independently of the stack config
+    # it manages.
+    #
+    # The asymmetry is irreducible rather than untidy: you cannot fetch the playbook
+    # from a target you have not cloned yet, and the playbook is what does the
+    # cloning. Everything after the clone can and should come from the target.
+    #
+    # This also means the control node needs only host/ansible/**, not the repo --
+    # which is what the cluster container has to carry.
+    #
+    # coord_repo_version is the hook for pinning: it floats at main today, and when
+    # there are named releases worth pinning to, the control node clones a specified
+    # version rather than whatever main happens to be.
+    coord_checkout: "/home/{{ ansible_user | default('pi') }}/coordinator"
+
+    # Creating the checkout is what removes the last bootstrap ordering problem.
+    # Off by default so an operator's working tree is never reset under them.
+    manage_checkout: false
+    coord_repo_url: https://github.com/symmatree/coordinator.git
+    coord_repo_version: main
+
+    # Was lookup('env','USER'), which resolves on the CONTROL NODE -- remotely that
+    # would add the driver's username to the device's docker group.
     docker_users:
-      - "{{ lookup('env', 'USER') }}"
+      - "{{ ansible_user | default('pi') }}"
+
+    # From outside, ansible can reboot the target AND WAIT, so the old
+    # "exit 1, reboot, run it again" dance collapses into one play. #113 had to
+    # remove auto-reboot precisely because it ran locally, where ansible refuses to
+    # reboot its own control node.
+    allow_reboot: true
+
   pre_tasks:
+    # Refuse --check rather than leaving it available and dangerous.
+    #
+    # Check mode skips every `command` task, which here is the quiesce below, the
+    # image pull, the stack start, and every probe that registers a result and
+    # keys off its rc. So a dry run cannot exercise the half of this play that
+    # matters -- while still costing a full apt index refresh and fact gather on a
+    # device that has no slack for it. Measured: a --check run on campod-se with
+    # collection still up drove the box to stop servicing SSH for 20 minutes.
+    #
+    # The alternative was `check_mode: false` on the quiesce so a dry run stops
+    # collection too. Rejected: the trailing `coord start` is also a command task
+    # and would still skip, so --check would stop collection and leave it stopped.
+    # Fixing that needs both tasks marked, and then any future edit to either one
+    # reintroduces the half that leaves a pod dark.
+    #
+    # `--syntax-check` still validates structure and never connects to a device,
+    # which is what a dry run is actually useful for here.
+    - name: Refuse check mode
+      ansible.builtin.fail:
+        msg: >-
+          This play does not support --check. Check mode skips every command task
+          (the capture quiesce, the image pull, the stack start), so it cannot
+          validate what matters, while still costing a full apt refresh on a Pi
+          Zero -- which has been measured to make the device stop answering SSH.
+          Use --syntax-check to validate structure, or run the play for real.
+      when: ansible_check_mode
+
     # Stop data collection before converging, and let the converge have the
     # device to itself. A software update is a bench operation on wall power, so
     # the capture gap is intentional.
@@ -76,6 +145,7 @@
         - coord_stack_compose.stat.exists
 
   roles:
+    - role: bootstrap
     - role: docker-host
     # Unconditional, like docker-host: both device roles sit on the same power
     # rail and the same SD medium, so neither has a reason to be blind. Metrics
@@ -89,17 +159,62 @@
     - role: campod
       when: device_role == 'campod'
   post_tasks:
-    - name: Re-check reboot required after possible reboot
+    # Reboot when anything asked for one -- a kernel/firmware/module install, or
+    # the /usr hatch this play opened. From outside we can reboot and wait, so the
+    # device ends the play in the state it should be in rather than telling someone
+    # to go and finish the job.
+    - name: Check whether a reboot is pending
       ansible.builtin.stat:
         path: /var/run/reboot-required
-      register: reboot_required_final
+      register: bootstrap_reboot_required
 
-    - name: Bootstrap complete
+    # Reboot only when this run actually did something.
+    #
+    # The naive condition was "reboot if we remounted /usr", and /usr is read-only
+    # on every boot, so that fires on EVERY run -- meaning a re-run against an
+    # already-converged device would change nothing and then bounce the hardware.
+    # For something a pre-flight button triggers, that is the wrong default.
+    #
+    # So: reboot if a package asked for one (reboot-required), or if we opened the
+    # /usr hatch AND something was actually installed behind it. A genuine no-op
+    # run leaves /usr writable until the next boot, which is the lesser cost --
+    # and the next boot closes it regardless of whether anyone asks.
+    - name: Reboot and wait for the device to come back
+      ansible.builtin.reboot:
+        msg: Rekon bootstrap -- applying kernel/firmware/module changes and restoring read-only /usr
+      when:
+        - allow_reboot | bool
+        # ansible.builtin.reboot refuses under connection=local rather than
+        # rebooting its own control node, and it would refuse at the LAST task --
+        # after the device is already converged -- so the play would report failure
+        # on a device that is fine. Skip instead and say so below.
+        - ansible_connection | default('ssh') != 'local'
+        # Reboot if a package asked for one, OR if we opened the /usr hatch --
+        # which in practice means every run, because /usr comes back read-only at
+        # every boot so the remount always fires. That is deliberate.
+        #
+        # This used to additionally require that apt had actually installed
+        # something, to avoid rebooting a no-op converge. Measured consequence on
+        # campod-se: the apply installed nothing, so no reboot fired, so /usr was
+        # left WRITABLE with no marker and no warning -- while the bootstrap role's
+        # own message said "the reboot at the end of this play restores it". The
+        # invariant silently did not hold and the operator was told it did.
+        #
+        # Rebooting every converge is cheaper than an invariant that is true only
+        # conditionally, and a converge is a bench operation anyway.
+        - >-
+          bootstrap_reboot_required.stat.exists
+          or (bootstrap_usr_remount is defined and bootstrap_usr_remount is changed)
+
+    - name: Report what the device ended up in
       ansible.builtin.debug:
         msg: >-
-          Host bootstrap finished (device_role={{ device_role }}).
-          {% if reboot_required_final.stat.exists %}
-          Reboot still required (/var/run/reboot-required). Reboot, then run ./host/one_time.sh {{ device_role }} again.
+          {{ inventory_hostname }} converged (device_role={{ device_role }}).
+          {% if allow_reboot | bool and ansible_connection | default('ssh') != 'local' %}
+          Rebooted, which is what restores read-only /usr; the boot unit brings the
+          stack back up.
           {% else %}
-          No pending kernel/firmware reboot. Use newgrp docker or re-login once if docker permission denied.
+          NOT rebooted{% if ansible_connection | default('ssh') == 'local' %} (connection is local, so ansible will not
+          reboot its own control node){% endif %} -- reboot manually if /usr must return to
+          read-only or a kernel change is pending.
           {% endif %}
