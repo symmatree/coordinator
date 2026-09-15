@@ -26,6 +26,20 @@
 - name: Rekon host bootstrap
   hosts: all
   become: true
+  # Deliberately off, so the capture quiesce in pre_tasks runs FIRST. Automatic
+  # gathering happens before pre_tasks, which meant the heaviest thing in the play
+  # ran while the payload was still writing -- the opposite of the intended order.
+  #
+  # Measured on campod-se 2026-09-15: the converge's own startup coincided with a
+  # whole-box stall. coord-throttle-log fires every 35s and logged at 15:00:10,
+  # 15:00:45, 15:01:20, 15:01:55, 15:02:30, 15:03:05, 15:03:40 -- then nothing
+  # until 15:07:33. A systemd timer missed six firings, so this is the whole
+  # system stalling, and it began BEFORE `coord stop` was invoked at 15:04:10.
+  # The three trivial stat tasks ahead of it took 21 seconds between them.
+  #
+  # Facts are gathered explicitly below, after the quiesce, and only the ones this
+  # playbook reads.
+  gather_facts: false
   vars_files:
     # The gadget-net contract, read by both device roles so the two halves cannot
     # drift apart. See the file for why it is not in each role's defaults.
@@ -168,6 +182,32 @@
       when:
         - coord_cli.stat.exists
         - coord_stack_compose.stat.exists
+
+    # Only the facts this playbook actually reads. Grepped, not guessed: the whole
+    # play references exactly five gathered facts -- ansible_hostname,
+    # ansible_os_family, ansible_distribution, ansible_distribution_release and
+    # ansible_architecture. Everything else that looks like a fact
+    # (ansible_user, ansible_connection, ansible_check_mode) is a connection or
+    # magic var and needs no gathering at all.
+    #
+    # A full gather collects 99 facts; this collects 24 and all five are present.
+    # The 75 we drop include the ones that actually touch hardware:
+    # ansible_devices runs lsblk, ansible_mounts stats every mount -- and this card
+    # carries seven btrfs subvolumes plus docker's overlays -- and the network
+    # subset walks every veth and bridge docker has created. Those are the
+    # plausible candidates for the stall above, on a 416 MB box with no swap.
+    #
+    # If a future task needs another fact, add its subset here. Ansible will fail
+    # on the undefined variable rather than silently misbehave, which is the right
+    # failure.
+    - name: Gather only the facts this playbook reads
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - '!min'
+          - architecture
+          - distribution
+          - platform
 
   roles:
     - role: bootstrap
