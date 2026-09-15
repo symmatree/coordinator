@@ -250,8 +250,40 @@ def _wait_for_camera():
     return None
 
 
+# Where the stack file mounts the host's own /etc/hostname.
+HOST_HOSTNAME_PATH = Path("/etc/host-hostname")
+
+
+def _node_name():
+    """The name of the HOST, not of the container.
+
+    socket.gethostname() in a container is the container ID -- measured on
+    campod-se: e2e7f038824a, while the host was campod-se -- and it changes on
+    every recreate. So it cannot be the primary: it would scatter one pod's
+    captures across a new directory per restart, which is worse than collecting
+    them under one wrong name.
+
+    The stack file bind-mounts the host's /etc/hostname read-only. That makes the
+    host the single source of truth and is byte-identical on all four pods --
+    there is no per-unit value in a shared file to get wrong, which is exactly
+    what #272 was: one literal in a file describing four machines.
+
+    gethostname stays as a last resort, and outside a container it is correct.
+    """
+    override = os.getenv("CAMPOD_NODE_NAME")
+    if override:
+        return override
+    try:
+        name = HOST_HOSTNAME_PATH.read_text(encoding="utf-8").strip()
+        if name:
+            return name
+    except OSError:
+        pass
+    return socket.gethostname()
+
+
 def main():
-    node = os.getenv("CAMPOD_NODE_NAME") or socket.gethostname()
+    node = _node_name()
     out_dir = Path(os.getenv("CAMPOD_CAPTURE_DIR", "/captures"))
     hz = _env_float("CAMPOD_CAPTURE_HZ", 1.0)
     width = _env_int("CAMPOD_CAPTURE_WIDTH", 0)

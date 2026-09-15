@@ -58,8 +58,17 @@ that space, even when it has the same shape as a capture. Concretely:
   manifest.json                     # flight-level index: sessions + artifact paths + key facts
   polisher.json                     # flight-level provenance sidecar (flight-analysis run)
 
-  captures/                         # SOURCE (immutable): OAK-D capture sessions (0..n)
+  captures/                         # SOURCE (immutable): capture sessions (0..n), keyed by
+                                    # the DEVICE IDENTITY that produced them -- OAK-D MxId for
+                                    # the coordinator's camera, hostname for a campod. Both are
+                                    # the identity the producing device can state about itself
+                                    # without being told, which is the property that matters:
+                                    # a per-unit value configured from outside is a value that
+                                    # can be wrong, and was (#272).
     <MxId>/                         #   OAK-D serial / MxId (coordinator #32)
+    <campod-NE|SE|SW|NW>/           #   campod hostname (coordinator #211) -- the pod writes
+                                    #   /captures/<node>/<session>/ locally, so a collected
+                                    #   session drops straight in here
       <session>/                    #   ISO-basic UTC session stamp, e.g. 20260712T132731Z
         <MxId>_<session>.feat            # estimator input record (IMU + features)
         <MxId>_<session>.feat.json       # capture metadata sidecar
