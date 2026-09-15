@@ -13,7 +13,7 @@ node, and reports the exit code. **0 means converged.**
 
 ```
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
-  -e device_role=<coordinator|campod> -e manage_checkout=true
+  -e device_role=<coordinator|campod>
 ```
 
 There used to be two actions. `bootstrap` differed from `update` because a fresh card needed a
@@ -37,12 +37,16 @@ not answering SSH for much of it. That is the WiFi link rather than the CPU — 
 with 239 retry-discarded packets, and `usb0` down so there is no alternative path — so a small
 TCP handshake completes while sshd's banner does not get through.
 
-`manage_checkout=true` is passed because every node here is a managed fleet node; it defaults
-off in the playbook so an operator's working tree is never reset under them. That flag is what
-makes the checkout the playbook's problem rather than this service's: `roles/bootstrap` runs
+**This service carries no git logic, and does not need any.** `roles/bootstrap` runs
 `ansible.builtin.git` with `update: true` **before** `coord-stack` installs `bin/coord` and the
 VIO tools from that same checkout with `remote_src`. So pull-then-converge is ordered inside
 the play and cannot be got wrong from out here.
+
+That used to be gated on a `manage_checkout` flag this service passed as `true`.
+[#295](https://github.com/symmatree/coordinator/pull/295) deleted the flag: `git pull` is the
+deploy, so a converge that does not update the checkout is not a converge, and the dirty-tree
+case it guarded is handled better by `ansible.builtin.git` defaulting to `force: no` -- which
+fails loudly instead of silently skipping the config deploy.
 
 ### Reflashed cards
 
