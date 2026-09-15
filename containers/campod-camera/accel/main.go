@@ -133,9 +133,16 @@ var devices = []struct{ label, path string }{
 }
 
 const (
+	clockRealtime  = 0
 	clockMonotonic = 1
 	clockBoottime  = 7
 )
+
+// How often to emit a clock-pair record. Once a second: CLOCK_MONOTONIC is
+// linear, so pairs only have to be dense enough to LOCATE a wall-clock step, not
+// to track it. A wall stamp on every batch would be ~15% file growth at 42k
+// batches a minute for no extra information.
+const clockPairInterval = time.Second
 
 func clockGettime(id uintptr) int64 {
 	var ts syscall.Timespec
@@ -150,6 +157,7 @@ func clockGettime(id uintptr) int64 {
 // is what lets a frame and a vibration record be placed on the same timeline.
 func bootNS() int64 { return clockGettime(clockBoottime) }
 func monoNS() int64 { return clockGettime(clockMonotonic) }
+func wallNS() int64 { return clockGettime(clockRealtime) }
 
 type stats struct {
 	batches, samples, overruns, drops, readErrs atomic.Int64
@@ -224,7 +232,13 @@ func run() error {
 				"whatever each has, so batch spacing and size vary by design. Each batch carries drain_ns (how long " +
 				"the read took) and gap_ns (since this device's previous drain), which is " +
 				"what bounds how much the FIFO could have discarded -- a batch with n < 32 " +
-				"and ovr false lost nothing, because the FIFO never filled.",
+				"and ovr false lost nothing, because the FIFO never filled. " +
+				"RECORD TYPES: filter on \"t\" -- \"b\" is a sample batch, \"clk\" is a " +
+				"clock-pair (boot_ns, mono_ns, wall_ns) emitted about once a second. " +
+				"This pod has no RTC, so join on monotonic and repair wall stamps " +
+				"from it; the clk stream is what locates a wall-clock step. Absence " +
+				"of a step does NOT mean the wall clock is right -- with nothing to " +
+				"sync against there is no step and it is wrong throughout.",
 		}
 		w, err := newWriter(filepath.Join(sessionDir, "accel-"+d.label+".jsonl"), hdr, 64*1024)
 		if err != nil {
@@ -240,7 +254,37 @@ func run() error {
 		wg.Add(1)
 		go func(p *pool, w *writer, st *stats) {
 			defer wg.Done()
+			nextClock := time.Now()
 			for b := range p.filled {
+				// A clock-pair record, on this goroutine rather than the capture
+				// loop, which must do nothing but drain.
+				//
+				// The pod has no RTC and, until something disciplines it, no
+				// honest wall clock. docs/flight-data-interpretation.md has the
+				// rule: join on monotonic and repair wall stamps from it, never
+				// key a join on a wall timestamp. That needs BOTH clocks in the
+				// file -- the coordinator's capture sidecars carry monotonic_ns
+				// and wall_clock_unix for exactly this reason, and this reader
+				// carried only monotonic, so a step was undetectable in its own
+				// data.
+				//
+				// A step is what happens when time service arrives: measured on
+				// the coordinator at +184.288 s at monotonic 69.5 s. In the field
+				// with nothing to sync against there is no step at all and the
+				// clock is simply wrong for the whole flight -- so the ABSENCE of
+				// a divergence here is not evidence the clock is right.
+				//
+				// A stream rather than a trailer, because the session's ending
+				// signal is a battery yank: a summary written at close would be
+				// missing exactly when it is needed.
+				if now := time.Now(); !now.Before(nextClock) {
+					nextClock = now.Add(clockPairInterval)
+					if err := w.record(map[string]any{
+						"t": "clk", "boot_ns": bootNS(), "mono_ns": monoNS(), "wall_ns": wallNS(),
+					}); err != nil {
+						fmt.Fprintf(os.Stderr, "accel: write clk: %v\n", err)
+					}
+				}
 				rec := map[string]any{
 					"t": "b", "i": st.samples.Load(), "boot_ns": b.BootNS, "mono_ns": b.MonoNS,
 					"drain_ns": b.DrainNS, "gap_ns": b.GapNS,
