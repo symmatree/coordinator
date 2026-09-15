@@ -18,6 +18,7 @@ System overview, mission context, and design rationale: **[rekon-design.md](reko
 | Central hub, power, pod harness | [central-hub.md](central-hub.md) |
 | Flight platform (as-built hardware, wiring, stack recipe) | [flight-platform.md](flight-platform.md) |
 | Flight platform build log (chronicle, bench notes) | [flight-platform-build-log.md](flight-platform-build-log.md) |
+| Vibration and structural testing (chain validation, bump-test method) | [vibration-testing.md](vibration-testing.md) |
 | ArduPilot configuration (params, serial, RC, tools) | [ardupilot.md](ardupilot.md) ; [`ardupilot/rekon10-methodi.param`](../../ardupilot/rekon10-methodi.param) |
 | EdgeTX REKON10 model | [`config/MODELS/model01.yml`](config/MODELS/model01.yml) |
 | EdgeTX FIREFLY16 model | [`config/MODELS/model02.yml`](config/MODELS/model02.yml) |
