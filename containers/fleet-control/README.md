@@ -22,12 +22,27 @@ node did not. [#263](https://github.com/symmatree/coordinator/pull/263) deletes 
 the same playbook handles a virgin unit and a converged one, so two buttons running identical
 commands would misdescribe what the service does.
 
-The playbook owns the whole sequence — it stops capture before converging, reboots and waits
-when something actually changed, and starts the stack on the way out. This service adds
-nothing to it except a button and a log.
+The playbook owns the whole sequence — it stops capture before converging, reboots and waits,
+and starts the stack on the way out. This service adds nothing to it except a button and a log.
 
-`manage_checkout=true` is passed because every node here is a managed fleet node. It defaults
-off in the playbook so an operator's working tree is never reset under them.
+**It reboots on every converge, by design.** `/usr` comes back read-only at every boot, so the
+remount always fires, and the reboot is what restores that invariant. Gating the reboot on
+"did apt install anything" was tried and produced a worse outcome: a no-op converge left `/usr`
+writable while the play's own message claimed otherwise. Rebooting a bench operation is
+cheaper than an invariant that is only conditionally true.
+
+**Budget twenty minutes or more on a campod**, not the few minutes a Pi 4B takes. Measured on
+campod-se: a single apply took over 20 minutes, dominated by `apt-get update`, with the box
+not answering SSH for much of it. That is the WiFi link rather than the CPU — wlan0 at -64 dBm
+with 239 retry-discarded packets, and `usb0` down so there is no alternative path — so a small
+TCP handshake completes while sshd's banner does not get through.
+
+`manage_checkout=true` is passed because every node here is a managed fleet node; it defaults
+off in the playbook so an operator's working tree is never reset under them. That flag is what
+makes the checkout the playbook's problem rather than this service's: `roles/bootstrap` runs
+`ansible.builtin.git` with `update: true` **before** `coord-stack` installs `bin/coord` and the
+VIO tools from that same checkout with `remote_src`. So pull-then-converge is ordered inside
+the play and cannot be got wrong from out here.
 
 ### Reflashed cards
 
@@ -99,12 +114,24 @@ The build then runs `ansible-playbook --syntax-check -i localhost, --connection=
 the local-connection property `site.yaml` documents. A broken playbook fails CI rather than a
 provisioning run.
 
-## Known limitation
+## Known limitations
 
-The run lives in this process. If the pod dies mid-converge, the playbook dies with it and the
-node is left part-converged. Moving Ansible to the control node did not fix that — it was true
-when this drove SSH directly too. A converge is re-runnable, so recovery is to run it again,
-but nothing resumes automatically.
+**The run lives in this process.** If the pod dies mid-converge, the playbook dies with it and
+the node is left part-converged. Moving Ansible to the control node did not fix that — it was
+equally true when this drove SSH directly. A converge is re-runnable, so recovery is to run it
+again, but nothing resumes on its own.
+
+**There is no overall ceiling on a converge.** Ansible's own timeouts bound it, and that is
+deliberate: the previous version had a 60-minute ceiling, hit it on a slow node, and reported
+a *successful* converge as a failure while the play was still running. Killing a running play
+is worse than waiting — it leaves a half-configured box. The cost is that a genuinely wedged
+run holds that node's slot until the pod restarts.
+
+**Dry runs are not available.** The playbook refuses `--check` deliberately: check mode skips
+every `command` task, which is the quiesce, the image pull, the start, and every probe that
+registers a result and keys off its `rc` — so it cannot validate the half that matters while
+still costing a full apt refresh. `--syntax-check` validates structure without connecting, and
+the image build already runs it.
 
 ## Develop
 
