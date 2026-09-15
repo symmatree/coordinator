@@ -18,6 +18,10 @@
 # Cross-build (slow; QEMU):
 #   docker buildx build --platform linux/arm64 -t coordinator-campod-camera:local containers/campod-camera
 
+# Declared before the first FROM so it is a GLOBAL arg: an ARG after a FROM
+# belongs to that stage only, and the final `FROM ${BASE_IMAGE}` could not see it.
+ARG BASE_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+
 # The accelerometer reader is Go, not Python, for one reason: a drain has to be
 # ONE ioctl. py-spidev has no multi-transfer API, so the Python reader issued an
 # ioctl per FIFO entry -- measured on a quiet campod-se at 105.5 us/sample against
@@ -38,7 +42,6 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
       go build -trimpath -ldflags="-s -w" -o /out/campod-accel .
 
-ARG BASE_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 FROM ${BASE_IMAGE}
 
 ARG DEBIAN_FRONTEND=noninteractive
