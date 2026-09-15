@@ -63,9 +63,13 @@
     mode: "0644"
   notify: Restart collectd
 
+# Fully qualified here too, for the same reason as the handler: the bare name is
+# ambiguous between collectd-core's init script and its unit. This task happened to
+# succeed where the handler did not, which makes the ambiguity worse rather than
+# better -- an inconsistency that shows up only sometimes is one nobody debugs.
 - name: Enable collectd
   ansible.builtin.systemd:
-    name: collectd
+    name: collectd.service
     enabled: true
     state: started
     daemon_reload: true
