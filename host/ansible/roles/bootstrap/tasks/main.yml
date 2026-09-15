@@ -86,6 +86,65 @@
     group: root
     mode: "0644"
 
+# --- the Raspberry Pi archive ------------------------------------------------
+# We install NOTHING from it. Walk the roles: bootstrap takes ca-certificates,
+# curl and git from Debian; docker-host takes its four packages from Docker's own
+# repo; metrics takes collectd-core from Debian; coordinator takes i2c-tools from
+# Debian. power-resilience only DETECTS vcgencmd with `command -v` -- it never
+# installs it. So the archive is consulted by every apt-get update and supplies
+# nothing, and the index fetch is the expensive step: measured on campod-se, a
+# converge that installed nothing at all still took over 20 minutes and took the
+# device off the network, over a -64 dBm wifi link.
+#
+# Kernel and firmware DO come from it -- and they move by reflash, not by
+# converge. #96 makes the OS version a property of the flashed image, and kernel
+# and firmware are the most OS-ish things there are. So dropping the archive is
+# the appliance model applied consistently, not a compromise.
+#
+# ORDER IS LOAD-BEARING: mark before removing. Once the source is gone, nothing
+# can tell you which installed packages came from it, so the marking has to happen
+# while its index is still on disk.
+- name: Find installed packages that came from the Raspberry Pi archive
+  # Only those currently marked AUTO, which is exactly the at-risk set: autoremove
+  # will not touch a manual package. Marking only what is at risk keeps this from
+  # pinning half the system as manual and defeating autoremove entirely.
+  #
+  # Prints nothing and exits 0 if the archive's index is absent -- which is the
+  # signal the removal below keys on, so a card that has never run apt-get update
+  # keeps its archive rather than losing the marking opportunity silently.
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      idx=$(ls /var/lib/apt/lists/*raspberrypi*_Packages 2>/dev/null) || exit 0
+      [ -n "$idx" ] || exit 0
+      comm -12 \
+        <(apt-mark showauto | sort -u) \
+        <(awk '/^Package: /{print $2}' $idx | sort -u)
+    executable: /bin/bash
+  changed_when: false
+  register: bootstrap_rpi_auto_pkgs
+
+- name: Mark them manually installed, so autoremove cannot take them
+  # Seth's call, and the better one: make "these are intentionally installed" a
+  # TRUE and checkable fact rather than removing the autoremove that would notice.
+  # Without this, the combination of a removed source (no candidate version) and
+  # autoremove could take a package the box boots from.
+  ansible.builtin.command:
+    cmd: apt-mark manual {{ bootstrap_rpi_auto_pkgs.stdout_lines | join(' ') }}
+  when: bootstrap_rpi_auto_pkgs.stdout_lines | length > 0
+  changed_when: true
+
+- name: Remove the Raspberry Pi archive from apt's sources
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/raspi.list
+    - /etc/apt/sources.list.d/raspi.sources
+  # Only once the marking above had a chance to run. An absent index means we
+  # could not enumerate, so leave the source alone and let a later converge do it.
+  when: bootstrap_rpi_auto_pkgs.stdout is defined
+
 - name: Install prerequisites
   ansible.builtin.apt:
     install_recommends: false

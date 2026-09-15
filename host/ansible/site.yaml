@@ -138,11 +138,29 @@
     # changed_when reads compose's progress output, which is not a stable
     # interface; a misread here is cosmetic recap noise only. Nothing keys on it,
     # and in particular the reboot decision does not.
+    # Bounded, because unbounded is how this failed. On its first ever hardware
+    # run (2026-09-15, campod-se) this task sat silent for 50+ minutes inside a
+    # play the fleet driver deliberately runs with no overall ceiling, so the hang
+    # held the node's slot indefinitely and reported nothing about itself.
+    #
+    # It is past its own internal bound by two orders of magnitude, which is what
+    # makes it a hang rather than slowness: `coord stop` is `docker compose stop`,
+    # and compose waits at most 10s per container before SIGKILL. Two containers
+    # is ~20s worst case. So whatever is stuck is not the container's shutdown --
+    # it is docker itself, and the likeliest way that happens is a container
+    # process in uninterruptible sleep on I/O, where even SIGKILL cannot land and
+    # the daemon waits forever.
+    #
+    # async/poll rather than a `timeout` wrapper so the failure names itself in
+    # the recap instead of surfacing as a bare exit 124. 180s is generous against
+    # a 20s worst case and still bounded.
     - name: Stop data collection for the duration of the converge
       ansible.builtin.command:
         cmd: /usr/local/bin/coord stop
       environment:
         COORD_STACK: "{{ device_role }}"
+      async: 180
+      poll: 5
       register: coord_stack_quiesced
       changed_when: >-
         'Stopping' in coord_stack_quiesced.stderr
