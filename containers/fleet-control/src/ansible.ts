@@ -29,6 +29,8 @@ export interface ConvergeOptions {
   extraVars: Record<string, string | boolean>;
   /** Ansible's own connect timeout. Its default is 10s, which a loaded Zero misses. */
   sshTimeoutSec?: number;
+  /** The known_hosts ssh should use. Shared with knownhosts.ts so a clear actually clears. */
+  knownHostsPath: string;
   sink?: EventSink;
 }
 
@@ -164,7 +166,14 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
     const child = spawn('ansible-runner', args, {
       env: {
         ...process.env,
-        ANSIBLE_HOST_KEY_CHECKING: 'False',
+        // Host keys are CHECKED. Turning this off while also clearing known_hosts on a reflash
+        // -- which the caller does -- would be theatre: the clear only means something if the
+        // check is real. `accept-new` records an unknown host and still refuses a CHANGED one,
+        // which is exactly the reflash case the caller handles explicitly.
+        ANSIBLE_HOST_KEY_CHECKING: 'True',
+        ANSIBLE_SSH_ARGS:
+          '-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=accept-new ' +
+          `-o UserKnownHostsFile=${opts.knownHostsPath}`,
         ANSIBLE_TIMEOUT: String(opts.sshTimeoutSec ?? 90),
       },
     });

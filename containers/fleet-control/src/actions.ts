@@ -19,6 +19,7 @@ export interface ActionContext {
   inventory: Inventory;
   privateKeyPath: string;
   sshTimeoutSec: number;
+  knownHostsPath: string;
 }
 
 function note(sink: EventSink | undefined, msg: string): void {
@@ -44,7 +45,7 @@ export async function converge(
   note(sink, `converging ${node.name} (${host}) as ${node.role}`);
 
   if (opts.reflashed) {
-    const forgotten = await forgetHostKey(host);
+    const forgotten = await forgetHostKey(host, ctx.knownHostsPath);
     note(sink, forgotten ? `cleared the recorded host key for ${host}` : `no recorded host key for ${host}`);
   }
 
@@ -53,6 +54,7 @@ export async function converge(
     user: ctx.inventory.user,
     privateKeyPath: ctx.privateKeyPath,
     sshTimeoutSec: ctx.sshTimeoutSec,
+    knownHostsPath: ctx.knownHostsPath,
     // manage_checkout creates or updates the on-device clone that /opt/stacks/<role> symlinks
     // into. It defaults off in the playbook so an operator's working tree is never reset --
     // but every node this service drives is a managed fleet node, not someone's bench.

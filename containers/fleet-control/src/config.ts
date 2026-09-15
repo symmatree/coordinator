@@ -30,6 +30,9 @@ export function loadConfig(): Config {
       // Ansible's own default is 10s, which a Zero under a converge misses; the handshake
       // failures on campod-se are what this number is sized against.
       sshTimeoutSec: Number(env('FLEET_SSH_TIMEOUT_SEC', '90')),
+      // On the /state volume so recorded keys survive a pod restart -- otherwise every
+      // restart is a fresh first contact and the check protects nothing.
+      knownHostsPath: env('FLEET_KNOWN_HOSTS', '/state/known_hosts'),
     },
     port: Number(env('PORT', '8080')),
     host: env('HOST', '0.0.0.0'),
