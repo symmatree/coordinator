@@ -54,6 +54,11 @@ refuses changed ones, and Ansible surfaces the refusal as a bare `UNREACHABLE` w
 error buried. Clearing it is a caller decision, so it lives here and the playbook carries no
 trust policy.
 
+Host keys really are checked: `accept-new`, not disabled. Turning the check off while also
+clearing keys on reflash would be theatre — the clear only means anything if the check is real.
+Both ssh and the clear are pointed at one explicit `known_hosts` file rather than the account
+default, which in a container is neither predictable nor persistent.
+
 ## Progress comes from events, not scraped text
 
 `ansible-runner` emits a structured JSON event per task and per host. The service renders those
@@ -88,6 +93,7 @@ One action per node at a time; a second `POST` against a busy node is a `409`.
 | `FLEET_INVENTORY` | *(required)* | path to the roster |
 | `FLEET_SSH_KEY` | `/secrets/ssh/id` | private key |
 | `FLEET_SSH_TIMEOUT_SEC` | `90` | Ansible's connect timeout. Its own default is 10s, which a Zero under a converge misses |
+| `FLEET_KNOWN_HOSTS` | `/state/known_hosts` | recorded host keys, shared by ssh and the clear-on-reflash path. On the `/state` volume so they survive a pod restart |
 | `FLEET_PLAYBOOK_DIR` | `/app/ansible` | where the image keeps `host/ansible/**` |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | |
 
