@@ -1,6 +1,19 @@
 ---
+# collectd.service, fully qualified, NOT bare "collectd". collectd-core ships BOTH
+# /etc/init.d/collectd and /lib/systemd/system/collectd.service, and against the bare
+# name ansible decided it was looking at the init script:
+#
+#   [WARNING]: The service (collectd) is actually an init script but the system is
+#   managed by systemd
+#   fatal: FAILED! => {"msg": "Service is in unknown state", ...}
+#
+# That aborted a whole bring-up in its handler phase -- after every task had
+# succeeded and collectd was running fine (MainPID set, Result: success) -- and so
+# the play never reached the reboot that returns /usr to read-only.
+#
+# No daemon_reload: this role installs no unit files, so there is nothing to reload.
+# It was cargo-culted from a role that does install units.
 - name: Restart collectd
   ansible.builtin.systemd:
-    name: collectd
+    name: collectd.service
     state: restarted
-    daemon_reload: true
