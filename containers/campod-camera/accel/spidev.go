@@ -169,11 +169,23 @@ func (d *spidev) DrainFIFO(count int, dst []byte) ([]byte, error) {
 			length:      bytesPerRead,
 			speedHz:     d.speedHz,
 			bitsPerWord: 8,
-			// Deassert CS and wait between entries. Both are what the datasheet
-			// asks for above 1.6 MHz and neither costs anything meaningful here:
-			// 5 us x 16 entries is 80 us against a 10 ms overflow bound.
-			csChange:   1,
+			// Wait between entries: AN-1025 wants >= 5 us between reading the
+			// data registers and the next FIFO access, and above 1.6 MHz the
+			// address byte no longer covers it. 5 us x 32 is 160 us against a
+			// 10 ms overflow bound, so it is free.
 			delayUsecs: popDelayUsec,
+		}
+		// cs_change deasserts CS between transfers -- but on the LAST transfer of
+		// a message it means the opposite: leave CS ASSERTED after the message,
+		// which is the primitive for chaining. Setting it there left this device
+		// selected while the loop went on to address the other one on the second
+		// chip select. Measured cost of getting this wrong: the second-drained
+		// device reported 126 overruns in 60 s with a median read of 1 entry,
+		// against 1 overrun and a median of 5 on the first -- and it claimed
+		// 32-entry reads when no gap exceeded 6.1 ms, which is impossible at
+		// 3200 Hz. So: between transfers yes, after the message no.
+		if i < count-1 {
+			d.xfers[i].csChange = 1
 		}
 	}
 	if err := d.ioctlPtr(spiIOCMessage(count), unsafe.Pointer(&d.xfers[0])); err != nil {

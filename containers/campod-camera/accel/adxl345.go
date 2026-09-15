@@ -30,6 +30,22 @@ const (
 	bytesPerRead = 7 // 1 address + 6 data
 	popDelayUsec = 5 // AN-1025: >= 5 us between a data read and the next FIFO access
 
+	// 3 MHz, not the 1.5 MHz the Python reader used. That 1.5 was chosen to stay
+	// under the 1.6 MHz above which AN-1025 requires deasserting CS to guarantee
+	// the 5 us pop delay -- and it was the real bottleneck. Measured on campod-se,
+	// two devices at ODR 3200 over 30 s:
+	//
+	//   1.5 MHz   2698 samples/s (84% of nominal)   2516 overruns of 2530 batches
+	//   3   MHz   3246 samples/s (100%)                 3 overruns
+	//   6   MHz   3249 samples/s (100%)                 2 overruns
+	//
+	// 6 MHz buys nothing over 3, so 3 is where we stop being SPI-bound. We can
+	// raise it because DrainFIFO sets cs_change and delay_usecs per transfer, which
+	// satisfies the delay explicitly instead of relying on the address byte's
+	// incidental duration. Per-sample cost at 3 MHz decomposes as 18.7 us of clock
+	// plus 29.6 us fixed per transaction.
+	defaultSPIHz = 3000000
+
 	// In FULL_RES the scale is a constant 3.9 mg/LSB at every range -- the bit
 	// depth grows instead -- so the widest range costs nothing in resolution.
 	scaleMgPerLSB = 3.9

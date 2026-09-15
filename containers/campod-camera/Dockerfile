@@ -22,11 +22,14 @@
 # belongs to that stage only, and the final `FROM ${BASE_IMAGE}` could not see it.
 ARG BASE_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
-# The accelerometer reader is Go, not Python, for one reason: a drain has to be
-# ONE ioctl. py-spidev has no multi-transfer API, so the Python reader issued an
-# ioctl per FIFO entry -- measured on a quiet campod-se at 105.5 us/sample against
-# 37.3 us of actual clock time, so 65% of the cost was syscall overhead. See
-# accel/spidev.go DrainFIFO.
+# The accelerometer reader is Go, not Python, because it needs to build a proper
+# multi-transfer SPI message with explicit inter-transfer delays -- which py-spidev
+# cannot express -- and that is what makes running the bus above 1.6 MHz legal.
+# Raising the clock from 1.5 to 3 MHz took overruns from 2516 to 3 per 30 s.
+#
+# NOT for batching. Batching a drain into one ioctl saves syscalls and measured no
+# improvement at all (103.5 vs 105.5 us/sample); the part requires one SPI
+# transaction per FIFO entry regardless. See accel/README notes and DrainFIFO.
 #
 # --platform=$BUILDPLATFORM so the compile and the tests run natively on the
 # builder instead of under QEMU; only the output is arm64.

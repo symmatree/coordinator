@@ -94,22 +94,46 @@ at exactly 200 Hz in every spectrum.
 
 ### Why Go
 
-A FIFO drain has to be **one ioctl**. py-spidev has no multi-transfer API, so the Python
-reader issued one ioctl per FIFO entry: measured on a quiet campod-se, **105.5 µs per sample
-against 37.3 µs of actual clock time** at 1.5 MHz, so 65% of the cost was syscall overhead
-rather than bits on the wire. Two devices at 3200 Hz spent 3.37 ms per cycle draining, with
-worst cases at 19.93 ms — past the 10 ms a 32-deep FIFO takes to overflow at 3200 Hz, which
-is where the steady-state 2.08 overruns/second came from.
+Not for the reason this originally said. The first version of this section claimed the
+Python reader was slow because py-spidev issues one ioctl per FIFO entry, and that batching a
+whole drain into one `SPI_IOC_MESSAGE` would collapse the overhead. **Measured, it collapsed
+nothing** -- 103.5 µs/sample batched against 105.5 µs unbatched. And the part's protocol says
+it never could: popping one FIFO entry requires a complete read of `DATAX0..DATAZ1`, and
+address auto-increment runs into other registers rather than advancing the FIFO, so 32 entries
+is 32 SPI transactions however they are packaged. Batching saves 32 *syscalls*, which turned
+out to be about 2 µs of the 103.5.
 
-`SPI_IOC_MESSAGE(n)` carries the whole drain in one syscall, with `cs_change` and
-`delay_usecs` between entries — which satisfies the datasheet's 5 µs FIFO-pop delay
-*explicitly* rather than relying on the incidental duration of an address byte.
+What actually mattered was **the SPI clock**, and the reason we could raise it. Measured on
+campod-se, two devices at ODR 3200 over 30 s:
+
+| SPI clock | delivered | overruns |
+|---|---|---|
+| 1.5 MHz | 2698/s (84%) | 2516 of 2530 batches |
+| **3 MHz** | **3246/s (100%)** | **3** |
+| 6 MHz | 3249/s (100%) | 2 |
+
+1.5 MHz was chosen specifically to stay under the 1.6 MHz above which AN-1025 requires
+deasserting CS to guarantee the 5 µs FIFO-pop delay, and the comment beside it said "do not
+raise this". That was the bottleneck. This reader sets `cs_change` and `delay_usecs`
+per transfer, satisfying the delay explicitly, which is what makes 3 MHz legal. Per-sample
+cost there decomposes as 18.7 µs of clock plus 29.6 µs fixed per transaction.
+
+So the honest summary: Go bought the ability to build a proper multi-transfer SPI message with
+explicit inter-transfer delays, and that unlocked the clock. It did not buy fewer transactions,
+because there are none to save.
+
+There is **no fill threshold and no fixed poll rate.** The reader alternates between devices
+and takes whatever each has -- typically 2-3 entries. An earlier version waited for 16 and that
+was a bug: after draining both, neither met the threshold, so the loop slept the 5 ms it takes
+to reach 16, then spent 6.6 ms draining. A 12 ms cycle against a FIFO that fills in 10 ms, so
+99% of batches came back flagged and 14% of samples were lost. Waiting gains nothing anyway,
+since per-sample cost is fixed per transaction rather than per drain.
 
 Writes happen on their own goroutines behind a preallocated batch pool, and the handoff is
 non-blocking: if the writer falls behind, a batch is dropped and counted rather than stalling
-the capture loop. Blocking the drain would cost the hardware FIFO — samples that are gone
-before any of our code runs — to protect samples already in hand. `fsync` happens once, at
-shutdown; `sync_file_range(WRITE)` keeps dirty pages moving without waiting.
+the capture loop. Blocking the drain would cost the hardware FIFO -- samples gone before any of
+our code runs -- to protect samples already in hand. `fsync` happens once, at shutdown;
+`sync_file_range(WRITE)` keeps dirty pages moving without waiting.
 
 ### Why spidev and not the IIO driver
 

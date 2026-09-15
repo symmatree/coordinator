@@ -44,7 +44,6 @@ type config struct {
 	odrHz     int
 	rangeG    int
 	spiHz     uint32
-	threshold int
 	poolDepth int
 	sepM      string
 }
@@ -61,17 +60,13 @@ func envInt(k string, def int) int {
 
 func loadConfig() config {
 	c := config{
-		dir:     os.Getenv("CAMPOD_ACCEL_DIR"),
-		node:    os.Getenv("CAMPOD_NODE_NAME"),
-		session: os.Getenv("CAMPOD_SESSION"),
-		sepM:    os.Getenv("CAMPOD_ACCEL_SEPARATION_M"),
-		odrHz:   envInt("CAMPOD_ACCEL_ODR_HZ", 3200),
-		rangeG:  envInt("CAMPOD_ACCEL_RANGE_G", 16),
-		spiHz:   uint32(envInt("CAMPOD_ACCEL_SPI_HZ", 1500000)),
-		// Drain at half depth: fat enough that the per-drain cost is amortised
-		// (measured: 105.5 us/sample at 10-17 entries against 178.7 at 1-2),
-		// while leaving 16 slots -- 5 ms at 3200 Hz -- before overflow.
-		threshold: envInt("CAMPOD_ACCEL_DRAIN_AT", fifoDepth/2),
+		dir:       os.Getenv("CAMPOD_ACCEL_DIR"),
+		node:      os.Getenv("CAMPOD_NODE_NAME"),
+		session:   os.Getenv("CAMPOD_SESSION"),
+		sepM:      os.Getenv("CAMPOD_ACCEL_SEPARATION_M"),
+		odrHz:     envInt("CAMPOD_ACCEL_ODR_HZ", 3200),
+		rangeG:    envInt("CAMPOD_ACCEL_RANGE_G", 16),
+		spiHz:     uint32(envInt("CAMPOD_ACCEL_SPI_HZ", defaultSPIHz)),
 		poolDepth: envInt("CAMPOD_ACCEL_POOL", 256),
 	}
 	if c.dir == "" {
@@ -175,14 +170,14 @@ func run() error {
 			"label": d.label, "device": d.path, "devid": devIDExpected,
 			"odr_hz_nominal": c.odrHz, "range_g": c.rangeG, "full_res": true,
 			"scale_mg_per_lsb": scaleMgPerLSB, "spi_hz": c.spiHz,
-			"drain_at": c.threshold, "pool_depth": c.poolDepth,
+			"pool_depth":   c.poolDepth,
 			"reader":       "campod-accel (go)",
 			"self_test":    stRes,
 			"separation_m": c.sepM,
 			"started_utc":  time.Now().UTC().Format("2006-01-02T15:04:05.000000Z"),
-			"note": "Samples are raw LSB counts, not g. There is NO fixed poll rate: " +
-				"the reader alternates between devices and drains at a fill threshold, " +
-				"so batch spacing varies by design. Each batch carries drain_ns (how long " +
+			"note": "Samples are raw LSB counts, not g. There is NO fixed poll rate " +
+				"and no fill threshold: the reader alternates between devices and takes " +
+				"whatever each has, so batch spacing and size vary by design. Each batch carries drain_ns (how long " +
 				"the read took) and gap_ns (since this device's previous drain), which is " +
 				"what bounds how much the FIFO could have discarded -- a batch with n < 32 " +
 				"and ovr false lost nothing, because the FIFO never filled.",
@@ -221,8 +216,8 @@ func run() error {
 		return fmt.Errorf("no ADXL345 answered on either chip select; " +
 			"check dtparam=spi=on and the wiring")
 	}
-	fmt.Printf("accel: logging %d device(s) odr=%d range=+/-%dg spi=%d drain_at=%d pool=%d\n",
-		len(lives), c.odrHz, c.rangeG, c.spiHz, c.threshold, c.poolDepth)
+	fmt.Printf("accel: logging %d device(s) odr=%d range=+/-%dg spi=%d pool=%d\n",
+		len(lives), c.odrHz, c.rangeG, c.spiHz, c.poolDepth)
 
 	capture(lives, c, stop)
 
@@ -244,16 +239,27 @@ func run() error {
 	return nil
 }
 
-// capture alternates between devices until told to stop.
+// capture alternates between devices until told to stop, draining whatever each
+// one has rather than waiting for it to accumulate.
 //
-// It never blocks on anything but the clock: FIFO status, a batched drain, a
-// non-blocking handoff to the pool, and a sleep sized from how far each device
-// still is from the drain threshold. There is deliberately no busy-wait -- a
-// status read is its own ioctl at ~80-100 us, so spinning on it would burn a
-// core to learn nothing.
+// The first version of this waited for a fill threshold of 16 entries, and that
+// was the bug. Measured on campod-se: after draining both devices their FIFOs are
+// near-empty, so neither met the threshold, so the loop slept the 5 ms it takes to
+// reach 16 -- and then the two drains took 6.6 ms more. A 12 ms cycle against a
+// FIFO that fills in 10 ms, so 16 samples arrived during the sleep and 21 more
+// during the drains: 37 into a 32-deep FIFO, overflowing every single cycle. 99%
+// of batches came back flagged and 14% of samples were lost.
+//
+// There was never anything to gain by waiting, either. Per-sample cost is fixed
+// PER TRANSACTION, not per drain -- the part requires a complete read of
+// DATAX0..DATAZ1 to pop one entry, so 32 entries is 32 transactions however they
+// are packaged. Draining 4 costs about the same per sample as draining 32.
+//
+// So: take what is there, every time. The only sleep is one sample period when
+// BOTH devices came back empty, which cannot delay work that exists and stops the
+// loop reading FIFO_STATUS thousands of times a second to be told "nothing yet".
 func capture(lives []*live, c config, stop <-chan os.Signal) {
 	perSample := time.Duration(float64(time.Second) / float64(c.odrHz))
-	maxSleep := time.Duration(float64(c.threshold) * float64(perSample))
 
 	for {
 		select {
@@ -263,31 +269,25 @@ func capture(lives []*live, c config, stop <-chan os.Signal) {
 		default:
 		}
 
-		shortest := maxSleep
-		worked := false
-
+		idle := true
 		for _, lv := range lives {
 			n, ovr, err := lv.s.entries()
 			if err != nil {
 				lv.st.readErrs.Add(1)
 				continue
 			}
-			if n < c.threshold {
-				// How long until this device reaches the threshold?
-				if wait := time.Duration(c.threshold-n) * perSample; wait < shortest {
-					shortest = wait
-				}
+			if n == 0 {
 				continue
 			}
-			worked = true
+			idle = false
 			if ovr {
 				lv.st.overruns.Add(1)
 			}
 			b := lv.pool.get()
 			if b == nil {
-				// Writer is behind. Drain anyway -- leaving entries in the FIFO
-				// would push the overflow into the next cycle -- but throw the
-				// samples away rather than stall the loop.
+				// Writer is behind. Drain anyway so the FIFO does not carry the
+				// backlog into the next cycle, but discard rather than stall.
+				lv.st.readErrs.Add(0)
 				_ = lv.s.drain(n, &Batch{X: make([]int16, 0, fifoDepth),
 					Y: make([]int16, 0, fifoDepth), Z: make([]int16, 0, fifoDepth)})
 				continue
@@ -309,8 +309,8 @@ func capture(lives []*live, c config, stop <-chan os.Signal) {
 			lv.pool.put(b)
 		}
 
-		if !worked && shortest > 0 {
-			time.Sleep(shortest)
+		if idle {
+			time.Sleep(perSample)
 		}
 	}
 }
