@@ -1,6 +1,6 @@
 ---
 # This device is an appliance. The OS is a property of the flashed image (#96) and
-# os_upgrade.sh is the deliberate in-place alternative; nothing updates or maintains
+# `-e dist_upgrade=true` is the deliberate in-place alternative; nothing updates or maintains
 # itself on a schedule. One rule, one exception, stated below.
 #
 # WHY. These are flight devices with a duty cycle measured in minutes -- powered up

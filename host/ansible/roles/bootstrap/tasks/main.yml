@@ -58,8 +58,37 @@
 # nothing to bootstrap it onto, which is what removed the last ordering problem --
 # previously `apt install git` had to precede the clone, while the helper that
 # made /usr writable lived inside the repo that clone produced.
+# Stop fetching index data this device cannot use, BEFORE the first apt run --
+# every `update_cache` below and in every other role pays for whatever is
+# configured here.
+#
+# Translation-* indexes carry localized package descriptions and nothing
+# functional. On a headless appliance consulting three archives, they are a
+# meaningful share of an apt-get update that we can never read. That matters
+# because the update is the expensive step: measured on campod-se, a converge that
+# installed nothing at all still took over 20 minutes and took the device off the
+# network, because the index fetch runs over a -64 dBm wifi link.
+#
+# Deliberately NOT disabling the DEP-11/appstream indexes here. Those are fetched
+# because the `appstream` package ships its own apt.conf.d drop-in, so the lever is
+# whether appstream is installed -- not a config key of ours. install_recommends:
+# false makes it much less likely to arrive in the first place. Worth checking on a
+# device rather than guessing at target names.
+- name: Do not fetch translation indexes (nothing here reads them)
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/99-rekon-no-translations
+    content: |
+      // Managed by host/ansible/roles/bootstrap. Headless appliance: there is no
+      // localized package description anyone will ever read here, and fetching
+      // them is a share of the slowest step in a converge.
+      Acquire::Languages "none";
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Install prerequisites
   ansible.builtin.apt:
+    install_recommends: false
     name:
       - ca-certificates
       - curl
@@ -72,6 +101,45 @@
   # installed. Registered vars are host facts for the whole play, so they are
   # visible from post_tasks even though they are set inside a role.
   register: bootstrap_prereqs
+
+# In-place OS upgrade, off by default. Was a separate playbook
+# (host/ansible/os-upgrade.yaml); folded in here because keeping it separate meant
+# duplicating the /usr hatch, the reboot-and-wait and its connection=local caveat
+# -- and it silently missed two things site.yaml has: the capture quiesce and the
+# --check refusal. A dist-upgrade is the heaviest thing we run, so running it
+# against a live capture was the worst case of exactly the contention we spend
+# effort avoiding.
+#
+# Here rather than in site.yaml's `tasks:` for two reasons: `tasks:` runs AFTER
+# all roles, so the rest would converge on the old packages and then upgrade them;
+# and the /usr hatch above is already open at this point.
+#
+# The reboot in site.yaml's post_tasks needs no change -- it already fires
+# whenever the hatch was opened, which is every run.
+- name: Upgrade all packages (dist_upgrade)
+  # A dist-upgrade is far more likely than a fresh install to hit a debconf prompt
+  # (maintainer scripts asking about changed conffiles), and there is no tty on a
+  # pushed run. force_apt_get because the ansible apt module's default aptitude
+  # path is not installed on these images.
+  #
+  # No install_recommends here: it applies to new installs, and constraining an
+  # upgrade with it can hold packages back.
+  ansible.builtin.apt:
+    upgrade: dist
+    update_cache: true
+    force_apt_get: true
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  register: bootstrap_dist_upgrade
+  when: dist_upgrade | bool
+
+- name: Remove packages no longer required (dist_upgrade)
+  ansible.builtin.apt:
+    autoremove: true
+    force_apt_get: true
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  when: dist_upgrade | bool
 
 # --- the checkout ------------------------------------------------------------
 # /opt/stacks/<role> is a symlink into this, so it has to exist on the device and

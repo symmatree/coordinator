@@ -18,7 +18,10 @@
 # than working around it, which also removed host/lib/usr-rw.sh -- the /usr hatch is
 # now a task in roles/bootstrap, ordered before the things that need it.
 #
-# In-place OS upgrade is a separate deliberate playbook: host/ansible/os-upgrade.yaml.
+# In-place OS upgrade is off unless asked for:
+#     ansible-playbook host/ansible/site.yaml ... -e dist_upgrade=true
+# It used to be a separate playbook. One entry point, and the upgrade now inherits
+# the capture quiesce and the --check refusal, which the separate playbook lacked.
 
 - name: Rekon host bootstrap
   hosts: all
@@ -50,6 +53,13 @@
     # Creating the checkout is what removes the last bootstrap ordering problem.
     # Off by default so an operator's working tree is never reset under them.
     manage_checkout: false
+
+    # In-place `apt upgrade dist`. OFF by default: in the appliance model the OS
+    # version is a property of the flashed image (#96) and a reflash is the primary
+    # way to move it, so a routine config deploy must not drag a dist-upgrade and
+    # its reboot behind it (#48). This is the in-place alternative for a box you do
+    # not want to reflash yet -- run it deliberately, expect it to be slow.
+    dist_upgrade: false
     coord_repo_url: https://github.com/symmatree/coordinator.git
     coord_repo_version: main
 

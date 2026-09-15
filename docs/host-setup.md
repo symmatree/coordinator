@@ -110,7 +110,7 @@ coord start
 | A container image (new build on `main`) | `coord pull` |
 | An Ansible role, `bin/coord`, udev, or the boot unit | re-run `site.yaml` against the device; it reboots and waits if anything needs it |
 | Anything in `config.txt` / `cmdline.txt` | **reflash** -- the image owns it |
-| OS packages | `host/ansible/os-upgrade.yaml` -- deliberate, never part of a config deploy |
+| OS packages | `site.yaml -e dist_upgrade=true` -- deliberate, off by default, never part of a config deploy |
 
 `coord pull` runs `compose down` first, so it is a full stop of the stack, not a rolling
 update. Fine on the bench; not something to do on a hot vehicle.

@@ -12,6 +12,7 @@
 
 - name: Install packages for Docker apt repo
   ansible.builtin.apt:
+    install_recommends: false
     name:
       - ca-certificates
       - curl
@@ -39,6 +40,7 @@
 
 - name: Install Docker Engine and Compose plugin
   ansible.builtin.apt:
+    install_recommends: false
     name:
       - docker-buildx-plugin
       - docker-ce

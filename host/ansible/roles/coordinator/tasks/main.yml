@@ -82,6 +82,7 @@
 
 - name: Install i2c-tools (i2cdetect for display bring-up / debugging)
   ansible.builtin.apt:
+    install_recommends: false
     name: i2c-tools
     state: present
     update_cache: true

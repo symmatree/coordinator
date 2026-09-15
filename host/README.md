@@ -17,7 +17,7 @@ A bare `'<addr>,'` is a valid inventory, so no inventory file and no DNS are nee
 
 The play remounts `/usr` read-write (it ships read-only), installs prerequisites, converges config, and **reboots and waits** if a kernel/firmware change or the `/usr` hatch requires it. Driving from outside is what makes that possible: [#113](https://github.com/symmatree/coordinator/issues/113) had to remove auto-reboot because the play ran locally, where ansible refuses to reboot its own control node.
 
-It is a **config-only** deploy -- it does not `dist-upgrade`. That is a separate deliberate playbook, [ansible/os-upgrade.yaml](ansible/os-upgrade.yaml) ([#48](https://github.com/symmatree/coordinator/issues/48)).
+It is a **config-only** deploy -- it does not `dist-upgrade`. That is off unless asked for, with `-e dist_upgrade=true` ([#48](https://github.com/symmatree/coordinator/issues/48)).
 
 Then bench: coordinator tracker [docs/bench-tracker.md](../docs/bench-tracker.md); campod [docs/campod-software.md](../docs/campod-software.md).
 
@@ -38,7 +38,7 @@ Both roles, and the in-place OS upgrade:
 ```bash
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi -e device_role=coordinator
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi -e device_role=campod
-ansible-playbook host/ansible/os-upgrade.yaml -i '<addr>,' -u pi
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi -e device_role=coordinator -e dist_upgrade=true
 ```
 
 GHCR images are public; `docker login ghcr.io` is not required for `coord pull`.
