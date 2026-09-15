@@ -7,7 +7,3 @@
 # image (#96) and a reflash is the primary way to move it, so a config deploy must
 # never drag a dist-upgrade and its reboot behind it (#48).
 dist_upgrade: false
-
-# Whether ansible clones/updates the checkout. Off so a run never resets an
-# operator's working tree under them; the fleet driver passes true.
-manage_checkout: false

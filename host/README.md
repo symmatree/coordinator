@@ -10,10 +10,10 @@ Full narratives: coordinator [docs/host-setup.md](../docs/host-setup.md), campod
 
 ```bash
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
-  -e device_role=coordinator -e manage_checkout=true
+  -e device_role=coordinator
 ```
 
-A bare `'<addr>,'` is a valid inventory, so no inventory file and no DNS are needed for one device; pass a real `-i` for more. `manage_checkout=true` creates the on-device clone that `/opt/stacks/<role>` symlinks into -- leave it off against a device someone is editing on, or it resets their working tree.
+A bare `'<addr>,'` is a valid inventory, so no inventory file and no DNS are needed for one device; pass a real `-i` for more. The play creates and updates the on-device clone that `/opt/stacks/<role>` symlinks into -- unconditionally, because `git pull` **is** the config deploy ([#48](https://github.com/symmatree/coordinator/issues/48)), so a run that skipped it would not be a converge. A device with local edits is not clobbered: `ansible.builtin.git` defaults to `force: no`, so the task fails and says so.
 
 The play remounts `/usr` read-write (it ships read-only), installs prerequisites, converges config, and **reboots and waits** if a kernel/firmware change or the `/usr` hatch requires it. Driving from outside is what makes that possible: [#113](https://github.com/symmatree/coordinator/issues/113) had to remove auto-reboot because the play ran locally, where ansible refuses to reboot its own control node.
 

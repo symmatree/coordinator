@@ -145,14 +145,19 @@
 # /opt/stacks/<role> is a symlink into this, so it has to exist on the device and
 # `git pull` is how a merged change reaches the box (#48).
 #
-# Defaulted OFF. An operator mid-edit on the device would have their working tree
-# reset without being asked, which is the rudest thing this playbook could do. Turn
-# it on for a fresh card: -e manage_checkout=true
-- name: Ensure the checkout exists
+# No flag on this. It used to be gated on manage_checkout, defaulting to false so
+# a run could never reset an operator's working tree -- which was the same mistake
+# as sync_repo: a default that does LESS than every real caller wants, where
+# forgetting it silently skipped the config deploy. #48 makes `git pull` the deploy,
+# so a converge that does not update the checkout is not a converge.
+#
+# And the case the flag was guarding is already handled, better. ansible.builtin.git
+# defaults to force: no, so local modifications are NOT discarded -- the task fails
+# and says so. Failing loudly on a dirty tree beats silently skipping everything.
+- name: Ensure the checkout exists and is current
   ansible.builtin.git:
     repo: "{{ coord_repo_url }}"
     dest: "{{ coord_checkout }}"
     version: "{{ coord_repo_version }}"
     update: true
   become: false
-  when: manage_checkout | bool

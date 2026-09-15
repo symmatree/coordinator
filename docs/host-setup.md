@@ -81,7 +81,7 @@ git clone https://github.com/symmatree/coordinator.git
 cd coordinator
 # from any machine that can reach it; 'coordinator' is the default role
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
-  -e device_role=coordinator -e manage_checkout=true
+  -e device_role=coordinator
 ```
 
 Re-run it after any reboot it asks for, until it exits clean. It is idempotent.

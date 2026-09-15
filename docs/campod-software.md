@@ -142,7 +142,7 @@ git clone https://github.com/symmatree/coordinator.git
 cd coordinator
 # from any machine that can reach it
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
-  -e device_role=campod -e manage_checkout=true
+  -e device_role=campod
 ```
 
 The playbook runs with

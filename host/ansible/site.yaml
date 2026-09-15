@@ -7,7 +7,7 @@
 # image -- so this works against a virgin unit:
 #
 #   ansible-playbook host/ansible/site.yaml -i '10.0.2.49,' -u pi \
-#     -e device_role=campod -e manage_checkout=true
+#     -e device_role=campod
 #
 # A bare "address," is a valid inventory, so no inventory file and no DNS are
 # required to run it. Pass a real -i inventory when driving more than one device.
@@ -50,9 +50,6 @@
     # version rather than whatever main happens to be.
     coord_checkout: "/home/{{ ansible_user | default('pi') }}/coordinator"
 
-    # Creating the checkout is what removes the last bootstrap ordering problem.
-    # Off by default so an operator's working tree is never reset under them.
-    manage_checkout: false
 
     # In-place `apt upgrade dist`. OFF by default: in the appliance model the OS
     # version is a property of the flashed image (#96) and a reflash is the primary
