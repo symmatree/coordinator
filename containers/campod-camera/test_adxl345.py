@@ -135,19 +135,28 @@ def main():
     )
 
     # Two's complement across the 13-bit full-res range, sign boundary included.
+    # The first entry of every read is discarded -- it is unreliable, and it was
+    # the entire source of a line at the poll rate. See Sensor.drain().
     fake.fifo = [(0, 1, -1), (4095, -4096, 2048), (-1, 0, 1)]
-    samples, entries, overrun = dev.drain()
-    ok &= check(entries == 3 and len(samples) == 3, "drain returns every queued sample")
+    samples, kept, raw, overrun = dev.drain()
+    ok &= check(kept == 2 and len(samples) == 2, "drain discards the first entry")
     ok &= check(
-        samples == [(0, 1, -1), (4095, -4096, 2048), (-1, 0, 1)],
-        "signed 16-bit decode",
+        samples == [(4095, -4096, 2048), (-1, 0, 1)],
+        "signed 16-bit decode, first entry dropped",
         str(samples),
     )
+    ok &= check(raw == 3, "raw count is what the FIFO held, before the discard")
+    ok &= check(not fake.fifo, "the FIFO is still drained completely, not left with a stale entry")
     ok &= check(not overrun, "no overrun flagged on a short FIFO")
 
+    fake.fifo = [(9, 9, 9)]
+    samples, kept, raw, overrun = dev.drain()
+    ok &= check(kept == 0 and samples == [], "a single queued entry yields nothing but still drains")
+
     fake.fifo = [(1, 2, 3)] * 32
-    _, entries, overrun = dev.drain()
-    ok &= check(entries == 32 and overrun, "full FIFO reports the hardware overrun bit")
+    _, kept, raw, overrun = dev.drain()
+    ok &= check(kept == 31 and raw == 32, "kept = raw - 1, and raw is reported so the ODR can still be fitted")
+    ok &= check(overrun, "overrun stays keyed on the RAW count, before the discard")
 
     # JSONL shape
     with tempfile.TemporaryDirectory() as td:

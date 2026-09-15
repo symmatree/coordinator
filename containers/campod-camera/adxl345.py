@@ -147,8 +147,12 @@ ODR_HZ = 3200
 # depth grows instead -- so the wide range is free, and the design doc's "tens of
 # microns at ~330 Hz" works out to 4-9 g, close enough to the rail to want it.
 RANGE_G = 16
-# At or below 1.6 MHz the datasheet's 5 us FIFO-pop delay is covered by the
-# register addressing alone, so no CS-deassert dance. Do not raise this.
+# Chosen so the datasheet's 5 us FIFO-pop delay is covered by the register
+# addressing alone, avoiding a CS-deassert dance. That reasoning is now suspect:
+# the first entry of every read turns out to be unreliable anyway (see drain()),
+# which is not what this rationale predicts. The value is kept because nothing
+# yet argues for a different one, and because raising it would change the one
+# variable we have characterised while chasing a mechanism we have not.
 SPI_HZ = 1500000
 # The FIFO fills in 32/ODR = 10 ms at 3200 Hz, so this has 2x margin.
 POLL_HZ = 200.0
@@ -263,17 +267,60 @@ class Adxl345:
         return {"delta_g": delta_g, "pass": passed, "all_pass": all(passed.values())}
 
     def drain(self):
-        """Read every queued FIFO sample. Returns (samples, entries, overrun)."""
+        """Read every queued FIFO sample, discarding the first.
+
+        Returns (samples, kept, raw, overrun): `kept` is what is returned, `raw`
+        is what the FIFO actually held. Both are recorded, because `raw` is the
+        only thing that can recover the part's true Output Data Rate offline --
+        `kept` is short by exactly one per poll, which at 200 Hz would read as
+        3000 Hz against a part running at 3200.
+
+        THE FIRST ENTRY OF EVERY READ IS DISCARDED, and it is worth being precise
+        about why, because the reason is measured rather than understood.
+
+        Measured on campod-se over 420 s of steady-state capture: the spectrum
+        carried a line at exactly the 200 Hz poll rate, plus its 400 Hz harmonic,
+        standing a factor of two above the broadband floor. Dropping the first
+        entry of each read removes it completely --
+
+            frequency      all samples   first dropped
+            100 Hz  ctrl        1.40 mg         1.42 mg     +0.9%
+            200 Hz              2.93 mg         1.45 mg    -50.4%
+            400 Hz              1.64 mg         1.44 mg    -12.0%
+            600 Hz  ctrl        1.39 mg         1.43 mg     +2.5%
+            800 Hz  ctrl        1.40 mg         1.43 mg     +2.1%
+            floor 500-1400      1.39 mg         1.43 mg
+
+        -- landing it on the broadband floor rather than merely attenuating it,
+        while every control frequency and the floor itself stay put. So this is
+        not general smoothing; it is specific to the poll rate.
+
+        The corroborating statistic: sample-to-sample steps ACROSS a read boundary
+        are zero 15.4% of the time against 10.3% inside a read, i.e. the first
+        entry is often a repeat of the last entry of the previous read.
+
+        What this is NOT is an explanation. The obvious suspect is the datasheet's
+        5 us FIFO-pop delay, but the arithmetic does not support it: between reads
+        there is ~5 ms of Python, and within a read the one-byte addressing gives
+        5.3 us at 1.5 MHz, so neither boundary is tight. Whatever the mechanism,
+        the first entry is unreliable and one sample in 16 is cheap against a 2x
+        artifact sitting on top of every spectrum. It also means the SPI_HZ note
+        about 1.6 MHz covering the pop delay is a claim we now have evidence
+        against, whatever the real cause turns out to be.
+        """
         entries = self.read(REG_FIFO_STATUS)[0] & 0x3F
         if entries == 0:
-            return [], 0, False
+            return [], 0, 0, False
         # Only pay for INT_SOURCE when the FIFO came back full; reading it also
         # clears the latched overrun bit, which is what we want while polling.
+        # Keyed on the RAW entry count, before the discard.
         overrun = False
         if entries >= FIFO_DEPTH:
             overrun = bool(self.read(REG_INT_SOURCE)[0] & INT_SOURCE_OVERRUN)
         samples = [self.read_one() for _ in range(entries)]
-        return samples, entries, overrun
+        # The FIFO must still be drained fully -- leaving an entry behind would
+        # just push the problem into the next read. Read all, return all but one.
+        return samples[1:], entries - 1, entries, overrun
 
     def close(self):
         try:
@@ -405,7 +452,10 @@ def main():
             "separation_m": os.getenv("CAMPOD_ACCEL_SEPARATION_M"),
             "started_utc": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
             "note": (
-                "Samples are raw LSB counts, not g. Batches carry the cumulative "
+                "Samples are raw LSB counts, not g. \"n\" is samples in this "
+                "record; \"nraw\" is what the FIFO held before the first entry "
+                "was discarded (see drain()) -- fit the ODR against nraw. "
+                "Batches carry the cumulative "
                 "sample index so the effective ODR can be fitted offline; the "
                 "datasheet specifies no tolerance on the part's internal clock, so "
                 "odr_hz_nominal is nominal."
@@ -444,7 +494,7 @@ def main():
                 t_boot = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
                 t_mono = time.monotonic_ns()
                 try:
-                    samples, entries, overrun = dev.drain()
+                    samples, entries, raw_entries, overrun = dev.drain()
                     failures[dev.label] = 0
                 except Exception as exc:  # noqa: BLE001
                     # Bounded, because this loop runs at POLL_HZ: printing on every
@@ -471,6 +521,9 @@ def main():
                         "boot_ns": t_boot,
                         "mono_ns": t_mono,
                         "n": entries,
+                        # What the FIFO held before drain() discarded its first
+                        # entry. Fit the Output Data Rate against THIS, not "n".
+                        "nraw": raw_entries,
                         "ovr": overrun,
                         "x": [s[0] for s in samples],
                         "y": [s[1] for s in samples],
