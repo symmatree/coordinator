@@ -4,10 +4,13 @@ on:
     branches: [main]
     paths:
       - containers/fleet-control/**
+      # The image carries the playbook, so a change to it must rebuild.
+      - host/ansible/**
       - .github/workflows/build-fleet-control.yaml
   pull_request:
     paths:
       - containers/fleet-control/**
+      - host/ansible/**
       - .github/workflows/build-fleet-control.yaml
   workflow_dispatch: {}
 
@@ -68,7 +71,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: containers/fleet-control
+          context: .
           file: containers/fleet-control/Dockerfile
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}

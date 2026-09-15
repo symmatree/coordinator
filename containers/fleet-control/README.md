@@ -1,53 +1,58 @@
 # fleet-control
 
-Set up and update the rekon10 fleet over SSH, from a phone instead of a laptop. Runs in the
-cluster on linux/amd64. Child of
-[#223](https://github.com/symmatree/coordinator/issues/223), filed as
+Converge the rekon10 fleet from a phone instead of a laptop. Runs in the cluster on
+linux/amd64. Child of [#223](https://github.com/symmatree/coordinator/issues/223), filed as
 [#236](https://github.com/symmatree/coordinator/issues/236).
 
-## The two actions
+Live at `https://fleet.{cluster}.symmatree.com`; deployment lives in `tiles`.
 
-| | what runs on the node | when |
-|---|---|---|
-| **bootstrap** | remount `/usr` rw, install git, clone, `./host/one_time.sh <role>`, `coord pull -q`, reboot, `coord start` | a freshly flashed card |
-| **update** | `git pull --ff-only && coord pull -q && coord start` | to bring a set-up node to the merged state of the repo, including a dependency or OS refresh via `one_time.sh` |
+## One action
 
-The operator picks; the service does not guess.
+**Converge.** The service runs `host/ansible/site.yaml` against the node, here on the control
+node, and reports the exit code. **0 means converged.**
 
-The images are pulled before the closing reboot. `one_time.sh` installs a boot unit that runs
-`coord start` on every boot ([#256](https://github.com/symmatree/coordinator/pull/256)), so on
-a card that has never pulled, rebooting first would start an unattended multi-minute fetch --
-and `coord pull` runs `compose down` first, so pulling afterwards would tear down what that
-unit was starting. Pulling first also means the reboot needs no network, and checks that the
-stack comes back on its own.
+```
+ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
+  -e device_role=<coordinator|campod> -e manage_checkout=true
+```
 
-`/usr` ships read-only, so it is remounted before anything is installed. That cannot move
-into `one_time.sh`'s playbook, because the remount has to precede installing git and git is
-how `one_time.sh` arrives. The closing reboot is what puts `/usr` back — `remount,ro` is
-refused on a live system.
+There used to be two actions. `bootstrap` differed from `update` because a fresh card needed a
+`/usr` remount, an apt install, a clone, and an exit-1-means-reboot retry dance that a running
+node did not. [#263](https://github.com/symmatree/coordinator/pull/263) deletes all of that:
+the same playbook handles a virgin unit and a converged one, so two buttons running identical
+commands would misdescribe what the service does.
 
-Timings from the bring-up of campod-se: clone to converged ~13 min on a Zero 2 W, `coord
-pull` ~4 min.
+The playbook owns the whole sequence — it stops capture before converging, reboots and waits
+when something actually changed, and starts the stack on the way out. This service adds
+nothing to it except a button and a log.
 
-## Long commands are detached
+`manage_checkout=true` is passed because every node here is a managed fleet node. It defaults
+off in the playbook so an operator's working tree is never reset under them.
 
-`setsid` runs them in their own session with output on a file, and the service follows that
-file over short connections. Losing this pod does not SIGHUP an apt transaction; a lost link
-is survivable; a replacement pod re-attaches to the running job rather than starting a
-second. See [`src/detached.ts`](src/detached.ts).
+### Reflashed cards
 
-## Everything confirms
+`POST /nodes/<name>/converge?reflashed=true` clears the recorded SSH host key first.
 
-Any action opens a confirmation naming what will run. That is the guard — against a bump on a
-phone screen, not against flying. The service touches no node until asked.
+A reflashed card presents a **new key for the same address**, which is a *changed* key rather
+than an unknown one — `StrictHostKeyChecking=accept-new` accepts unknown hosts and still
+refuses changed ones, and Ansible surfaces the refusal as a bare `UNREACHABLE` with the ssh
+error buried. Clearing it is a caller decision, so it lives here and the playbook carries no
+trust policy.
+
+## Progress comes from events, not scraped text
+
+`ansible-runner` emits a structured JSON event per task and per host. The service renders those
+rather than parsing `-v` output, which is not a stable interface and prints each task's entire
+result object — one `docker.service` fact block is several kilobytes.
 
 ## curl, not just the browser
 
 The UI is one client of the routes; it has no private endpoints.
 
 ```sh
-curl -sXPOST localhost:8080/nodes/campod-se/bootstrap    # -> 202 {"id": ...}
-curl -sN     localhost:8080/runs/<id>/stream             # live output (SSE)
+curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/converge"
+curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/converge?reflashed=true"
+curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 ```
 
 | route | |
@@ -55,8 +60,7 @@ curl -sN     localhost:8080/runs/<id>/stream             # live output (SSE)
 | `GET /` | the web UI |
 | `GET /healthz` | liveness |
 | `GET /nodes` | the roster |
-| `POST /nodes/:name/update` | start a run -> `202 {id}` |
-| `POST /nodes/:name/bootstrap` | start a run -> `202 {id}` |
+| `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
 
@@ -64,47 +68,54 @@ One action per node at a time; a second `POST` against a busy node is a `409`.
 
 ## Configuration
 
-`FLEET_INVENTORY` is required and has no default.
-
 | env | default | |
 |---|---|---|
 | `FLEET_INVENTORY` | *(required)* | path to the roster |
 | `FLEET_SSH_KEY` | `/secrets/ssh/id` | private key |
-| `FLEET_HOSTKEYS` | `/state/hostkeys.json` | recorded host keys |
-| `FLEET_REPO_URL` | the coordinator repo | what `bootstrap` clones |
-| `FLEET_CHECKOUT_PATH` | `$HOME/coordinator` | where it clones to |
-| `FLEET_SSH_TIMEOUT_MS` | `15000` | connect timeout |
+| `FLEET_SSH_TIMEOUT_SEC` | `90` | Ansible's connect timeout. Its own default is 10s, which a Zero under a converge misses |
+| `FLEET_PLAYBOOK_DIR` | `/app/ansible` | where the image keeps `host/ansible/**` |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | |
 
-The roster: `host` is optional and defaults to `name`, so named hosts need no addresses.
+Roster: `host` is optional and defaults to `name`.
 
 ```json
 {
   "user": "pi",
   "nodes": [
-    { "name": "coordinator", "role": "coordinator" },
+    { "name": "coordinator", "role": "coordinator", "host": "10.0.99.75" },
     { "name": "campod-se", "role": "campod" }
   ]
 }
 ```
 
-Host keys follow OpenSSH: recorded on first sight, rejected if they change, and cleared by
-`bootstrap`, since a reflashed card has new ones.
+## The image carries the playbook
+
+The build context is the **repo root**, and `host/ansible/**` is copied in — the playbook ships
+with the service that runs it, so the service cannot invoke a playbook it was never built
+against. That coupling is the one that bit us when this shelled `one_time.sh` and the script
+changed underneath it.
+
+The build then runs `ansible-playbook --syntax-check -i localhost, --connection=local`, using
+the local-connection property `site.yaml` documents. A broken playbook fails CI rather than a
+provisioning run.
+
+## Known limitation
+
+The run lives in this process. If the pod dies mid-converge, the playbook dies with it and the
+node is left part-converged. Moving Ansible to the control node did not fix that — it was true
+when this drove SSH directly too. A converge is re-runnable, so recovery is to run it again,
+but nothing resumes automatically.
 
 ## Develop
 
 ```sh
-npm install && npm run typecheck && npm test    # no hardware needed
+npm install && npm run typecheck && npm test   # no hardware, no ansible needed
 FLEET_INVENTORY=./my-inventory.json npm run dev
 ```
-
-`test/fixtures.json` holds fingerprints generated by `ssh-keygen`, so the fingerprint tests
-compare against OpenSSH rather than against this code. Regenerate with
-`bash test/gen-fixtures.sh`.
 
 ## Related
 
 - [#223](https://github.com/symmatree/coordinator/issues/223) the epic
 - [#236](https://github.com/symmatree/coordinator/issues/236) this service
-- [`docs/fleet-bringup.md`](../../docs/fleet-bringup.md) the bring-up order and the transcript behind the bootstrap sequence
-- [symmatree/tiles#735](https://github.com/symmatree/tiles/issues/735) reservations and names, which is where the roster should eventually come from
+- [#263](https://github.com/symmatree/coordinator/pull/263) the playbook this drives
+- [#280](https://github.com/symmatree/coordinator/issues/280) whether to keep building this or adopt a platform

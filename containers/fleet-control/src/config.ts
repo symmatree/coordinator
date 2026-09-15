@@ -1,13 +1,10 @@
 // Configuration, all from the environment.
-import { HostKeyStore } from './hostkeys.js';
 import { loadInventory, type Inventory } from './inventory.js';
-import type { SessionOptions } from './ssh.js';
+import type { ActionContext } from './actions.js';
 
 export interface Config {
   inventory: Inventory;
-  ssh: SessionOptions;
-  repoUrl: string;
-  checkoutPath: string;
+  action: ActionContext;
   port: number;
   host: string;
 }
@@ -27,14 +24,13 @@ export function loadConfig(): Config {
   const inventory = loadInventory(required('FLEET_INVENTORY'));
   return {
     inventory,
-    ssh: {
-      user: inventory.user,
+    action: {
+      inventory,
       privateKeyPath: env('FLEET_SSH_KEY', '/secrets/ssh/id'),
-      hostKeys: new HostKeyStore(env('FLEET_HOSTKEYS', '/state/hostkeys.json')),
-      timeoutMs: Number(env('FLEET_SSH_TIMEOUT_MS', '15000')),
+      // Ansible's own default is 10s, which a Zero under a converge misses; the handshake
+      // failures on campod-se are what this number is sized against.
+      sshTimeoutSec: Number(env('FLEET_SSH_TIMEOUT_SEC', '90')),
     },
-    repoUrl: env('FLEET_REPO_URL', 'https://github.com/symmatree/coordinator.git'),
-    checkoutPath: env('FLEET_CHECKOUT_PATH', '$HOME/coordinator'),
     port: Number(env('PORT', '8080')),
     host: env('HOST', '0.0.0.0'),
   };

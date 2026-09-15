@@ -47,10 +47,13 @@
   const dlg = document.getElementById('confirm');
 
   const WHAT = {
-    update: 'git pull, coord pull, coord start. The stack stops while images are pulled.',
-    bootstrap:
-      'For a freshly flashed card: install git, clone, run host/one_time.sh, reboot, start the ' +
-      'stack. Around 20 minutes on a Zero 2 W.',
+    converge:
+      'Runs the Ansible playbook against the node: stops capture, converges packages and ' +
+      'config, pulls images, reboots if anything changed, starts the stack. Same for a fresh ' +
+      'card or a running one. Minutes on a Pi 4B, longer on a Zero.',
+    'converge?reflashed=true':
+      'As above, and clears the recorded SSH host key first -- for a card that has just been ' +
+      'reflashed and therefore presents a new key.',
   };
 
   async function j(url, opts) {
@@ -82,7 +85,10 @@
         b.onclick = () => confirmThen(n.name, action);
         return b;
       };
-      btns.append(mk('Update', 'update', true), mk('Bootstrap', 'bootstrap', false));
+      btns.append(
+        mk('Converge', 'converge', true),
+        mk('Reflashed', 'converge?reflashed=true', false),
+      );
       card.append(btns);
 
       if (st.log?.length) {
