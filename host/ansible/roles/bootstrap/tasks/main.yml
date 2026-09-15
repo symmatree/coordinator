@@ -115,8 +115,12 @@
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      idx=$(ls /var/lib/apt/lists/*raspberrypi*_Packages 2>/dev/null) || exit 0
-      [ -n "$idx" ] || exit 0
+      # NO_INDEX is the signal the removal below keys on. It must be
+      # distinguishable from "index present, nothing auto-marked" -- both produce
+      # no package names, but only one of them means it is safe to remove the
+      # source. Printing nothing for both was the bug.
+      idx=$(ls /var/lib/apt/lists/*raspberrypi*_Packages 2>/dev/null) || { echo NO_INDEX; exit 0; }
+      [ -n "$idx" ] || { echo NO_INDEX; exit 0; }
       comm -12 \
         <(apt-mark showauto | sort -u) \
         <(awk '/^Package: /{print $2}' $idx | sort -u)
@@ -131,7 +135,9 @@
   # autoremove could take a package the box boots from.
   ansible.builtin.command:
     cmd: apt-mark manual {{ bootstrap_rpi_auto_pkgs.stdout_lines | join(' ') }}
-  when: bootstrap_rpi_auto_pkgs.stdout_lines | length > 0
+  when:
+    - "'NO_INDEX' not in bootstrap_rpi_auto_pkgs.stdout"
+    - bootstrap_rpi_auto_pkgs.stdout_lines | length > 0
   changed_when: true
 
 - name: Remove the Raspberry Pi archive from apt's sources
@@ -141,9 +147,21 @@
   loop:
     - /etc/apt/sources.list.d/raspi.list
     - /etc/apt/sources.list.d/raspi.sources
-  # Only once the marking above had a chance to run. An absent index means we
-  # could not enumerate, so leave the source alone and let a later converge do it.
-  when: bootstrap_rpi_auto_pkgs.stdout is defined
+  # Only once the marking above had a CHANCE to run -- i.e. the archive's index was
+  # on disk, so the enumeration was meaningful.
+  #
+  # This was `stdout is defined`, which is true whenever the task ran at all,
+  # because an empty string is still defined. So on a fresh card that had never run
+  # apt-get update, the index was absent, nothing was enumerated, and the source
+  # was removed anyway -- destroying the marking opportunity this is supposed to
+  # protect, in exactly the case where it matters most. A fresh flash is when Pi
+  # packages are most likely still auto-marked from the image build.
+  #
+  # With NO_INDEX the source survives and a later converge does the job: the
+  # `Install prerequisites` update below populates the index, so the NEXT run
+  # marks and removes. One extra archive fetch, once, in exchange for never
+  # removing the source blind.
+  when: "'NO_INDEX' not in bootstrap_rpi_auto_pkgs.stdout"
 
 - name: Install prerequisites
   ansible.builtin.apt:
