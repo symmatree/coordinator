@@ -5,16 +5,10 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import { findNode } from './inventory.js';
 import { RunRegistry, sinkFor } from './runs.js';
-import { bootstrap, update, type ActionContext } from './actions.js';
+import { converge } from './actions.js';
 
 export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInstance {
   const app = Fastify({ logger: true });
-  const ctx: ActionContext = {
-    inventory: cfg.inventory,
-    ssh: cfg.ssh,
-    repoUrl: cfg.repoUrl,
-    checkoutPath: cfg.checkoutPath,
-  };
 
   app.get('/healthz', async () => ({ ok: true }));
 
@@ -23,18 +17,21 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
 
   app.get('/nodes', async () => cfg.inventory.nodes);
 
-  const ACTIONS = { update, bootstrap } as const;
-
-  app.post<{ Params: { name: string; action: keyof typeof ACTIONS } }>(
-    '/nodes/:name/:action',
+  /**
+   * Converge a node. `?reflashed=true` clears the recorded host key first, which is the one
+   * thing a reflashed card needs and nothing else does.
+   */
+  app.post<{ Params: { name: string }; Querystring: { reflashed?: string } }>(
+    '/nodes/:name/converge',
     async (req, reply) => {
-      const fn = ACTIONS[req.params.action];
-      if (!fn) return reply.code(404).send({ error: `no such action: ${req.params.action}` });
       const node = findNode(cfg.inventory, req.params.name);
       if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+      const reflashed = req.query.reflashed === 'true';
       try {
-        const run = runs.start(req.params.action, node.name, (emit) => fn(node, ctx, sinkFor(emit)));
-        return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
+        const run = runs.start('converge', node.name, (emit) =>
+          converge(node, cfg.action, { reflashed }, sinkFor(emit)),
+        );
+        return reply.code(202).send({ id: run.id, action: run.action, node: run.node, reflashed });
       } catch (err) {
         return reply.code(409).send({ error: (err as Error).message });
       }
