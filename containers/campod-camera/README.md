@@ -60,7 +60,7 @@ the same vibration writes **2.4x more bands** here. Binning is a lever if it eve
 
 ## ADXL345 vibration logging (#211)
 
-`adxl345.py` reads one or more ADXL345s over SPI and writes batched samples as JSONL
+`accel/` (a Go binary, `campod-accel`) reads one or more ADXL345s over SPI and writes batched samples as JSONL
 into the **same session directory** as the frames, on the **same kernel clock** -- which
 is the whole point: accelerometer and camera share one host, so correlating them needs
 no NTP, no PPS, and no network.
@@ -79,10 +79,61 @@ connected mid-session appears within 30 s. There is no mid-run rediscovery.
 |-----|---------|---------|
 | `CAMPOD_ACCEL_SEPARATION_M` | *(empty)* | camera-to-arm baseline in metres, recorded in the run header. The only input, because it is a per-vehicle **measurement** rather than a tuning knob. |
 
-ODR (3200 Hz), range (±16 g), SPI clock (1.5 MHz) and poll rate (200 Hz) are constants at
-the top of `adxl345.py`, each with the reasoning beside it. They are not knobs: every one is
-derived from the datasheet rather than chosen, and a different value would need the argument
-changed, not the config.
+ODR (3200 Hz), range (±16 g) and SPI clock (1.5 MHz) are defaults in `accel/main.go`, each
+with the reasoning beside it. They are derived from the datasheet rather than chosen, and in
+normal operation a different value would need the argument changed, not the config. They are
+nevertheless overridable by environment variable (`CAMPOD_ACCEL_ODR_HZ`, `_RANGE_G`,
+`_SPI_HZ`, `_DRAIN_AT`, `_POOL`) for one narrow purpose: identifying artifacts requires
+sweeping them, and a rebuild-and-redeploy per point makes that experiment impractical. They
+are set nowhere in the stack file, so the deployed configuration is the derived one.
+
+**There is no poll rate any more.** The reader alternates between the two devices and drains
+each at a fill threshold, so there is no fixed cadence to fall behind — and nothing at a
+fixed frequency for an acquisition artifact to land on. The old 200 Hz poll produced a line
+at exactly 200 Hz in every spectrum.
+
+### Why Go
+
+Not for the reason this originally said. The first version of this section claimed the
+Python reader was slow because py-spidev issues one ioctl per FIFO entry, and that batching a
+whole drain into one `SPI_IOC_MESSAGE` would collapse the overhead. **Measured, it collapsed
+nothing** -- 103.5 µs/sample batched against 105.5 µs unbatched. And the part's protocol says
+it never could: popping one FIFO entry requires a complete read of `DATAX0..DATAZ1`, and
+address auto-increment runs into other registers rather than advancing the FIFO, so 32 entries
+is 32 SPI transactions however they are packaged. Batching saves 32 *syscalls*, which turned
+out to be about 2 µs of the 103.5.
+
+What actually mattered was **the SPI clock**, and the reason we could raise it. Measured on
+campod-se, two devices at ODR 3200 over 30 s:
+
+| SPI clock | delivered | overruns |
+|---|---|---|
+| 1.5 MHz | 2698/s (84%) | 2516 of 2530 batches |
+| **3 MHz** | **3246/s (100%)** | **3** |
+| 6 MHz | 3249/s (100%) | 2 |
+
+1.5 MHz was chosen specifically to stay under the 1.6 MHz above which AN-1025 requires
+deasserting CS to guarantee the 5 µs FIFO-pop delay, and the comment beside it said "do not
+raise this". That was the bottleneck. This reader sets `cs_change` and `delay_usecs`
+per transfer, satisfying the delay explicitly, which is what makes 3 MHz legal. Per-sample
+cost there decomposes as 18.7 µs of clock plus 29.6 µs fixed per transaction.
+
+So the honest summary: Go bought the ability to build a proper multi-transfer SPI message with
+explicit inter-transfer delays, and that unlocked the clock. It did not buy fewer transactions,
+because there are none to save.
+
+There is **no fill threshold and no fixed poll rate.** The reader alternates between devices
+and takes whatever each has -- typically 2-3 entries. An earlier version waited for 16 and that
+was a bug: after draining both, neither met the threshold, so the loop slept the 5 ms it takes
+to reach 16, then spent 6.6 ms draining. A 12 ms cycle against a FIFO that fills in 10 ms, so
+99% of batches came back flagged and 14% of samples were lost. Waiting gains nothing anyway,
+since per-sample cost is fixed per transaction rather than per drain.
+
+Writes happen on their own goroutines behind a preallocated batch pool, and the handoff is
+non-blocking: if the writer falls behind, a batch is dropped and counted rather than stalling
+the capture loop. Blocking the drain would cost the hardware FIFO -- samples gone before any of
+our code runs -- to protect samples already in hand. `fsync` happens once, at shutdown;
+`sync_file_range(WRITE)` keeps dirty pages moving without waiting.
 
 ### Why spidev and not the IIO driver
 
