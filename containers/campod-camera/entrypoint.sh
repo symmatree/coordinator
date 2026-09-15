@@ -15,6 +15,11 @@ echo "campod: session ${CAMPOD_SESSION}"
 # the spidev nodes exist whether or not a sensor is wired, so only a DEVID read
 # tells you anything, and the reader has to do that regardless.
 #
+# It is a Go binary rather than python3 adxl345.py because a FIFO drain has to be
+# one ioctl; see accel/spidev.go. It owns its own capture thread, batch pool and
+# writer goroutines, and it fsyncs only on shutdown -- so a slow SD card can no
+# longer delay a drain, which is what was costing ~2% of samples.
+#
 # Supervised separately on purpose: a missing sensor, an unset dtparam=spi=on, or
 # a bad solder joint must never cost us the frames. The restart is also the only
 # recovery path -- each run re-probes, so a sensor connected mid-session is picked
@@ -29,7 +34,7 @@ echo "campod: session ${CAMPOD_SESSION}"
 # says which, and says it once a miss plus a heartbeat, not on a loop.
 (
 	while true; do
-		python3 /opt/campod/adxl345.py || echo "accel: exited $?, retrying in 30s"
+		/opt/campod/campod-accel || echo "accel: exited $?, retrying in 30s"
 		sleep 30
 	done
 ) &

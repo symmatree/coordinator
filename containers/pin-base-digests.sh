@@ -29,7 +29,7 @@ for f in "${dockerfiles[@]}"; do
 		ref="${ref%% *}"                # drop ` AS builder`
 		ref="${ref%@sha256:*}"          # drop existing @digest
 		[[ $ref == *'$'* ]] && continue # ${VAR}
-		if [[ $ref == */* || $ref =~ ^(debian|ubuntu|alpine|python|node):.+$ ]]; then
+		if [[ $ref == */* || $ref =~ ^(debian|ubuntu|alpine|python|node|golang):.+$ ]]; then
 			refs["$ref"]=1
 		fi
 	done < <(grep -hoE '^(FROM |ARG BASE_IMAGE=)[^ ]+( AS [A-Za-z0-9_-]+)?' "$f" |

@@ -18,6 +18,26 @@
 # Cross-build (slow; QEMU):
 #   docker buildx build --platform linux/arm64 -t coordinator-campod-camera:local containers/campod-camera
 
+# The accelerometer reader is Go, not Python, for one reason: a drain has to be
+# ONE ioctl. py-spidev has no multi-transfer API, so the Python reader issued an
+# ioctl per FIFO entry -- measured on a quiet campod-se at 105.5 us/sample against
+# 37.3 us of actual clock time, so 65% of the cost was syscall overhead. See
+# accel/spidev.go DrainFIFO.
+#
+# --platform=$BUILDPLATFORM so the compile and the tests run natively on the
+# builder instead of under QEMU; only the output is arm64.
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81 AS accel-build
+WORKDIR /src
+COPY accel/ ./
+# Hardware-free: a fake SPI part covers the register protocol, the signed decode
+# across the 13-bit boundary, DEVID gating, the self-test verdict against the
+# datasheet's signed per-axis limits, that a drain is exactly one ioctl, and that
+# the batch pool never blocks the capture loop. A broken reader fails the build.
+RUN go vet ./... && go test ./...
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+      go build -trimpath -ldflags="-s -w" -o /out/campod-accel .
+
 ARG BASE_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 FROM ${BASE_IMAGE}
 
@@ -58,20 +78,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dumb-init \
     python3-picamera2 \
     python3-simplejpeg \
-    python3-spidev \
   && apt-get purge -y curl gpg \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
 
 COPY capture.py /opt/campod/capture.py
-COPY adxl345.py /opt/campod/adxl345.py
+COPY --from=accel-build /out/campod-accel /opt/campod/campod-accel
 COPY entrypoint.sh /opt/campod/entrypoint.sh
 RUN chmod +x /opt/campod/entrypoint.sh
 
-# Hardware-free check of the ADXL345 register protocol, decode, and JSONL shape
-# against a fake spidev -- a broken reader fails the build instead of a flight.
-COPY test_adxl345.py /opt/campod/test_adxl345.py
-RUN cd /opt/campod && python3 test_adxl345.py && rm test_adxl345.py
 COPY test_capture_wait.py /opt/campod/test_capture_wait.py
 RUN cd /opt/campod && python3 test_capture_wait.py && rm test_capture_wait.py
 
