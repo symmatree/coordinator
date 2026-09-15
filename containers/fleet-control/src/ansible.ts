@@ -32,6 +32,13 @@ export interface ConvergeOptions {
   sink?: EventSink;
 }
 
+/**
+ * Ansible colours its output. Those escapes are invisible in a terminal and literal noise
+ * everywhere else -- a log file, the run registry, the web UI -- so strip them once here.
+ */
+const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
+const plain = (t: string): string => t.replace(ANSI, '');
+
 /** One line of ansible-runner's JSON event stream, as much of it as we use. */
 interface RunnerEvent {
   event?: string;
@@ -54,6 +61,7 @@ interface RunnerEvent {
 function describe(e: RunnerEvent): string | null {
   const task = e.event_data?.task;
   const host = e.event_data?.host;
+  const out = e.stdout ? plain(e.stdout).trimEnd() : '';
   switch (e.event) {
     case 'playbook_on_task_start':
       return task ? `TASK ${task}` : null;
@@ -65,8 +73,15 @@ function describe(e: RunnerEvent): string | null {
       return `  UNREACHABLE: ${host ?? ''}${e.event_data?.res?.msg ? ' -- ' + e.event_data.res.msg : ''}`;
     case 'runner_on_skipped':
       return null; // skips are noise; the recap carries the count
+    // Runner's own failures arrive as `error`/`verbose`, not as task events. Without these a
+    // run that never reached a task -- a bad playbook path, a broken env -- emits NOTHING and
+    // fails silently, which is exactly how the first smoke test of this file behaved.
+    case 'error':
+      return out.length > 0 ? out : 'ansible-runner reported an error';
+    case 'verbose':
+      return out.length > 0 ? out : null;
     case 'playbook_on_stats':
-      return e.stdout?.trim() ? e.stdout.trimEnd() : 'PLAY RECAP';
+      return out.length > 0 ? out : 'PLAY RECAP';
     default:
       return null;
   }
@@ -113,7 +128,18 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
 
     writeFileSync(
       join(pdd, 'env', 'extravars'),
-      JSON.stringify({ ansible_user: opts.user, ...opts.extraVars }, null, 2),
+      JSON.stringify(
+        {
+          ansible_user: opts.user,
+          // Not a runner flag -- `--private-key` belongs to ansible-playbook, and runner does
+          // not forward it. The inventory variable is the supported route and needs no
+          // command-line string splitting.
+          ansible_ssh_private_key_file: opts.privateKeyPath,
+          ...opts.extraVars,
+        },
+        null,
+        2,
+      ),
     );
 
     writeFileSync(
@@ -132,8 +158,6 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
       PLAYBOOK_DIR,
       '-p',
       'site.yaml',
-      '--private-key',
-      opts.privateKeyPath,
       '-j', // JSON events on stdout
     ];
 
@@ -142,8 +166,6 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
         ...process.env,
         ANSIBLE_HOST_KEY_CHECKING: 'False',
         ANSIBLE_TIMEOUT: String(opts.sshTimeoutSec ?? 90),
-        // Keep ansible's own text output out of the way; we render from events.
-        ANSIBLE_STDOUT_CALLBACK: 'null',
       },
     });
 
@@ -155,11 +177,11 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
         if (rendered !== null) opts.sink?.('stdout', rendered);
       } catch {
         // Not an event line -- runner's own chatter. Pass it through rather than hide it.
-        opts.sink?.('stdout', trimmed);
+        opts.sink?.('stdout', plain(trimmed));
       }
     });
     const err = lineSplitter((line) => {
-      if (line.trim().length > 0) opts.sink?.('stderr', line);
+      if (line.trim().length > 0) opts.sink?.('stderr', plain(line));
     });
 
     child.stdout.on('data', (c: Buffer) => out.push(c));
