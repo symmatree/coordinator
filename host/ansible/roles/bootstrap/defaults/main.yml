@@ -1,0 +1,9 @@
+---
+# Role defaults so this role is safe to invoke from a playbook that does not
+# declare these. site.yaml sets both explicitly, which is where an operator looks
+# -- these exist so an undefined variable cannot be the failure mode instead.
+
+# In-place `apt upgrade dist`. Off: the OS version is a property of the flashed
+# image (#96) and a reflash is the primary way to move it, so a config deploy must
+# never drag a dist-upgrade and its reboot behind it (#48).
+dist_upgrade: false

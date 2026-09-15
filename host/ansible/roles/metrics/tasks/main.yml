@@ -25,6 +25,7 @@
 
 - name: Install collectd
   ansible.builtin.apt:
+    install_recommends: false
     # collectd-core, NOT collectd: the metapackage pulls rrdtool and the full plugin
     # dependency set for plugins this config never loads. We are not writing RRD.
     name: collectd-core

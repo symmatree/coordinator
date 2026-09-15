@@ -7,7 +7,7 @@
 # image -- so this works against a virgin unit:
 #
 #   ansible-playbook host/ansible/site.yaml -i '10.0.2.49,' -u pi \
-#     -e device_role=campod -e manage_checkout=true
+#     -e device_role=campod
 #
 # A bare "address," is a valid inventory, so no inventory file and no DNS are
 # required to run it. Pass a real -i inventory when driving more than one device.
@@ -18,7 +18,10 @@
 # than working around it, which also removed host/lib/usr-rw.sh -- the /usr hatch is
 # now a task in roles/bootstrap, ordered before the things that need it.
 #
-# In-place OS upgrade is a separate deliberate playbook: host/ansible/os-upgrade.yaml.
+# In-place OS upgrade is off unless asked for:
+#     ansible-playbook host/ansible/site.yaml ... -e dist_upgrade=true
+# It used to be a separate playbook. One entry point, and the upgrade now inherits
+# the capture quiesce and the --check refusal, which the separate playbook lacked.
 
 - name: Rekon host bootstrap
   hosts: all
@@ -47,9 +50,13 @@
     # version rather than whatever main happens to be.
     coord_checkout: "/home/{{ ansible_user | default('pi') }}/coordinator"
 
-    # Creating the checkout is what removes the last bootstrap ordering problem.
-    # Off by default so an operator's working tree is never reset under them.
-    manage_checkout: false
+
+    # In-place `apt upgrade dist`. OFF by default: in the appliance model the OS
+    # version is a property of the flashed image (#96) and a reflash is the primary
+    # way to move it, so a routine config deploy must not drag a dist-upgrade and
+    # its reboot behind it (#48). This is the in-place alternative for a box you do
+    # not want to reflash yet -- run it deliberately, expect it to be slow.
+    dist_upgrade: false
     coord_repo_url: https://github.com/symmatree/coordinator.git
     coord_repo_version: main
 
@@ -131,11 +138,29 @@
     # changed_when reads compose's progress output, which is not a stable
     # interface; a misread here is cosmetic recap noise only. Nothing keys on it,
     # and in particular the reboot decision does not.
+    # Bounded, because unbounded is how this failed. On its first ever hardware
+    # run (2026-09-15, campod-se) this task sat silent for 50+ minutes inside a
+    # play the fleet driver deliberately runs with no overall ceiling, so the hang
+    # held the node's slot indefinitely and reported nothing about itself.
+    #
+    # It is past its own internal bound by two orders of magnitude, which is what
+    # makes it a hang rather than slowness: `coord stop` is `docker compose stop`,
+    # and compose waits at most 10s per container before SIGKILL. Two containers
+    # is ~20s worst case. So whatever is stuck is not the container's shutdown --
+    # it is docker itself, and the likeliest way that happens is a container
+    # process in uninterruptible sleep on I/O, where even SIGKILL cannot land and
+    # the daemon waits forever.
+    #
+    # async/poll rather than a `timeout` wrapper so the failure names itself in
+    # the recap instead of surfacing as a bare exit 124. 180s is generous against
+    # a 20s worst case and still bounded.
     - name: Stop data collection for the duration of the converge
       ansible.builtin.command:
         cmd: /usr/local/bin/coord stop
       environment:
         COORD_STACK: "{{ device_role }}"
+      async: 180
+      poll: 5
       register: coord_stack_quiesced
       changed_when: >-
         'Stopping' in coord_stack_quiesced.stderr

@@ -142,7 +142,7 @@ git clone https://github.com/symmatree/coordinator.git
 cd coordinator
 # from any machine that can reach it
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
-  -e device_role=campod -e manage_checkout=true
+  -e device_role=campod
 ```
 
 The playbook runs with
@@ -272,7 +272,7 @@ It is idempotent; running it when nothing changed is cheap and safe.
 | `containers/campod-camera/*` merged upstream | `coord pull` (CI builds it; never build on the Zero) |
 | An Ansible role | re-run `site.yaml` against the device |
 | Anything in `/boot/firmware/config.txt` | reflash -- the image is the only writer of that partition |
-| OS packages | `host/ansible/os-upgrade.yaml` -- deliberate, not part of a config deploy |
+| OS packages | `site.yaml -e dist_upgrade=true` -- deliberate, off by default, never part of a config deploy |
 
 **Never build on the Zero.** CI builds arm64 and the Zero pulls. 512 MB of RAM is the
 binding constraint on this device and a build will not fit.
