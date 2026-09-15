@@ -15,7 +15,23 @@ LoadPlugin cpu
 LoadPlugin memory
 LoadPlugin disk
 LoadPlugin thermal
+LoadPlugin interface
 LoadPlugin csv
+
+<Plugin interface>
+  # Added because a question we could not answer: a converge that should take
+  # minutes took over an hour, and "was the wifi worse that time?" had no data
+  # behind it. wlan0 measured -64 dBm with 239 retry-discarded packets on the
+  # bench next to the AP, which is the best case a pod will ever see -- so link
+  # quality is a real variable in converge duration and we were not recording it.
+  #
+  # Named explicitly rather than collecting everything: docker creates a veth per
+  # container and a bridge per network, so IgnoreSelected false would grow the CSV
+  # tree with interfaces that come and go and tell us nothing.
+  Interface "wlan0"
+  Interface "usb0"
+  IgnoreSelected false
+</Plugin>
 
 <Plugin cpu>
   # Per-core and per-state. On a 4-core Zero 2 W that is the difference between
