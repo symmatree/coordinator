@@ -42,8 +42,14 @@ COPY accel/ ./
 # the batch pool never blocks the capture loop. A broken reader fails the build.
 RUN go vet ./... && go test ./...
 ARG TARGETARCH
+# GIT_SHA is stamped into the binary and lands in every capture header. Without it
+# a file records only that its reader was "the Go one", which identifies the
+# language and not the build -- and which commit wrote a capture is provenance
+# that cannot be recovered afterwards. Empty for a local build, which the reader
+# reports as such rather than pretending.
+ARG GIT_SHA=""
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
-      go build -trimpath -ldflags="-s -w" -o /out/campod-accel .
+      go build -trimpath -ldflags="-s -w -X main.buildSHA=${GIT_SHA}" -o /out/campod-accel .
 
 FROM ${BASE_IMAGE}
 

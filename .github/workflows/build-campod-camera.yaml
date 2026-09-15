@@ -69,6 +69,7 @@ jobs:
           tags: ${{ steps.docker-metadata.outputs.tags }}
           labels: ${{ steps.docker-metadata.outputs.labels }}
           build-args: |
+            GIT_SHA=${{ github.sha }}
             BASE_IMAGE=${{ steps.pins.outputs.base_image }}
             RPI_SUITE=${{ steps.pins.outputs.rpi_suite }}
             RPI_KEYRING_DEB=${{ steps.pins.outputs.rpi_keyring_deb }}

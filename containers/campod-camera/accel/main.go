@@ -28,6 +28,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -36,6 +37,24 @@ import (
 )
 
 const schema = 1
+
+// Where the stack file mounts the host's own /etc/hostname. A var rather than a
+// const so the test can point it somewhere else; nothing else reassigns it.
+var hostHostnamePath = "/etc/host-hostname"
+
+// buildSHA is stamped at link time (-ldflags -X) from the commit the image was
+// built from. Recorded in every capture header, because "which reader wrote
+// this" is provenance that cannot be reconstructed afterwards -- the file used
+// to say only "campod-accel (go)", which identifies the language and nothing
+// else. Empty means a local build outside the image.
+var buildSHA = ""
+
+func readerID() string {
+	if buildSHA == "" {
+		return "campod-accel (go, local build)"
+	}
+	return "campod-accel (go) " + buildSHA
+}
 
 type config struct {
 	dir       string
@@ -58,6 +77,31 @@ func envInt(k string, def int) int {
 	return def
 }
 
+// nodeName is the name of the HOST, not of the container.
+//
+// os.Hostname() inside a container returns the container ID -- measured on
+// campod-se: Config.Hostname was e2e7f038824a while the host was campod-se --
+// and it changes on every recreate. So it cannot be the fallback: it would
+// scatter one pod's captures across a new directory per container restart,
+// which is worse than collecting them under one wrong name.
+//
+// The stack file bind-mounts the host's /etc/hostname read-only, which makes the
+// host the single source of truth and is byte-identical on all four pods. That
+// is the point: there is no per-unit value in a shared file to get wrong, which
+// is exactly what went wrong before (#272 -- every pod claimed to be campod-sw
+// because the shared stack file carried one literal).
+//
+// os.Hostname stays as a last resort, and outside a container it is correct.
+func nodeName() string {
+	if b, err := os.ReadFile(hostHostnamePath); err == nil {
+		if n := strings.TrimSpace(string(b)); n != "" {
+			return n
+		}
+	}
+	h, _ := os.Hostname()
+	return h
+}
+
 func loadConfig() config {
 	c := config{
 		dir:       os.Getenv("CAMPOD_ACCEL_DIR"),
@@ -73,8 +117,7 @@ func loadConfig() config {
 		c.dir = "/captures"
 	}
 	if c.node == "" {
-		h, _ := os.Hostname()
-		c.node = h
+		c.node = nodeName()
 	}
 	if c.session == "" {
 		c.session = time.Now().UTC().Format("20060102T150405Z")
@@ -171,7 +214,8 @@ func run() error {
 			"odr_hz_nominal": c.odrHz, "range_g": c.rangeG, "full_res": true,
 			"scale_mg_per_lsb": scaleMgPerLSB, "spi_hz": c.spiHz,
 			"pool_depth":   c.poolDepth,
-			"reader":       "campod-accel (go)",
+			"reader":       readerID(),
+			"build_sha":    buildSHA,
 			"self_test":    stRes,
 			"separation_m": c.sepM,
 			"started_utc":  time.Now().UTC().Format("2006-01-02T15:04:05.000000Z"),
