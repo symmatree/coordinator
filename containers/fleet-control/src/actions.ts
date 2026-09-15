@@ -55,10 +55,7 @@ export async function converge(
     privateKeyPath: ctx.privateKeyPath,
     sshTimeoutSec: ctx.sshTimeoutSec,
     knownHostsPath: ctx.knownHostsPath,
-    // manage_checkout creates or updates the on-device clone that /opt/stacks/<role> symlinks
-    // into. It defaults off in the playbook so an operator's working tree is never reset --
-    // but every node this service drives is a managed fleet node, not someone's bench.
-    extraVars: { device_role: node.role, manage_checkout: true },
+    extraVars: { device_role: node.role },
     sink,
   });
 
