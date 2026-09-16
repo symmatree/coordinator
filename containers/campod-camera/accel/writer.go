@@ -11,6 +11,19 @@ import (
 // SYNC_FILE_RANGE_WRITE: start writeback on the range, do not wait for it.
 const syncFileRangeWrite = 2
 
+// How much to buffer before kicking writeback. 128 KiB because that is btrfs's
+// compression block size, and @var is mounted with zstd: a flush boundary at
+// 64 KiB lands mid-block, so every flush asks the filesystem to update a
+// partially-written compressed extent rather than complete one.
+//
+// This is a HYPOTHESIS UNDER TEST, not a settled tuning. It was 64 KiB, chosen
+// for no reason beyond being a round number. The box saturates its card at
+// ~20 MiB/s of READS whenever this writer runs, with writes at 0.13 MiB/s, and
+// read-modify-write on partial compressed extents is one candidate. If the
+// read rate does not move, this should be reconsidered rather than left as
+// folklore.
+const syncEveryBytes = 128 * 1024
+
 // writer owns a JSONL file and the only blocking I/O in the program.
 //
 // Two different operations get called "sync" and conflating them is what made
@@ -30,7 +43,6 @@ type writer struct {
 	f         *os.File
 	bw        *bufio.Writer
 	enc       *json.Encoder
-	written   int64 // bytes handed to the kernel
 	synced    int64 // bytes we have asked it to start writing back
 	syncEvery int64
 }
@@ -53,13 +65,8 @@ func (w *writer) record(v any) error {
 	if err := w.enc.Encode(v); err != nil {
 		return err
 	}
-	w.written = int64(w.bw.Size()-w.bw.Available()) + w.flushedBytes()
 	return w.maybeStartWriteback()
 }
-
-// bufio does not expose how much it has flushed, so track it by draining the
-// buffer on a fixed boundary instead of guessing.
-func (w *writer) flushedBytes() int64 { return w.synced }
 
 func (w *writer) maybeStartWriteback() error {
 	if w.bw.Buffered() < int(w.syncEvery) {
