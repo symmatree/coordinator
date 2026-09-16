@@ -2,16 +2,20 @@
 # Auto-start this device's stack on every boot, so it returns to a known-good
 # running state regardless of the last operator command (#97).
 #
-# What this does and does NOT cover, stated precisely because it is easy to
-# overclaim. `restart: unless-stopped` already handles the common cases on its
-# own: a power yank, or `shutdown -h now` with the stack running, both come back
-# up running. The one case it deliberately does not cover is an EXPLICIT stop --
-# `coord stop` marks containers stopped and that survives reboots. So the gap is
-# narrow: `coord stop`, then a power cycle, equals a device that stays idle.
-#
-# Narrow but real, and it is #97's point: come back to a known-good running state
+# This unit is the ONLY thing that starts the stack. No service in either stack
+# carries a `restart:` policy, so dockerd starts nothing on its own and nothing
+# races this. `coord start` is `compose up -d`, which starts stopped containers, so
+# a power yank, a `shutdown -h now`, and a `coord stop` followed by a power cycle
+# all come back up running -- which is #97's point: a known-good running state
 # regardless of the last operator command. A pod stopped for bench work and then
 # carried out and connected to a battery has nobody there to start it.
+#
+# A container that dies mid-run therefore stays dead until the next boot, and that
+# is wanted. None of these come up happy mid-flight, and feeding the FC data from a
+# container that just restarted would be suspect. A restart policy also fights this
+# unit: it brought containers back DURING a shutdown on campod-se, where the
+# accelerometer reader exited cleanly on the reboot's SIGTERM and dockerd started a
+# fresh session 22 s later on a box that was going down.
 #
 # Shared by both roles because the coordinator had it and the campod did not,
 # which was an accident of where the task lived rather than a decision.

@@ -33,7 +33,6 @@ services:
     image: ghcr.io/symmatree/coordinator-vio-tracker:main
     container_name: coordinator_vio_tracker
     privileged: true
-    restart: unless-stopped
     volumes:
       # Bind-mount /dev/bus/usb (NOT `devices:`). When depthai uploads firmware
       # the MyriadX resets and re-enumerates to a new USB address/node. A static
@@ -96,7 +95,6 @@ services:
   vio-estimator:
     image: ghcr.io/symmatree/coordinator-vio-estimator:main
     container_name: coordinator_vio_estimator
-    restart: unless-stopped
     volumes:
       - /var/lib/coordinator/ipc:/tmp
       - /var/lib/coordinator/config:/config:ro
@@ -108,7 +106,6 @@ services:
     image: ghcr.io/symmatree/coordinator-mavlink:main
     container_name: coordinator_mavlink
     privileged: true
-    restart: unless-stopped
     network_mode: host
     depends_on:
       - vio-estimator
@@ -142,7 +139,6 @@ services:
   sh1106-display:
     image: ghcr.io/symmatree/coordinator-sh1106-display:main
     container_name: coordinator_sh1106_display
-    restart: unless-stopped
     devices:
       - /dev/i2c-1:/dev/i2c-1
     volumes:
