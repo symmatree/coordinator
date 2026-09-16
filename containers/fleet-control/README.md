@@ -16,37 +16,30 @@ ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
   -e device_role=<coordinator|campod>
 ```
 
-There used to be two actions. `bootstrap` differed from `update` because a fresh card needed a
-`/usr` remount, an apt install, a clone, and an exit-1-means-reboot retry dance that a running
-node did not. [#263](https://github.com/symmatree/coordinator/pull/263) deletes all of that:
-the same playbook handles a virgin unit and a converged one, so two buttons running identical
-commands would misdescribe what the service does.
+There used to be two actions, `bootstrap` and `update`.
+[#263](https://github.com/symmatree/coordinator/pull/263) made the playbook handle a virgin
+unit and a converged one the same way, so two buttons issuing identical commands would
+misdescribe what the service does.
 
-The playbook owns the whole sequence — it stops capture before converging, reboots and waits,
-and starts the stack on the way out. This service adds nothing to it except a button and a log.
+The playbook owns the whole sequence. This service adds nothing to it except a button and a log.
 
-**It reboots on every converge, by design.** `/usr` comes back read-only at every boot, so the
-remount always fires, and the reboot is what restores that invariant. Gating the reboot on
-"did apt install anything" was tried and produced a worse outcome: a no-op converge left `/usr`
-writable while the play's own message claimed otherwise. Rebooting a bench operation is
-cheaper than an invariant that is only conditionally true.
+> **Scope of this file.** It documents the *service*. What the playbook does, and what happens
+> on a device while it runs, is documented with the playbook (`host/ansible/`) and the device
+> (`docs/campod.md`, `docs/host-setup.md`). Causal claims about device behaviour do not belong
+> here: nobody debugging a device reaches for the ground station's README, and a copy this far
+> from the thing it describes goes stale without anyone noticing.
 
-**Budget twenty minutes or more on a campod**, not the few minutes a Pi 4B takes. Measured on
-campod-se: a single apply took over 20 minutes, dominated by `apt-get update`, with the box
-not answering SSH for much of it. That is the WiFi link rather than the CPU — wlan0 at -64 dBm
-with 239 retry-discarded packets, and `usb0` down so there is no alternative path — so a small
-TCP handshake completes while sshd's banner does not get through.
+**Every converge reboots the device**, whether or not anything changed. Worth knowing before
+you press the button; the reason is the playbook's and is recorded there.
 
-**This service carries no git logic, and does not need any.** `roles/bootstrap` runs
-`ansible.builtin.git` with `update: true` **before** `coord-stack` installs `bin/coord` and the
-VIO tools from that same checkout with `remote_src`. So pull-then-converge is ordered inside
-the play and cannot be got wrong from out here.
+**Budget twenty minutes or more on a campod**, against a few minutes for a Pi 4B. That is
+measured from this side -- wall time for a single converge driven from here -- and it is an
+expectation to set, not an explanation of anything.
 
-That used to be gated on a `manage_checkout` flag this service passed as `true`.
-[#295](https://github.com/symmatree/coordinator/pull/295) deleted the flag: `git pull` is the
-deploy, so a converge that does not update the checkout is not a converge, and the dirty-tree
-case it guarded is handled better by `ansible.builtin.git` defaulting to `force: no` -- which
-fails loudly instead of silently skipping the config deploy.
+**This service carries no git logic and needs none:** the playbook updates the on-device
+checkout before installing from it. It used to be gated on a `manage_checkout` flag this
+service passed as `true`; [#295](https://github.com/symmatree/coordinator/pull/295) deleted
+the flag.
 
 ### Reflashed cards
 
@@ -96,7 +89,7 @@ One action per node at a time; a second `POST` against a busy node is a `409`.
 |---|---|---|
 | `FLEET_INVENTORY` | *(required)* | path to the roster |
 | `FLEET_SSH_KEY` | `/secrets/ssh/id` | private key |
-| `FLEET_SSH_TIMEOUT_SEC` | `90` | Ansible's connect timeout. Its own default is 10s, which a Zero under a converge misses |
+| `FLEET_SSH_TIMEOUT_SEC` | `90` | Ansible's connect timeout, raised from its 10s default |
 | `FLEET_KNOWN_HOSTS` | `/state/known_hosts` | recorded host keys, shared by ssh and the clear-on-reflash path. On the `/state` volume so they survive a pod restart |
 | `FLEET_PLAYBOOK_DIR` | `/app/ansible` | where the image keeps `host/ansible/**` |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | |
@@ -137,11 +130,9 @@ a *successful* converge as a failure while the play was still running. Killing a
 is worse than waiting — it leaves a half-configured box. The cost is that a genuinely wedged
 run holds that node's slot until the pod restarts.
 
-**Dry runs are not available.** The playbook refuses `--check` deliberately: check mode skips
-every `command` task, which is the quiesce, the image pull, the start, and every probe that
-registers a result and keys off its `rc` — so it cannot validate the half that matters while
-still costing a full apt refresh. `--syntax-check` validates structure without connecting, and
-the image build already runs it.
+**Dry runs are not available.** The playbook refuses `--check`, for reasons recorded with the
+playbook. `--syntax-check` validates structure without connecting, and the image build already
+runs it.
 
 ## Develop
 
