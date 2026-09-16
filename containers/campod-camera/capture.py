@@ -17,7 +17,7 @@ Config via environment (all optional):
   CAMPOD_STILL_MAX_EXPOSURE_US
                       cap the shutter (default: 5000; 0 = uncapped AE)
   CAMPOD_STILL_FOCUS     auto | infinity | <dioptres> (default: auto)
-  CAMPOD_SESSION         session id (default: UTC timestamp at start)
+  CAMPOD_SESSION         session id (default: the kernel boot_id)
   CAMPOD_SYNC_MODE       off | server | client (default: off) -- see note below
 """
 
@@ -253,6 +253,15 @@ def _wait_for_camera():
 HOST_HOSTNAME_PATH = Path("/etc/host-hostname")
 
 
+def _boot_id() -> str:
+    """The kernel's boot id, which names the session.
+
+    No fallback: if this cannot be read we cannot name a session, and inventing
+    one would produce data that lies about which boot it came from.
+    """
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
 def _node_name():
     """The name of the HOST, not of the container.
 
@@ -297,13 +306,18 @@ def main():
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
 
-    # Per-process session dir so reboots/restarts don't interleave sequences.
-    # CAMPOD_SESSION lets the entrypoint hand the same id to the accelerometer
-    # reader, so a session directory holds the frames and the vibration record
-    # for the same interval -- one self-contained unit (#211).
-    session = os.getenv("CAMPOD_SESSION") or dt.datetime.now(dt.timezone.utc).strftime(
-        "%Y%m%dT%H%M%SZ"
-    )
+    # The session is the kernel boot_id, which the accelerometer reader derives
+    # independently: it is generated once per boot and is not namespaced, so two
+    # containers agree on it with nothing passed between them. That is what lets
+    # the camera and the reader be separate services and still land in one
+    # directory (#211).
+    #
+    # It used to be a wall-clock timestamp, which meant nothing on a box with no
+    # RTC -- the time at container start was whatever timesyncd had recovered, if
+    # the network was up. Consequence of the change: a restart within one boot
+    # re-enters the same directory, so `seq` is no longer unique inside it. Frame
+    # filenames still are, because the stem carries a microsecond wall stamp.
+    session = os.getenv("CAMPOD_SESSION") or _boot_id()
     session_dir = out_dir / node / session
     session_dir.mkdir(parents=True, exist_ok=True)
 

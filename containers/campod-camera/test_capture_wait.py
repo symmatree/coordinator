@@ -12,8 +12,11 @@ that only an absent camera produces can be exercised on a build machine --
 
 The regression this guards is the crash loop: capture.py used to `return 1` on an
 absent camera, docker restarted it, and each restart re-paid the picamera2 import
--- 60 restarts in two hours on campod-se at load ~8 on a quad-core,
-which also killed the accelerometer reader the entrypoint runs beside us.
+-- 60 restarts in two hours on campod-se at load ~8 on a quad-core, which back
+then also took down the accelerometer reader sharing the container. The reader is
+its own service now, so it would survive; the import cost is the reason this
+still matters, and it is worse than we thought -- measured at 8m52s and ~10 GiB
+of card reads on campod-se.
 
 picamera2 is stubbed rather than imported for real on purpose: the real import is
 the expensive thing being avoided, and it has no camera to find on a builder.

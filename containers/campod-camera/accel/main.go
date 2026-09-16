@@ -122,9 +122,31 @@ func loadConfig() config {
 		c.node = nodeName()
 	}
 	if c.session == "" {
-		c.session = time.Now().UTC().Format("20060102T150405Z")
+		c.session = bootID()
 	}
 	return c
+}
+
+// bootID names the session. The kernel generates it once per boot and it is
+// not namespaced, so the camera container and this one derive the same id
+// without a launcher passing it between them -- which is what let the two
+// programs be separate services at all.
+//
+// A wall-clock timestamp used to name the session, and it never meant anything:
+// a campod has no RTC, so the time at container start is whatever timesyncd had
+// managed to recover, if the network was up at all. Both programs print their
+// session on startup, so if this ever did diverge between containers the logs
+// would say so immediately rather than quietly splitting one run in two.
+//
+// No fallback on purpose. If /proc is not readable we cannot name a session,
+// and inventing one would produce data that lies about where it came from.
+func bootID() string {
+	b, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "accel: cannot read boot_id: %v\n", err)
+		os.Exit(1)
+	}
+	return strings.TrimSpace(string(b))
 }
 
 var devices = []struct{ label, path string }{
