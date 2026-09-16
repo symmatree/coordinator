@@ -91,4 +91,5 @@ services:
       # is meaningless without this number -- 1 g across 150 mm at 120 Hz is
       # 0.41 px of image shift. Empty until it is measured on the airframe.
       CAMPOD_ACCEL_SEPARATION_M: ""
+      CAMPOD_ACCEL_SYNC_KIB: "0"
     command: ["/opt/campod/campod-accel"]
