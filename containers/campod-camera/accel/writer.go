@@ -16,6 +16,11 @@ const syncFileRangeWrite = 2
 // 64 KiB lands mid-block, so every flush asks the filesystem to update a
 // partially-written compressed extent rather than complete one.
 //
+// CAMPOD_ACCEL_SYNC_KIB overrides it; 0 stops kicking writeback at all, leaving
+// bufio to flush when its buffer fills and the kernel to decide when the card
+// sees it. Settable so the value can be compared on the card without an image
+// build per value.
+//
 // This is a HYPOTHESIS UNDER TEST, not a settled tuning. It was 64 KiB, chosen
 // for no reason beyond being a round number. The box saturates its card at
 // ~20 MiB/s of READS whenever this writer runs, with writes at 0.13 MiB/s, and
@@ -69,6 +74,9 @@ func (w *writer) record(v any) error {
 }
 
 func (w *writer) maybeStartWriteback() error {
+	if w.syncEvery == 0 {
+		return nil // 0 means do not kick at all; bufio still flushes when full
+	}
 	if w.bw.Buffered() < int(w.syncEvery) {
 		return nil
 	}

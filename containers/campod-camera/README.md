@@ -78,6 +78,7 @@ connected mid-session appears within 30 s. There is no mid-run rediscovery.
 | Var | Default | Meaning |
 |-----|---------|---------|
 | `CAMPOD_ACCEL_SEPARATION_M` | *(empty)* | camera-to-arm baseline in metres, recorded in the run header. The only input, because it is a per-vehicle **measurement** rather than a tuning knob. |
+| `CAMPOD_ACCEL_SYNC_KIB` | `128` | bytes buffered before kicking writeback; `0` stops kicking altogether. |
 | `CAMPOD_ACCEL` | `1` | `0` skips starting the reader entirely. A **bisect gate**, not a feature -- see `entrypoint.sh`. Set it on the `docker run` under test; it is deliberately absent from compose. |
 
 ODR (3200 Hz), range (±16 g) and SPI clock (3 MHz) are defaults in `accel/main.go`, each
