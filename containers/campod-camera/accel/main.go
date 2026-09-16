@@ -240,7 +240,7 @@ func run() error {
 				"of a step does NOT mean the wall clock is right -- with nothing to " +
 				"sync against there is no step and it is wrong throughout.",
 		}
-		w, err := newWriter(filepath.Join(sessionDir, "accel-"+d.label+".jsonl"), hdr, 64*1024)
+		w, err := newWriter(filepath.Join(sessionDir, "accel-"+d.label+".jsonl"), hdr, syncEveryBytes)
 		if err != nil {
 			return err
 		}
