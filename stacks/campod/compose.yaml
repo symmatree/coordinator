@@ -23,7 +23,6 @@ services:
   campod-camera:
     image: ghcr.io/symmatree/coordinator-campod-camera:main
     container_name: campod_camera
-    restart: unless-stopped
     # libcamera/IMX708 passthrough. privileged populates the container /dev with
     # host devices and lifts the device cgroup (same pattern as vio-tracker);
     # /run/udev lets libcamera enumerate the camera. If enumeration ever fails,
@@ -73,7 +72,6 @@ services:
   campod-accel:
     image: ghcr.io/symmatree/coordinator-campod-camera:main
     container_name: campod_accel
-    restart: unless-stopped
     # privileged for /dev/spidev0.0 and 0.1. The host still needs dtparam=spi=on
     # for those nodes to exist at all. No /run/udev and no /config: SPI has no
     # enumeration, so there is nothing to discover and nothing to configure --
