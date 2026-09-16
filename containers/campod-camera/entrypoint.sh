@@ -10,7 +10,7 @@ mkdir -p "${CAPTURE_DIR}"
 export CAMPOD_SESSION="${CAMPOD_SESSION:-$(date -u +%Y%m%dT%H%M%SZ)}"
 echo "campod: session ${CAMPOD_SESSION}"
 
-# The accelerometer reader always runs; it probes both chip selects and logs
+# The accelerometer reader runs by default; it probes both chip selects and logs
 # whichever answers. There is nothing to enable, because SPI has no enumeration --
 # the spidev nodes exist whether or not a sensor is wired, so only a DEVID read
 # tells you anything, and the reader has to do that regardless.
@@ -32,11 +32,26 @@ echo "campod: session ${CAMPOD_SESSION}"
 # couple of minutes and took these accelerometers down with it. The consequence to
 # know: the container being Up no longer implies the camera is present. The log
 # says which, and says it once a miss plus a heartbeat, not on a loop.
-(
-	while true; do
-		/opt/campod/campod-accel || echo "accel: exited $?, retrying in 30s"
-		sleep 30
-	done
-) &
+#
+# CAMPOD_ACCEL=0 is a bisect gate, not a feature. Container termination does not
+# complete on this image and does on the last pre-Go one, and the obvious suspect
+# is the second process tree. We tried establishing that by SIGKILLing the reader
+# out of a running container, which proved nothing: a container you killed two
+# children out of is not the same object as one that never had them. This makes
+# "no Go process in the tree" a property of a container you can start.
+#
+# It is deliberately not plumbed into compose. Set it on the docker run that is
+# under test, so main's flight behaviour is unchanged and no other pod picks this
+# up on its next converge. Delete the gate and this comment once that is settled.
+if [ "${CAMPOD_ACCEL:-1}" = "0" ]; then
+	echo "accel: CAMPOD_ACCEL=0, reader not started (bisect gate)"
+else
+	(
+		while true; do
+			/opt/campod/campod-accel || echo "accel: exited $?, retrying in 30s"
+			sleep 30
+		done
+	) &
+fi
 
 exec python3 /opt/campod/capture.py
