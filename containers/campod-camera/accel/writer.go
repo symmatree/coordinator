@@ -42,8 +42,8 @@ const syncEveryBytes = 128 * 1024
 // writer synchronously at a moment nobody chose -- deferring syncs without
 // bounding dirty pages just relocates the stall somewhere worse.
 //
-// fsync happens exactly once, at Close, which is the moment durability is
-// actually wanted: the operator is about to pull the plug.
+// And never fsync at all -- see Close. There is no point in a pod's life where
+// a clean shutdown is the durability boundary.
 type writer struct {
 	f         *os.File
 	bw        *bufio.Writer
@@ -98,13 +98,25 @@ func (w *writer) maybeStartWriteback() error {
 	return nil
 }
 
-// Close flushes, then fsyncs once. This is the only fsync in the program.
+// Close hands the buffer to the kernel and closes the file. It does NOT fsync,
+// and there is no fsync anywhere in this program.
+//
+// A clean shutdown is never the durability boundary here. On the bench a stop
+// is an unnatural event we trigger ourselves; in flight the sequence is disarm
+// and then power-off, and a power pull does not call Close at all. So an fsync
+// here would buy durability only for the one case that was never at risk.
+//
+// It is not free, either. It waits on the card, and on SD that includes an FTL
+// mapping flush, at precisely the moment something is trying to stop the
+// container. Measured on campod-se: docker stop took 131s with this writer
+// running against 41s with it absent, and the reader was already out of the
+// process tree 9s in -- the rest was aftermath.
+//
+// What bounds loss is sync_file_range as we go: writeback is already in flight
+// for everything up to the last boundary, so the exposure is one buffer, not
+// the run.
 func (w *writer) Close() error {
 	if err := w.bw.Flush(); err != nil {
-		w.f.Close()
-		return err
-	}
-	if err := w.f.Sync(); err != nil {
 		w.f.Close()
 		return err
 	}

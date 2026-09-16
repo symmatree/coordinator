@@ -214,8 +214,7 @@ def _wait_for_camera():
         "capture: libcamera reports NO cameras. Check the ribbon is seated "
         "(both ends, contacts toward the board) and that this is a campod "
         "image -- camera_auto_detect=1 comes from the vendor config. Waiting "
-        f"for a camera, re-probing every {CAMERA_PROBE_INTERVAL_S:.0f}s; "
-        "the accelerometer reader keeps running.",
+        f"for a camera, re-probing every {CAMERA_PROBE_INTERVAL_S:.0f}s.",
         flush=True,
     )
 
