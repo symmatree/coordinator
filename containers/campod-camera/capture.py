@@ -17,7 +17,6 @@ Config via environment (all optional):
   CAMPOD_STILL_MAX_EXPOSURE_US
                       cap the shutter (default: 5000; 0 = uncapped AE)
   CAMPOD_STILL_FOCUS     auto | infinity | <dioptres> (default: auto)
-  CAMPOD_SESSION         session id (default: the kernel boot_id)
   CAMPOD_SYNC_MODE       off | server | client (default: off) -- see note below
 """
 
@@ -254,11 +253,7 @@ HOST_HOSTNAME_PATH = Path("/etc/host-hostname")
 
 
 def _boot_id() -> str:
-    """The kernel's boot id, which names the session.
-
-    No fallback: if this cannot be read we cannot name a session, and inventing
-    one would produce data that lies about which boot it came from.
-    """
+    """The kernel's boot id, which names the session."""
     return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
 
@@ -306,18 +301,9 @@ def main():
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
 
-    # The session is the kernel boot_id, which the accelerometer reader derives
-    # independently: it is generated once per boot and is not namespaced, so two
-    # containers agree on it with nothing passed between them. That is what lets
-    # the camera and the reader be separate services and still land in one
-    # directory (#211).
-    #
-    # It used to be a wall-clock timestamp, which meant nothing on a box with no
-    # RTC -- the time at container start was whatever timesyncd had recovered, if
-    # the network was up. Consequence of the change: a restart within one boot
-    # re-enters the same directory, so `seq` is no longer unique inside it. Frame
-    # filenames still are, because the stem carries a microsecond wall stamp.
-    session = os.getenv("CAMPOD_SESSION") or _boot_id()
+    # The session is the boot id: this binary and the accel binary both use it to
+    # agree on an output path (#211). No fallback, this is linux functionality.
+    session = _boot_id()
     session_dir = out_dir / node / session
     session_dir.mkdir(parents=True, exist_ok=True)
 

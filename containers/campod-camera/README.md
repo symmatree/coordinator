@@ -76,11 +76,9 @@ you the frames and neither program shares a signal path with the other. Docker's
 policy is the recovery path: each run re-probes, so a sensor connected mid-session appears
 on the next restart. There is no mid-run rediscovery.
 
-The two containers land in one directory because both derive the session id from the kernel
-`boot_id` -- generated once per boot, not namespaced, so nothing has to hand it between
-them. A restart within one boot therefore re-enters the same directory, which means `seq`
-is not unique inside it; frame filenames still are, because the stem carries a microsecond
-wall stamp. The previous timestamp session id meant nothing on a box with no RTC.
+Both containers name their output directory from the kernel `boot_id`, so they agree on a
+path without anything handing it between them. A session is therefore a boot: restarting
+one container inside a boot re-enters the same directory, which is not a supported case.
 
 | Var | Default | Meaning |
 |-----|---------|---------|

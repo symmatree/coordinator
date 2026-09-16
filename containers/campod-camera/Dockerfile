@@ -107,11 +107,5 @@ WORKDIR /opt/campod
 # One image, two services: the stack runs this twice with different commands
 # (see stacks/campod/compose.yaml). dumb-init is PID 1 in each, with exactly one
 # child, so a signal has one place to go.
-#
-# It replaces an entrypoint.sh that backgrounded the accelerometer reader and
-# then exec'd python3 in place -- which made the reader's supervisor a child of
-# capture.py's pid as an artifact of the exec, and put two programs behind one
-# signal path. One image because the two containers then share every layer, so
-# the page cache holds one copy of the binaries rather than two.
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["python3", "/opt/campod/capture.py"]

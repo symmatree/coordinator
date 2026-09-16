@@ -5,19 +5,8 @@
 # to resolve in your head.
 # Manage with the shared CLI: coord pull | start | stop | status | logs [service]
 #
-# TWO SERVICES, ONE IMAGE. The camera loop and the accelerometer reader used to
-# be one container, with an entrypoint that backgrounded the reader and then
-# exec'd python3 over itself -- so two programs sat behind one signal path and
-# the reader's supervisor appeared as a child of capture.py by accident of the
-# exec. They are separate services now: dumb-init is PID 1 in each with exactly
-# one child. Same image both times, so the two containers share every layer and
-# the page cache holds one copy of the binaries rather than two, which matters
-# on 416 MB.
-#
-# They agree on a session id without anything passing between them: both derive
-# it from the kernel boot_id, which is generated once per boot and not
-# namespaced. Each prints its session at startup, so a disagreement is visible
-# in the logs instead of quietly splitting a run across two directories.
+# Two services off one image, one process each; they agree on an output path via
+# the kernel boot_id. See containers/campod-camera/README.md.
 #
 # No profiles. campod-camera is what a campod is for, so `coord start` starts it --
 # there is no useful run of this stack with capture switched off, and the switch

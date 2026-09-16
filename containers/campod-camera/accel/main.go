@@ -107,7 +107,7 @@ func loadConfig() config {
 	c := config{
 		dir:       os.Getenv("CAMPOD_ACCEL_DIR"),
 		node:      os.Getenv("CAMPOD_NODE_NAME"),
-		session:   os.Getenv("CAMPOD_SESSION"),
+		session:   bootID(),
 		sepM:      os.Getenv("CAMPOD_ACCEL_SEPARATION_M"),
 		odrHz:     envInt("CAMPOD_ACCEL_ODR_HZ", 3200),
 		rangeG:    envInt("CAMPOD_ACCEL_RANGE_G", 16),
@@ -121,25 +121,12 @@ func loadConfig() config {
 	if c.node == "" {
 		c.node = nodeName()
 	}
-	if c.session == "" {
-		c.session = bootID()
-	}
 	return c
 }
 
-// bootID names the session. The kernel generates it once per boot and it is
-// not namespaced, so the camera container and this one derive the same id
-// without a launcher passing it between them -- which is what let the two
-// programs be separate services at all.
-//
-// A wall-clock timestamp used to name the session, and it never meant anything:
-// a campod has no RTC, so the time at container start is whatever timesyncd had
-// managed to recover, if the network was up at all. Both programs print their
-// session on startup, so if this ever did diverge between containers the logs
-// would say so immediately rather than quietly splitting one run in two.
-//
-// No fallback on purpose. If /proc is not readable we cannot name a session,
-// and inventing one would produce data that lies about where it came from.
+// bootID names the session: the camera binary and this accel binary both use
+// the boot id to agree on an output path. No fallback mechanism, this is linux
+// functionality.
 func bootID() string {
 	b, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil {

@@ -36,14 +36,8 @@ const syncEveryBytes = 128 * 1024
 // that also flushes the FTL mapping, which is where tens of milliseconds come
 // from. sync_file_range(WRITE) merely STARTS writeback and returns.
 //
-// So: buffer, and call sync_file_range as we go to keep dirty pages flowing and
-// bounded. Never fsync on a timer. The kernel's dirty_ratio default of 20% is
-// ~83 MB on a 416 MB campod, and reaching it makes the KERNEL throttle the
-// writer synchronously at a moment nobody chose -- deferring syncs without
-// bounding dirty pages just relocates the stall somewhere worse.
-//
-// And never fsync at all -- see Close. There is no point in a pod's life where
-// a clean shutdown is the durability boundary.
+// This program never fsyncs. It buffers, and calls sync_file_range to keep dirty
+// pages flowing without waiting on the card.
 type writer struct {
 	f         *os.File
 	bw        *bufio.Writer
@@ -98,23 +92,9 @@ func (w *writer) maybeStartWriteback() error {
 	return nil
 }
 
-// Close hands the buffer to the kernel and closes the file. It does NOT fsync,
-// and there is no fsync anywhere in this program.
-//
-// A clean shutdown is never the durability boundary here. On the bench a stop
-// is an unnatural event we trigger ourselves; in flight the sequence is disarm
-// and then power-off, and a power pull does not call Close at all. So an fsync
-// here would buy durability only for the one case that was never at risk.
-//
-// It is not free, either. It waits on the card, and on SD that includes an FTL
-// mapping flush, at precisely the moment something is trying to stop the
-// container. Measured on campod-se: docker stop took 131s with this writer
-// running against 41s with it absent, and the reader was already out of the
-// process tree 9s in -- the rest was aftermath.
-//
-// What bounds loss is sync_file_range as we go: writeback is already in flight
-// for everything up to the last boundary, so the exposure is one buffer, not
-// the run.
+// Close hands the buffer to the kernel and closes the file. No fsync: the pod
+// dies by power pull, which never reaches Close, so an fsync here only costs a
+// wait on the card while something is trying to stop the container.
 func (w *writer) Close() error {
 	if err := w.bw.Flush(); err != nil {
 		w.f.Close()
