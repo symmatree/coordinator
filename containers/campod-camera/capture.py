@@ -17,7 +17,6 @@ Config via environment (all optional):
   CAMPOD_STILL_MAX_EXPOSURE_US
                       cap the shutter (default: 5000; 0 = uncapped AE)
   CAMPOD_STILL_FOCUS     auto | infinity | <dioptres> (default: auto)
-  CAMPOD_SESSION         session id (default: UTC timestamp at start)
   CAMPOD_SYNC_MODE       off | server | client (default: off) -- see note below
 """
 
@@ -214,8 +213,7 @@ def _wait_for_camera():
         "capture: libcamera reports NO cameras. Check the ribbon is seated "
         "(both ends, contacts toward the board) and that this is a campod "
         "image -- camera_auto_detect=1 comes from the vendor config. Waiting "
-        f"for a camera, re-probing every {CAMERA_PROBE_INTERVAL_S:.0f}s; "
-        "the accelerometer reader keeps running.",
+        f"for a camera, re-probing every {CAMERA_PROBE_INTERVAL_S:.0f}s.",
         flush=True,
     )
 
@@ -252,6 +250,11 @@ def _wait_for_camera():
 
 # Where the stack file mounts the host's own /etc/hostname.
 HOST_HOSTNAME_PATH = Path("/etc/host-hostname")
+
+
+def _boot_id() -> str:
+    """The kernel's boot id, which names the session."""
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
 
 def _node_name():
@@ -298,13 +301,9 @@ def main():
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
 
-    # Per-process session dir so reboots/restarts don't interleave sequences.
-    # CAMPOD_SESSION lets the entrypoint hand the same id to the accelerometer
-    # reader, so a session directory holds the frames and the vibration record
-    # for the same interval -- one self-contained unit (#211).
-    session = os.getenv("CAMPOD_SESSION") or dt.datetime.now(dt.timezone.utc).strftime(
-        "%Y%m%dT%H%M%SZ"
-    )
+    # The session is the boot id: this binary and the accel binary both use it to
+    # agree on an output path (#211). No fallback, this is linux functionality.
+    session = _boot_id()
     session_dir = out_dir / node / session
     session_dir.mkdir(parents=True, exist_ok=True)
 

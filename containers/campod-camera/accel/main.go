@@ -107,7 +107,7 @@ func loadConfig() config {
 	c := config{
 		dir:       os.Getenv("CAMPOD_ACCEL_DIR"),
 		node:      os.Getenv("CAMPOD_NODE_NAME"),
-		session:   os.Getenv("CAMPOD_SESSION"),
+		session:   bootID(),
 		sepM:      os.Getenv("CAMPOD_ACCEL_SEPARATION_M"),
 		odrHz:     envInt("CAMPOD_ACCEL_ODR_HZ", 3200),
 		rangeG:    envInt("CAMPOD_ACCEL_RANGE_G", 16),
@@ -121,10 +121,19 @@ func loadConfig() config {
 	if c.node == "" {
 		c.node = nodeName()
 	}
-	if c.session == "" {
-		c.session = time.Now().UTC().Format("20060102T150405Z")
-	}
 	return c
+}
+
+// bootID names the session: the camera binary and this accel binary both use
+// the boot id to agree on an output path. No fallback mechanism, this is linux
+// functionality.
+func bootID() string {
+	b, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "accel: cannot read boot_id: %v\n", err)
+		os.Exit(1)
+	}
+	return strings.TrimSpace(string(b))
 }
 
 var devices = []struct{ label, path string }{

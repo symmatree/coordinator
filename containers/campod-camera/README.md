@@ -71,15 +71,19 @@ campod once `dtparam=spi=on` is in the image, wired or not -- so a `DEVID` read 
 presence test there is, and the reader does it anyway. Chip select is the identity: **CE0 is
 the camera-colocated sensor, CE1 the arm-end one**, by wiring convention.
 
-Supervised separately from the camera loop so a missing sensor or a bad joint cannot cost
-you the frames. The restart is also the recovery path: each run re-probes, so a sensor
-connected mid-session appears within 30 s. There is no mid-run rediscovery.
+**Its own container**, off the same image, so a missing sensor or a bad joint cannot cost
+you the frames and neither program shares a signal path with the other. Docker's restart
+policy is the recovery path: each run re-probes, so a sensor connected mid-session appears
+on the next restart. There is no mid-run rediscovery.
+
+Both containers name their output directory from the kernel `boot_id`, so they agree on a
+path without anything handing it between them. A session is therefore a boot: restarting
+one container inside a boot re-enters the same directory, which is not a supported case.
 
 | Var | Default | Meaning |
 |-----|---------|---------|
 | `CAMPOD_ACCEL_SEPARATION_M` | *(empty)* | camera-to-arm baseline in metres, recorded in the run header. The only input, because it is a per-vehicle **measurement** rather than a tuning knob. |
 | `CAMPOD_ACCEL_SYNC_KIB` | `128` | bytes buffered before kicking writeback; `0` stops kicking altogether. |
-| `CAMPOD_ACCEL` | `1` | `0` skips starting the reader entirely. A **bisect gate**, not a feature -- see `entrypoint.sh`. Set it on the `docker run` under test; it is deliberately absent from compose. |
 
 ODR (3200 Hz), range (±16 g) and SPI clock (3 MHz) are defaults in `accel/main.go`, each
 with the reasoning beside it. They are derived from the datasheet rather than chosen, and in

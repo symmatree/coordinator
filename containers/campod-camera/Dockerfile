@@ -96,9 +96,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY capture.py /opt/campod/capture.py
 COPY --from=accel-build /out/campod-accel /opt/campod/campod-accel
-COPY entrypoint.sh /opt/campod/entrypoint.sh
-RUN chmod +x /opt/campod/entrypoint.sh
-
 COPY test_capture_wait.py /opt/campod/test_capture_wait.py
 RUN cd /opt/campod && python3 test_capture_wait.py && rm test_capture_wait.py
 
@@ -107,4 +104,8 @@ RUN cd /opt/campod && python3 test_capture_wait.py && rm test_capture_wait.py
 ENV PYTHONUNBUFFERED=1
 WORKDIR /opt/campod
 
-ENTRYPOINT ["/usr/bin/dumb-init", "--", "/opt/campod/entrypoint.sh"]
+# One image, two services: the stack runs this twice with different commands
+# (see stacks/campod/compose.yaml). dumb-init is PID 1 in each, with exactly one
+# child, so a signal has one place to go.
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["python3", "/opt/campod/capture.py"]

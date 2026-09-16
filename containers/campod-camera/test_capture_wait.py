@@ -11,9 +11,8 @@ that only an absent camera produces can be exercised on a build machine --
     probe interval (docker stop's grace period is 10 s)
 
 The regression this guards is the crash loop: capture.py used to `return 1` on an
-absent camera, docker restarted it, and each restart re-paid the picamera2 import
--- 60 restarts in two hours on campod-se at load ~8 on a quad-core,
-which also killed the accelerometer reader the entrypoint runs beside us.
+absent camera, so docker restarted it and each restart re-paid the picamera2
+import.
 
 picamera2 is stubbed rather than imported for real on purpose: the real import is
 the expensive thing being avoided, and it has no camera to find on a builder.

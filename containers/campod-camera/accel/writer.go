@@ -36,14 +36,8 @@ const syncEveryBytes = 128 * 1024
 // that also flushes the FTL mapping, which is where tens of milliseconds come
 // from. sync_file_range(WRITE) merely STARTS writeback and returns.
 //
-// So: buffer, and call sync_file_range as we go to keep dirty pages flowing and
-// bounded. Never fsync on a timer. The kernel's dirty_ratio default of 20% is
-// ~83 MB on a 416 MB campod, and reaching it makes the KERNEL throttle the
-// writer synchronously at a moment nobody chose -- deferring syncs without
-// bounding dirty pages just relocates the stall somewhere worse.
-//
-// fsync happens exactly once, at Close, which is the moment durability is
-// actually wanted: the operator is about to pull the plug.
+// This program never fsyncs. It buffers, and calls sync_file_range to keep dirty
+// pages flowing without waiting on the card.
 type writer struct {
 	f         *os.File
 	bw        *bufio.Writer
@@ -98,13 +92,11 @@ func (w *writer) maybeStartWriteback() error {
 	return nil
 }
 
-// Close flushes, then fsyncs once. This is the only fsync in the program.
+// Close hands the buffer to the kernel and closes the file. No fsync: the pod
+// dies by power pull, which never reaches Close, so an fsync here only costs a
+// wait on the card while something is trying to stop the container.
 func (w *writer) Close() error {
 	if err := w.bw.Flush(); err != nil {
-		w.f.Close()
-		return err
-	}
-	if err := w.f.Sync(); err != nil {
 		w.f.Close()
 		return err
 	}

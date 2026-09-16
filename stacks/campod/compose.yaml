@@ -5,6 +5,9 @@
 # to resolve in your head.
 # Manage with the shared CLI: coord pull | start | stop | status | logs [service]
 #
+# Two services off one image, one process each; they agree on an output path via
+# the kernel boot_id. See containers/campod-camera/README.md.
+#
 # No profiles. campod-camera is what a campod is for, so `coord start` starts it --
 # there is no useful run of this stack with capture switched off, and the switch
 # cost a silent one: #233 folded the .env in here but COMPOSE_PROFILES=capture was
@@ -63,8 +66,29 @@ services:
       CAMPOD_STILL_FOCUS: auto
       # off | server | client -- multi-campod sync is #24.
       CAMPOD_SYNC_MODE: "off"
+    # Explicit even though it matches the image's CMD, because the accel service
+    # below overrides it -- reading one without the other would be misleading.
+    command: ["python3", "/opt/campod/capture.py"]
+
+  campod-accel:
+    image: ghcr.io/symmatree/coordinator-campod-camera:main
+    container_name: campod_accel
+    restart: unless-stopped
+    # privileged for /dev/spidev0.0 and 0.1. The host still needs dtparam=spi=on
+    # for those nodes to exist at all. No /run/udev and no /config: SPI has no
+    # enumeration, so there is nothing to discover and nothing to configure --
+    # a DEVID read is the only presence test there is.
+    privileged: true
+    volumes:
+      - /var/lib/campod/captures:/captures
+      # Same reason as the camera service: a container's hostname is its
+      # container ID, so the host's name has to be mounted in for the data to
+      # know which pod it came from (#272).
+      - /etc/hostname:/etc/host-hostname:ro
+    environment:
       # Camera-to-arm-end baseline in metres, MEASURED per vehicle. Differential
       # acceleration over a known separation is the rotational signature, and it
       # is meaningless without this number -- 1 g across 150 mm at 120 Hz is
       # 0.41 px of image shift. Empty until it is measured on the airframe.
       CAMPOD_ACCEL_SEPARATION_M: ""
+    command: ["/opt/campod/campod-accel"]
