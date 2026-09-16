@@ -64,6 +64,7 @@ type config struct {
 	rangeG    int
 	spiHz     uint32
 	poolDepth int
+	syncKiB   int
 	sepM      string
 }
 
@@ -112,6 +113,7 @@ func loadConfig() config {
 		rangeG:    envInt("CAMPOD_ACCEL_RANGE_G", 16),
 		spiHz:     uint32(envInt("CAMPOD_ACCEL_SPI_HZ", defaultSPIHz)),
 		poolDepth: envInt("CAMPOD_ACCEL_POOL", 256),
+		syncKiB:   envInt("CAMPOD_ACCEL_SYNC_KIB", syncEveryBytes/1024),
 	}
 	if c.dir == "" {
 		c.dir = "/captures"
@@ -240,7 +242,7 @@ func run() error {
 				"of a step does NOT mean the wall clock is right -- with nothing to " +
 				"sync against there is no step and it is wrong throughout.",
 		}
-		w, err := newWriter(filepath.Join(sessionDir, "accel-"+d.label+".jsonl"), hdr, syncEveryBytes)
+		w, err := newWriter(filepath.Join(sessionDir, "accel-"+d.label+".jsonl"), hdr, int64(c.syncKiB)*1024)
 		if err != nil {
 			return err
 		}
