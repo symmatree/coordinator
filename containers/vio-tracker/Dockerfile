@@ -10,7 +10,7 @@
 # Cross-build (slow; uses QEMU):
 #   docker buildx build --platform linux/arm64 -t coordinator-vio-tracker:local containers/vio-tracker
 
-FROM ghcr.io/symmatree/coordinator-vio-tracker-base:main@sha256:763da8d87a04f66711931da044370eb09a8f954fe94ed6a816665d0ccd001929 AS builder
+FROM ghcr.io/symmatree/coordinator-vio-tracker-base:main@sha256:afb0a0f51e423477568c30da23646b1fda00d99e3a32cc0117f87b09849f67f3 AS builder
 
 ARG OAK_D_VINS_CPP_BRANCH=apm_wiki
 ARG OAK_D_VINS_CPP_SHA

@@ -11,7 +11,7 @@ each image installs them via `apt-get install`, that layer is non-reproducible, 
 miss gives it a new digest and the Pi re-pulls all ~140 MB even though only app code changed
 (measured in #145). Building the OpenCV runtime **once** here, pinned by digest, fixes that:
 
-- `debian:bookworm-slim` **pinned by digest** (refreshed by `containers/pin-base-digests.sh`),
+- `debian:trixie-slim` **pinned by digest** (refreshed by `containers/pin-base-digests.sh`),
 - the OpenCV runtime + the libs common to both VIO runtime stages.
 
 Both app runtime stages `FROM` this by digest, so the OpenCV layer is built once, stays stable

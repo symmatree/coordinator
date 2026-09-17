@@ -13,7 +13,7 @@ only `feature_tracker.cpp` changed (measured; see #145).
 
 This image carries that heavy, rarely-changing content once:
 
-- `debian:bookworm-slim` **pinned by digest** (refreshed by `containers/pin-base-digests.sh`),
+- `debian:trixie-slim` **pinned by digest** (refreshed by `containers/pin-base-digests.sh`),
 - the build toolchain + OpenCV dev libs + depthai's build deps,
 - a built **depthai-core at `/opt/depthai`** (pinned via `upstream.lock`).
 

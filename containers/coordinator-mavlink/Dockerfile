@@ -7,7 +7,7 @@
 # Local build:
 #   docker build -t coordinator-mavlink:local containers/coordinator-mavlink
 
-FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 ARG DEBIAN_FRONTEND=noninteractive
 
