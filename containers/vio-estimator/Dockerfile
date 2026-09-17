@@ -44,7 +44,7 @@ RUN git clone --depth 1 --branch "${VINS_FUSION_BRANCH}" https://github.com/chob
 COPY overlay/ /overlay/
 RUN cd VINS-Fusion \
   && if [ -d /overlay/VINS-Fusion ]; then cp -a /overlay/VINS-Fusion/. . ; fi \
-  && cmake -S vins_estimator -B build -DCMAKE_BUILD_TYPE=Release \
+  && cmake -S vins_estimator -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 \
   && cmake --build build --parallel "$(nproc)" \
   && install -D build/vins_fusion /opt/coordinator/bin/vins_fusion \
   # deterministic offline harness, built only when the overlay provides it (main_offline.cpp)
