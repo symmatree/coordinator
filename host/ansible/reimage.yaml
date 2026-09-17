@@ -7,71 +7,46 @@
 #     -e reimage_image_sha256=<sha256 of that zip> \
 #     -e reimage_image_id=campod-20260917
 #
-# The bench half only. It stages a validated image in p1 and arms tryboot; the
-# flasher that writes p2 is dotfiles-symm#53 and owns everything after the reboot.
-# That boundary is the whole interface: a file at an agreed path plus
-# `reboot '0 tryboot'`. Neither side needs to know more about the other.
+# Stages a validated image in p1 and arms tryboot. The flasher that writes p2 is
+# dotfiles-symm#53; the interface between the halves is that file plus
+# `reboot '0 tryboot'`.
 #
-# NOT a mode of site.yaml. This destroys the rootfs, so it must never be able to
-# run the converge roles by accident -- and fleet-control's change for this feature
-# is "run a different playbook", not a new subsystem.
-#
-# DESTRUCTIVE. Flashing p2 discards everything on it, exactly as writing the card
-# from a reader does. Captures are gone unless they were copied off first.
+# DESTRUCTIVE. Flashing p2 discards everything on it, as writing the card from a
+# reader does. Captures are gone unless they were copied off first.
 
 - name: Rekon touchless reimage
   hosts: all
   become: true
-  # Same reason as site.yaml: automatic gathering runs before pre_tasks, so it
-  # would run while the payload was still writing. Nothing here reads a fact, so
-  # it is never gathered at all.
+  # Nothing here reads a fact.
   gather_facts: false
-  # One device at a time. The transfer is the long pole (~13 min for 693 MiB at the
-  # ~0.9 MB/s measured to a device) and it is not known whether that ceiling is the
-  # device's radio or the uplink -- if it is the uplink, parallel devices just share
-  # the same 0.9 MB/s and nothing is gained while more devices are simultaneously
-  # unbootable. Serial until someone measures two at once; the driver can override.
+  # One at a time only because this is destructive and has never run on hardware,
+  # so a failure leaves one device unbootable rather than the fleet. Nothing about
+  # the transfer requires it -- each device has its own partition and its own
+  # flasher. Drop this line once it has worked on hardware.
   serial: 1
 
   vars:
-    # Required. No defaults for any of them: a wrong value here reflashes a device
-    # with the wrong image, and an undefined-variable failure before the quiesce is
-    # much cheaper than a plausible-looking default.
     #   device_role           campod | coordinator -- selects the stack to quiesce
     #   reimage_image_url     where to fetch the zip (fleet-control's cache)
     #   reimage_image_sha256  expected sha256 of the zip
     #   reimage_image_id      what /etc/fleet-image should read afterwards
-    #
-    # Staged into the FAT partition, which is p1 mounted read-write at
-    # /boot/firmware. Enlarged to 1.5 G for this (#312), which leaves ~1386 MiB
-    # usable after kernel, firmware and overlays -- one compressed image and about
-    # as much again spare. Two do not fit, which is why step one is removing any
-    # previous stage.
     reimage_staging_dir: /boot/firmware
     reimage_staged_name: "fleet-image.zip"
 
-    # get_url's tmp_dest. Deliberately on p2's root, not in p1: get_url downloads
-    # here, verifies the digest, then moves to dest -- and across a filesystem
-    # boundary that move is a copy. Pointing it at p1 would need 693 MiB twice
-    # inside ~1386 MiB usable, leaving nothing for boot content. The cost of this
-    # choice is that the transfer is written to the card twice.
+    # get_url's tmp_dest, and it must not be inside reimage_staging_dir: get_url
+    # downloads here, verifies, then moves to dest, and across a filesystem
+    # boundary that move is a copy -- which would need the image twice over inside
+    # p1's ~1386 MiB usable.
     reimage_tmp_dir: /var/tmp
 
-    # Path to the known_hosts file the driver connects with. Optional: a hand-run
-    # without it just skips the clearing task and the operator deals with the
-    # changed key themselves.
+    # known_hosts the driver connects with. Empty skips the clearing task.
     reimage_known_hosts: ""
 
-    # Re-stage and re-flash even when /etc/fleet-image already reports
-    # reimage_image_id. For recovering a device whose rootfs is damaged but whose
-    # marker still reads correct.
+    # Reflash even when /etc/fleet-image already reports reimage_image_id, for a
+    # device whose rootfs is damaged but whose marker still reads correct.
     reimage_force: false
 
   pre_tasks:
-    # Refuse --check for the same reason site.yaml does, and more sharply: every
-    # step that does anything here is a command or a transfer, so a dry run
-    # exercises none of it while still costing the quiesce's contention on a device
-    # with no slack. --syntax-check validates structure without connecting.
     - name: Refuse check mode
       ansible.builtin.fail:
         msg: >-
@@ -93,9 +68,8 @@
           rather than part-way through a reflash.
         quiet: true
 
-    # Idempotency: "ensure this device runs image X" is a no-op if it already does.
-    # dotfiles-symm#36 writes this marker at image build time, so it describes what
-    # the card was flashed from rather than what is installed on it.
+    # dotfiles-symm#36 writes this at image build time, so it names what the card
+    # was flashed from.
     - name: Read the image marker
       ansible.builtin.slurp:
         src: /etc/fleet-image
@@ -114,10 +88,8 @@
         - not (reimage_force | bool)
         - reimage_current == reimage_image_id
 
-    # Quiesce before anything heavy, as site.yaml does. Here it also matters that
-    # the payload stops WRITING to the card we are about to stage 693 MiB onto.
-    # Bounded for the reason site.yaml records: this task hung for 50+ minutes on
-    # its first hardware run against a 20s worst case.
+    # Quiesce before staging 693 MiB onto the card the payload is writing to.
+    # Bounded for the reason site.yaml records.
     - name: Stat the coord CLI
       ansible.builtin.stat:
         path: /usr/local/bin/coord
@@ -144,18 +116,15 @@
         - reimage_stack_compose.stat.exists
 
   tasks:
-    # Only one compressed image fits, so a leftover stage from a previous run is
-    # the difference between succeeding and running p1 out of space mid-transfer.
-    # Removed before the space check, not after, so the check measures what will
-    # actually be available.
+    # Only one compressed image fits in p1. Removed before the space check so the
+    # check measures what will actually be available.
     - name: Remove any previously staged image
       ansible.builtin.file:
         path: "{{ reimage_staging_dir }}/{{ reimage_staged_name }}"
         state: absent
 
-    # Targeted df rather than the mounts fact: gathering mounts stats every mount,
-    # and this card carries seven btrfs subvolumes plus docker's overlays -- one of
-    # the plausible causes of the whole-box stall recorded in site.yaml.
+    # df rather than the mounts fact, which stats every mount on a card carrying
+    # seven btrfs subvolumes and docker's overlays.
     - name: Measure free space where the image will be staged
       ansible.builtin.command:
         cmd: "df --output=avail --block-size=1M {{ reimage_staging_dir }}"
@@ -168,9 +137,6 @@
       changed_when: false
       register: reimage_tmp_avail
 
-    # 693 MiB today and growing; the margin in a 1.5 G FAT is the thing #312 says
-    # to watch. Refuse up front rather than filling p1 and leaving a device with a
-    # truncated image and no boot content.
     - name: Require room for the image in both places
       ansible.builtin.assert:
         that:
@@ -184,15 +150,6 @@
           never laid down -- that needs the one full reflash #312 accounts for.
         quiet: true
 
-    # get_url rather than copy or synchronize. `copy` from the controller
-    # base64-encodes the file through the connection, which is absurd at this size;
-    # `synchronize` needs rsync on the device, which is not confirmed present in
-    # the image; and get_url carries `checksum`, so a corrupt or truncated download
-    # is rejected rather than being caught by a later step that could disagree.
-    #
-    # tmp_dest does the two-step itself: download there, verify the checksum, then
-    # move to dest. Hand-rolling that as get_url-then-copy would do the same work
-    # with more tasks and leave the temp file for us to remember to remove.
     - name: Fetch and stage the image
       ansible.builtin.get_url:
         url: "{{ reimage_image_url }}"
@@ -202,10 +159,8 @@
         mode: "0644"
         timeout: 60
 
-    # get_url validated the DOWNLOAD. This validates the STAGED FILE -- a different
-    # artifact, written across a filesystem boundary onto a FAT partition on an SD
-    # card. #312 requires validation on the device before any reboot, and the thing
-    # the flasher will read is this copy, not the one get_url checked.
+    # Not redundant with get_url's checksum: that verified the bytes it fetched,
+    # this verifies the staged copy, which is what the flasher reads.
     - name: Verify the staged image is what the flasher will read
       ansible.builtin.stat:
         path: "{{ reimage_staging_dir }}/{{ reimage_staged_name }}"
@@ -225,21 +180,11 @@
           apart from a bad file in p1, which the next run removes.
         quiet: true
 
-    # The host key is about to change. Nothing in the image build handles host keys,
-    # so they are vendor default and regenerate on first boot -- a new key for the
-    # same address.
-    #
-    # This play clears it because this play CAUSED it: it staged the image,
-    # validated the digest on the device, and is about to arm tryboot. That is
-    # bookkeeping about an action taken here, not a decision to trust an unknown
-    # host, which is what fleet-control's README means when it says the playbook
-    # carries no trust policy. The alternative -- splitting into two phases around
-    # the reboot -- reintroduces a sequencing step into a feature whose point is
-    # that there is no human in it.
-    #
-    # Isolated in one task on purpose: if the two-phase shape is preferred later,
-    # this is a deletion and a split, not a rewrite. fleet-control/README.md needs
-    # amending either way so the stated rule and the code agree.
+    # Host keys are vendor default and regenerate on first boot, so the device
+    # comes back with a new key for the same address. Cleared here because this
+    # play caused it. Kept to one task: fleet-control/README.md says the playbook
+    # carries no trust policy, and if that rule wins instead, this is a deletion
+    # plus a split of the play around the reboot.
     - name: Forget the outgoing host key
       ansible.builtin.known_hosts:
         path: "{{ reimage_known_hosts }}"
@@ -249,15 +194,12 @@
       become: false
       when: reimage_known_hosts | length > 0
 
-    # tryboot is one-shot: this boot selects the flasher, and if the flasher does
-    # not run or does not reboot, the next power cycle comes back to the current
-    # system rather than looping. That is the safety property -- worst case is a
-    # device that needs a card pull, which is what happens today.
+    # tryboot is one-shot: if the flasher does not run, the next power cycle comes
+    # back to the current system rather than looping.
     #
-    # Fire and forget rather than ansible.builtin.reboot: there are TWO reboots
-    # here, ours into the flasher and the flasher's into the new system, and
-    # reboot's own wait would try to reconnect across a device that comes up
-    # WITHOUT sshd (the flasher's /init never pivots) and then goes down again.
+    # Not ansible.builtin.reboot, which would wait for the reconnect: there are two
+    # reboots here, and between them the device is up with no sshd because the
+    # flasher's /init never pivots.
     - name: Arm tryboot and reboot into the flasher
       ansible.builtin.command:
         cmd: reboot '0 tryboot'
@@ -266,12 +208,9 @@
       changed_when: true
 
   post_tasks:
-    # delay gets us past the moment of issuing so this cannot succeed against the
-    # outgoing system. The flasher window itself needs no estimate: it presents no
-    # sshd, so this simply keeps failing to connect until the new system is up.
-    # timeout is generous because the flasher stream-decompresses 693 MiB and
-    # writes multiple GB to an SD card, and #53 has never run on hardware -- there
-    # is no measured duration to size this against yet.
+    # delay only clears the moment of issuing, so this cannot succeed against the
+    # outgoing system. The flasher window needs no estimate -- it presents no sshd,
+    # so this keeps failing to connect until the new system is up.
     - name: Wait for the device to come back from the flasher
       ansible.builtin.wait_for_connection:
         delay: 60
@@ -283,9 +222,8 @@
         src: /etc/fleet-image
       register: reimage_marker_after
 
-    # #312: verification has to complete before power-off, or it does not happen at
-    # all. So this fails the play rather than warning -- a device that came back on
-    # its old image looks identical to one that succeeded, until a flight.
+    # Fails rather than warns: a device that came back on its old image looks
+    # identical to one that succeeded, until a flight.
     - name: Confirm the device booted the image we staged
       ansible.builtin.assert:
         that:
