@@ -50,7 +50,7 @@ RUN cd VINS-Fusion \
   # deterministic offline harness, built only when the overlay provides it (main_offline.cpp)
   && if [ -f build/vins_fusion_offline ]; then install -D build/vins_fusion_offline /opt/coordinator/bin/vins_fusion_offline; fi
 
-FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:9c6114f4724cf348e9536dd4c2d48f1ff560bf7a1f3fd817f1f9a556687704fa
+FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:9b45ec296d122e27a4a3f1ee0ad9a85b64627ffcb1a87b9205bd7995962a66cf
 
 ARG DEBIAN_FRONTEND=noninteractive
 
