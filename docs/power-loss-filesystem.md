@@ -127,14 +127,29 @@ image, re-lay its rootfs into the subvolumes) is what exists and what ships.
 > - **`compress`**, where the lines that *omitted* it set the whole filesystem to "use no
 >   compression". Two units from one build behaved differently; the coordinator logged `use zstd
 >   compression, level 3` and then `use no compression`, so nothing on that card was compressed —
->   `@data` included. Compression is now off fleet-wide
->   ([dotfiles-symm#52](https://github.com/symmatree/dotfiles-symm/pull/52)): it earned ~96 KB/s and
->   cost CPU the Zero 2 W needs elsewhere. If it ever returns it goes on **every** line.
+>   `@data` included, because the setting is global.
+>   [dotfiles-symm#52](https://github.com/symmatree/dotfiles-symm/pull/52) removed compression from
+>   the **build** — it earned ~96 KB/s and cost CPU the Zero 2 W needs elsewhere — and if it ever
+>   returns it goes on **every** line.
 > - **`nodatacow` on `@scratch`**, which read as set on the build host and was absent on a booted
 >   card (#309). Set as the inode flag with `chattr +C` on the empty subvolume instead
 >   ([dotfiles-symm#55](https://github.com/symmatree/dotfiles-symm/pull/55)), which is how
 >   `/var/lib/docker` already got it, and read back with `lsattr` at build time so it cannot
 >   silently fail to take again.
+>
+> **Read this as a property of the BUILD, not of the fleet.** Compression and the `@scratch`
+> inode flag are both set when an image is made, and a running card keeps whatever it was flashed
+> with until it is reflashed. As of 2026-09-17 no unit has been reflashed since either change, so
+> **both deployed campods are still mounting `compress=zstd:3`** — read off campod-se's
+> `/proc/mounts` in #309:
+>
+> ```
+> /dev/mmcblk0p2 /scratch btrfs rw,noatime,compress=zstd:3,ssd,discard=async,...,subvol=/@scratch
+> ```
+>
+> Anything measured on those cards was measured on a compressed filesystem, and because the
+> setting is global that includes `@data`, where the captures and the accel JSONL are written.
+> The first Trixie flash changes the OS **and** turns compression off in the same step.
 >
 > The rule for this layout: **anything btrfs-specific is a property of the filesystem or of an
 > inode, never of an fstab line.** `noatime`/`nodev` are genuine per-mount VFS flags and are fine.
