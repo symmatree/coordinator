@@ -14,14 +14,14 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 ARG DEBIAN_FRONTEND=noninteractive
 
 # The intersection of vio-tracker's and vio-estimator's runtime deps. Image-specific extras stay
-# in each app Dockerfile: tracker adds libglib2.0-0 / libopencv-imgcodecs406 / libusb-1.0-0 /
-# udev; estimator adds libceres3 / python3.
+# in each app Dockerfile: tracker adds libglib2.0-0 / libopencv-imgcodecs410 / libusb-1.0-0 /
+# udev; estimator adds libceres4t64 / python3.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     dumb-init \
     libgomp1 \
-    libopencv-calib3d406 \
-    libopencv-core406 \
-    libopencv-imgproc406 \
+    libopencv-calib3d410 \
+    libopencv-core410 \
+    libopencv-imgproc410 \
     libstdc++6 \
   && rm -rf /var/lib/apt/lists/*

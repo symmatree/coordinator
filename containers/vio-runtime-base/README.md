@@ -21,9 +21,9 @@ across app changes, and -- because the Pi runs the tracker and the estimator tog
 ## Contents
 
 The intersection of the tracker's and estimator's runtime deps: `ca-certificates`, `dumb-init`,
-`libgomp1`, `libopencv-calib3d406`, `libopencv-core406`, `libopencv-imgproc406`, `libstdc++6`.
+`libgomp1`, `libopencv-calib3d410`, `libopencv-core410`, `libopencv-imgproc410`, `libstdc++6`.
 Image-specific extras stay in each app Dockerfile (tracker: `libglib2.0-0`,
-`libopencv-imgcodecs406`, `libusb-1.0-0`, `udev`; estimator: `libceres3`, `python3`).
+`libopencv-imgcodecs410`, `libusb-1.0-0`, `udev`; estimator: `libceres4t64`, `python3`).
 
 ## Scope
 

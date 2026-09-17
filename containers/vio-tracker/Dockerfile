@@ -41,7 +41,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # (shared with the estimator, pulled once). Only the tracker-specific extras are added here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
-    libopencv-imgcodecs406 \
+    libopencv-imgcodecs410 \
     libusb-1.0-0 \
     udev \
   && rm -rf /var/lib/apt/lists/*

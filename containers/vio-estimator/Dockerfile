@@ -55,11 +55,11 @@ FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:9c6114f4724cf348
 ARG DEBIAN_FRONTEND=noninteractive
 
 # OpenCV runtime + ca-certificates/dumb-init/libgomp1/libstdc++6 come from the runtime base
-# (shared with the tracker). Estimator extras only: libceres3 (pulls glog/suitesparse/lapack/tbb),
+# (shared with the tracker). Estimator extras only: libceres4t64 (pulls glog/suitesparse/lapack/tbb),
 # and python3 (not -minimal -- offline_runner.py's provenance sidecar needs json/hashlib; the
 # flight binary needs none of it).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libceres3 \
+    libceres4t64 \
     python3 \
   && rm -rf /var/lib/apt/lists/*
 
