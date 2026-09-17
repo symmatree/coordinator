@@ -65,17 +65,21 @@ All subvolumes `noatime`; the filesystem is `mkfs.btrfs -m single` (single metad
 
 | Subvolume | Mount (option) | Contents / why |
 |-----------|----------------|----------------|
-| `@` | `/` (`compress=zstd`) | root. |
-| `@usr` | `/usr` (**`ro`** — ⚠️ *contested, see warning above*; `compress=zstd`) | the OS binaries/libraries — can't be written mid-cut, so can't corrupt. **Mount-option `ro`** (not the btrfs ro *property*), *intended* so `remount,rw` → apt → `remount,ro` works live for ansible maintenance, no reboot. **Status: `ro` holds on both current SD units; reported `rw` on pipboy in August, unexplained ([#202](https://github.com/symmatree/coordinator/issues/202)).** |
-| `@var` | `/var` (`compress=zstd`) | `journald`, Docker `data-root` (images survive reboot; `/var/lib/docker` is `chattr +C` / nodatacow — CoW-on-CoW footgun for overlay2), spool. |
-| `@home` | `/home` (`compress=zstd`) | operator home (the checkout, interactive scratch that must survive a reboot). |
-| `@data` | `/var/lib/coordinator` (`compress=zstd`) | config + captures — the precious data; **nests under `/var`** (mount after `@var`). Disarm takes an **RO snapshot** of this (#88). |
-| `@scratch` | `/scratch` (`nodatacow`, `compress=zstd`) | ephemeral WAL/sim scratch; ships empty and is never populated. `nodatacow` means its files are never compressed regardless — the `compress=zstd` on its fstab line exists only so this mount cannot clear the superblock setting for everything else (see the warning below). |
-| `@snapshots` | `/.snapshots` (`compress=zstd`) | snapshot store (incl. the disarm RO-snapshots). |
+| `@` | `/` | root. |
+| `@usr` | `/usr` (**`ro`** — ⚠️ *contested, see warning above*) | the OS binaries/libraries — can't be written mid-cut, so can't corrupt. **Mount-option `ro`** (not the btrfs ro *property*), *intended* so `remount,rw` → apt → `remount,ro` works live for ansible maintenance, no reboot. **Status: `ro` holds on both current SD units; reported `rw` on pipboy in August, unexplained ([#202](https://github.com/symmatree/coordinator/issues/202)).** |
+| `@var` | `/var` | `journald`, Docker `data-root` (images survive reboot; `/var/lib/docker` is `chattr +C` / nodatacow — CoW-on-CoW footgun for overlay2), spool. |
+| `@home` | `/home` | operator home (the checkout, interactive scratch that must survive a reboot). |
+| `@data` | `/var/lib/coordinator` | config + captures — the precious data; **nests under `/var`** (mount after `@var`). Disarm takes an **RO snapshot** of this (#88). |
+| `@scratch` | `/scratch` (**`chattr +C`**, not a mount option) | ephemeral WAL/sim scratch; ships empty and is never populated. nodatacow is set as the **inode flag** on the empty subvolume at build time, because it cannot be set per-subvolume from fstab — see the warning below. |
+| `@snapshots` | `/.snapshots` | snapshot store (incl. the disarm RO-snapshots). |
 | FAT | `/boot/firmware` (**`rw`**) | firmware. Was `ro` by design; it is **`rw` as built**, and deliberately so: every vendor first-boot mechanism *deletes its own trigger file* from this partition (`firstrun.sh` removes itself; `imager_fixup` rewrites `cmdline.txt`), so `ro` broke all of them. Related: `nofail` here dropped the mount's `Before=local-fs.target` ordering and let `firstrun.sh` race an empty mountpoint ([dotfiles-symm#41](https://github.com/symmatree/dotfiles-symm/pull/41)). |
 | `/tmp`, `/run` | tmpfs | normal, small — the *only* ramdisk. |
 
-Boot config is **standard, no custom initramfs hook**: `cmdline.txt` carries `rootfstype=btrfs rootflags=subvol=@`, and the stock Pi initramfs already has the btrfs module.
+Boot config: `cmdline.txt` carries `rootfstype=btrfs rootflags=subvol=@`, and `auto_initramfs=1`
+in `config.txt` makes the bootloader load the initramfs. The vendor ships an initramfs but **not one
+with btrfs in it** — the kernel has btrfs as a module — so `build-image.sh` chroots the rootfs,
+installs `btrfs-progs`, rebuilds `initramfs8` / `initramfs_2712`, and asserts the module is actually
+in them. No custom hook, but not the stock initramfs either.
 
 Why btrfs over the overlay: tmpfs-upper overlay costs RAM we can't spare on the 512 MB Zero 2 W campods;
 disk-upper + conditional-reset needs a custom initramfs hook. Subvolumes give ro-where-it-matters +
@@ -101,49 +105,43 @@ subvolume; the generated fstab is hardcoded `defaults`). So the image build is *
 (`dotfiles-symm/pi-image/assemble-btrfs.sh`) lays it into the subvolumes above and writes the
 `fstab` + `cmdline`, then genimage packages the `.img`. Repeatable, per-role, in CI.
 
-**De-risk status (2026-07-30): the assembly is verified; one gate remains.** The subvolume
-assembly was built and tested against a real btrfs kernel — all seven subvolumes assemble, mount per
-the fstab, the split is exclusive, and `remount,rw /usr` works. The subvolume logic is only ~30
-lines of straightforward bash over a plain rootfs copy (cheap — this is why subvolumes were kept
-rather than dropping to a single-subvolume btrfs). The **one thing still unproven** is that a Pi
-actually **boots** from a btrfs-subvolume root on the stock initramfs (mounts `subvol=@` and pivots)
-— the gate, testable off flight-hardware by building a real `.img` and booting it under
-`qemu-system-aarch64` (RPi firmware) or on a **spare** SD card (the ext4 card stays as instant
-rollback). Everything else (the mmdebstrap rootfs, genimage packaging) is hardware-free.
+**Status: the boot gate is closed.** The image boots from SD on every role's hardware — the
+coordinator on a Pi 4B, campods on Zero 2 Ws, pocketterm on a Pi 5 — mounting `subvol=@` and
+pivoting, with `initramfs8` / `initramfs_2712` loaded under `auto_initramfs=1`. The assembly itself
+is verified separately by `test-assemble.sh` against a real btrfs kernel: all seven subvolumes
+assemble, mount per the fstab, the split is exclusive, and both `chattr +C` targets take.
+
+What remains unbuilt is the **mmdebstrap from-scratch path**; the convert path (take the vendor
+image, re-lay its rootfs into the subvolumes) is what exists and what ships.
 
 > [!WARNING]
-> **The spike's `compress` conclusion was exactly backwards, and it cost fleet-wide compression.**
-> The note here used to read *"`@usr` inherits `@`'s `compress` regardless of its fstab line —
-> harmless."* `compress` **is** per-superblock, but a mount that omits it does **not** inherit the
-> current setting — it sets the whole filesystem to *"use no compression"*. Three fstab lines omitted
-> it (`@usr`, `@scratch`, `@snapshots`), so whichever of them mounted **last** decided for every
-> subvolume, and systemd does not fix that order across devices.
+> **btrfs-specific mount options are per-filesystem, so fstab cannot set them per subvolume.**
+> `btrfs(5)`: *"Most mount options apply to the whole filesystem and only options in the first
+> mounted subvolume will take effect [...] you can't set per-subvolume **nodatacow**,
+> **nodatasum**, or **compress** using mount options."*
 >
-> Caught on the first two units, from the same build with identical root lines and identical
-> `rootflags=subvol=@` — the kernel log states it outright:
+> `/` is mounted from the initramfs before fstab is processed, so `@` is always the first mounted
+> subvolume and every later line's btrfs-specific options are discarded — no error, no warning, and
+> `mount` output the only place it shows. This has bitten twice:
 >
-> ```
-> coordinator:  BTRFS info (...): use zstd compression, level 3
->               BTRFS info (...): use no compression
-> campod:       BTRFS info (...): use zstd compression, level 3
-> ```
+> - **`compress`**, where the lines that *omitted* it set the whole filesystem to "use no
+>   compression". Two units from one build behaved differently; the coordinator logged `use zstd
+>   compression, level 3` and then `use no compression`, so nothing on that card was compressed —
+>   `@data` included. Compression is now off fleet-wide
+>   ([dotfiles-symm#52](https://github.com/symmatree/dotfiles-symm/pull/52)): it earned ~96 KB/s and
+>   cost CPU the Zero 2 W needs elsewhere. If it ever returns it goes on **every** line.
+> - **`nodatacow` on `@scratch`**, which read as set on the build host and was absent on a booted
+>   card (#309). Set as the inode flag with `chattr +C` on the empty subvolume instead
+>   ([dotfiles-symm#55](https://github.com/symmatree/dotfiles-symm/pull/55)), which is how
+>   `/var/lib/docker` already got it, and read back with `lsattr` at build time so it cannot
+>   silently fail to take again.
 >
-> The coordinator got zstd and then had it turned off. So **nothing** on that card was compressed —
-> `@data` included, since it shares the superblock — which is the captures subvolume on the device
-> with the worst power-loss exposure, and the SD medium was justified *because* write volume would
-> stay low. Not reproducible from the build: the fstab looked correct on its face.
->
-> Fixed in [dotfiles-symm#45](https://github.com/symmatree/dotfiles-symm/pull/45) — `compress=zstd`
-> on every btrfs line, including `@scratch`, where it changes nothing in practice (nodatacow files
-> are never compressed) but stops any mount order from clearing the superblock. **Both current cards
-> keep the behaviour they have until they are reflashed**, which waits until after the first bring-up
-> so the process is tested against the final image ([#247](https://github.com/symmatree/coordinator/issues/247)).
-
-(The rest of the spike's mount-option findings, which stand: `noatime`/`nodev` are true
-per-mount VFS flags — but **`ro` turned out NOT to be reliably per-mount here**: because `@usr` shares
-`@`'s superblock, remounting `/` rw at boot drops `/usr`'s read-only flag, so `/usr` ends up `rw`
-despite the fstab `ro`. This is the correction to the spike's assumption — see the warning at the top
-of this section and [#96](https://github.com/symmatree/coordinator/issues/96).)
+> The rule for this layout: **anything btrfs-specific is a property of the filesystem or of an
+> inode, never of an fstab line.** `noatime`/`nodev` are genuine per-mount VFS flags and are fine.
+> `ro` is a VFS flag too but is not dependable here either — `@usr` shares `@`'s superblock, so
+> remounting `/` rw at boot can drop `/usr`'s read-only flag
+> ([#96](https://github.com/symmatree/coordinator/issues/96),
+> [#202](https://github.com/symmatree/coordinator/issues/202)).
 
 ### Built images (where they are, how they were made)
 
