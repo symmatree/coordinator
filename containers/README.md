@@ -13,7 +13,7 @@ churn justified. Diffing the shipped `coordinator-vio-tracker` layers across con
 one transition re-pulled **0 MB**, the next re-pulled the **entire ~190 MB** with byte-identical
 layer *sizes* but all-new *digests*. Two causes:
 
-1. **Floating base tag.** `FROM debian:bookworm-slim` is a rolling tag. When Debian ships a point
+1. **Floating base tag.** `FROM debian:trixie-slim` is a rolling tag. When Debian ships a point
    release the base layer's digest changes, and since it is the bottom layer, *every* layer above
    it re-pulls -- on every device, regardless of whether any of our code changed.
 2. **Non-reproducible heavy layers.** `apt-get install` (unpinned versions) and from-scratch C++
@@ -25,7 +25,7 @@ The two big offenders were **depthai-core** (~built, then copied in) and the **O
 
 ## The strategy (three parts)
 
-1. **Pin every base image by digest.** `FROM debian:bookworm-slim@sha256:...` in every Dockerfile
+1. **Pin every base image by digest.** `FROM debian:trixie-slim@sha256:...` in every Dockerfile
    (and `campod-camera`'s `BASE_IMAGE` default). The readable tag stays for humans; the digest makes
    the base layer immutable, so a Debian release no longer silently re-pulls the fleet. A base
    move becomes a **deliberate, reviewed** digest bump.
@@ -69,7 +69,7 @@ Both VIO images consume `vio-runtime-base` by digest as of [#145](https://github
 
 - **New heavy image sharing OpenCV/depthai?** `FROM` the relevant base by digest; keep only the
   image-specific layers in its own Dockerfile.
-- **New small image?** Just `FROM debian:bookworm-slim@sha256:...`; `pin-base-digests.sh` will keep
+- **New small image?** Just `FROM debian:trixie-slim@sha256:...`; `pin-base-digests.sh` will keep
   the digest fresh once the line exists.
 - **Bumping a pinned upstream** (depthai, a base): edit the relevant `upstream.lock` / run the pin
   script, let the base rebuild, then bump the consuming images' `FROM ...@sha256:` to the new

@@ -2,16 +2,9 @@
 #
 # Uses Raspberry Pi's apt archive (NOT stock Debian) so libcamera + picamera2 are
 # the matched, Pi-pipeline-aware versions -- the one real gotcha for camera-in-
-# container (stock Debian libcamera enumerates "no cameras"). Base suite tracks
-# the host Pi OS, and the campod image is pinned to BOOKWORM -- 2025-05-13, the
-# last Bookworm Lite release, deliberately pinned by URL+sha in
-# dotfiles-symm/pi-image/build-image.sh. It is not stock current Pi OS.
-#
-# This was briefly bumped to trixie on the premise that the host would be current
-# stock Pi OS (2026-06-18, Debian 13). That premise was wrong: the campods boot
-# the btrfs image, which is Bookworm. Bookworm's Pi archive carries libcamera
-# 0.5.2, which already has the ExposureTimeMode / AnalogueGainMode split capture.py
-# needs, so nothing is lost by matching the host.
+# container (stock Debian libcamera enumerates "no cameras"). RPI_SUITE must match
+# the suite the campod image is built from (dotfiles-symm/pi-image/build-image.sh):
+# the container's libcamera talks to the host kernel, so the two move together.
 #
 # Local build on the Zero (or arm64 box):
 #   docker build -t coordinator-campod-camera:local containers/campod-camera
@@ -20,7 +13,7 @@
 
 # Declared before the first FROM so it is a GLOBAL arg: an ARG after a FROM
 # belongs to that stage only, and the final `FROM ${BASE_IMAGE}` could not see it.
-ARG BASE_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+ARG BASE_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 # The accelerometer reader is Go, not Python, because it needs to build a proper
 # multi-transfer SPI message with explicit inter-transfer delays -- which py-spidev
@@ -33,7 +26,7 @@ ARG BASE_IMAGE=debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889ef
 #
 # --platform=$BUILDPLATFORM so the compile and the tests run natively on the
 # builder instead of under QEMU; only the output is arm64.
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81 AS accel-build
+FROM --platform=$BUILDPLATFORM golang:1.26-trixie@sha256:771f3162219f7a66bb6be3fea1ba31f418932946a99ad9eac26ffd555dfcf393 AS accel-build
 WORKDIR /src
 COPY accel/ ./
 # Hardware-free: a fake SPI part covers the register protocol, the signed decode
@@ -55,7 +48,7 @@ FROM ${BASE_IMAGE}
 
 ARG DEBIAN_FRONTEND=noninteractive
 # Raspberry Pi apt suite; keep aligned with the host Pi OS release.
-ARG RPI_SUITE=bookworm
+ARG RPI_SUITE=trixie
 # Take the archive key from the KEYRING PACKAGE, not from the raw
 # archive.raspberrypi.com/debian/raspberrypi.gpg.key URL.
 #
