@@ -21,6 +21,8 @@ export const PLAYBOOK_DIR = process.env.FLEET_PLAYBOOK_DIR ?? '/app/ansible';
 export type EventSink = (stream: 'stdout' | 'stderr', line: string) => void;
 
 export interface ConvergeOptions {
+  /** Which playbook in PLAYBOOK_DIR to run. */
+  playbook?: string;
   /** Address or hostname to converge. A bare `addr,` is a valid inventory. */
   host: string;
   /** Login account. */
@@ -159,7 +161,7 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
       '--project-dir',
       PLAYBOOK_DIR,
       '-p',
-      'site.yaml',
+      opts.playbook ?? 'site.yaml',
       '-j', // JSON events on stdout
     ];
 

@@ -67,3 +67,51 @@ export async function converge(
   }
   note(sink, `${node.name} converged`);
 }
+
+/**
+ * Reimage a node: stage a disk image in its FAT partition and arm the tryboot flasher.
+ *
+ * The play stages and arms; it does not verify (#324). Whether it worked is answered the
+ * same way everything else is -- probe the machine afterwards and see what it says it is.
+ * There is no in-flight state here worth protecting: the device drops off the network, comes
+ * back or does not, and the status screen is the completion check.
+ *
+ * Worst case is a card pull, which is what a reflash costs today.
+ */
+export async function reimage(
+  node: FleetNode,
+  ctx: ActionContext,
+  image: { url: string; sha256: string; sha: string },
+  sink?: EventSink,
+): Promise<void> {
+  const host = hostOf(node);
+  note(sink, `reimaging ${node.name} (${host}) as ${node.role}`);
+  note(sink, `image built from ${image.sha.slice(0, 10)}`);
+  note(sink, `device fetches ${image.url}`);
+
+  const rc = await runPlaybook({
+    playbook: 'reimage.yaml',
+    host,
+    user: ctx.inventory.user,
+    privateKeyPath: ctx.privateKeyPath,
+    sshTimeoutSec: ctx.sshTimeoutSec,
+    knownHostsPath: ctx.knownHostsPath,
+    extraVars: {
+      device_role: node.role,
+      reimage_image_url: image.url,
+      reimage_image_sha256: image.sha256,
+      // The play clears the recorded host key itself, because reimaging is what changes it --
+      // it is recording the consequence of its own action rather than trusting a stranger.
+      reimage_known_hosts: ctx.knownHostsPath,
+    },
+    sink,
+  });
+
+  if (rc !== 0) {
+    throw new ActionError(
+      `${node.name}: reimage failed (ansible-runner exit ${rc}). The device may still be on ` +
+        'its old image; probe it to see what it reports.',
+    );
+  }
+  note(sink, `${node.name} armed; it will drop off the network and come back on the new image`);
+}
