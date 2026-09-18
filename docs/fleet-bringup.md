@@ -41,7 +41,7 @@ Identity injection mechanics: `dotfiles-symm/pi-image/provision/README.md`.
 
 1. Flash the role's btrfs image, injecting per-unit identity at flash time (hostname, user,
    SSH public key, WiFi). The image itself is generic and secret-free.
-2. Power on. `firstrun.sh` applies identity, deletes itself, reboots. Expect two boots.
+2. Power on. cloud-init applies identity from `user-data` on the boot partition. One boot.
 3. The unit joins lab WiFi and is reachable over SSH.
 
 **Verified in this stage's first run:**

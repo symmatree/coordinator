@@ -90,7 +90,7 @@ The image and its per-unit provisioning live in **`dotfiles-symm/pi-image`**, no
   and a `config.append.txt` carrying `enable_uart=1` + `dtoverlay=disable-bt` (serial
   console) and `dtoverlay=dwc2,dr_mode=peripheral` (gadget net, device tree, must come
   from the image).
-- `pi-image/provision/` -- `firstrun.sh` template + `Flash-Card.ps1`. Per-unit identity
+- `pi-image/provision/` -- cloud-init `user-data` template + `Flash-Card.ps1`. Per-unit identity
   (hostname, user, SSH key, WiFi) is injected onto the FAT partition **at flash time**;
   secrets stay in a gitignored `fleet.env` on the operator's machine, so the image itself
   stays secret-free.
@@ -271,7 +271,7 @@ It is idempotent; running it when nothing changed is cheap and safe.
 | A container image (new build on `main`) | `coord pull` |
 | `containers/campod-camera/*` merged upstream | `coord pull` (CI builds it; never build on the Zero) |
 | An Ansible role | re-run `site.yaml` against the device |
-| Anything in `/boot/firmware/config.txt` | reflash -- the image is the only writer of that partition |
+| Anything in `/boot/firmware/config.txt` | reflash -- config.txt is built into the image so routine operation never writes that partition |
 | OS packages | `site.yaml -e dist_upgrade=true` -- deliberate, off by default, never part of a config deploy |
 
 **Never build on the Zero.** CI builds arm64 and the Zero pulls. 512 MB of RAM is the
@@ -298,7 +298,7 @@ across reboots, disable the unit (`systemctl disable --now campod-stack.service`
 | `accel: ... does not exist -- is dtparam=spi=on set?` | `ls /dev/spidev*`; if empty the card predates that image line -- reflash |
 | `accel: DEVID 0x00, expected 0xE5` | wiring, chip select, or SPI mode -- the bus is reaching nothing |
 | `accel: self-test FAIL` | sensor is talking but not moving: cold joint on a supply pin, or a dead part |
-| `capture: WARNING could not pin exposure` | container libcamera predates the exposure/gain mode split (needs >= 0.4). Check `RPI_SUITE` matches **the campod image's pinned suite** -- `dotfiles-symm/pi-image/build-image.sh`, currently Bookworm -- not whatever Pi OS ships today |
+| `capture: WARNING could not pin exposure` | container libcamera predates the exposure/gain mode split (needs >= 0.4). Check `RPI_SUITE` matches **the campod image's pinned suite** -- `dotfiles-symm/pi-image/build-image.sh` -- not whatever Pi OS ships today |
 | libcamera reports "no cameras" | **First check the ribbon** -- both ends, contacts toward the board. Confirmed 2026-09-12 that the suite pairing is correct (libcamera `v0.5.2` initialises in-container on the campod image), so a bare node reports "no cameras" for the ordinary reason. The suite-mismatch cause is real but secondary: `RPI_SUITE` tracks **the campod image's pinned suite** (`dotfiles-symm/pi-image/build-image.sh`), not current stock Pi OS -- reading it the other way is what produced [#214](https://github.com/symmatree/coordinator/pull/214). If libcamera prints its version banner at all, the suite is fine and the camera is not attached. |
 | Out-of-memory during bootstrap | expected pressure point on 512 MB; confirm zram/swap is on (Pi OS default) |
 | `coord` picks the wrong stack | only the campod stack belongs under `/opt/stacks/` on a campod |

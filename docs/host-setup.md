@@ -26,14 +26,13 @@ OAK-D bench bring-up is separate: [bench-tracker.md](bench-tracker.md).
   deploy -- no copy step, no on-box edit
   ([#48](https://github.com/symmatree/coordinator/issues/48)). Never hand-edit the deployed
   `compose.yaml`; change it in git and pull.
-- **Passwordless sudo works, and bootstrap can be driven non-interactively.** The pinned
-  Bookworm base ships `/etc/sudoers.d/010_pi-nopasswd` (`pi ALL=(ALL) NOPASSWD: ALL`, mode
-  0440, root-owned) and `pi` is in both `adm` and `sudo`. The image build rsyncs the vendor
-  rootfs verbatim (`-aHAX`), so mode and ownership carry, and `firstrun.sh`'s `userconf` call
-  is a no-op when the account is not being renamed. The Pi OS change that removed this
-  default is on the **Trixie** side of the split and does not reach this pin -- current
-  Bookworm `raspberrypi-sys-mods` still ships the file. Relevant to
-  [#236](https://github.com/symmatree/coordinator/issues/236): no sudoers work is needed.
+- **Passwordless sudo works, and bootstrap can be driven non-interactively.** Raspberry Pi
+  OS stopped shipping `/etc/sudoers.d/010_pi-nopasswd`, so the image build installs it
+  (`pi ALL=(ALL) NOPASSWD: ALL`, 0440, root-owned, validated with `visudo -cf` at build
+  time). The vendor filename is kept because `userconf` rewrites exactly that path when it
+  renames the account. `pi` is in both `adm` and `sudo` from cloud-init's distro default
+  user. Relevant to [#236](https://github.com/symmatree/coordinator/issues/236): no sudoers
+  work is needed.
 
 ## One-time: blank card to a running node
 
@@ -54,8 +53,13 @@ Get-Disk | Format-Table Number, FriendlyName, Size, BusType
 
 ### 2. First boot
 
-Power on. `firstrun.sh` sets the hostname, renames the account, installs the SSH key,
-writes the WiFi connection, then deletes itself and reboots. Expect two boots.
+Power on. cloud-init reads `user-data` from the boot partition and sets the hostname,
+creates the account with its SSH key, enables `ssh.service`, and writes the WiFi
+NetworkManager keyfile. Expect **one** boot.
+
+`cloud-init status` reports `degraded` on every card -- `/etc/cloud/cloud.cfg` references a
+`netplan_nm_patch` module the package no longer ships -- so judge by reachability, not by
+that.
 
 > **A failed first boot powers the board off.** Imager's generated unit carries
 > `FailureAction=exit`, and for PID 1 that is a shutdown -- so a failure looks exactly like a
