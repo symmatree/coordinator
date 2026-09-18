@@ -48,8 +48,16 @@ the flag.
 A reflashed card presents a **new key for the same address**, which is a *changed* key rather
 than an unknown one — `StrictHostKeyChecking=accept-new` accepts unknown hosts and still
 refuses changed ones, and Ansible surfaces the refusal as a bare `UNREACHABLE` with the ssh
-error buried. Clearing it is a caller decision, so it lives here and the playbook carries no
-trust policy.
+error buried.
+
+**Clearing it is a caller decision when only the caller knows.** Here, nothing on the device
+says the card was swapped -- the operator does, out of band, by passing `reflashed=true`. So
+it lives in this service.
+
+That is a rule about *who knows*, not a rule that playbooks never touch `known_hosts`:
+`host/ansible/reimage.yaml` clears the key itself, because the play replaced the rootfs and so
+is recording the consequence of its own action rather than deciding to trust a stranger. It
+takes the `known_hosts` path as a variable and skips the step when it is not given.
 
 Host keys really are checked: `accept-new`, not disabled. Turning the check off while also
 clearing keys on reflash would be theatre — the clear only means anything if the check is real.
