@@ -87,6 +87,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
 
+# The build provenance, as a file the payload can read without knowing it runs in
+# a container. Same values as the OCI labels the workflow attaches -- those are
+# recoverable with `docker inspect`, but only by something that knows to ask
+# docker. capture.py and campod-accel copy this into each session's manifests/
+# so a capture carries the sha that produced it.
+#
+# GIT_SHA is re-declared here: it is passed to the accel-build stage above, and an
+# ARG belongs to the stage that declares it.
+ARG GIT_SHA=""
+RUN printf '%s\n' \
+      "# Written by containers/campod-camera/Dockerfile at build time." \
+      "NAME=campod-camera" \
+      "IMAGE=ghcr.io/symmatree/coordinator-campod-camera" \
+      "SOURCE=https://github.com/symmatree/coordinator" \
+      "REVISION=${GIT_SHA}" \
+      > /etc/container-image
+
 COPY capture.py /opt/campod/capture.py
 COPY --from=accel-build /out/campod-accel /opt/campod/campod-accel
 COPY test_capture_wait.py /opt/campod/test_capture_wait.py

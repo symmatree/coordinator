@@ -23,6 +23,7 @@ Config via environment (all optional):
 import datetime as dt
 import json
 import os
+import re
 import signal
 import socket
 import sys
@@ -252,6 +253,43 @@ def _wait_for_camera():
 HOST_HOSTNAME_PATH = Path("/etc/host-hostname")
 
 
+# Baked into the image at build time; a module var so the test can redirect it.
+MANIFEST_SOURCES = (
+    (Path("/etc/container-image"), None),
+    (Path("/etc/fleet-image"), "fleet-image"),
+)
+
+
+def _copy_manifests(session_dir: Path) -> None:
+    """Record what produced this session, in <session>/manifests/.
+
+    /etc/container-image is baked in at image build time and carries the commit
+    the payload was built from; /etc/fleet-image is baked into the card image.
+    Copying both means a capture directory says what wrote it without anyone
+    having to ask docker, or correlate against a registry that may have moved on.
+
+    Written at session start. Both containers do this and may race, so each file
+    goes to a temp name and is renamed into place.
+
+    A missing manifest is logged, not fatal: losing the capture would be a worse
+    outcome than an unattributed one, and the log says which.
+    """
+    out = session_dir / "manifests"
+    out.mkdir(parents=True, exist_ok=True)
+    for src, name in MANIFEST_SOURCES:
+        try:
+            body = src.read_text()
+        except OSError as exc:
+            print(f"capture: no {src} to record ({exc}); this session is unattributed", flush=True)
+            continue
+        if name is None:
+            m = re.search(r"^NAME=(.*)$", body, re.M)
+            name = m.group(1).strip() if m else src.name
+        tmp = out / f".{name}.{os.getpid()}"
+        tmp.write_text(body)
+        tmp.replace(out / name)
+
+
 def _boot_id() -> str:
     """The kernel's boot id, which names the session."""
     return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
@@ -306,6 +344,7 @@ def main():
     session = _boot_id()
     session_dir = out_dir / node / session
     session_dir.mkdir(parents=True, exist_ok=True)
+    _copy_manifests(session_dir)
 
     cameras = _wait_for_camera()
     if cameras is None:  # SIGTERM while waiting

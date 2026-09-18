@@ -103,6 +103,38 @@ check(
     f"{elapsed:.2f}s",
 )
 
+# 4. A session records what produced it. NAME= drives the filename, both sources
+#    land, and no temp file survives the rename.
+import tempfile
+from pathlib import Path
+
+with tempfile.TemporaryDirectory() as td:
+    src, session = Path(td) / "src", Path(td) / "session"
+    src.mkdir()
+    body = "# comment\nNAME=campod-camera\nREVISION=deadbeef\n"
+    (src / "container-image").write_text(body)
+    (src / "fleet-image").write_text("IMAGE=campod-pi-20260918.img\n")
+    capture.MANIFEST_SOURCES = (
+        (src / "container-image", None),
+        (src / "fleet-image", "fleet-image"),
+    )
+    session.mkdir()
+    capture._copy_manifests(session)
+    m = session / "manifests"
+    check("NAME= drives the manifest filename", (m / "campod-camera").is_file())
+    check("manifest content is copied verbatim", (m / "campod-camera").read_text() == body)
+    check("the image manifest is recorded too", (m / "fleet-image").is_file())
+    check("no temp file survives the rename", not [p for p in m.iterdir() if p.name.startswith(".")])
+
+# 5. A missing manifest is logged, not fatal -- losing frames is worse than an
+#    unattributed session.
+with tempfile.TemporaryDirectory() as td:
+    session = Path(td) / "session"
+    session.mkdir()
+    capture.MANIFEST_SOURCES = ((Path(td) / "absent", None),)
+    capture._copy_manifests(session)
+    check("missing manifest does not raise", (session / "manifests").is_dir())
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)
