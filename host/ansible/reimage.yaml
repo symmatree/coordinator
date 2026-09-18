@@ -1,0 +1,245 @@
+---
+# Touchless reimage of a Rekon device (#312). Replaces p2 without pulling the card.
+#
+#   ansible-playbook host/ansible/reimage.yaml -i '10.0.5.237,' -u pi \
+#     -e device_role=campod \
+#     -e reimage_image_url=http://fleet-control/images/campod-20260917.img.zip \
+#     -e reimage_image_sha256=<sha256 of that zip> \
+#     -e reimage_image_id=campod-20260917
+#
+# Stages a validated image in p1 and arms tryboot. The flasher that writes p2 is
+# dotfiles-symm#53; the interface between the halves is that file plus
+# `reboot '0 tryboot'`.
+#
+# DESTRUCTIVE. Flashing p2 discards everything on it, as writing the card from a
+# reader does. Captures are gone unless they were copied off first.
+
+- name: Rekon touchless reimage
+  hosts: all
+  become: true
+  # Nothing here reads a fact.
+  gather_facts: false
+  # One at a time only because this is destructive and has never run on hardware,
+  # so a failure leaves one device unbootable rather than the fleet. Nothing about
+  # the transfer requires it -- each device has its own partition and its own
+  # flasher. Drop this line once it has worked on hardware.
+  serial: 1
+
+  vars:
+    #   device_role           campod | coordinator -- selects the stack to quiesce
+    #   reimage_image_url     where to fetch the zip (fleet-control's cache)
+    #   reimage_image_sha256  expected sha256 of the zip
+    #   reimage_image_id      what /etc/fleet-image should read afterwards
+    reimage_staging_dir: /boot/firmware
+    reimage_staged_name: "fleet-image.zip"
+
+    # get_url's tmp_dest, and it must not be inside reimage_staging_dir: get_url
+    # downloads here, verifies, then moves to dest, and across a filesystem
+    # boundary that move is a copy -- which would need the image twice over inside
+    # p1's ~1386 MiB usable.
+    reimage_tmp_dir: /var/tmp
+
+    # known_hosts the driver connects with. Empty skips the clearing task.
+    reimage_known_hosts: ""
+
+    # Reflash even when /etc/fleet-image already reports reimage_image_id, for a
+    # device whose rootfs is damaged but whose marker still reads correct.
+    reimage_force: false
+
+  pre_tasks:
+    - name: Refuse check mode
+      ansible.builtin.fail:
+        msg: >-
+          reimage.yaml does not support --check. Every step that does anything is a
+          command or a transfer, so check mode validates nothing while still costing
+          a connection to a device it may leave half-staged. Use --syntax-check.
+      when: ansible_check_mode
+
+    - name: Require the image identity and digest
+      ansible.builtin.assert:
+        that:
+          - device_role is defined and device_role in ['campod', 'coordinator']
+          - reimage_image_url | default('') | length > 0
+          - reimage_image_sha256 | default('') | length == 64
+          - reimage_image_id | default('') | length > 0
+        fail_msg: >-
+          reimage.yaml needs device_role, reimage_image_url, reimage_image_sha256
+          (64 hex chars) and reimage_image_id. Failing here, before the quiesce,
+          rather than part-way through a reflash.
+        quiet: true
+
+    # dotfiles-symm#36 writes this at image build time, so it names what the card
+    # was flashed from.
+    - name: Read the image marker
+      ansible.builtin.slurp:
+        src: /etc/fleet-image
+      register: reimage_marker
+      failed_when: false
+
+    - name: Decide whether this device needs reimaging
+      ansible.builtin.set_fact:
+        reimage_current: >-
+          {{ (reimage_marker.content | b64decode | trim)
+             if reimage_marker.content is defined else '' }}
+
+    - name: Skip devices that already run this image
+      ansible.builtin.meta: end_host
+      when:
+        - not (reimage_force | bool)
+        - reimage_current == reimage_image_id
+
+    # Quiesce before staging 693 MiB onto the card the payload is writing to.
+    # Bounded for the reason site.yaml records.
+    - name: Stat the coord CLI
+      ansible.builtin.stat:
+        path: /usr/local/bin/coord
+      register: reimage_coord_cli
+
+    - name: Stat the stack compose file
+      ansible.builtin.stat:
+        path: "/opt/stacks/{{ device_role }}/compose.yaml"
+      register: reimage_stack_compose
+
+    - name: Stop data collection before staging
+      ansible.builtin.command:
+        cmd: /usr/local/bin/coord stop
+      environment:
+        COORD_STACK: "{{ device_role }}"
+      async: 180
+      poll: 5
+      register: reimage_quiesced
+      changed_when: >-
+        'Stopping' in reimage_quiesced.stderr
+        or 'Stopped' in reimage_quiesced.stderr
+      when:
+        - reimage_coord_cli.stat.exists
+        - reimage_stack_compose.stat.exists
+
+  tasks:
+    # Only one compressed image fits in p1. Removed before the space check so the
+    # check measures what will actually be available.
+    - name: Remove any previously staged image
+      ansible.builtin.file:
+        path: "{{ reimage_staging_dir }}/{{ reimage_staged_name }}"
+        state: absent
+
+    # df rather than the mounts fact, which stats every mount on a card carrying
+    # seven btrfs subvolumes and docker's overlays.
+    - name: Measure free space where the image will be staged
+      ansible.builtin.command:
+        cmd: "df --output=avail --block-size=1M {{ reimage_staging_dir }}"
+      changed_when: false
+      register: reimage_p1_avail
+
+    - name: Measure free space where the download will land
+      ansible.builtin.command:
+        cmd: "df --output=avail --block-size=1M {{ reimage_tmp_dir }}"
+      changed_when: false
+      register: reimage_tmp_avail
+
+    - name: Require room for the image in both places
+      ansible.builtin.assert:
+        that:
+          - (reimage_p1_avail.stdout_lines[1] | trim | int) > 800
+          - (reimage_tmp_avail.stdout_lines[1] | trim | int) > 800
+        fail_msg: >-
+          Not enough room. {{ reimage_staging_dir }} has
+          {{ reimage_p1_avail.stdout_lines[1] | trim }} MiB and {{ reimage_tmp_dir }}
+          has {{ reimage_tmp_avail.stdout_lines[1] | trim }} MiB; a compressed image
+          is ~693 MiB and needs to fit in both. If p1 is short, its 1.5 G layout was
+          never laid down -- that needs the one full reflash #312 accounts for.
+        quiet: true
+
+    - name: Fetch and stage the image
+      ansible.builtin.get_url:
+        url: "{{ reimage_image_url }}"
+        dest: "{{ reimage_staging_dir }}/{{ reimage_staged_name }}"
+        tmp_dest: "{{ reimage_tmp_dir }}"
+        checksum: "sha256:{{ reimage_image_sha256 }}"
+        mode: "0644"
+        timeout: 60
+
+    # Not redundant with get_url's checksum: that verified the bytes it fetched,
+    # this verifies the staged copy, which is what the flasher reads.
+    - name: Verify the staged image is what the flasher will read
+      ansible.builtin.stat:
+        path: "{{ reimage_staging_dir }}/{{ reimage_staged_name }}"
+        checksum_algorithm: sha256
+        get_checksum: true
+      register: reimage_staged
+
+    - name: Refuse to arm unless the staged digest matches
+      ansible.builtin.assert:
+        that:
+          - reimage_staged.stat.exists
+          - reimage_staged.stat.checksum == reimage_image_sha256
+        fail_msg: >-
+          The staged image does not match its expected digest
+          ({{ reimage_staged.stat.checksum | default('absent') }} vs
+          {{ reimage_image_sha256 }}). NOT arming tryboot. The device is untouched
+          apart from a bad file in p1, which the next run removes.
+        quiet: true
+
+    # Host keys are vendor default and regenerate on first boot, so the device
+    # comes back with a new key for the same address. Cleared here because this
+    # play caused it. Kept to one task: fleet-control/README.md says the playbook
+    # carries no trust policy, and if that rule wins instead, this is a deletion
+    # plus a split of the play around the reboot.
+    - name: Forget the outgoing host key
+      ansible.builtin.known_hosts:
+        path: "{{ reimage_known_hosts }}"
+        name: "{{ inventory_hostname }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: reimage_known_hosts | length > 0
+
+    # tryboot is one-shot: if the flasher does not run, the next power cycle comes
+    # back to the current system rather than looping.
+    #
+    # Not ansible.builtin.reboot, which would wait for the reconnect: there are two
+    # reboots here, and between them the device is up with no sshd because the
+    # flasher's /init never pivots.
+    - name: Arm tryboot and reboot into the flasher
+      ansible.builtin.command:
+        cmd: reboot '0 tryboot'
+      async: 1
+      poll: 0
+      changed_when: true
+
+  post_tasks:
+    # delay only clears the moment of issuing, so this cannot succeed against the
+    # outgoing system. The flasher window needs no estimate -- it presents no sshd,
+    # so this keeps failing to connect until the new system is up.
+    - name: Wait for the device to come back from the flasher
+      ansible.builtin.wait_for_connection:
+        delay: 60
+        timeout: 1800
+        sleep: 10
+
+    - name: Read the image marker again
+      ansible.builtin.slurp:
+        src: /etc/fleet-image
+      register: reimage_marker_after
+
+    # Fails rather than warns: a device that came back on its old image looks
+    # identical to one that succeeded, until a flight.
+    - name: Confirm the device booted the image we staged
+      ansible.builtin.assert:
+        that:
+          - (reimage_marker_after.content | b64decode | trim) == reimage_image_id
+        fail_msg: >-
+          {{ inventory_hostname }} came back reporting
+          '{{ reimage_marker_after.content | b64decode | trim }}', not
+          '{{ reimage_image_id }}'. The flasher did not write p2, or wrote
+          something else. tryboot is one-shot so the device is on its previous
+          system and is safe to leave powered; do not power down until this is
+          understood.
+        quiet: true
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} reimaged: {{ reimage_current | default('unknown') }}
+          -> {{ reimage_image_id }}. Captures on the old p2 are gone. The stack comes
+          up from the boot unit; a converge is still needed to apply config.
