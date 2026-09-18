@@ -11,33 +11,30 @@ import (
 // SYNC_FILE_RANGE_WRITE: start writeback on the range, do not wait for it.
 const syncFileRangeWrite = 2
 
-// How much to buffer before kicking writeback. 128 KiB because that is btrfs's
-// compression block size, and @var is mounted with zstd: a flush boundary at
-// 64 KiB lands mid-block, so every flush asks the filesystem to update a
-// partially-written compressed extent rather than complete one.
+// How much to buffer before kicking writeback.
 //
-// CAMPOD_ACCEL_SYNC_KIB overrides it; 0 stops kicking writeback at all, leaving
-// bufio to flush when its buffer fills and the kernel to decide when the card
-// sees it. Settable so the value can be compared on the card without an image
-// build per value.
+// WHY THERE IS ANY KICKING: to keep the dirty page pool bounded, rather than
+// letting it build until the kernel's own thresholds force writeback in a lump.
+// That is a prospective concern and was never a measured one -- no stall here
+// was traced to it. It is an addition, so "off" is the simpler behaviour, not a
+// deviation from it.
 //
-// This is a HYPOTHESIS UNDER TEST, not a settled tuning. It was 64 KiB, chosen
-// for no reason beyond being a round number. The box saturates its card at
-// ~20 MiB/s of READS whenever this writer runs, with writes at 0.13 MiB/s, and
-// read-modify-write on partial compressed extents is one candidate. If the
-// read rate does not move, this should be reconsidered rather than left as
-// folklore.
+// The size is a knob, not a measured optimum. CAMPOD_ACCEL_SYNC_KIB overrides it
+// so values can be compared on a device without an image build each time, and 0
+// stops kicking altogether, leaving bufio to flush when its buffer fills and the
+// kernel to decide when the disk sees it. The deployed stack sets 0
+// (coordinator#307). Whether kicking earns its cost at all is open --
+// coordinator#319.
 const syncEveryBytes = 128 * 1024
 
 // writer owns a JSONL file and the only blocking I/O in the program.
 //
-// Two different operations get called "sync" and conflating them is what made
-// the Python reader stall. fsync() forces data to the card AND WAITS -- on SD
-// that also flushes the FTL mapping, which is where tens of milliseconds come
-// from. sync_file_range(WRITE) merely STARTS writeback and returns.
+// Two operations both get called "sync" and conflating them stalls the sample
+// loop: fsync() forces data out AND WAITS, while sync_file_range(WRITE) only
+// starts writeback and returns.
 //
-// This program never fsyncs. It buffers, and calls sync_file_range to keep dirty
-// pages flowing without waiting on the card.
+// This program never fsyncs. It buffers, and optionally kicks writeback so
+// dirty pages keep moving without the sample loop waiting on I/O.
 type writer struct {
 	f         *os.File
 	bw        *bufio.Writer
@@ -82,7 +79,7 @@ func (w *writer) maybeStartWriteback() error {
 		return err
 	}
 	// Kick writeback for everything we have not kicked yet. Non-blocking: this
-	// queues the pages, it does not wait for the card.
+	// queues the pages, it does not wait for them.
 	if off > w.synced {
 		if err := syscall.SyncFileRange(int(w.f.Fd()), w.synced, off-w.synced, syncFileRangeWrite); err != nil {
 			return fmt.Errorf("sync_file_range: %w", err)
@@ -93,8 +90,8 @@ func (w *writer) maybeStartWriteback() error {
 }
 
 // Close hands the buffer to the kernel and closes the file. No fsync: the pod
-// dies by power pull, which never reaches Close, so an fsync here only costs a
-// wait on the card while something is trying to stop the container.
+// dies by power pull, which never reaches Close, so an fsync here would only
+// add a wait while something is trying to stop the container.
 func (w *writer) Close() error {
 	if err := w.bw.Flush(); err != nil {
 		w.f.Close()

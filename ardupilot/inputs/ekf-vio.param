@@ -1,7 +1,8 @@
 # VIO / ExtNav and EKF3 source sets
 #
-# The GPS-vs-VIO integration. SRC1 is GPS (the flown lane); VIO/ExtNav is a
-# selectable source set. Mechanism and the load-bearing fusion details:
+# VIO is OFF: no source set selects ExtNav and the VISO backend is disabled, so the
+# FC neither waits for nor fuses VISION_POSITION_ESTIMATE. All three source sets are
+# the GPS lane. Mechanism and the fusion details, for when it comes back:
 # docs/ardupilot-extnav-fusion.md, docs/ardupilot-vio.md.
 #
 # --- Companion link (SERIAL4 -> coordinator Pi 4B) ---
@@ -28,27 +29,43 @@ EK3_SRC1_VELXY,3
 EK3_SRC1_POSZ,1
 EK3_SRC1_VELZ,3
 EK3_SRC1_YAW,1
-# SRC2 = VIO/ExtNav, position-only (velocity-only ExtNav is unsupported upstream).
-EK3_SRC2_POSXY,6
+# SRC2 was VIO/ExtNav (POSXY=6). Set to the GPS lane: VIO is removed for now and a
+#   source set pointing at ExtNav with nothing publishing is worse than not having one
+#   (coordinator#313). Set explicitly rather than deleted -- a fragment is applied, not
+#   a reset, so a deleted line leaves the flown value on the FC.
+#   provenance: coordinator#313 2026-09-17
+EK3_SRC2_POSXY,3
+EK3_SRC2_VELXY,3
+EK3_SRC2_VELZ,3
 EK3_SRC2_YAW,1
-# SRC3 = a copy of the GPS lane, so the switch has GPS on both ends, VIO in the middle.
+# SRC3 = the GPS lane. With SRC2 also GPS now, all three positions are identical and
+#   the CH10 switch below is inert; it stays assigned so the wiring and the switch
+#   position survive for when VIO returns.
 EK3_SRC3_POSXY,3
 EK3_SRC3_VELXY,3
 EK3_SRC3_VELZ,3
 EK3_SRC3_YAW,1
 # Runtime source-set select on SC/CH10.
 RC10_OPTION,90
-# SRC_OPTIONS bit 3 (=8, SRC_PER_CORE): core 0 runs SRC1/GPS, core 1 runs SRC2/VIO,
-#   so the VIO EKF lane is computed and logged next to the GPS lane (bit 0 off).
-EK3_SRC_OPTIONS,8
+# SRC_PER_CORE (bit 3 = 8) ran core 1 on SRC2/VIO so the VIO lane was computed and
+#   logged beside the GPS lane. Off: there is no VIO lane to compute, and dedicating a
+#   core to a second GPS lane buys nothing.  provenance: coordinator#313 2026-09-17
+EK3_SRC_OPTIONS,0
 # Reject GPS vertical velocity when reported vertical accuracy > 0.15 m.
 EK3_GPS_VACC_MAX,0.15
 # Baro altitude noise, widened to absorb the measured hover propwash offset (~1.2 m).
 EK3_ALT_M_NSE,2
 #
 # --- VISION_POSITION_ESTIMATE ingest (VISO) ---
-# Backend 2 = IntelT265: yaw-aligns the VIO frame onto AHRS (stereo VINS has no heading ref).
-VISO_TYPE,2
+# Disabled. Was 2 (IntelT265 backend, which yaw-aligns the VIO frame onto AHRS since
+#   stereo VINS has no heading reference). Nothing publishes VISION_POSITION_ESTIMATE
+#   any more, so the backend is off rather than left waiting.
+#   provenance: coordinator#313 2026-09-17
+VISO_TYPE,0
+#
+# The VISO values below are inert while VISO_TYPE=0. They are kept because they are
+# measurements, not tuning guesses: the lever arm came off the OAK-D mount and the
+# delay was measured on the link. Re-deriving them would cost a bench session.
 # Measured VINS->FC transport latency ~100 ms (not the 10 ms default).
 VISO_DELAY_MS,100
 # OAK-D -> FC lever arm, metres FRD. Y carries a half-baseline offset (VINS reports in
