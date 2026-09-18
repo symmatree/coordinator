@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Print what this machine is running, one map per versioned unit (#326).
+
+The device-side half of the status screen. It reports and does not compare:
+nothing here knows what it is supposed to be running, and nothing is passed in
+for it to check itself against. The caller reads these maps, decides whether it
+likes them, and presses a button if not.
+
+Output is TOML, one table per unit. The keys inside a table follow #326's
+vocabulary -- OCI label names with dots to underscores, uppercased -- so a unit
+that carries the label carries the key. Anything else a unit wants to report
+comes through verbatim under its own name; there is no permitted-key list.
+
+EXIT CODE IS 0 WHENEVER THE PROBE ITSELF RAN. Absent software is an answer, not
+a failure: a machine with no docker, no containers, or no image manifest reports
+that in FLEET_PROBE_ERROR and the caller distinguishes "nothing installed" from
+"could not ask". A non-zero exit means the probe broke, which is a different
+thing and should not be confused with an empty machine.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+FLEET_IMAGE = Path("/etc/fleet-image")
+STACKS_ROOT = Path("/opt/stacks")
+
+# Labels worth naming as identity. Everything else an image carries is emitted
+# too -- this list only fixes the order so a diff between two machines is
+# readable.
+ORDERED = (
+    "FLEET_UNIT_KIND",
+    "FLEET_UNIT_ID",
+    "ORG_OPENCONTAINERS_IMAGE_SOURCE",
+    "ORG_OPENCONTAINERS_IMAGE_REVISION",
+    "ORG_OPENCONTAINERS_IMAGE_REF_NAME",
+    "ORG_OPENCONTAINERS_IMAGE_VERSION",
+    "ORG_OPENCONTAINERS_IMAGE_TITLE",
+)
+
+
+def key_of(label: str) -> str:
+    """org.opencontainers.image.revision -> ORG_OPENCONTAINERS_IMAGE_REVISION."""
+    return re.sub(r"[^A-Za-z0-9]", "_", label).upper()
+
+
+def emit(table: str, pairs: dict[str, str]) -> None:
+    """One TOML table, with an explicit value grammar rather than an escaping rule.
+
+    Every emitted line is exactly  KEY="VALUE"  where KEY is [A-Z0-9_]+ and VALUE
+    matches [^"\\$\n]* -- no quote, no backslash, no dollar, no newline. Those
+    characters are STRIPPED, not escaped, so a consumer needs no unescaping and can
+    reject any line that does not match the grammar rather than guessing.
+    Legitimate values here are shas, URLs, refs and container names; one that
+    needs escaping is one that is wrong.
+    """
+    print(f"[{re.sub(r'[^A-Za-z0-9_]', '_', table)}]")
+    ordered = [k for k in ORDERED if k in pairs]
+    rest = sorted(k for k in pairs if k not in ORDERED)
+    for k in ordered + rest:
+        v = str(pairs[k]).replace("\\", "").replace('"', "").replace("$", "")
+        print(f'{k}="{v}"')
+    print()
+
+
+def run(*cmd: str, timeout: int = 20) -> tuple[int, str]:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout.strip()
+    except FileNotFoundError:
+        return 127, ""
+    except subprocess.TimeoutExpired:
+        return 124, ""
+
+
+def disk_image() -> dict[str, str]:
+    """The card image, from the manifest baked in at image build time."""
+    base = {"FLEET_UNIT_KIND": "disk_image", "FLEET_UNIT_ID": "disk_image"}
+    try:
+        body = FLEET_IMAGE.read_text()
+    except OSError as exc:
+        return base | {"FLEET_PROBE_ERROR": f"cannot read {FLEET_IMAGE}: {exc.strerror}"}
+    pairs = dict(re.findall(r'^([A-Za-z0-9_]+)="?([^"\n]*)"?$', body, re.M))
+    if not pairs:
+        return base | {"FLEET_PROBE_ERROR": f"{FLEET_IMAGE} has no key=value lines"}
+    return base | pairs
+
+
+def checkout(path: Path) -> dict[str, str]:
+    """The coordinator checkout the payload config is deployed from."""
+    base = {"FLEET_UNIT_KIND": "checkout", "FLEET_UNIT_ID": str(path)}
+    if not (path / ".git").exists():
+        return base | {"FLEET_PROBE_ERROR": f"no git checkout at {path}"}
+    rc, sha = run("git", "-C", str(path), "rev-parse", "HEAD")
+    if rc != 0:
+        return base | {"FLEET_PROBE_ERROR": f"git rev-parse failed in {path}"}
+    _, ref = run("git", "-C", str(path), "rev-parse", "--abbrev-ref", "HEAD")
+    _, url = run("git", "-C", str(path), "config", "--get", "remote.origin.url")
+    rc, dirty = run("git", "-C", str(path), "status", "--porcelain")
+    pairs = base | {
+        "ORG_OPENCONTAINERS_IMAGE_SOURCE": url,
+        "ORG_OPENCONTAINERS_IMAGE_REVISION": sha,
+        "ORG_OPENCONTAINERS_IMAGE_REF_NAME": ref,
+        # A dirty checkout means the sha above does not describe what is
+        # deployed, which the caller cannot infer from the sha alone.
+        "FLEET_CHECKOUT_DIRTY": "true" if dirty else "false",
+    }
+    return pairs
+
+
+def containers() -> tuple[list[tuple[str, dict[str, str]]], str]:
+    """One table per container, plus the enumeration status for the kind.
+
+    Returns (tables, error). An empty error means enumeration RAN; zero tables
+    with an empty error means the machine genuinely has no containers. A
+    non-empty error means we could not ask, which renders differently -- that
+    distinction cannot live in a per-unit key because a kind that failed to
+    enumerate has no unit to hang it on.
+
+    Identity comes from the image's OCI labels read on the host rather than by
+    exec'ing into the container: same vocabulary, works for a stopped container,
+    and does not need the payload to cooperate.
+    """
+    if shutil.which("docker") is None:
+        return [], "docker is not installed"
+    rc, out = run("docker", "ps", "-a", "--format", "{{.Names}}\t{{.Image}}\t{{.State}}")
+    if rc == 124:
+        return [], "docker did not answer within 20s"
+    if rc != 0:
+        return [], "docker is installed but not answering"
+    if not out:
+        return [], ""
+
+    tables: list[tuple[str, dict[str, str]]] = []
+    for line in out.splitlines():
+        name, image, state = (line.split("\t") + ["", ""])[:3]
+        pairs = {
+            "FLEET_UNIT_KIND": "container",
+            "FLEET_UNIT_ID": name,
+            "FLEET_CONTAINER_IMAGE": image,
+            "FLEET_CONTAINER_STATE": state,
+        }
+        rc, blob = run("docker", "inspect", image, "--format", "{{json .Config.Labels}}")
+        if rc == 0 and blob and blob != "null":
+            try:
+                for label, value in (json.loads(blob) or {}).items():
+                    pairs[key_of(label)] = value
+            except json.JSONDecodeError:
+                pairs["FLEET_PROBE_ERROR"] = "image labels did not parse"
+        else:
+            pairs["FLEET_PROBE_ERROR"] = f"no labels readable for {image}"
+        rc, digest = run("docker", "inspect", image, "--format", "{{index .RepoDigests 0}}")
+        if rc == 0 and digest:
+            pairs["FLEET_CONTAINER_IMAGE_DIGEST"] = digest
+        tables.append((f"container_{name}", pairs))
+    return tables, ""
+
+
+def main() -> int:
+    status: dict[str, str] = {}
+
+    # Enumeration for this kind is trivially "there is one card image", so its
+    # status is always ok. A failure to READ the manifest is a unit-level error
+    # and stays in the unit -- putting it here too would conflate "could not
+    # enumerate the kind" with "the one unit did not answer".
+    emit("disk_image", disk_image())
+    status["DISK_IMAGE"] = ""
+    status["DISK_IMAGE_COUNT"] = "1"
+
+    # Every checkout under a home directory, rather than one hardcoded path: the
+    # user the playbook runs as is configurable, so the path is not knowable here.
+    found = sorted(p.parent for p in Path("/home").glob("*/coordinator/.git"))
+    for path in found:
+        emit(f"checkout_{path.parent.name}", checkout(path))
+    status["CHECKOUT"] = ""
+    status["CHECKOUT_COUNT"] = str(len(found))
+
+    tables, err = containers()
+    for table, pairs in tables:
+        emit(table, pairs)
+    status["CONTAINER"] = err
+    status["CONTAINER_COUNT"] = str(len(tables))
+
+    # Per kind: did enumeration RUN, and how many units did it find. Zero with no
+    # error is "this machine has none"; an error is "could not ask". Those render
+    # differently and a per-unit key cannot carry the difference, because a kind
+    # that failed to enumerate produced no unit.
+    emit("enumeration", {f"FLEET_ENUM_{k}": v for k, v in status.items()})
+
+    stacks = sorted(p.name for p in STACKS_ROOT.glob("*")) if STACKS_ROOT.is_dir() else []
+    emit("host", {
+        "FLEET_STACKS_INSTALLED": ",".join(stacks) if stacks else "",
+        "FLEET_PROBE_VERSION": "1",
+    })
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
