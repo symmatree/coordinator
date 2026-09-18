@@ -72,7 +72,7 @@ All subvolumes `noatime`; the filesystem is `mkfs.btrfs -m single` (single metad
 | `@data` | `/var/lib/coordinator` | config + captures — the precious data; **nests under `/var`** (mount after `@var`). Disarm takes an **RO snapshot** of this (#88). |
 | `@scratch` | `/scratch` (**`chattr +C`**, not a mount option) | ephemeral WAL/sim scratch; ships empty and is never populated. nodatacow is set as the **inode flag** on the empty subvolume at build time, because it cannot be set per-subvolume from fstab — see the warning below. |
 | `@snapshots` | `/.snapshots` | snapshot store (incl. the disarm RO-snapshots). |
-| FAT | `/boot/firmware` (**`rw`**) | firmware. Was `ro` by design; it is **`rw` as built**, and deliberately so: every vendor first-boot mechanism *deletes its own trigger file* from this partition (`firstrun.sh` removes itself; `imager_fixup` rewrites `cmdline.txt`), so `ro` broke all of them. Related: `nofail` here dropped the mount's `Before=local-fs.target` ordering and let `firstrun.sh` race an empty mountpoint ([dotfiles-symm#41](https://github.com/symmatree/dotfiles-symm/pull/41)). |
+| FAT | `/boot/firmware` (**`rw`**) | firmware, and the staging area a re-flash writes its image into (#312). `rw` deliberately: cloud-init reads its seed from here, and a re-flash stages into it. No `nofail` -- that dropped the mount's `Before=local-fs.target` ordering and let first-boot provisioning race an empty mountpoint ([dotfiles-symm#41](https://github.com/symmatree/dotfiles-symm/pull/41)). |
 | `/tmp`, `/run` | tmpfs | normal, small — the *only* ramdisk. |
 
 Boot config: `cmdline.txt` carries `rootfstype=btrfs rootflags=subvol=@`, and `auto_initramfs=1`
@@ -162,7 +162,7 @@ image, re-lay its rootfs into the subvolumes) is what exists and what ships.
 
 The first flashable image was built via the **convert** path (fastest to a testable image; the
 mmdebstrap from-scratch build stays the reproducible follow-on): take the **official Raspberry Pi
-OS Lite (Bookworm, arm64, pinned 2025-05-13)** and re-lay its rootfs into the subvolume layout
+OS Lite (arm64, pinned by URL and sha256)** and re-lay its rootfs into the subvolume layout
 above, keeping the vendor boot stack known-good.
 
 - **Built by:** `symmatree/dotfiles-symm`, `pi-image/build-image.sh` + the `build-pi-image` GitHub
