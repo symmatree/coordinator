@@ -88,6 +88,11 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
+| `GET /images/builds` | recent successful builds on the tracked ref, newest first |
+| `GET /images/cached` | what the image cache holds |
+| `POST /images/:role/fetch[?sha=]` | put a build in the cache -- the only route needing a token |
+| `GET /images/:role/:sha/zip` | serve a cached image, for a device to `get_url` |
+| `GET /images/:sha/current` | is that sha head of the tracked ref, and what PR was it |
 
 One action per node at a time; a second `POST` against a busy node is a `409`.
 
@@ -100,6 +105,11 @@ One action per node at a time; a second `POST` against a busy node is a `409`.
 | `FLEET_SSH_TIMEOUT_SEC` | `90` | Ansible's connect timeout, raised from its 10s default |
 | `FLEET_KNOWN_HOSTS` | `/state/known_hosts` | recorded host keys, shared by ssh and the clear-on-reflash path. On the `/state` volume so they survive a pod restart |
 | `FLEET_PLAYBOOK_DIR` | `/app/ansible` | where the image keeps `host/ansible/**` |
+| `FLEET_IMAGE_REPO` | `symmatree/dotfiles-symm` | where disk images are built |
+| `FLEET_IMAGE_WORKFLOW` | `build-pi-image.yaml` | the workflow that builds them |
+| `FLEET_IMAGE_REF` | `main` | the ref the fleet tracks |
+| `FLEET_GITHUB_TOKEN` | *(unset)* | needed **only** to download an artifact; see below |
+| `FLEET_IMAGE_CACHE` | `/images` | where fetched images are kept |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | |
 
 Roster: `host` is optional and defaults to `name`.
@@ -113,6 +123,23 @@ Roster: `host` is optional and defaults to `name`.
   ]
 }
 ```
+
+## Images: discovery is public, download is not
+
+Listing builds and their artifacts needs no credential -- the repos are public and both API
+calls answer unauthenticated. **Downloading an artifact zip does**: that endpoint returns
+`401 Requires authentication` even for a public repo. So the status routes and the
+is-this-sha-current check work with `FLEET_GITHUB_TOKEN` unset, and only `fetch` needs it.
+The minimal useful grant is a fine-grained token with *Actions: read-only*.
+
+Identity comes from the build, not from the bytes: a run carries its own head sha and ref, so
+nothing is reconstructed afterwards. The one thing read from the artifact is the `.img` member
+name, taken from the zip's central directory rather than assembled from a naming convention --
+a value read from the artifact cannot disagree with what ends up on the card.
+
+**Nothing evicts.** Every image fetched stays until the volume is wiped. Images are built on
+every PR and almost none matter; the ones actually pushed are exactly the ones worth keeping,
+and one image to five machines is one fetch and five local reads.
 
 ## The image carries the playbook
 
