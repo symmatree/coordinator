@@ -12,11 +12,11 @@ func TestCopyManifestsRecordsProvenance(t *testing.T) {
 	src := t.TempDir()
 	container := filepath.Join(src, "container-image")
 	fleet := filepath.Join(src, "fleet-image")
-	body := "# comment\nNAME=campod-camera\nREVISION=deadbeef\n"
+	body := "# comment\nORG_OPENCONTAINERS_IMAGE_REVISION=\"deadbeef\"\nFLEET_UNIT=\"campod-camera\"\n"
 	if err := os.WriteFile(container, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fleet, []byte("IMAGE=campod-pi-20260918.img\n"), 0o644); err != nil {
+	if err := os.WriteFile(fleet, []byte("ORG_OPENCONTAINERS_IMAGE_REVISION=\"0c8b713f9a\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	old := manifestSources
@@ -28,7 +28,7 @@ func TestCopyManifestsRecordsProvenance(t *testing.T) {
 
 	got, err := os.ReadFile(filepath.Join(session, "manifests", "campod-camera"))
 	if err != nil {
-		t.Fatalf("NAME= did not drive the output filename: %v", err)
+		t.Fatalf("FLEET_UNIT= did not drive the output filename: %v", err)
 	}
 	if string(got) != body {
 		t.Errorf("content differs:\n got %q\nwant %q", got, body)

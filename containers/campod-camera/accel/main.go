@@ -155,8 +155,8 @@ func copyManifests(sessionDir string) {
 			continue
 		}
 		name := filepath.Base(src)
-		if m := regexp.MustCompile(`(?m)^NAME=(.*)$`).FindSubmatch(body); m != nil {
-			name = strings.TrimSpace(string(m[1]))
+		if m := regexp.MustCompile(`(?m)^FLEET_UNIT="([^"]*)"`).FindSubmatch(body); m != nil {
+			name = string(m[1])
 		}
 		tmp := filepath.Join(out, fmt.Sprintf(".%s.%d", name, os.Getpid()))
 		if err := os.WriteFile(tmp, body, 0o644); err != nil {

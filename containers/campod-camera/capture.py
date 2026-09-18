@@ -283,8 +283,8 @@ def _copy_manifests(session_dir: Path) -> None:
             print(f"capture: no {src} to record ({exc}); this session is unattributed", flush=True)
             continue
         if name is None:
-            m = re.search(r"^NAME=(.*)$", body, re.M)
-            name = m.group(1).strip() if m else src.name
+            m = re.search(r'^FLEET_UNIT="([^"]*)"', body, re.M)
+            name = m.group(1) if m else src.name
         tmp = out / f".{name}.{os.getpid()}"
         tmp.write_text(body)
         tmp.replace(out / name)
