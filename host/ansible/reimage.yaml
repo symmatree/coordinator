@@ -34,11 +34,9 @@
     # Supplied by the caller and compared against what the device reports. The
     # play does not derive or infer it.
     #
-    # What the comparison establishes is which image the card was written from --
-    # /etc/fleet-image is written at image build time and describes the image, not
-    # current state. It does not establish that the write was complete (the digest
-    # check before arming covers that) and it stops describing the running software
-    # as soon as anything converges.
+    # /etc/fleet-image is written at image build time and describes the image the
+    # card was written from, not current state -- so it stops describing the
+    # running software as soon as anything converges.
     reimage_staging_dir: /boot/firmware
     reimage_staged_name: "fleet-image.zip"
 
