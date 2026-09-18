@@ -13,7 +13,7 @@
 # model lives in feature_tracker, so camera_models (the only roscpp-dependent
 # package) is intentionally not built.
 
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS builder
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG VINS_FUSION_BRANCH=apm_wiki
@@ -44,22 +44,22 @@ RUN git clone --depth 1 --branch "${VINS_FUSION_BRANCH}" https://github.com/chob
 COPY overlay/ /overlay/
 RUN cd VINS-Fusion \
   && if [ -d /overlay/VINS-Fusion ]; then cp -a /overlay/VINS-Fusion/. . ; fi \
-  && cmake -S vins_estimator -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 \
+  && cmake -S vins_estimator -B build -DCMAKE_BUILD_TYPE=Release \
   && cmake --build build --parallel "$(nproc)" \
   && install -D build/vins_fusion /opt/coordinator/bin/vins_fusion \
   # deterministic offline harness, built only when the overlay provides it (main_offline.cpp)
   && if [ -f build/vins_fusion_offline ]; then install -D build/vins_fusion_offline /opt/coordinator/bin/vins_fusion_offline; fi
 
-FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:9b45ec296d122e27a4a3f1ee0ad9a85b64627ffcb1a87b9205bd7995962a66cf
+FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:9c6114f4724cf348e9536dd4c2d48f1ff560bf7a1f3fd817f1f9a556687704fa
 
 ARG DEBIAN_FRONTEND=noninteractive
 
 # OpenCV runtime + ca-certificates/dumb-init/libgomp1/libstdc++6 come from the runtime base
-# (shared with the tracker). Estimator extras only: libceres4t64 (pulls glog/suitesparse/lapack/tbb),
+# (shared with the tracker). Estimator extras only: libceres3 (pulls glog/suitesparse/lapack/tbb),
 # and python3 (not -minimal -- offline_runner.py's provenance sidecar needs json/hashlib; the
 # flight binary needs none of it).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libceres4t64 \
+    libceres3 \
     python3 \
   && rm -rf /var/lib/apt/lists/*
 

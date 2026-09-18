@@ -11,7 +11,7 @@ each image installs them via `apt-get install`, that layer is non-reproducible, 
 miss gives it a new digest and the Pi re-pulls all ~140 MB even though only app code changed
 (measured in #145). Building the OpenCV runtime **once** here, pinned by digest, fixes that:
 
-- `debian:trixie-slim` **pinned by digest** (refreshed by `containers/pin-base-digests.sh`),
+- `debian:bookworm-slim` **pinned by digest** (refreshed by `containers/pin-base-digests.sh`),
 - the OpenCV runtime + the libs common to both VIO runtime stages.
 
 Both app runtime stages `FROM` this by digest, so the OpenCV layer is built once, stays stable
@@ -21,9 +21,9 @@ across app changes, and -- because the Pi runs the tracker and the estimator tog
 ## Contents
 
 The intersection of the tracker's and estimator's runtime deps: `ca-certificates`, `dumb-init`,
-`libgomp1`, `libopencv-calib3d410`, `libopencv-core410`, `libopencv-imgproc410`, `libstdc++6`.
+`libgomp1`, `libopencv-calib3d406`, `libopencv-core406`, `libopencv-imgproc406`, `libstdc++6`.
 Image-specific extras stay in each app Dockerfile (tracker: `libglib2.0-0`,
-`libopencv-imgcodecs410`, `libusb-1.0-0`, `udev`; estimator: `libceres4t64`, `python3`).
+`libopencv-imgcodecs406`, `libusb-1.0-0`, `udev`; estimator: `libceres3`, `python3`).
 
 ## Scope
 

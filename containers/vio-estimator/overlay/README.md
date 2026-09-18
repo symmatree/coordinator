@@ -45,7 +45,7 @@ curl -s "https://raw.githubusercontent.com/chobitsfan/VINS-Fusion/$SHA/vins_esti
 
 ## Build note (x86 for offline testing)
 
-The build stage is `FROM debian:trixie-slim`, which is multi-arch — building this Dockerfile on
+The build stage is `FROM debian:bookworm-slim`, which is multi-arch — building this Dockerfile on
 an **x86** host yields an x86 `vins_fusion` (native, fast, no qemu), building on arm yields the Pi
 binary. The overlay applies identically either way. (Same shadow files also work for a direct
 native `cmake` build outside Docker, if faster iteration is wanted.)
