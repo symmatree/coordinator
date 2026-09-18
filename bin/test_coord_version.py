@@ -55,10 +55,17 @@ out = emitted("unit_x", {"ORG_OPENCONTAINERS_IMAGE_REVISION": 'ab"cd$ef', "Z_EXT
 parsed = tomllib.loads(out)
 check("emit output parses as TOML", "unit_x" in parsed)
 check(
-    "quote and dollar are stripped from values",
+    "quote, dollar and backslash are stripped from values",
     parsed["unit_x"]["ORG_OPENCONTAINERS_IMAGE_REVISION"] == "abcdef",
     repr(parsed["unit_x"]["ORG_OPENCONTAINERS_IMAGE_REVISION"]),
 )
+# The stated grammar is KEY="VALUE" with VALUE matching [^"\\$\n]*. A consumer
+# rejects any line that does not match, so every line we emit must.
+import re as _re
+grammar = _re.compile(r'^[A-Z0-9_]+="[^"\\$]*"$')
+bad = [ln for ln in emitted("u", {"A": 'x"y\\z$w', "B": "ok"}).splitlines()
+       if ln and not ln.startswith("[") and not grammar.match(ln)]
+check("every emitted line matches the stated grammar", not bad, str(bad))
 check(
     "controlled keys sort before extras",
     out.index("ORG_OPENCONTAINERS_IMAGE_REVISION") < out.index("Z_EXTRA"),
@@ -91,7 +98,47 @@ check("absent disk manifest yields an error key", "FLEET_PROBE_ERROR" in got, st
 got = cv.checkout(Path("/nonexistent/checkout"))
 check("absent checkout yields an error key", "FLEET_PROBE_ERROR" in got, str(got))
 
-# 5. End to end: exit 0 and valid TOML even on this machine, which has no
+# 5. Absence and failure are distinguishable PER KIND, which a per-unit key
+#    cannot carry: a kind that failed to enumerate produced no unit to hang an
+#    error on. Zero units with no error means the machine has none; an error
+#    means we could not ask.
+import subprocess as _sp
+
+def probe_env(**env):
+    import os
+    e = dict(os.environ, **env)
+    p = _sp.run([sys.executable, str(HERE / "coord-version")], capture_output=True, text=True, env=e)
+    return tomllib.loads(p.stdout)
+
+doc = probe_env(PATH="/nonexistent")  # no docker on PATH at all
+enum = doc.get("enumeration", {})
+check(
+    "docker absent reports a kind-level error",
+    enum.get("FLEET_ENUM_CONTAINER") == "docker is not installed"
+    and enum.get("FLEET_ENUM_CONTAINER_COUNT") == "0",
+    f"{enum.get('FLEET_ENUM_CONTAINER')!r} count={enum.get('FLEET_ENUM_CONTAINER_COUNT')!r}",
+)
+check(
+    "no container tables when enumeration failed",
+    not [t for t in doc if t.startswith("container_")],
+)
+check(
+    "disk image read failure stays a UNIT error, not a kind error",
+    enum.get("FLEET_ENUM_DISK_IMAGE") == "" and "FLEET_PROBE_ERROR" in doc["disk_image"],
+    f"enum={enum.get('FLEET_ENUM_DISK_IMAGE')!r}",
+)
+
+# 6. Every unit table carries kind and id, and the ids are unique.
+for table, pairs in doc.items():
+    if table in ("enumeration", "host"):
+        continue
+    check(f"{table} carries kind and id",
+          "FLEET_UNIT_KIND" in pairs and "FLEET_UNIT_ID" in pairs, str(sorted(pairs))[:60])
+ids = [p["FLEET_UNIT_ID"] for t, p in doc.items()
+       if t not in ("enumeration", "host") and "FLEET_UNIT_ID" in p]
+check("unit ids are unique within the machine", len(ids) == len(set(ids)), str(ids))
+
+# 7. End to end: exit 0 and valid TOML even on this machine, which has no
 #    /etc/fleet-image and no reachable docker.
 p = subprocess.run([sys.executable, str(HERE / "coord-version")], capture_output=True, text=True)
 check("probe exits 0 with things missing", p.returncode == 0, f"rc={p.returncode}")
