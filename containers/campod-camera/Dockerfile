@@ -87,10 +87,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
 
+# The build provenance, as a file the payload can read without knowing it runs in
+# a container. The same values the workflow attaches as OCI labels, which are
+# recoverable with `docker inspect` but only by something that knows to ask
+# docker. capture.py and campod-accel copy this into each session's manifests/.
+#
+# Format per #326: a flat table of double-quoted strings, which is valid TOML AND
+# a sourceable shell file AND a systemd EnvironmentFile at once. Two rules, both
+# easy to break by accident -- NO whitespace around `=`, because `source` would
+# read it as a command; and no `$` in a value, because sourcing expands it.
+#
+# Controlled keys are the OCI label names with dots to underscores, uppercased.
+# FLEET_UNIT is artifact-specific and uncontrolled: it names the output file when
+# this is copied into a session, since the OCI title is the repo's, not the
+# image's.
+#
+# GIT_SHA is re-declared here: it is passed to the accel-build stage above, and an
+# ARG belongs to the stage that declares it. Both are empty for a local build,
+# which yields empty strings rather than absent keys.
+ARG GIT_SHA=""
+ARG GIT_REF=""
+RUN printf '%s\n' \
+      "# campod-camera build manifest, written by its Dockerfile." \
+      "ORG_OPENCONTAINERS_IMAGE_SOURCE=\"https://github.com/symmatree/coordinator\"" \
+      "ORG_OPENCONTAINERS_IMAGE_REVISION=\"${GIT_SHA}\"" \
+      "ORG_OPENCONTAINERS_IMAGE_REF_NAME=\"${GIT_REF}\"" \
+      "FLEET_UNIT=\"campod-camera\"" \
+      > /etc/container-image
+
 COPY capture.py /opt/campod/capture.py
 COPY --from=accel-build /out/campod-accel /opt/campod/campod-accel
 COPY test_capture_wait.py /opt/campod/test_capture_wait.py
-RUN cd /opt/campod && python3 test_capture_wait.py && rm test_capture_wait.py
+RUN cd /opt/campod && python3 test_capture_wait.py --require-manifest && rm test_capture_wait.py
 
 # Flush logs immediately so `coord logs -f campod-camera` is live (cf. the
 # vio-tracker stdbuf line-buffering fix).

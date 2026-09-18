@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -127,6 +128,47 @@ func loadConfig() config {
 // bootID names the session: the camera binary and this accel binary both use
 // the boot id to agree on an output path. No fallback mechanism, this is linux
 // functionality.
+
+// Baked into the image at build time; a var so the test can point at a temp dir.
+var manifestSources = []string{"/etc/container-image", "/etc/fleet-image"}
+
+// copyManifests records what produced this session, in <session>/manifests/.
+//
+// /etc/container-image is baked in at image build time and carries the commit
+// the payload was built from; /etc/fleet-image is baked into the card image.
+// Copying both means a capture directory says what wrote it without anyone
+// having to ask docker, or correlate against a registry that may have moved on.
+//
+// Both containers do this and may race, so each file is written to a temp name
+// and renamed into place. A missing manifest is logged, not fatal: losing the
+// capture would be worse than an unattributed one, and the log says which.
+func copyManifests(sessionDir string) {
+	out := filepath.Join(sessionDir, "manifests")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		fmt.Printf("accel: cannot create %s: %v; this session is unattributed\n", out, err)
+		return
+	}
+	for _, src := range manifestSources {
+		body, err := os.ReadFile(src)
+		if err != nil {
+			fmt.Printf("accel: no %s to record (%v); this session is unattributed\n", src, err)
+			continue
+		}
+		name := filepath.Base(src)
+		if m := regexp.MustCompile(`(?m)^FLEET_UNIT="([^"]*)"`).FindSubmatch(body); m != nil {
+			name = string(m[1])
+		}
+		tmp := filepath.Join(out, fmt.Sprintf(".%s.%d", name, os.Getpid()))
+		if err := os.WriteFile(tmp, body, 0o644); err != nil {
+			fmt.Printf("accel: cannot write %s: %v\n", tmp, err)
+			continue
+		}
+		if err := os.Rename(tmp, filepath.Join(out, name)); err != nil {
+			fmt.Printf("accel: cannot place %s: %v\n", name, err)
+		}
+	}
+}
+
 func bootID() string {
 	b, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil {
@@ -198,6 +240,7 @@ func run() error {
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		return err
 	}
+	copyManifests(sessionDir)
 	fmt.Printf("accel: session %s -> %s\n", c.session, sessionDir)
 
 	var lives []*live

@@ -103,6 +103,88 @@ check(
     f"{elapsed:.2f}s",
 )
 
+# 4. A session records what produced it. NAME= drives the filename, both sources
+#    land, and no temp file survives the rename.
+import tempfile
+from pathlib import Path
+
+with tempfile.TemporaryDirectory() as td:
+    src, session = Path(td) / "src", Path(td) / "session"
+    src.mkdir()
+    body = (
+        "# comment\n"
+        'ORG_OPENCONTAINERS_IMAGE_REVISION="deadbeef"\n'
+        'FLEET_UNIT="campod-camera"\n'
+    )
+    (src / "container-image").write_text(body)
+    (src / "fleet-image").write_text('ORG_OPENCONTAINERS_IMAGE_REVISION="0c8b713f9a"\n')
+    capture.MANIFEST_SOURCES = (
+        (src / "container-image", None),
+        (src / "fleet-image", "fleet-image"),
+    )
+    session.mkdir()
+    capture._copy_manifests(session)
+    m = session / "manifests"
+    check("FLEET_UNIT= drives the manifest filename", (m / "campod-camera").is_file())
+    check("manifest content is copied verbatim", (m / "campod-camera").read_text() == body)
+    check("the image manifest is recorded too", (m / "fleet-image").is_file())
+    check("no temp file survives the rename", not [p for p in m.iterdir() if p.name.startswith(".")])
+
+# 5. A missing manifest is logged, not fatal -- losing frames is worse than an
+#    unattributed session.
+with tempfile.TemporaryDirectory() as td:
+    session = Path(td) / "session"
+    session.mkdir()
+    capture.MANIFEST_SOURCES = ((Path(td) / "absent", None),)
+    capture._copy_manifests(session)
+    check("missing manifest does not raise", (session / "manifests").is_dir())
+
+# 6. The manifest this image's Dockerfile actually wrote satisfies #326's format:
+#    valid TOML, sourceable by /bin/sh, and carrying the controlled keys. Checked
+#    against the real file rather than a fixture, because the two rules that make
+#    it sourceable -- no whitespace around '=', values double-quoted, no '$' --
+#    are easy to break in a printf and break silently.
+import re as _re
+import subprocess
+import tomllib
+
+# --require-manifest is passed by the Dockerfile, where the file must exist by
+# then. A bare local run skips instead of failing, since nothing has written it.
+baked = Path("/etc/container-image")
+if not baked.is_file():
+    if "--require-manifest" in sys.argv:
+        check("the image carries /etc/container-image", False, "absent")
+    else:
+        print("skip  baked-manifest checks (no /etc/container-image; pass --require-manifest to require)")
+else:
+    text = baked.read_text()
+    try:
+        parsed = tomllib.loads(text)
+        check("baked manifest parses as TOML", True)
+    except Exception as exc:
+        parsed = {}
+        check("baked manifest parses as TOML", False, str(exc))
+    check(
+        "carries the controlled keys",
+        {"ORG_OPENCONTAINERS_IMAGE_SOURCE", "ORG_OPENCONTAINERS_IMAGE_REVISION",
+         "ORG_OPENCONTAINERS_IMAGE_REF_NAME"} <= set(parsed),
+        str(sorted(parsed)),
+    )
+    kv = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
+    check(
+        "no whitespace around '=' (would break `source`)",
+        not [ln for ln in kv if _re.search(r"\s=|=\s", ln)],
+    )
+    check(
+        "every value is double-quoted",
+        not [ln for ln in kv if not _re.match(r'^[A-Z0-9_]+="[^"]*"$', ln)],
+    )
+    check("no '$' in any value (sourcing would expand it)", "$" not in text)
+    rc = subprocess.run(
+        ["/bin/sh", "-c", f'set -a; . {baked}; set +a; [ -n "$FLEET_UNIT" ]'],
+    ).returncode
+    check("sourceable by /bin/sh with FLEET_UNIT set", rc == 0, f"rc={rc}")
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)
