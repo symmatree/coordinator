@@ -68,7 +68,7 @@ that.
 > HDMI is how you tell them apart.
 
 ```bash
-ssh pi@coordinator.local
+ssh pi@coordinator
 uname -m            # aarch64
 cat /etc/fleet-image # IMAGE / ROLE / SOURCE / BASE -- which image this card came from
 findmnt -no FSTYPE,OPTIONS /   # btrfs ... subvol=/@

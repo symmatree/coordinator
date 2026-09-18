@@ -134,7 +134,7 @@ the initramfs carries btrfs, and `initramfs8` loads under `auto_initramfs=1`. Th
 ### 2. Clone and bootstrap
 
 ```bash
-ssh <user>@campod-sw.local
+ssh <user>@campod-sw
 uname -m                      # expect aarch64
 
 sudo apt-get update && sudo apt-get install -y git
