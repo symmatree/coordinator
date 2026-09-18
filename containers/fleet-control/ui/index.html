@@ -30,8 +30,27 @@
   dialog h2 { margin:0 0 10px; font-size:1.05rem; }
   dialog .what { color:var(--dim); font-size:.86rem; margin-bottom:14px; }
   dialog .state { font-size:.82rem; margin-bottom:14px; }
+  .topbar { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .topbar button { flex:0 0 auto; min-height:40px; padding:0 14px; font-size:.9rem; }
+  .units { margin-top:12px; border-top:1px solid var(--line); }
+  .unit { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap;
+          padding:8px 0; border-bottom:1px solid var(--line); font-size:.86rem; }
+  .unit .kind { color:var(--dim); font-size:.72rem; text-transform:uppercase;
+                letter-spacing:.06em; flex:0 0 5.5rem; }
+  .unit .id { font-weight:600; }
+  .unit .sha { color:var(--dim); font-family:ui-monospace, monospace; font-size:.78rem; }
+  .unit .title { flex-basis:100%; color:var(--dim); font-size:.8rem; }
+  .unit .title.stale { color:var(--warn); }
+  .badge { font-size:.7rem; padding:1px 7px; border-radius:99px; border:1px solid var(--line); }
+  .badge.ok { color:var(--ok); border-color:#215f47; }
+  .badge.stale { color:var(--warn); border-color:#6b4d1c; }
+  .badge.unknown { color:var(--dim); }
 </style>
 <h1>rekon10 fleet</h1>
+<div class="topbar">
+  <button id="refresh">Refresh status</button>
+  <span class="meta" id="stamp">status not loaded</span>
+</div>
 <div id="fleet">loading...</div>
 <dialog id="confirm">
   <h2 id="cTitle"></h2>
@@ -54,6 +73,12 @@
     'converge?reflashed=true':
       'As above, and clears the recorded SSH host key first -- for a card that has just been ' +
       'reflashed and therefore presents a new key.',
+    reimage:
+      'Fetches the newest disk image for this role, stages it in the FAT partition, and ' +
+      'arms the tryboot flasher. The device drops off the network and comes back on the new ' +
+      'image, or does not -- refresh status to find out. Everything on the card is lost, the ' +
+      'same as writing it from a card reader. Worst case is a card pull, which is what a ' +
+      'reflash costs today.',
   };
 
   async function j(url, opts) {
@@ -91,6 +116,8 @@
       );
       card.append(btns);
 
+      if (st.status) card.append(renderUnits(st.status, n.name));
+
       if (st.log?.length) {
         const pre = document.createElement('pre');
         pre.textContent = st.log.join('\n');
@@ -99,6 +126,88 @@
       root.append(card);
     }
   }
+
+  /**
+   * One row per versioned thing the machine reported.
+   *
+   * Display only. A stale row is labelled and shows both titles; nothing is greyed out and no
+   * button is withheld, because whether a build exists yet is something the operator knows
+   * and this page does not.
+   */
+  function renderUnits(status, nodeName) {
+    const wrap = $({ className: 'units' });
+    if (status.error) {
+      wrap.append($({ className: 'unit err', textContent: status.error }));
+      return wrap;
+    }
+    if (!status.units?.length) {
+      wrap.append($({ className: 'unit meta', textContent: 'reported no units' }));
+      return wrap;
+    }
+    for (const u of status.units) {
+      const row = $({ className: 'unit' });
+      const badge = u.lookupError
+        ? { cls: 'unknown', text: 'unknown' }
+        : u.current === true
+          ? { cls: 'ok', text: 'current' }
+          : u.current === false
+            ? { cls: 'stale', text: 'behind' }
+            : { cls: 'unknown', text: 'unversioned' };
+      row.append(
+        $({ className: 'kind', textContent: u.kind }),
+        $({ className: 'id', textContent: u.id }),
+        $({ className: 'sha', textContent: (u.revision ?? '').slice(0, 10) }),
+        $({ className: 'sha', textContent: u.refName ? '@' + u.refName : '' }),
+        Object.assign($({ className: 'badge ' + badge.cls }), { textContent: badge.text }),
+      );
+      if (u.title) row.append($({ className: 'title', textContent: u.title }));
+      // What it would move to, so "the build I wanted is not here yet" is readable as a
+      // title that has not appeared rather than a state this page tried to detect.
+      if (u.headTitle) {
+        row.append($({ className: 'title stale', textContent: '\u2192 ' + u.headTitle }));
+      }
+      if (u.lookupError) row.append($({ className: 'title err', textContent: u.lookupError }));
+      // The disk image is the one unit whose update is not a converge. Offered whatever the
+      // row says: whether a newer build exists is the operator's to judge, not this page's.
+      if (u.kind === 'disk_image') {
+        const b = document.createElement('button');
+        b.textContent = 'Reimage';
+        b.style.flex = '0 0 auto';
+        b.style.minHeight = '34px';
+        b.style.padding = '0 12px';
+        b.style.fontSize = '.82rem';
+        b.disabled = !!(state.get(nodeName) ?? {}).busy;
+        b.onclick = () => confirmThen(nodeName, 'reimage');
+        row.append(b);
+      }
+      wrap.append(row);
+    }
+    return wrap;
+  }
+
+  /**
+   * Probe on demand, never on a timer and never on load. Nothing should touch the fleet
+   * while it is flying, and a button is the whole scheduling policy.
+   */
+  async function refreshStatus() {
+    const btn = document.getElementById('refresh');
+    btn.disabled = true;
+    document.getElementById('stamp').textContent = 'probing...';
+    try {
+      for (const s of await j('/status')) {
+        const st = state.get(s.node) ?? {};
+        st.status = s;
+        state.set(s.node, st);
+      }
+      document.getElementById('stamp').textContent = 'as of ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      document.getElementById('stamp').textContent = 'probe failed: ' + e.message;
+    } finally {
+      btn.disabled = false;
+      render(await j('/nodes'));
+    }
+  }
+  document.getElementById('refresh').onclick = refreshStatus;
 
   /** Every action confirms first, so a bump on a phone screen cannot start anything. */
   async function confirmThen(name, action) {

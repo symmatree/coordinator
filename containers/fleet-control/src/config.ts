@@ -7,7 +7,7 @@ export interface Config {
   inventory: Inventory;
   action: ActionContext;
   /** Where disk images are built and which ref the fleet tracks. */
-  images: GithubOptions & { cacheDir: string };
+  images: GithubOptions & { cacheDir: string; publicUrl: string };
   port: number;
   host: string;
 }
@@ -47,6 +47,9 @@ export function loadConfig(): Config {
       // Large and rebuildable, so it wants its own space rather than sharing /state with
       // known_hosts. Nothing evicts; it is wiped deliberately.
       cacheDir: env('FLEET_IMAGE_CACHE', '/images'),
+      // Where a DEVICE can reach this service. It fetches the image itself with get_url, so
+      // the in-cluster service name is no use to it.
+      publicUrl: env('FLEET_PUBLIC_URL', 'https://fleet.tiles.symmatree.com').replace(/\/$/, ''),
     },
     port: Number(env('PORT', '8080')),
     host: env('HOST', '0.0.0.0'),

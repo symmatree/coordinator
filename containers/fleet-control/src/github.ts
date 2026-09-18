@@ -92,6 +92,13 @@ export async function listArtifacts(opts: GithubOptions, runId: number): Promise
  * This is a displayed fact, not a gate. "Not head" is shown next to what head actually is and
  * the operator decides; nothing here refuses to act on it.
  */
+export async function refHead(repo: string, ref: string, token?: string): Promise<string> {
+  const body = (await api(`/repos/${repo}/commits/${encodeURIComponent(ref)}`, token)) as {
+    sha: string;
+  };
+  return body.sha;
+}
+
 export async function isHeadOfRef(
   repo: string,
   ref: string,

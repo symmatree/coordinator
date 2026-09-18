@@ -14,7 +14,6 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { downloadArtifact, type Build, type GithubOptions } from './github.js';
-import { imgMemberName } from './zipindex.js';
 
 /** What we know about a cached image, written beside it so the cache is self-describing. */
 export interface CachedImage {
@@ -23,8 +22,6 @@ export interface CachedImage {
   sha: string;
   ref: string;
   runId: number;
-  /** The `.img` name inside the zip, read from the zip rather than constructed. */
-  imgName: string;
   /** sha256 of the zip as fetched, for the device to verify what it downloaded. */
   sha256: string;
   sizeBytes: number;
@@ -125,7 +122,6 @@ export class ImageCache {
       sha: build.sha,
       ref: build.ref,
       runId: build.runId,
-      imgName: await imgMemberName(finalPath),
       sha256: hash.digest('hex'),
       sizeBytes,
       fetchedAt: new Date().toISOString(),

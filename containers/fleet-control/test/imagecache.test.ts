@@ -13,7 +13,6 @@ function meta(over: Partial<CachedImage> = {}): CachedImage {
     sha: SHA,
     ref: 'main',
     runId: 1,
-    imgName: 'campod-pi-20260918.img',
     sha256: 'f'.repeat(64),
     sizeBytes: 852_000_000,
     fetchedAt: '2026-09-18T18:52:10Z',

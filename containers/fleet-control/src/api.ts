@@ -5,8 +5,10 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import { findNode } from './inventory.js';
 import { RunRegistry, sinkFor } from './runs.js';
-import { converge } from './actions.js';
+import { converge, reimage } from './actions.js';
 import { ImageCache } from './imagecache.js';
+import { probeAll, probeNode } from './probe.js';
+import { enrich, LookupCache } from './status.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds } from './github.js';
 
 export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInstance {
@@ -40,6 +42,26 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
     },
   );
 
+  // ---- status -------------------------------------------------------------------------
+  // On demand, never polled: nothing should touch the fleet while it is flying, and a probe
+  // is cheap enough that a refresh button is the whole scheduling policy.
+  //
+  // One cache for the life of the process. A sha's PR title never changes so it is kept for
+  // good; only head-of-ref is re-asked. That is what keeps a refresh inside GitHub's 60/hour
+  // unauthenticated budget.
+
+  const lookups = new LookupCache(cfg.images.token);
+
+  /** Every machine, concurrently. One that cannot be reached is reported, not omitted. */
+  app.get('/status', async () => enrich(await probeAll(cfg.inventory.nodes, cfg.action), lookups));
+
+  app.get<{ Params: { name: string } }>('/nodes/:name/status', async (req, reply) => {
+    const node = findNode(cfg.inventory, req.params.name);
+    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+    const [one] = await enrich([await probeNode(node, cfg.action)], lookups);
+    return one;
+  });
+
   // ---- images -------------------------------------------------------------------------
   // Discovery is unauthenticated: the repos are public and listing runs and artifacts works
   // without a token. Only the download does, so everything here except `fetch` works with no
@@ -59,11 +81,38 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
     return Promise.all(
       builds.map(async (b) => ({
         ...b,
+        // The run's own display_title is the commit subject, which for a merge commit is
+        // `Merge pull request #64 from symmatree/feat/...` -- the branch, not the title.
+        // This is the list you pick a build from, so it gets the real one. Cached per sha
+        // and a sha's PR never changes, so a second listing costs nothing.
+        title: await lookups.title(cfg.images.repo, b.sha).catch(() => b.title ?? ''),
         artifacts: role === undefined ? undefined : await listArtifacts(cfg.images, b.runId),
         cached: held.some((h) => h.sha === b.sha && (role === undefined || h.role === role)),
       })),
     );
   });
+
+  /**
+   * Resolve a build to a cached image, fetching it if absent. Returns a problem rather than
+   * throwing, so callers can choose the status code.
+   */
+  async function ensureCached(
+    role: string,
+    sha?: string,
+  ): Promise<import('./imagecache.js').CachedImage | { error: string; code: 404 | 410 }> {
+    const builds = await listBuilds(cfg.images, 20);
+    const build = sha ? builds.find((b) => b.sha.startsWith(sha)) : builds[0];
+    if (!build) return { error: `no build matching ${sha ?? '(newest)'}`, code: 404 };
+    const held = await images.get(role, build.sha);
+    if (held && (await images.pathFor(role, build.sha))) return held;
+    const arts = await listArtifacts(cfg.images, build.runId);
+    const art = arts.find((a) => a.name.startsWith(`${role}-`));
+    if (!art) return { error: `run ${build.runId} has no artifact for role ${role}`, code: 404 };
+    if (art.expired) {
+      return { error: `artifact for ${build.sha.slice(0, 10)} expired at ${art.expiresAt}`, code: 410 };
+    }
+    return images.ensure(cfg.images, build, role, art.id);
+  }
 
   /** What the cache holds. Nothing evicts, so this only grows until the volume is wiped. */
   app.get('/images/cached', async () => images.list());
@@ -75,25 +124,9 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
   app.post<{ Params: { role: string }; Querystring: { sha?: string } }>(
     '/images/:role/fetch',
     async (req, reply) => {
-      const builds = await listBuilds(cfg.images, 20);
-      const build = req.query.sha
-        ? builds.find((b) => b.sha.startsWith(req.query.sha as string))
-        : builds[0];
-      if (!build) return reply.code(404).send({ error: `no build matching ${req.query.sha}` });
-      const arts = await listArtifacts(cfg.images, build.runId);
-      const art = arts.find((a) => a.name.startsWith(`${req.params.role}-`));
-      if (!art) {
-        return reply
-          .code(404)
-          .send({ error: `run ${build.runId} has no artifact for role ${req.params.role}` });
-      }
-      if (art.expired) {
-        return reply
-          .code(410)
-          .send({ error: `artifact for ${build.sha.slice(0, 10)} expired at ${art.expiresAt}` });
-      }
       try {
-        return await images.ensure(cfg.images, build, req.params.role, art.id);
+        const got = await ensureCached(req.params.role, req.query.sha);
+        return 'error' in got ? reply.code(got.code).send({ error: got.error }) : got;
       } catch (err) {
         return reply.code(502).send({ error: (err as Error).message });
       }
@@ -116,7 +149,6 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
         .type('application/zip')
         .header('content-length', String(meta.sizeBytes))
         .header('x-fleet-image-sha256', meta.sha256)
-        .header('x-fleet-image-name', meta.imgName)
         .send(createReadStream(path));
     },
   );
@@ -136,6 +168,42 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
       return reply.code(502).send({ error: (err as Error).message });
     }
   });
+
+  /**
+   * Reimage a node from a cached build, fetching it first if we do not hold it.
+   *
+   * `?sha=` picks a build; absent means the newest on the tracked ref. The play stages and
+   * arms only -- whether it worked is answered by probing afterwards, not reported here.
+   */
+  app.post<{ Params: { name: string }; Querystring: { sha?: string } }>(
+    '/nodes/:name/reimage',
+    async (req, reply) => {
+      const node = findNode(cfg.inventory, req.params.name);
+      if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+
+      let held;
+      try {
+        held = await ensureCached(node.role, req.query.sha);
+      } catch (err) {
+        return reply.code(502).send({ error: (err as Error).message });
+      }
+      if ('error' in held) return reply.code(held.code).send({ error: held.error });
+
+      const image = {
+        url: `${cfg.images.publicUrl}/images/${node.role}/${held.sha}/zip`,
+        sha256: held.sha256,
+        sha: held.sha,
+      };
+      try {
+        const run = runs.start('reimage', node.name, (emit) =>
+          reimage(node, cfg.action, image, sinkFor(emit)),
+        );
+        return reply.code(202).send({ id: run.id, action: run.action, node: run.node, image });
+      } catch (err) {
+        return reply.code(409).send({ error: (err as Error).message });
+      }
+    },
+  );
 
   app.get('/runs', async () =>
     runs.list().map(({ lines, ...rest }) => ({ ...rest, lineCount: lines.length })),

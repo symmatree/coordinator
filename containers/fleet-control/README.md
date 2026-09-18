@@ -133,9 +133,7 @@ is-this-sha-current check work with `FLEET_GITHUB_TOKEN` unset, and only `fetch`
 The minimal useful grant is a fine-grained token with *Actions: read-only*.
 
 Identity comes from the build, not from the bytes: a run carries its own head sha and ref, so
-nothing is reconstructed afterwards. The one thing read from the artifact is the `.img` member
-name, taken from the zip's central directory rather than assembled from a naming convention --
-a value read from the artifact cannot disagree with what ends up on the card.
+nothing is reconstructed afterwards.
 
 **Nothing evicts.** Every image fetched stays until the volume is wiped. Images are built on
 every PR and almost none matter; the ones actually pushed are exactly the ones worth keeping,

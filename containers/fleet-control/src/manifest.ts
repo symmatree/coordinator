@@ -66,3 +66,70 @@ export function parseManifest(text: string): Manifest {
 export function shortSha(sha: string | undefined): string {
   return sha === undefined ? '' : sha.slice(0, 10);
 }
+
+// ---- the probe: several units in one document ------------------------------------------
+//
+// `coord version` emits one TOML table per versioned thing on a machine (coordinator#327).
+// The table name is a human-readable label and is never parsed: a unit's kind and identity
+// come from FLEET_UNIT_KIND and FLEET_UNIT_ID, because sniffing a kind out of a name prefix
+// is guesswork, and because sanitised names can collide and silently merge two units.
+
+/** Which button a row gets. Unknown kinds are carried rather than dropped. */
+export type UnitKind = 'disk_image' | 'checkout' | 'container';
+
+export interface ProbeUnit extends Manifest {
+  kind: UnitKind | string;
+  /** Stable and unique within a machine. Identity, not an action parameter. */
+  id: string;
+  /** The table name. Display only -- never matched on. */
+  label: string;
+}
+
+export interface Probe {
+  units: ProbeUnit[];
+  /** The `[host]` table: probe version, stacks installed, whole-machine errors. */
+  host: Record<string, string>;
+}
+
+const TABLE = /^\[([^\]]+)\]$/;
+
+/** Split a document into tables, in file order. Lines outside any table are ignored. */
+function tables(text: string): Array<{ name: string; body: string }> {
+  const out: Array<{ name: string; body: string }> = [];
+  let current: { name: string; body: string } | undefined;
+  for (const raw of text.split('\n')) {
+    const t = TABLE.exec(raw.trim());
+    if (t?.[1] !== undefined) {
+      current = { name: t[1], body: '' };
+      out.push(current);
+    } else if (current) {
+      current.body += `${raw}\n`;
+    }
+  }
+  return out;
+}
+
+/**
+ * Parse `coord version` output.
+ *
+ * A table missing FLEET_UNIT_KIND or FLEET_UNIT_ID is skipped rather than guessed at -- the
+ * whole point of carrying them is that identity does not depend on the label.
+ */
+export function parseProbe(text: string): Probe {
+  const units: ProbeUnit[] = [];
+  let host: Record<string, string> = {};
+  for (const { name, body } of tables(text)) {
+    const m = parseManifest(body);
+    if (name === 'host') {
+      host = m.extra;
+      continue;
+    }
+    const kind = m.extra.FLEET_UNIT_KIND;
+    const id = m.extra.FLEET_UNIT_ID;
+    if (kind === undefined || id === undefined) continue;
+    delete m.extra.FLEET_UNIT_KIND;
+    delete m.extra.FLEET_UNIT_ID;
+    units.push({ ...m, kind, id, label: name });
+  }
+  return { units, host };
+}
