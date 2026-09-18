@@ -11,13 +11,13 @@
 #   docker build -t rekon10-backpack .
 #   docker run --rm -v "/path/to/datasets/firmware/backpack:/out" rekon10-backpack
 #   # -> /out/ESP_TX_Backpack_1.5.9_rekon10-wifi.bin   (flash to the Boxer backpack)
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git python3 python3-venv ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# PlatformIO in a venv (bookworm's system pip is externally-managed). PIO self-fetches the
+# PlatformIO in a venv (the system pip is externally-managed). PIO self-fetches the
 # esp8266 platform + toolchain on first build, so the compile is hermetic.
 RUN python3 -m venv /opt/pio && /opt/pio/bin/pip install --no-cache-dir -q platformio
 ENV PATH="/opt/pio/bin:${PATH}"

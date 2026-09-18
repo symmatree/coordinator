@@ -114,9 +114,9 @@ vio-estimator, oak-still-capture, etc. -- so it hits the whole fleet.
 baking / [#96](https://github.com/symmatree/coordinator/issues/96) image build):
 
 1. **Pin the base to an immutable reference.** A bare rolling tag does **not** fix this --
-   `debian:bookworm-slim` *is* rolling, which is the bug. What pins the cache is either the
+   `debian:trixie-slim` *is* rolling, which is the bug. What pins the cache is either the
    digest or an immutable dated tag. The idiom that keeps human visibility is
-   `FROM debian:bookworm-slim@sha256:...` (readable tag **and** immutable digest) in every
+   `FROM debian:trixie-slim@sha256:...` (readable tag **and** immutable digest) in every
    stage of every Dockerfile, so a base bump is a **deliberate, reviewable** commit, not an
    implicit move. The pins are kept fresh in bulk by **`containers/pin-base-digests.sh`** (run
    by hand, or on a schedule via `.github/workflows/update-base-digests.yaml`, which opens a

@@ -32,8 +32,11 @@ for f in "${dockerfiles[@]}"; do
 		if [[ $ref == */* || $ref =~ ^(debian|ubuntu|alpine|python|node|golang):.+$ ]]; then
 			refs["$ref"]=1
 		fi
-	done < <(grep -hoE '^(FROM |ARG BASE_IMAGE=)[^ ]+( AS [A-Za-z0-9_-]+)?' "$f" |
-		sed -E 's/^FROM //; s/^ARG BASE_IMAGE=//')
+		# `--platform=` is stripped before the ref: without it the captured token is
+		# `--platform=$BUILDPLATFORM`, which the '$' check below then skips -- so a
+		# cross-build stage's base silently stops being maintained.
+	done < <(grep -hoE '^(FROM |ARG BASE_IMAGE=)(--platform=[^ ]+ )?[^ ]+( AS [A-Za-z0-9_-]+)?' "$f" |
+		sed -E 's/^FROM //; s/^ARG BASE_IMAGE=//; s/^--platform=[^ ]+ //')
 done
 
 changed=0
@@ -48,7 +51,11 @@ for ref in "${!refs[@]}"; do
 		# Replace `ref` or `ref@sha256:<64hex>` with `ref@digest`, anchored so the tag is whole
 		# (preceded by start/space/'=', followed by '@', space, or end-of-line).
 		before="$(cat "$f")"
-		perl -0pi -e "s/(^|[ =])\Q${ref}\E(?:\@sha256:[0-9a-f]{64})?(?=[ \n]|\$)/\${1}${ref}\@${digest}/mg" "$f"
+		# '#' as the delimiter, not '/': an image ref contains slashes
+		# (ghcr.io/symmatree/...), which would terminate a /-delimited s///
+		# and abort perl with a syntax error -- silently leaving that base
+		# unpinned, which is the drift this script exists to prevent.
+		perl -0pi -e "s#(^|[ =])\Q${ref}\E(?:\@sha256:[0-9a-f]{64})?(?=[ \n]|\$)#\${1}${ref}\@${digest}#mg" "$f"
 		[[ "$(cat "$f")" != "$before" ]] && changed=1
 	done
 done
