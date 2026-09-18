@@ -83,6 +83,16 @@
     dest: /usr/local/bin/coord
     mode: "0755"
 
+# The device-side half of the status screen (#326). Installed next to coord
+# because `coord version` execs it, and separately callable so the platform can
+# ask over plain SSH without ansible in the path.
+- name: Install the version probe
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ coord_checkout }}/bin/coord-version"
+    dest: /usr/local/bin/coord-version
+    mode: "0755"
+
 # Fetch the images as part of convergence, not as a step somebody has to remember
 # afterwards. This is what makes `coord start --pull never` safe: a converged node
 # has its images by definition, so a missing one at boot means something is wrong

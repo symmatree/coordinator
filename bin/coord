@@ -60,6 +60,7 @@ Commands:
   teardown          docker compose down (remove containers + networks)
   restart           docker compose restart [service]
   status            docker compose ps
+  version           print what this machine is running, one TOML table per unit
   logs [service]    Follow logs (default: all services)
   shell [service]   Interactive shell in service (default: stack's first service)
   exec <service> <cmd...>  Run command in service container
@@ -135,6 +136,12 @@ restart)
 status)
 	require_compose_file
 	compose ps
+	;;
+version)
+	# Deliberately no require_compose_file: the probe has to answer on a machine
+	# with no stack installed, which is one of the things the caller needs to be
+	# able to tell apart from a machine that did not answer (#326).
+	exec /usr/local/bin/coord-version "$@"
 	;;
 logs)
 	require_compose_file
