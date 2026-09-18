@@ -29,22 +29,10 @@
     #   device_role           campod | coordinator -- selects the stack to quiesce
     #   reimage_image_url     where to fetch the zip (fleet-control's cache)
     #   reimage_image_sha256  expected sha256 of the zip
-    #   reimage_image_id      the .img basename inside the zip, matched against
-    #                         IMAGE= in /etc/fleet-image
-    #   reimage_image_source  the git sha the image was built from, matched
-    #                         against SOURCE=
+    #   reimage_image_id      the value to expect in IMAGE= after the flash
     #
-    # Both, because neither identifies an image on its own. IMAGE= is
-    # <role>-pi-<date>.img (build-image.sh:70, date only), so every build of a
-    # role on one calendar day shares it. SOURCE= is the git sha, which repeats
-    # across rebuilds of the same commit. Requiring both to match means a
-    # same-day rebuild from a new commit is reflashed rather than skipped.
-    #
-    # BASE= is not compared and does not need to be: RPIOS_URL is hardcoded in
-    # build-image.sh, so it cannot change without changing the commit, and
-    # SOURCE covers it. The exception is a local build from a dirty tree, whose
-    # SOURCE describes HEAD rather than the working copy -- unidentifiable by
-    # construction, and no comparison scheme fixes that.
+    # Supplied by the caller and compared against what the device reports. The
+    # play does not derive or infer it.
     reimage_staging_dir: /boot/firmware
     reimage_staged_name: "fleet-image.zip"
 
@@ -77,11 +65,10 @@
           - reimage_image_url | default('') | length > 0
           - reimage_image_sha256 | default('') | length == 64
           - reimage_image_id | default('') | length > 0
-          - reimage_image_source | default('') | length > 0
         fail_msg: >-
           reimage.yaml needs device_role, reimage_image_url, reimage_image_sha256
-          (64 hex chars), reimage_image_id and reimage_image_source. Failing here,
-          before the quiesce, rather than part-way through a reflash.
+          (64 hex chars) and reimage_image_id. Failing here, before the quiesce,
+          rather than part-way through a reflash.
         quiet: true
 
     # dotfiles-symm#36 writes this at image build time, so it names what the card
@@ -99,17 +86,12 @@
           {{ (reimage_marker.content | b64decode
               | regex_findall('(?m)^IMAGE=(.*)$') | first | default('') | trim)
              if reimage_marker.content is defined else '' }}
-        reimage_current_source: >-
-          {{ (reimage_marker.content | b64decode
-              | regex_findall('(?m)^SOURCE=(.*)$') | first | default('') | trim)
-             if reimage_marker.content is defined else '' }}
 
     - name: Skip devices that already run this image
       ansible.builtin.meta: end_host
       when:
         - not (reimage_force | bool)
         - reimage_current == reimage_image_id
-        - reimage_current_source == reimage_image_source
 
     # Quiesce before staging 693 MiB onto the card the payload is writing to.
     # Bounded for the reason site.yaml records.
@@ -253,9 +235,6 @@
         reimage_after_role: >-
           {{ reimage_marker_after.content | b64decode
              | regex_findall('(?m)^ROLE=(.*)$') | first | default('') | trim }}
-        reimage_after_source: >-
-          {{ reimage_marker_after.content | b64decode
-             | regex_findall('(?m)^SOURCE=(.*)$') | first | default('') | trim }}
 
     # Fails rather than warns: a device that came back on its old image looks
     # identical to one that succeeded, until a flight. The role check catches a
@@ -264,12 +243,10 @@
       ansible.builtin.assert:
         that:
           - reimage_after_image == reimage_image_id
-          - reimage_after_source == reimage_image_source
           - reimage_after_role == device_role
         fail_msg: >-
           {{ inventory_hostname }} came back reporting IMAGE='{{ reimage_after_image }}'
-          SOURCE='{{ reimage_after_source }}' ROLE='{{ reimage_after_role }}', wanted
-          IMAGE='{{ reimage_image_id }}' SOURCE='{{ reimage_image_source }}'
+          ROLE='{{ reimage_after_role }}', wanted IMAGE='{{ reimage_image_id }}'
           ROLE='{{ device_role }}'. The flasher did not write p2, or wrote something
           else. tryboot is one-shot so the device is on its previous system and is
           safe to leave powered; do not power down until this is understood.
