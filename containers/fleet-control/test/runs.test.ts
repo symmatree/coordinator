@@ -73,3 +73,65 @@ describe('RunRegistry', () => {
     assert.ok(seen.includes('pulling'));
   });
 });
+
+describe('RunRegistry -- telling a watcher the run is over', () => {
+  it('fires onEnd once, after the last line', async () => {
+    const runs = new RunRegistry();
+    const seen: string[] = [];
+    let ended = 0;
+    const run = runs.start('converge', 'campod-se', async (emit) => {
+      emit({ t: 'now', stream: 'stdout', line: 'working' });
+    });
+    runs.subscribe(
+      run.id,
+      (l) => seen.push(l.line),
+      () => {
+        ended += 1;
+        // The end signal must come after the final line, or a watcher that closes on it
+        // drops the last thing the run said.
+        assert.ok(seen.some((l) => l.includes('run succeeded')), 'last line arrived first');
+      },
+    );
+    await settle();
+    assert.equal(ended, 1);
+  });
+
+  it('fires onEnd for a failed run too', async () => {
+    const runs = new RunRegistry();
+    let ended = 0;
+    const run = runs.start('converge', 'campod-se', async () => {
+      throw new Error('converge failed (exit 2)');
+    });
+    runs.subscribe(run.id, () => {}, () => { ended += 1; });
+    await settle();
+    assert.equal(ended, 1);
+    assert.equal(runs.get(run.id)?.status, 'failed');
+  });
+
+  it('unsubscribing removes the end callback as well as the listener', async () => {
+    const runs = new RunRegistry();
+    let lines = 0;
+    let ended = 0;
+    const run = runs.start('converge', 'campod-se', async (emit) => {
+      await settle();
+      emit({ t: 'now', stream: 'stdout', line: 'late' });
+    });
+    const off = runs.subscribe(run.id, () => { lines += 1; }, () => { ended += 1; });
+    off();
+    await settle();
+    await settle();
+    assert.equal(lines, 0, 'a detached watcher gets no lines');
+    assert.equal(ended, 0, 'and no end signal -- its connection is already gone');
+  });
+
+  it('a watcher attached with no onEnd still works', async () => {
+    const runs = new RunRegistry();
+    const seen: string[] = [];
+    const run = runs.start('converge', 'campod-se', async (emit) => {
+      emit({ t: 'now', stream: 'stdout', line: 'x' });
+    });
+    runs.subscribe(run.id, (l) => seen.push(l.line));
+    await settle();
+    assert.ok(seen.length >= 1);
+  });
+});

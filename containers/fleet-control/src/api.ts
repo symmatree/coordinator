@@ -231,12 +231,27 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
       Connection: 'keep-alive',
     });
     const send = (l: unknown) => reply.raw.write(`data: ${JSON.stringify(l)}\n\n`);
+    /**
+     * A named terminal event, then close.
+     *
+     * Named rather than just closing, because EventSource RECONNECTS when a server closes the
+     * connection -- so an unannounced close would have the browser reattach, get the replayed
+     * lines, and be closed again, forever. The client closes on this event instead.
+     *
+     * It also means a watcher does not have to recognise the text of the last line to know the
+     * run is over, which is what the page was doing.
+     */
+    const finish = (status: string) => {
+      reply.raw.write(`event: done\ndata: ${JSON.stringify({ id: run.id, status })}\n\n`);
+      reply.raw.end();
+    };
+
     for (const l of run.lines) send(l);
     if (run.status !== 'running') {
-      reply.raw.end();
+      finish(run.status);
       return;
     }
-    const unsubscribe = runs.subscribe(run.id, send);
+    const unsubscribe = runs.subscribe(run.id, send, () => finish(runs.get(run.id)?.status ?? 'unknown'));
     req.raw.on('close', unsubscribe);
   });
 
