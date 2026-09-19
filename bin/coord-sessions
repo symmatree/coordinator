@@ -59,6 +59,29 @@ def state_root() -> Path | None:
     return Path("/var/lib") / stacks[0] if len(stacks) == 1 else None
 
 
+def resolve(captures: Path, session: str) -> tuple[str, Path] | None:
+    """(node, dir) for a session id, or None. Raises on an id that is not one.
+
+    The id is a single directory name and is checked to be one. This command
+    exists partly so that nobody assembles an rm -rf path on the other end of an
+    ssh connection; accepting a separator here would hand that back.
+    """
+    if not session or "/" in session or session in (".", ".."):
+        raise ValueError(f"{session!r} is not a session id")
+    matches = [
+        (node_dir.name, node_dir / session)
+        for node_dir in sorted(p for p in captures.glob("*") if p.is_dir())
+        if (node_dir / session).is_dir()
+    ]
+    if len(matches) > 1:
+        raise ValueError(f"{session} exists under several nodes")
+    return matches[0] if matches else None
+
+
+def bundle_path(out_dir: Path, node: str, session: str) -> Path:
+    return out_dir / f"{node}_{session}.tar.gz"
+
+
 def sidecar_utc(path: Path) -> str | None:
     try:
         return json.loads(path.read_text()).get("wall_clock_utc")
@@ -127,18 +150,15 @@ def add_hashed(tar: tarfile.TarFile, path: Path, arcname: str) -> str:
 
 def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
     current = boot_id()
-    matches = [
-        (node_dir.name, node_dir / session)
-        for node_dir in sorted(p for p in captures.glob("*") if p.is_dir())
-        if (node_dir / session).is_dir()
-    ]
-    if not matches:
+    try:
+        found = resolve(captures, session)
+    except ValueError as exc:
+        print(f"coord-sessions: {exc}", file=sys.stderr)
+        return 1
+    if found is None:
         print(f"coord-sessions: no session {session} under {captures}", file=sys.stderr)
         return 1
-    if len(matches) > 1:
-        print(f"coord-sessions: {session} exists under several nodes", file=sys.stderr)
-        return 1
-    node, session_dir = matches[0]
+    node, session_dir = found
 
     # Refused rather than snapshotted or rotated. Only a reboot closes a session, so
     # there is no quiescent moment to snapshot, and "rotate" would mean rebooting the
@@ -170,7 +190,7 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
         )
         return 1
 
-    bundle = out_dir / f"{node}_{session}.tar.gz"
+    bundle = bundle_path(out_dir, node, session)
     partial = bundle.with_suffix(".partial")
     started = time.time()
     try:
@@ -223,6 +243,68 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
     return 0
 
 
+def cmd_delete(captures: Path, sessions: list[str], out_dir: Path) -> int:
+    """Remove sessions and their bundles. Takes a list; both callers are one verb.
+
+    The transfer deletes each session as it verifies it, and the operator prunes
+    whatever was not selected in one go (#302, #31). Same operation either way.
+
+    CAPTURE IS ASSUMED STOPPED. That is Seth's precondition for list, package and
+    delete alike, not something checked here. Note what the check would have to be
+    if it were ever wanted: the writers are in containers, so their /proc fd links
+    resolve in their own mount namespace and a path comparison would not see them.
+
+    The open session is NOT refused. Nothing is writing, by that precondition, and
+    a new boot gets a new id so it does not come back. Refusing would make the
+    current boot's directory the one thing that cannot be pruned without a reboot,
+    which is the disk filling up -- the reason this verb exists.
+
+    Absent is not an error. The wanted end state is that it is gone, and a transfer
+    loop retrying a delete should not fail; the result says `absent` so a caller can
+    still tell the difference from `deleted`.
+    """
+    results, failed = [], False
+    for session in sessions:
+        try:
+            found = resolve(captures, session)
+        except ValueError as exc:
+            print(f"coord-sessions: {exc}", file=sys.stderr)
+            failed = True
+            continue
+
+        entry = {"session": session, "session_dir": "absent", "bundle": "absent", "bytes": 0}
+        if found is not None:
+            node, session_dir = found
+            entry["node"] = node
+            freed = sum(p.stat().st_size for p in session_dir.rglob("*") if p.is_file())
+            try:
+                shutil.rmtree(session_dir)
+            except OSError as exc:
+                print(f"coord-sessions: cannot remove {session_dir}: {exc}", file=sys.stderr)
+                failed = True
+                continue
+            entry["session_dir"], entry["bytes"] = str(session_dir), freed
+
+            # The bundle is the same data again, so leaving it frees half the space
+            # the caller asked for and leaves a second copy nobody owns.
+            bundle = bundle_path(out_dir, node, session)
+            if bundle.is_file():
+                entry["bytes"] += bundle.stat().st_size
+                try:
+                    bundle.unlink()
+                    entry["bundle"] = str(bundle)
+                except OSError as exc:
+                    print(f"coord-sessions: cannot remove {bundle}: {exc}", file=sys.stderr)
+                    failed = True
+        results.append(entry)
+
+    print(json.dumps({
+        "deleted": results,
+        "bytes": sum(r["bytes"] for r in results),
+    }, indent=2))
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--captures-root", type=Path, help="default: <state root>/captures")
@@ -231,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
     pkg = sub.add_parser("package", help="one closed session into a verified bundle")
     pkg.add_argument("session")
     pkg.add_argument("--out-dir", type=Path, help="default: <state root>/bundles")
+    rm = sub.add_parser("delete", help="remove sessions and their bundles")
+    rm.add_argument("session", nargs="+")
+    rm.add_argument("--out-dir", type=Path, help="default: <state root>/bundles")
     args = ap.parse_args(argv)
 
     root = state_root()
@@ -249,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "list":
         return cmd_list(captures)
     out_dir = args.out_dir or (root / "bundles" if root else captures.parent / "bundles")
+    if args.cmd == "delete":
+        return cmd_delete(captures, args.session, out_dir)
     return cmd_package(captures, args.session, out_dir)
 
 

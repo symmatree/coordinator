@@ -140,7 +140,56 @@ try:
     check("refuses when free space will not cover it", rc == 1)
     check("and cleaned up after refusing", not list(out_dir.glob("*.partial")))
 
-    # 8. end to end through the CLI, including the missing-session path
+    # 8. delete takes a list, and takes the bundle with the session
+    make_session(captures, "campod-se", "33333333-cccc", frames=2)
+    bundle_before = list(out_dir.glob("campod-se_11111111-aaaa.tar.gz"))
+    check("the packaged bundle is on disk before deleting", len(bundle_before) == 1)
+    freed_expect = sum(p.stat().st_size for p in closed.rglob("*") if p.is_file()) \
+        + bundle_before[0].stat().st_size
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cs.cmd_delete(captures, ["11111111-aaaa", "33333333-cccc"], out_dir)
+    res = json.loads(buf.getvalue())
+    check("delete exits 0", rc == 0)
+    check("removes every session named", not closed.exists()
+          and not (captures / "campod-se" / "33333333-cccc").exists())
+    check("removes the bundle with its session", not bundle_before[0].exists())
+    by_s = {r["session"]: r for r in res["deleted"]}
+    check("reports the bundle it removed",
+          by_s["11111111-aaaa"]["bundle"].endswith("campod-se_11111111-aaaa.tar.gz"))
+    check("counts session plus bundle bytes",
+          by_s["11111111-aaaa"]["bytes"] == freed_expect,
+          f"{by_s['11111111-aaaa']['bytes']} vs {freed_expect}")
+    check("a session with no bundle reports absent",
+          by_s["33333333-cccc"]["bundle"] == "absent")
+    check("leaves the sessions it was not asked about",
+          (captures / "campod-se" / "22222222-bbbb").is_dir())
+
+    # 9. the open session is deletable -- refusing it would make the current boot
+    #    the one directory that cannot be pruned without a reboot
+    with redirect_stdout(io.StringIO()):
+        rc = cs.cmd_delete(captures, ["22222222-bbbb"], out_dir)
+    check("deletes the open session rather than refusing it",
+          rc == 0 and not (captures / "campod-se" / "22222222-bbbb").exists())
+
+    # 10. idempotent: absent is the wanted end state, not a failure
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cs.cmd_delete(captures, ["11111111-aaaa"], out_dir)
+    again = json.loads(buf.getvalue())
+    check("deleting an absent session is not an error", rc == 0)
+    check("and says absent rather than deleted",
+          again["deleted"][0]["session_dir"] == "absent" and again["bytes"] == 0)
+
+    # 11. an id that is not a single directory name is refused, not resolved
+    for bad in ("../../etc", "a/b", "..", ""):
+        with redirect_stdout(io.StringIO()):
+            rc = cs.cmd_delete(captures, [bad], out_dir)
+        check(f"refuses {bad!r} as a session id", rc == 1)
+    check("and /etc still exists", Path("/etc").is_dir())
+
+    # 8b. end to end through the CLI, including the missing-session path
     p = subprocess.run(
         [sys.executable, str(HERE / "coord-sessions"), "--captures-root", str(captures), "list"],
         capture_output=True, text=True)

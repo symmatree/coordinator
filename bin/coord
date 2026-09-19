@@ -63,6 +63,7 @@ Commands:
   version           print what this machine is running, one TOML table per unit
   sessions list     capture sessions on this device, as JSON
   sessions package  one closed session into a verified bundle
+  sessions delete   remove sessions and their bundles (capture must be stopped)
   logs [service]    Follow logs (default: all services)
   shell [service]   Interactive shell in service (default: stack's first service)
   exec <service> <cmd...>  Run command in service container
