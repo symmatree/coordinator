@@ -47,6 +47,13 @@ services:
       # a file describing four machines, so every pod claimed to be campod-sw and
       # the data misidentified its own origin (#272).
       - /etc/hostname:/etc/host-hostname:ro
+      # The card-image manifest, for the same reason and by the same route.
+      # Both writers list it as a manifest source and copy it into each
+      # session, but it lives on the host and was never mounted, so every
+      # session so far logged `this session is unattributed` and recorded only
+      # the payload half of the chain. If it is ever absent docker leaves an
+      # empty directory here, which reads as the same unattributed log line.
+      - /etc/fleet-image:/etc/fleet-image:ro
     environment:
       CAMPOD_CAPTURE_HZ: "1.0"
       # 0 = sensor full resolution (IMX708 4608x2592)
@@ -83,6 +90,13 @@ services:
       # container ID, so the host's name has to be mounted in for the data to
       # know which pod it came from (#272).
       - /etc/hostname:/etc/host-hostname:ro
+      # The card-image manifest, for the same reason and by the same route.
+      # Both writers list it as a manifest source and copy it into each
+      # session, but it lives on the host and was never mounted, so every
+      # session so far logged `this session is unattributed` and recorded only
+      # the payload half of the chain. If it is ever absent docker leaves an
+      # empty directory here, which reads as the same unattributed log line.
+      - /etc/fleet-image:/etc/fleet-image:ro
     environment:
       # Camera-to-arm-end baseline in metres, MEASURED per vehicle. Differential
       # acceleration over a known separation is the rotational signature, and it
