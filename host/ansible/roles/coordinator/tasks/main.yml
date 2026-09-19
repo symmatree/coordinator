@@ -1,5 +1,5 @@
 ---
-# Coordinator (Pi 4B) specifics: OAK-D udev rules, then the coordinator stack.
+# Coordinator (Pi 4B) specifics: the host devices the stack binds, then the stack.
 # Behavior matches the former install-coordinator.yaml.
 
 - name: Install Luxonis udev rules for OAK-D (MyriadX USB re-enumeration)
@@ -8,41 +8,6 @@
     content: 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"'
     mode: "0644"
   notify: Reload udev rules
-
-- name: Install coordinator stack and state dirs
-  ansible.builtin.include_role:
-    name: coord-stack
-  vars:
-    coord_stack_name: coordinator
-    coord_state_root: /var/lib/coordinator
-    coord_state_subdirs:
-      - config
-      - ipc
-      # OAK-D captures (disparity + stills): the in-tracker capture branch
-      # bind-mounts this as /captures (#72).
-      - captures
-
-# Seed the vins_fusion calibration. force: false so a flight-refined oak_d.yaml
-# on the Pi survives re-provisioning (it is a starting calibration -- see the
-# file header and docs/bench-estimator.md).
-- name: Seed OAK-D VINS calibration (does not overwrite local refinement)
-  ansible.builtin.copy:
-    src: oak_d.yaml
-    dest: /var/lib/coordinator/config/oak_d.yaml
-    mode: "0644"
-    force: false
-
-# Host-side VIO tools: vio-pose-tap (decode chobits_server pose to CSV) and
-# vio-ipc-record (raw multi-socket capture of chobits_* streams for replay, #35).
-- name: Install host VIO tools
-  ansible.builtin.copy:
-    remote_src: true
-    src: "{{ coord_checkout }}/bin/{{ item }}"
-    dest: "/usr/local/bin/{{ item }}"
-    mode: "0755"
-  loop:
-    - vio-pose-tap
-    - vio-ipc-record
 
 # The coordinator's boot config comes from the IMAGE, not from here:
 # dotfiles-symm pi-image/roles/coordinator/config.append.txt supplies
@@ -128,6 +93,46 @@
   ansible.builtin.command: modprobe i2c-dev
   when: "'i2c_dev' not in coordinator_lsmod.stdout"
   changed_when: true
+
+# Below the module loading, not above it. coord-stack's last task starts the
+# stack, and sh1106-display declares `devices: [/dev/i2c-1:/dev/i2c-1]`, which
+# fails the container -- and so `docker compose up` -- when the node is absent.
+# On a freshly flashed card it is absent until i2c-dev is loaded, so this used
+# to fail on exactly the first converge after a reimage and no other run.
+- name: Install coordinator stack and state dirs
+  ansible.builtin.include_role:
+    name: coord-stack
+  vars:
+    coord_stack_name: coordinator
+    coord_state_root: /var/lib/coordinator
+    coord_state_subdirs:
+      - config
+      - ipc
+      # OAK-D captures (disparity + stills): the in-tracker capture branch
+      # bind-mounts this as /captures (#72).
+      - captures
+
+# Seed the vins_fusion calibration. force: false so a flight-refined oak_d.yaml
+# on the Pi survives re-provisioning (it is a starting calibration -- see the
+# file header and docs/bench-estimator.md).
+- name: Seed OAK-D VINS calibration (does not overwrite local refinement)
+  ansible.builtin.copy:
+    src: oak_d.yaml
+    dest: /var/lib/coordinator/config/oak_d.yaml
+    mode: "0644"
+    force: false
+
+# Host-side VIO tools: vio-pose-tap (decode chobits_server pose to CSV) and
+# vio-ipc-record (raw multi-socket capture of chobits_* streams for replay, #35).
+- name: Install host VIO tools
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ coord_checkout }}/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - vio-pose-tap
+    - vio-ipc-record
 
 # Auto-start capturing on boot (#97) + persistent journal / throttle forensics
 # (#100), so the coordinator behaves well across the routine power bounces of
