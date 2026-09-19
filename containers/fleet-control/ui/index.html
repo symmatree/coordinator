@@ -45,6 +45,19 @@
   .badge.ok { color:var(--ok); border-color:#215f47; }
   .badge.stale { color:var(--warn); border-color:#6b4d1c; }
   .badge.unknown { color:var(--dim); }
+  .pf { background:var(--card); border:1px solid var(--line); border-radius:12px;
+        padding:14px; margin-bottom:12px; }
+  .pf h2 { font-size:.95rem; margin:0 0 4px; }
+  .pf .step { color:var(--dim); font-size:.82rem; margin:10px 0 6px; }
+  .pf input[type=text] { width:100%; min-height:44px; padding:0 10px; font-size:1rem;
+        border-radius:8px; border:1px solid var(--line); background:#0d0f14; color:var(--fg); }
+  .sess { display:flex; gap:10px; align-items:flex-start; padding:8px 0;
+        border-bottom:1px solid var(--line); font-size:.85rem; }
+  .sess input[type=checkbox] { width:22px; height:22px; margin-top:2px; flex:0 0 auto; }
+  .sess .who { font-weight:600; }
+  .sess .num { color:var(--dim); font-family:ui-monospace, monospace; font-size:.78rem; }
+  .sess .why { flex-basis:100%; color:var(--dim); font-size:.76rem; margin-left:32px; }
+  .sess.open { opacity:.55; }
 </style>
 <h1>rekon10 fleet</h1>
 <div class="topbar">
@@ -52,6 +65,26 @@
   <span class="meta" id="stamp">status not loaded</span>
 </div>
 <div id="fleet">loading...</div>
+<div class="pf">
+  <h2>Post-flight</h2>
+  <div class="meta">Stop capture, pick what to keep, the rest is deleted.</div>
+
+  <div class="step">1 &mdash; stop capture, so sizes stop moving while you read them</div>
+  <div class="btns"><button id="pfStop">Stop capture on all</button></div>
+
+  <div class="step">2 &mdash; what is on the cards</div>
+  <div class="btns"><button id="pfList">List sessions</button></div>
+  <div id="pfSessions"></div>
+
+  <div class="step">3 &mdash; name the flight, then retrieve what you ticked</div>
+  <input type="text" id="pfFlight" placeholder="flight name, e.g. 2026-09-19-vio"
+         autocapitalize="off" autocorrect="off" spellcheck="false" />
+  <div class="btns">
+    <button id="pfGet" class="primary">Retrieve ticked</button>
+    <button id="pfPrune">Delete the rest</button>
+  </div>
+  <pre id="pfLog" hidden></pre>
+</div>
 <dialog id="confirm">
   <h2 id="cTitle"></h2>
   <div class="what" id="cWhat"></div>
@@ -248,5 +281,129 @@
     es.onerror = () => { es.close(); st.busy = false; };
   }
 
+  // ---- post-flight --------------------------------------------------------------------
+  // Sessions are loaded on demand, like status: nothing touches the fleet unprompted. The
+  // open session is shown but cannot be ticked -- only a reboot closes one, so it is not
+  // packageable and saying so beats omitting it and leaving the list looking short.
+
+  const pf = { sessions: [], picked: new Set() };
+  const pfLog = document.getElementById('pfLog');
+
+  function log(line) {
+    pfLog.hidden = false;
+    pfLog.textContent += (pfLog.textContent ? '\n' : '') + line;
+    pfLog.scrollTop = pfLog.scrollHeight;
+  }
+
+  const MB = (n) => `${(n / 1e6).toFixed(0)} MB`;
+  const span = (s) => {
+    if (!s.first_utc || !s.last_utc) return 'no frames';
+    const secs = Math.round((Date.parse(s.last_utc) - Date.parse(s.first_utc)) / 1000);
+    return secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
+  };
+
+  function renderSessions() {
+    const root = document.getElementById('pfSessions');
+    root.textContent = '';
+    if (pf.sessions.length === 0) {
+      root.append($({ className: 'meta', textContent: 'nothing listed yet' }));
+      return;
+    }
+    for (const s of pf.sessions) {
+      const key = `${s.node}/${s.session}`;
+      const row = $({ className: 'sess' + (s.open ? ' open' : '') });
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.disabled = !!s.open;
+      box.checked = pf.picked.has(key);
+      box.onchange = () => { box.checked ? pf.picked.add(key) : pf.picked.delete(key); };
+      row.append(
+        box,
+        $({ className: 'who', textContent: s.node }),
+        // Frames and span are what tell a flight from a failed-lock power cycle; the
+        // directory name is a boot id and carries no clock at all.
+        $({ className: 'num', textContent: `${s.frames} frames` }),
+        $({ className: 'num', textContent: span(s) }),
+        $({ className: 'num', textContent: MB(s.bytes) }),
+      );
+      if (s.open) row.append($({ className: 'why', textContent: 'current boot -- only a reboot closes a session, so this one cannot be packaged' }));
+      else row.append($({ className: 'why', textContent: s.session }));
+      root.append(row);
+    }
+  }
+
+  document.getElementById('pfStop').onclick = async () => {
+    const nodes = await j('/nodes');
+    for (const n of nodes) {
+      try { await j(`/nodes/${n.name}/stop-capture`, { method: 'POST' }); log(`${n.name}: capture stopped`); }
+      catch (e) { log(`${n.name}: ${e.message}`); }
+    }
+  };
+
+  document.getElementById('pfList').onclick = async () => {
+    pf.sessions = [];
+    pf.picked.clear();
+    for (const n of await j('/nodes')) {
+      try {
+        const r = await j(`/nodes/${n.name}/sessions`);
+        pf.sessions.push(...r.sessions);
+      } catch (e) { log(`${n.name}: ${e.message}`); }
+      renderSessions();
+    }
+  };
+
+  /** One session per call, so a failure costs that session rather than the whole selection. */
+  document.getElementById('pfGet').onclick = async () => {
+    const flight = document.getElementById('pfFlight').value.trim();
+    if (!flight) return log('name the flight first');
+    if (pf.picked.size === 0) return log('nothing ticked');
+    for (const key of [...pf.picked]) {
+      const [node, session] = [key.slice(0, key.indexOf('/')), key.slice(key.indexOf('/') + 1)];
+      log(`${node}: starting ${session.slice(0, 8)}`);
+      try {
+        const { id } = await j(`/nodes/${node}/offload?session=${session}&flight=${encodeURIComponent(flight)}`, { method: 'POST' });
+        await new Promise((done) => {
+          const es = new EventSource(`/runs/${id}/stream`);
+          es.onmessage = (ev) => log('  ' + JSON.parse(ev.data).line);
+          es.addEventListener('done', () => { es.close(); done(); });
+          es.onerror = () => { es.close(); done(); };
+        });
+        pf.picked.delete(key);
+      } catch (e) { log(`${node}: ${e.message}`); }
+    }
+    renderSessions();
+  };
+
+  /** Everything not ticked, per node. Confirms, because it is the irreversible one. */
+  document.getElementById('pfPrune').onclick = async () => {
+    const doomed = pf.sessions.filter((s) => !pf.picked.has(`${s.node}/${s.session}`));
+    if (doomed.length === 0) return log('nothing to delete');
+    document.getElementById('cTitle').textContent = `Delete ${doomed.length} session(s)?`;
+    document.getElementById('cWhat').textContent =
+      `Removes them and their bundles from the devices, freeing about ` +
+      `${MB(doomed.reduce((a, s) => a + s.bytes, 0))}. Anything you ticked is left alone. ` +
+      `This cannot be undone, and anything not already retrieved is gone.`;
+    dlg.showModal();
+    document.getElementById('cNo').onclick = () => dlg.close();
+    document.getElementById('cYes').onclick = async () => {
+      dlg.close();
+      const byNode = {};
+      for (const s of doomed) (byNode[s.node] ??= []).push(s.session);
+      for (const [node, sessions] of Object.entries(byNode)) {
+        try {
+          const r = await j(`/nodes/${node}/sessions/delete`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessions }),
+          });
+          log(`${node}: freed ${MB(r.bytes)}`);
+        } catch (e) { log(`${node}: ${e.message}`); }
+      }
+      pf.sessions = pf.sessions.filter((s) => pf.picked.has(`${s.node}/${s.session}`));
+      renderSessions();
+    };
+  };
+
+  renderSessions();
   render(await j('/nodes'));
 </script>
