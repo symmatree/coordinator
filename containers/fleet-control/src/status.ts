@@ -4,7 +4,7 @@
 // running and nothing converges toward a target (coordinator#326). "Out of date" is a label
 // next to what head actually is, not a gate -- every button stays pressable.
 
-import { commitTitle, refHead } from './github.js';
+import { commitTitle, refHead, registryImage, type RegistryImage } from './github.js';
 import type { NodeStatus } from './probe.js';
 import type { ProbeUnit } from './manifest.js';
 
@@ -48,11 +48,18 @@ export function repoFromUrl(url: string | undefined): string | undefined {
 export interface Lookups {
   title(repo: string, sha: string): Promise<string>;
   head(repo: string, ref: string): Promise<string>;
+  /** What a container tag points at now. */
+  image(imageRef: string): Promise<RegistryImage | undefined>;
+  /** Head sha of the newest successful build of the disk image. */
+  buildSha(): Promise<string | undefined>;
 }
 
 export class LookupCache implements Lookups {
   private readonly titles = new Map<string, string>();
   private readonly heads = new Map<string, { head: string; at: number }>();
+  /** Registry answers move when a tag is repushed, so they expire like a ref does. */
+  private readonly images = new Map<string, { img: RegistryImage | undefined; at: number }>();
+  private build?: { sha: string | undefined; at: number };
 
   constructor(
     token: string | undefined,
@@ -60,11 +67,30 @@ export class LookupCache implements Lookups {
     private readonly headTtlMs = 60_000,
     private readonly now: () => number = Date.now,
     /** The network, injectable so the caching itself can be tested without it. */
-    private readonly fetchers: Lookups = {
+    private readonly fetchers: Pick<Lookups, 'title' | 'head' | 'image'> & {
+      buildSha: () => Promise<string | undefined>;
+    } = {
       title: (repo, sha) => commitTitle(repo, sha, token),
       head: (repo, ref) => refHead(repo, ref, token),
+      image: (ref) => registryImage(ref),
+      buildSha: async () => undefined,
     },
   ) {}
+
+  async image(imageRef: string): Promise<RegistryImage | undefined> {
+    const hit = this.images.get(imageRef);
+    if (hit && this.now() - hit.at < this.headTtlMs) return hit.img;
+    const img = await this.fetchers.image(imageRef);
+    this.images.set(imageRef, { img, at: this.now() });
+    return img;
+  }
+
+  async buildSha(): Promise<string | undefined> {
+    if (this.build && this.now() - this.build.at < this.headTtlMs) return this.build.sha;
+    const sha = await this.fetchers.buildSha();
+    this.build = { sha, at: this.now() };
+    return sha;
+  }
 
   async title(repo: string, sha: string): Promise<string> {
     const key = `${repo}@${sha}`;
@@ -85,19 +111,68 @@ export class LookupCache implements Lookups {
   }
 }
 
+/**
+ * Is this unit the artifact its branch would produce right now?
+ *
+ * NOT `revision === branch head`. That was wrong and reported correctly-built artifacts as
+ * stale: every build here is path-filtered, so an artifact's revision is the last commit that
+ * touched ITS paths and is almost never branch head. A doc edit made every container on every
+ * machine go red. Measured: campod-camera's image carried 26736fb, which was exactly the last
+ * commit touching its paths, while main was at ecff0ee.
+ *
+ * So currency is asked per kind, against the thing that actually determines the artifact:
+ *
+ * - **container** -- the digest its tag points at now, versus the digest the device pulled.
+ *   Exact, content-based, and needs no knowledge of which paths trigger which build.
+ * - **disk image** -- the newest successful build of it, rather than the newest commit.
+ * - **anything else** (the checkout, and the payload that will replace it) -- branch head,
+ *   which is right for a whole-repo working tree because that genuinely is what it tracks.
+ */
+async function currency(
+  unit: ProbeUnit,
+  repo: string,
+  cache: Lookups,
+): Promise<{ head?: string; current?: boolean }> {
+  if (unit.kind === 'container') {
+    const ref = unit.extra.FLEET_CONTAINER_IMAGE;
+    // RepoDigests is `ghcr.io/owner/name@sha256:...`; compare the digest, not the prefix.
+    const installed = unit.extra.FLEET_CONTAINER_IMAGE_DIGEST?.split('@').pop();
+    if (ref === undefined || installed === undefined) return {};
+    const now = await cache.image(ref);
+    if (now === undefined) return {};
+    return { head: now.revision, current: installed === now.digest };
+  }
+
+  if (unit.kind === 'disk_image') {
+    const built = await cache.buildSha();
+    if (built === undefined) return {};
+    return { head: built, current: built === unit.revision };
+  }
+
+  if (unit.refName === undefined) return {};
+  const head = await cache.head(repo, unit.refName);
+  return { head, current: head === unit.revision };
+}
+
 /** Annotate one unit. A failed lookup is recorded on the unit, never thrown. */
 export async function enrichUnit(unit: ProbeUnit, cache: Lookups): Promise<UnitStatus> {
   const repo = repoFromUrl(unit.source);
-  if (repo === undefined || unit.revision === undefined || unit.refName === undefined) {
+  // A container needs no refName -- its currency is a digest question -- so only the repo and
+  // the revision are required, and those are what name the change for display.
+  if (repo === undefined || unit.revision === undefined) {
     return { ...unit, repo };
   }
   try {
-    const head = await cache.head(repo, unit.refName);
+    const { head, current } = await currency(unit, repo, cache);
     const [title, headTitle] = await Promise.all([
       cache.title(repo, unit.revision),
-      head === unit.revision ? Promise.resolve(undefined) : cache.title(repo, head),
+      // Only name the other side when there IS one and it differs -- "what you would get"
+      // is only meaningful if it is not what you have.
+      head === undefined || head === unit.revision || current === true
+        ? Promise.resolve(undefined)
+        : cache.title(repo, head),
     ]);
-    return { ...unit, repo, head, current: head === unit.revision, title, headTitle };
+    return { ...unit, repo, head, current, title, headTitle };
   } catch (err) {
     return { ...unit, repo, lookupError: (err as Error).message };
   }

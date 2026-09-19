@@ -9,7 +9,7 @@ import { converge, reimage } from './actions.js';
 import { ImageCache } from './imagecache.js';
 import { probeAll, probeNode } from './probe.js';
 import { enrich, LookupCache } from './status.js';
-import { commitTitle, isHeadOfRef, listArtifacts, listBuilds } from './github.js';
+import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
 
 export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInstance {
   const app = Fastify({ logger: true });
@@ -50,7 +50,15 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
   // good; only head-of-ref is re-asked. That is what keeps a refresh inside GitHub's 60/hour
   // unauthenticated budget.
 
-  const lookups = new LookupCache(cfg.images.token);
+  const lookups = new LookupCache(cfg.images.token, 60_000, Date.now, {
+    title: (repo, sha) => commitTitle(repo, sha, cfg.images.token),
+    head: (repo, ref) => refHead(repo, ref, cfg.images.token),
+    image: (ref) => registryImage(ref),
+    // The disk image's currency is the newest successful BUILD of it, not the newest commit:
+    // its workflow is path-filtered on pi-image/**, so branch head moves for changes that
+    // cannot affect the card at all.
+    buildSha: async () => (await listBuilds(cfg.images, 1))[0]?.sha,
+  });
 
   /** Every machine, concurrently. One that cannot be reached is reported, not omitted. */
   app.get('/status', async () => enrich(await probeAll(cfg.inventory.nodes, cfg.action), lookups));
