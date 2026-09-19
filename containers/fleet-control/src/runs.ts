@@ -40,6 +40,8 @@ type Listener = (line: RunLine) => void;
 export class RunRegistry {
   private runs = new Map<string, Run>();
   private listeners = new Map<string, Set<Listener>>();
+  /** Fired once per watcher when a run finishes, after its last line. */
+  private enders = new Map<string, Set<() => void>>();
 
   /** Is an action already running against this node? */
   activeFor(node: string): Run | undefined {
@@ -57,11 +59,26 @@ export class RunRegistry {
     return this.runs.get(id);
   }
 
-  subscribe(id: string, fn: Listener): () => void {
+  /**
+   * Watch a run. `onEnd` fires once when it finishes, after the last line.
+   *
+   * Without it a watcher has no way to learn the run is over except by recognising the text
+   * of the final line, which is not an interface -- and a stream that never says it is done
+   * is one its reader holds open until its own timeout expires.
+   */
+  subscribe(id: string, fn: Listener, onEnd?: () => void): () => void {
     const set = this.listeners.get(id) ?? new Set();
     set.add(fn);
     this.listeners.set(id, set);
-    return () => set.delete(fn);
+    if (onEnd) {
+      const ends = this.enders.get(id) ?? new Set();
+      ends.add(onEnd);
+      this.enders.set(id, ends);
+    }
+    return () => {
+      set.delete(fn);
+      if (onEnd) this.enders.get(id)?.delete(onEnd);
+    };
   }
 
   /**
@@ -114,6 +131,8 @@ export class RunRegistry {
           fn({ t: run.endedAt, stream: 'stdout', line: `[fleet-control] run ${run.status}` });
         }
         this.listeners.delete(run.id);
+        for (const fn of this.enders.get(run.id) ?? []) fn();
+        this.enders.delete(run.id);
       });
 
     return run;

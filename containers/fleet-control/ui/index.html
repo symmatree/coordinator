@@ -236,13 +236,15 @@
       st.log.push(l.line);
       if (st.log.length > 400) st.log.splice(0, st.log.length - 400);
       render(await j('/nodes'));
-      if (l.line.startsWith('[fleet-control] run ')) {
-        es.close();
-        st.busy = false;
-        state.set(name, st);
-        render(await j('/nodes'));
-      }
     };
+    // The server says when it is done. Closing here is also what stops EventSource
+    // reconnecting to a finished run.
+    es.addEventListener('done', async () => {
+      es.close();
+      st.busy = false;
+      state.set(name, st);
+      render(await j('/nodes'));
+    });
     es.onerror = () => { es.close(); st.busy = false; };
   }
 
