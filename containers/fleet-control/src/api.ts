@@ -105,6 +105,10 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
     if (!build) return { error: `no build matching ${sha ?? '(newest)'}`, code: 404 };
     const held = await images.get(role, build.sha);
     if (held && (await images.pathFor(role, build.sha))) return held;
+    // The run's display_title is the commit subject, which for a merge commit is the branch
+    // name. What gets written beside a cached image should be the title the builds list
+    // shows, since both answer "which change is this".
+    build.title = await lookups.title(cfg.images.repo, build.sha).catch(() => build.title);
     const arts = await listArtifacts(cfg.images, build.runId);
     const art = arts.find((a) => a.name.startsWith(`${role}-`));
     if (!art) return { error: `run ${build.runId} has no artifact for role ${role}`, code: 404 };
