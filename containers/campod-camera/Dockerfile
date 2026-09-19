@@ -98,6 +98,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # read it as a command; and no `$` in a value, because sourcing expands it.
 #
 # Controlled keys are the OCI label names with dots to underscores, uppercased.
+# FLEET_SOURCE_REF is ours and fully qualified (refs/heads/main), per #336: the
+# OCI spec scopes ref.name to image layouts, so it never meant the source branch.
 # FLEET_UNIT is artifact-specific and uncontrolled: it names the output file when
 # this is copied into a session, since the OCI title is the repo's, not the
 # image's.
@@ -111,7 +113,7 @@ RUN printf '%s\n' \
       "# campod-camera build manifest, written by its Dockerfile." \
       "ORG_OPENCONTAINERS_IMAGE_SOURCE=\"https://github.com/symmatree/coordinator\"" \
       "ORG_OPENCONTAINERS_IMAGE_REVISION=\"${GIT_SHA}\"" \
-      "ORG_OPENCONTAINERS_IMAGE_REF_NAME=\"${GIT_REF}\"" \
+      "FLEET_SOURCE_REF=\"${GIT_REF}\"" \
       "FLEET_UNIT=\"campod-camera\"" \
       > /etc/container-image
 
