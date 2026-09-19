@@ -72,7 +72,7 @@ jobs:
             fleet.source.ref=${{ github.ref }}
           build-args: |
             GIT_SHA=${{ github.sha }}
-            GIT_REF=${{ github.ref_name }}
+            GIT_REF=${{ github.ref }}
             BASE_IMAGE=${{ steps.pins.outputs.base_image }}
             RPI_SUITE=${{ steps.pins.outputs.rpi_suite }}
             RPI_KEYRING_DEB=${{ steps.pins.outputs.rpi_keyring_deb }}

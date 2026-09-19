@@ -167,7 +167,7 @@ else:
     check(
         "carries the controlled keys",
         {"ORG_OPENCONTAINERS_IMAGE_SOURCE", "ORG_OPENCONTAINERS_IMAGE_REVISION",
-         "ORG_OPENCONTAINERS_IMAGE_REF_NAME"} <= set(parsed),
+         "FLEET_SOURCE_REF"} <= set(parsed),
         str(sorted(parsed)),
     )
     kv = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
