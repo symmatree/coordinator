@@ -21,6 +21,7 @@ thing and should not be confused with an empty machine.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -42,6 +43,30 @@ ORDERED = (
     "ORG_OPENCONTAINERS_IMAGE_VERSION",
     "ORG_OPENCONTAINERS_IMAGE_TITLE",
 )
+
+
+def data_volume(stacks: list[str]) -> dict[str, str]:
+    """Free space where captures land, so a caller can size a job before asking.
+
+    Reported for the sole installed stack's state root. With none or several
+    there is no single "the data volume", and an empty path with empty numbers
+    says that rather than guessing which one was meant.
+
+    f_bavail, not f_bfree: what a writer can actually use, which is the question
+    being asked. The gap is the filesystem's own reserve and it is not ours.
+    """
+    if len(stacks) != 1:
+        return {"FLEET_DATA_PATH": "", "FLEET_DATA_FREE_BYTES": "", "FLEET_DATA_TOTAL_BYTES": ""}
+    path = Path("/var/lib") / stacks[0]
+    try:
+        st = os.statvfs(path)
+    except OSError:
+        return {"FLEET_DATA_PATH": str(path), "FLEET_DATA_FREE_BYTES": "", "FLEET_DATA_TOTAL_BYTES": ""}
+    return {
+        "FLEET_DATA_PATH": str(path),
+        "FLEET_DATA_FREE_BYTES": str(st.f_bavail * st.f_frsize),
+        "FLEET_DATA_TOTAL_BYTES": str(st.f_blocks * st.f_frsize),
+    }
 
 
 def key_of(label: str) -> str:
@@ -195,7 +220,8 @@ def main() -> int:
     stacks = sorted(p.name for p in STACKS_ROOT.glob("*")) if STACKS_ROOT.is_dir() else []
     emit("host", {
         "FLEET_STACKS_INSTALLED": ",".join(stacks) if stacks else "",
-        "FLEET_PROBE_VERSION": "1",
+        **data_volume(stacks),
+        "FLEET_PROBE_VERSION": "2",
     })
     return 0
 

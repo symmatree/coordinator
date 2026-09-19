@@ -149,9 +149,55 @@ try:
         "every value is a string",
         all(isinstance(v, str) for t in doc.values() for v in t.values()),
     )
-    check("reports a probe version", doc.get("host", {}).get("FLEET_PROBE_VERSION") == "1")
+    check("reports a probe version", doc.get("host", {}).get("FLEET_PROBE_VERSION") == "2")
 except tomllib.TOMLDecodeError as exc:
     check("probe output parses as TOML", False, str(exc))
+
+# 8. Free space on the data volume (#302): a real filesystem, checked against an
+#    independent statvfs rather than against the probe's own call, and only
+#    reported when exactly one stack makes "the data volume" unambiguous.
+host = doc.get("host", {}) if "doc" in dir() else {}
+check(
+    "data-volume keys always present",
+    {"FLEET_DATA_PATH", "FLEET_DATA_FREE_BYTES", "FLEET_DATA_TOTAL_BYTES"} <= set(host),
+    str(sorted(host)),
+)
+check(
+    "no stack installed here, so the data volume is blank rather than guessed",
+    host.get("FLEET_DATA_PATH") == "" and host.get("FLEET_DATA_FREE_BYTES") == "",
+    f"path={host.get('FLEET_DATA_PATH')!r} free={host.get('FLEET_DATA_FREE_BYTES')!r}",
+)
+
+import os as _os
+
+# /var/lib/dpkg stands in for a stack's state root: a real directory under the
+# same base, so the call under test takes its normal path.
+_probe = Path("/var/lib/dpkg")
+_st = _os.statvfs(_probe)
+_got = cv.data_volume(["dpkg"])
+check("names the path it measured", _got["FLEET_DATA_PATH"] == str(_probe), _got["FLEET_DATA_PATH"])
+check(
+    "measures the filesystem it names",
+    _got["FLEET_DATA_TOTAL_BYTES"] == str(_st.f_blocks * _st.f_frsize),
+    f"{_got['FLEET_DATA_TOTAL_BYTES']} vs {_st.f_blocks * _st.f_frsize}",
+)
+# Not asserted: that free came from f_bavail rather than f_bfree. They are equal
+# on this filesystem, so the check could not fail and would be theatre. The
+# choice is in the docstring; a box with a root reserve would be needed to test it.
+_free, _total = int(_got["FLEET_DATA_FREE_BYTES"]), int(_got["FLEET_DATA_TOTAL_BYTES"])
+check(
+    "free is a plausible fraction of total, not a copy of it",
+    0 < _free < _total,
+    f"free={_free} total={_total}",
+)
+check(
+    "several stacks is not a data volume",
+    cv.data_volume(["a", "b"])["FLEET_DATA_PATH"] == "",
+)
+check(
+    "a path that is not there reports the path and no numbers",
+    cv.data_volume(["definitely-not-a-stack"])["FLEET_DATA_FREE_BYTES"] == "",
+)
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
