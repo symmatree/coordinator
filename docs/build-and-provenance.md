@@ -9,11 +9,15 @@ about to add or rename one, read [Load-bearing labels](#load-bearing-labels) fir
 
 ## Container images
 
-`.github/workflows/build-<name>.yaml`, one per image, all the same shape:
+`.github/workflows/build.yaml`, one matrix entry per image, all the same shape --
+`.github/actions/build-container` does the work and `.github/components.json` says what
+each image is built from. See [ci.md](ci.md) for why it is one workflow.
 
 1. `docker/metadata-action@v5` computes the tags and the standard OCI labels.
-2. `docker/build-push-action@v6` builds for `linux/arm64` and pushes to GHCR, passing the
-   metadata action's `labels` output plus our own.
+2. `docker/build-push-action@v6` builds for the component's `platforms` and pushes to
+   GHCR, passing the metadata action's `labels` output plus our own.
+
+The `vio-*` images still have a workflow each; they are not in the matrix.
 
 **Tags** come from the metadata action's `tags:` block:
 
