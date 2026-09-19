@@ -128,3 +128,40 @@ export async function deleteSessions(
   if (sessions.length === 0) return { deleted: [], bytes: 0 };
   return coordSessions<DeleteResult>(node, ctx, ['delete', ...sessions], 300);
 }
+
+/**
+ * Stop capture on a device, without converging it.
+ *
+ * The post-flight flow needs a quiet machine before it enumerates: capture writes ~6 GB/hour
+ * and a session that is still growing is one whose size and span change while the operator
+ * reads them. A converge stops capture too, but converging to stop capture is twenty minutes
+ * of apt to achieve a `docker compose stop`.
+ *
+ * `coord stop` is not a sticky off -- the boot unit's ExecStart is unconditional (#256) -- so
+ * a power cycle brings the stack back and nothing has to remember to undo this.
+ */
+export async function stopCapture(node: FleetNode, ctx: ActionContext): Promise<void> {
+  const host = hostOf(node);
+  try {
+    await run(
+      'ssh',
+      [
+        '-i', ctx.privateKeyPath,
+        '-o', 'BatchMode=yes',
+        '-o', 'StrictHostKeyChecking=accept-new',
+        '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
+        '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
+        `${ctx.inventory.user}@${host}`,
+        `COORD_STACK=${node.role} coord stop`,
+      ],
+      // Bounded, because this is the step that has hung before (#281): a wedged docker leaves
+      // `compose stop` waiting on a container that never exits.
+      { maxBuffer: 1024 * 1024, timeout: 180_000 },
+    );
+  } catch (err) {
+    const e = err as { stderr?: string; message?: string; killed?: boolean };
+    if (e.killed === true) throw new Error(`${node.name}: coord stop gave up after 180s`);
+    const why = (e.stderr ?? '').trim() || e.message || 'ssh failed';
+    throw new Error(`${node.name}: ${why.split('\n').slice(-2).join(' ').slice(0, 300)}`);
+  }
+}

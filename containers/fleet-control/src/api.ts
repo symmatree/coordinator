@@ -8,7 +8,7 @@ import { RunRegistry, sinkFor } from './runs.js';
 import { converge, reimage } from './actions.js';
 import { ImageCache } from './imagecache.js';
 import { probeAll, probeNode } from './probe.js';
-import { deleteSessions, listSessions } from './sessions.js';
+import { deleteSessions, listSessions, stopCapture } from './sessions.js';
 import { offloadSession, validFlightName } from './offload.js';
 import { enrich, LookupCache } from './status.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
@@ -76,6 +76,21 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
   // The device owns what a session is (#344); this drives it, moves the bundle, verifies it
   // and puts it with the other nodes' contributions. Capture must already be stopped -- a
   // converge does that itself, and these do not, because stopping is a decision with a cost.
+
+  /**
+   * Stop capture, without converging. The flow's first step: a session that is still growing
+   * is one whose size and span change while the operator is reading them.
+   */
+  app.post<{ Params: { name: string } }>('/nodes/:name/stop-capture', async (req, reply) => {
+    const node = findNode(cfg.inventory, req.params.name);
+    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+    try {
+      await stopCapture(node, cfg.action);
+      return { node: node.name, stopped: true };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
 
   /** Sessions on one node, for the selection list. */
   app.get<{ Params: { name: string } }>('/nodes/:name/sessions', async (req, reply) => {
