@@ -156,3 +156,93 @@ export async function downloadArtifact(opts: GithubOptions, artifactId: number):
   }
   return res;
 }
+
+// ---- registries -------------------------------------------------------------------------
+//
+// A container's currency is a DIGEST question, not a commit question. Its build is
+// path-filtered, so its revision is the last commit that touched its own paths and is almost
+// never branch head -- comparing the two reports a correctly-built image as stale on any
+// unrelated commit. The registry knows exactly what `:main` points at right now.
+//
+// GHCR issues anonymous pull tokens for public packages, so this needs no credential.
+
+const GHCR = 'ghcr.io';
+
+/** Split `ghcr.io/owner/name:tag` into its parts. Undefined if it is not that shape. */
+export function parseImageRef(ref: string): { repo: string; tag: string } | undefined {
+  const m = /^ghcr\.io\/([^:@]+)(?::([^:@]+))?$/.exec(ref.trim());
+  return m?.[1] === undefined ? undefined : { repo: m[1], tag: m[2] ?? 'latest' };
+}
+
+/** What a tag currently resolves to: its digest, and the commit that built it. */
+export interface RegistryImage {
+  /** The digest `docker` records in RepoDigests for a pull of this tag. */
+  digest: string;
+  /** `org.opencontainers.image.revision` off the image config, when it carries one. */
+  revision?: string;
+}
+
+async function ghcrToken(repo: string): Promise<string> {
+  const res = await fetch(
+    `https://${GHCR}/token?scope=${encodeURIComponent(`repository:${repo}:pull`)}&service=${GHCR}`,
+  );
+  if (!res.ok) throw new Error(`GHCR token ${res.status} for ${repo}`);
+  const { token } = (await res.json()) as { token?: string };
+  if (!token) throw new Error(`GHCR issued no token for ${repo}`);
+  return token;
+}
+
+const MANIFEST_TYPES = [
+  'application/vnd.oci.image.index.v1+json',
+  'application/vnd.docker.distribution.manifest.list.v2+json',
+  'application/vnd.oci.image.manifest.v1+json',
+  'application/vnd.docker.distribution.manifest.v2+json',
+].join(',');
+
+/**
+ * What `<image>:<tag>` points at right now.
+ *
+ * The digest is taken from the index, because that is what a pull records -- directly
+ * comparable with the device's RepoDigests. The revision is read from the image config so the
+ * screen can name the change you would get, not just say the digests differ.
+ *
+ * Throws rather than returning undefined on a registry error: a failed lookup is shown on the
+ * unit as such, and is a different thing from "this image is current".
+ */
+export async function registryImage(imageRef: string): Promise<RegistryImage | undefined> {
+  const parsed = parseImageRef(imageRef);
+  if (!parsed) return undefined;
+  const { repo, tag } = parsed;
+  const token = await ghcrToken(repo);
+  const hdrs = { authorization: `Bearer ${token}`, accept: MANIFEST_TYPES };
+
+  const idxRes = await fetch(`https://${GHCR}/v2/${repo}/manifests/${encodeURIComponent(tag)}`, {
+    headers: hdrs,
+  });
+  if (!idxRes.ok) throw new Error(`GHCR ${idxRes.status} for ${repo}:${tag}`);
+  const digest = idxRes.headers.get('docker-content-digest') ?? undefined;
+  if (digest === undefined) throw new Error(`GHCR returned no digest for ${repo}:${tag}`);
+
+  // Multi-arch: the index lists per-platform manifests, and the labels live on the config of
+  // one of them. Any is fine -- they are built from one commit.
+  const idx = (await idxRes.json()) as {
+    manifests?: Array<{ digest: string }>;
+    config?: { digest: string };
+  };
+  const manifestDigest = idx.manifests?.[0]?.digest;
+  let configDigest = idx.config?.digest;
+  if (manifestDigest !== undefined) {
+    const m = (await (
+      await fetch(`https://${GHCR}/v2/${repo}/manifests/${manifestDigest}`, { headers: hdrs })
+    ).json()) as { config?: { digest: string } };
+    configDigest = m.config?.digest;
+  }
+  if (configDigest === undefined) return { digest };
+
+  const cfg = (await (
+    await fetch(`https://${GHCR}/v2/${repo}/blobs/${configDigest}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+  ).json()) as { config?: { Labels?: Record<string, string> } };
+  return { digest, revision: cfg.config?.Labels?.['org.opencontainers.image.revision'] };
+}
