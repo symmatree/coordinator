@@ -67,9 +67,10 @@ services:
       # along-track smear -- drop toward 1500 if survey frames come back soft.
       CAMPOD_STILL_MAX_EXPOSURE_US: "5000"
       # Lens position in DIOPTRES (1/metres): 0.0 infinity, 0.5 = 2 m, 2.0 = 0.5 m.
-      # NOT the OAK-D's 0-255 scale. `auto` leaves AF running, which is the default
-      # on purpose: an uncalibrated fixed position is worse than AF.
-      CAMPOD_STILL_FOCUS: auto
+      # NOT the OAK-D's 0-255 scale. 0.8 = 1.25 m = hyperfocal, so 0.62 m to
+      # infinity falls inside a 2 px circle of confusion -- 2 px being the
+      # diffraction limit at f/2.2, where the Airy disk is already 2.1 px.
+      CAMPOD_STILL_FOCUS: "0.8"
       # off | server | client -- multi-campod sync is #24.
       CAMPOD_SYNC_MODE: "off"
     # Explicit even though it matches the image's CMD, because the accel service
