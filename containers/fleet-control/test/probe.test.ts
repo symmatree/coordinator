@@ -23,6 +23,19 @@ test('a node that cannot be reached is a status, not an exception', async () => 
   assert.ok(got.probedAt, 'and when we asked');
 });
 
+test('an unreachable machine is answered in seconds, not after the ssh timeout', async () => {
+  // The point of the precheck. sshTimeoutSec is 1 here so the old path was already fast in
+  // test, but in production it is 90 and the whole attempt bounded at 120s -- two minutes to
+  // learn a machine is switched off. Accepting a TCP connection is kernel-side, so this
+  // stays correct for a machine that is merely busy.
+  const started = Date.now();
+  const got = await probeNode(node, ctx({ sshTimeoutSec: 90 }));
+  const elapsed = Date.now() - started;
+  assert.ok(got.error, 'reports rather than throws');
+  assert.ok(elapsed < 15_000, `answered in ${elapsed}ms, not after the 120s ssh bound`);
+  assert.match(got.error ?? '', /nothing listening on .*:22/);
+});
+
 test('the failure names a cause and how long it took', async () => {
   // The bug this covers: a process killed by our own timeout has EMPTY stderr, so the old
   // fallback rendered node-js's generic `Command failed: ssh ...`. That reads as though the
