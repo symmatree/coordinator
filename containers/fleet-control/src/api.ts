@@ -8,6 +8,8 @@ import { RunRegistry, sinkFor } from './runs.js';
 import { converge, reimage } from './actions.js';
 import { ImageCache } from './imagecache.js';
 import { probeAll, probeNode } from './probe.js';
+import { deleteSessions, listSessions } from './sessions.js';
+import { offloadSession, validFlightName } from './offload.js';
 import { enrich, LookupCache } from './status.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
 
@@ -69,6 +71,75 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
     const [one] = await enrich([await probeNode(node, cfg.action)], lookups);
     return one;
   });
+
+  // ---- post-flight ---------------------------------------------------------------------
+  // The device owns what a session is (#344); this drives it, moves the bundle, verifies it
+  // and puts it with the other nodes' contributions. Capture must already be stopped -- a
+  // converge does that itself, and these do not, because stopping is a decision with a cost.
+
+  /** Sessions on one node, for the selection list. */
+  app.get<{ Params: { name: string } }>('/nodes/:name/sessions', async (req, reply) => {
+    const node = findNode(cfg.inventory, req.params.name);
+    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+    try {
+      return { node: node.name, sessions: await listSessions(node, cfg.action) };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * Package, fetch, verify and delete one session into a named flight.
+   *
+   * One session per call rather than a batch: each is minutes of gzip plus a transfer, and a
+   * failure should cost that session rather than the operator's whole selection. The caller
+   * loops, and the flight directory accumulates.
+   */
+  app.post<{
+    Params: { name: string };
+    Querystring: { session?: string; flight?: string; keep?: string };
+  }>('/nodes/:name/offload', async (req, reply) => {
+    const node = findNode(cfg.inventory, req.params.name);
+    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+    const { session, flight } = req.query;
+    if (!session) return reply.code(400).send({ error: 'session is required' });
+    if (!flight || !validFlightName(flight)) {
+      return reply.code(400).send({
+        error: 'flight must be a single path segment of letters, digits, dot, dash, underscore',
+      });
+    }
+    try {
+      const run = runs.start('offload', node.name, (emit) =>
+        offloadSession(node, cfg.action, session, flight, {
+          flightsDir: cfg.flightsDir,
+          // Kept by default is wrong for the flow this serves -- cards fill at ~6 GB/hour and
+          // there is no way to stop capture yet -- but `keep=true` exists for a first run
+          // where nobody wants the delete exercised at the same time as the transfer.
+          deleteAfter: req.query.keep !== 'true',
+          note: (l) => emit({ t: new Date().toISOString(), stream: 'stdout', line: l }),
+        }).then(() => undefined),
+      );
+      return reply.code(202).send({ id: run.id, action: run.action, node: run.node, flight });
+    } catch (err) {
+      return reply.code(409).send({ error: (err as Error).message });
+    }
+  });
+
+  /** Prune sessions that were not kept. Idempotent on the device; absent is not an error. */
+  app.post<{ Params: { name: string }; Body: { sessions?: string[] } }>(
+    '/nodes/:name/sessions/delete',
+    async (req, reply) => {
+      const node = findNode(cfg.inventory, req.params.name);
+      if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+      const sessions = req.body?.sessions ?? [];
+      if (sessions.length === 0) return reply.code(400).send({ error: 'sessions is required' });
+      try {
+        return await deleteSessions(node, cfg.action, sessions);
+      } catch (err) {
+        return reply.code(502).send({ error: (err as Error).message });
+      }
+    },
+  );
 
   // ---- images -------------------------------------------------------------------------
   // Discovery is unauthenticated: the repos are public and listing runs and artifacts works

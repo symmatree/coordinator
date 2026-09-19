@@ -8,6 +8,8 @@ export interface Config {
   action: ActionContext;
   /** Where disk images are built and which ref the fleet tracks. */
   images: GithubOptions & { cacheDir: string; publicUrl: string };
+  /** Where recovered flights land -- the datasets share. */
+  flightsDir: string;
   port: number;
   host: string;
 }
@@ -51,6 +53,8 @@ export function loadConfig(): Config {
       // the in-cluster service name is no use to it.
       publicUrl: env('FLEET_PUBLIC_URL', 'https://fleet.tiles.symmatree.com').replace(/\/$/, ''),
     },
+    // The datasets share, mounted from a static PV (tiles#764). Recovered flights go here.
+    flightsDir: env('FLEET_FLIGHTS_DIR', '/mnt/flights'),
     port: Number(env('PORT', '8080')),
     host: env('HOST', '0.0.0.0'),
   };
