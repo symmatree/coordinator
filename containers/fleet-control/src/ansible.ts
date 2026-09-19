@@ -44,25 +44,50 @@ const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
 const plain = (t: string): string => t.replace(ANSI, '');
 
 /** One line of ansible-runner's JSON event stream, as much of it as we use. */
-interface RunnerEvent {
+export interface RunnerEvent {
   event?: string;
   stdout?: string;
   event_data?: {
     task?: string;
     host?: string;
-    res?: { changed?: boolean; msg?: string };
+    res?: { changed?: boolean; msg?: string; rc?: number; stdout?: string; stderr?: string };
     playbook?: string;
   };
 }
 
 /**
+ * The tail of a failed command's output.
+ *
+ * A failing `command` task reports `msg: "non-zero return code"`, which says nothing. The
+ * output that says what actually went wrong is right there in the result and was being
+ * dropped -- so a stack that would not start produced a run log with no way to tell why, and
+ * the answer had to come from probing the device afterwards.
+ *
+ * Bounded rather than whole: the reason this renderer does not print result objects is that a
+ * fact block runs to kilobytes. The last few lines of a failure are where the message is.
+ */
+function failureOutput(res: NonNullable<RunnerEvent['event_data']>['res']): string[] {
+  const lines: string[] = [];
+  for (const [label, text] of [
+    ['stdout', res?.stdout],
+    ['stderr', res?.stderr],
+  ] as const) {
+    const body = plain(text ?? '').trimEnd();
+    if (body.length === 0) continue;
+    const tail = body.split('\n').slice(-12);
+    for (const l of tail) lines.push(`      ${label}: ${l.slice(0, 500)}`);
+  }
+  return lines;
+}
+
+/**
  * Render an event as a line worth showing an operator.
  *
- * Deliberately not the raw stdout: `-v` prints each task's entire result object, which is how
- * one `docker.service` fact block becomes several kilobytes. The event type already says what
- * happened, so say that instead.
+ * Deliberately not the raw stdout for tasks that SUCCEED: `-v` prints each task's entire
+ * result object, which is how one `docker.service` fact block becomes several kilobytes. The
+ * event type already says what happened. A failure is the exception -- see failureOutput.
  */
-function describe(e: RunnerEvent): string | null {
+export function renderEvent(e: RunnerEvent): string | null {
   const task = e.event_data?.task;
   const host = e.event_data?.host;
   const out = e.stdout ? plain(e.stdout).trimEnd() : '';
@@ -71,8 +96,12 @@ function describe(e: RunnerEvent): string | null {
       return task ? `TASK ${task}` : null;
     case 'runner_on_ok':
       return `  ok${e.event_data?.res?.changed ? ' (changed)' : ''}: ${host ?? ''} ${task ?? ''}`.trimEnd();
-    case 'runner_on_failed':
-      return `  FAILED: ${host ?? ''} ${task ?? ''}${e.event_data?.res?.msg ? ' -- ' + e.event_data.res.msg : ''}`;
+    case 'runner_on_failed': {
+      const res = e.event_data?.res;
+      const rc = res?.rc === undefined ? '' : ` (rc=${res.rc})`;
+      const head = `  FAILED: ${host ?? ''} ${task ?? ''}${res?.msg ? ' -- ' + res.msg : ''}${rc}`;
+      return [head, ...failureOutput(res)].join('\n');
+    }
     case 'runner_on_unreachable':
       return `  UNREACHABLE: ${host ?? ''}${e.event_data?.res?.msg ? ' -- ' + e.event_data.res.msg : ''}`;
     case 'runner_on_skipped':
@@ -184,7 +213,7 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
       const trimmed = line.trim();
       if (trimmed.length === 0) return;
       try {
-        const rendered = describe(JSON.parse(trimmed) as RunnerEvent);
+        const rendered = renderEvent(JSON.parse(trimmed) as RunnerEvent);
         if (rendered !== null) opts.sink?.('stdout', rendered);
       } catch {
         // Not an event line -- runner's own chatter. Pass it through rather than hide it.
