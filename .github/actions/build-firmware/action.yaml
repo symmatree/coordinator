@@ -1,7 +1,7 @@
 name: "build-firmware"
 description: >-
   Build one firmware target in its own container and upload the artifact it
-  produces. Shared by every entry of build.yaml's `firmware` matrix.
+  produces. Shared by every entry of build-firmware.yaml's matrix.
 inputs:
   target:
     description: "Firmware target name; also the artifact name prefix"

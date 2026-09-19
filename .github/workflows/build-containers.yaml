@@ -1,0 +1,109 @@
+name: "build-containers"
+# Deliberately no `paths:` filter. A workflow skipped by path filtering never
+# reports a check at all, so a required context stays pending forever and the
+# merge is blocked -- GitHub's own guidance is not to path-filter a required
+# workflow. Filtering happens one level down instead, because a *job* skipped
+# by a conditional reports success. See docs/ci.md.
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: build-containers-${{ github.ref }}
+  # Supersede an outdated pull-request run, but never interrupt a push to main
+  # part-way through pushing images.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      names: ${{ steps.resolve.outputs.names }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/resolve-components
+        id: resolve
+        with:
+          family: containers
+
+  # fleet-control is the only image with checks outside its Dockerfile, so it
+  # gets its own job rather than a hook in the shared action. It no longer
+  # gates the build the way it did as a `needs:` predecessor: the branch
+  # ruleset requires a pull request and this workflow's gate, so code that
+  # fails typecheck cannot reach main to be built from.
+  fleet-control-check:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.names), 'fleet-control')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: containers/fleet-control/package-lock.json
+      - run: npm ci
+        working-directory: containers/fleet-control
+      - run: npm run typecheck
+        working-directory: containers/fleet-control
+      - run: npm test
+        working-directory: containers/fleet-control
+
+  build:
+    # Without an explicit name the check is labelled with every key of the
+    # matrix entry, which is unreadable in the checks list.
+    name: build (${{ matrix.component }})
+    needs: changes
+    if: needs.changes.outputs.matrix != '[]'
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      # One component's failure must not hide another's.
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-container
+        with:
+          image: ${{ matrix.image }}
+          context: ${{ matrix.context }}
+          dockerfile: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          lockfile: ${{ matrix.lockfile }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The required check for container images. `if: always()` is load-bearing:
+  # under default `needs:` semantics this job is *skipped* when a build fails,
+  # and GitHub counts a skipped check as a pass -- so the gate would go green
+  # exactly when a build broke. It has to run regardless and read the results.
+  containers-ok:
+    needs: [changes, fleet-control-check, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "upstream results: ${RESULTS}"
+          for result in ${RESULTS}; do
+            case "${result}" in
+              success | skipped) ;;
+              *)
+                echo "::error::a container job reported '${result}'"
+                exit 1
+                ;;
+            esac
+          done
+          echo "every container job succeeded or was not needed"

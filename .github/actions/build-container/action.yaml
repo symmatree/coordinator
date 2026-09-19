@@ -1,7 +1,7 @@
 name: "build-container"
 description: >-
   Build one coordinator container image, pushing to GHCR on everything except a
-  pull request. Shared by every entry of build.yaml's `containers` matrix.
+  pull request. Shared by every entry of build-containers.yaml's matrix.
 inputs:
   image:
     description: "Full GHCR image name, without a tag"

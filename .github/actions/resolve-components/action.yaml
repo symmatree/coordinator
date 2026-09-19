@@ -1,0 +1,58 @@
+name: "resolve-components"
+description: >-
+  Work out which components of one family a change touches. Reads the family
+  from .github/components.json, hands its paths to dorny/paths-filter, and
+  returns the matrix of components that matched.
+inputs:
+  family:
+    description: "Top-level key of components.json, e.g. containers or firmware"
+    required: true
+  spec:
+    description: "Path to the component declarations"
+    required: false
+    default: ".github/components.json"
+outputs:
+  matrix:
+    description: "JSON array of matrix entries, one per changed component"
+    value: ${{ steps.assemble.outputs.matrix }}
+  names:
+    description: "JSON array of the changed component names"
+    value: ${{ steps.filter.outputs.changes }}
+runs:
+  using: "composite"
+  steps:
+    # paths-filter takes its filters as an inline document, and JSON is valid
+    # YAML, so the paths go straight across with no template. Each component
+    # watches its own paths plus its family's build machinery.
+    - name: Build filter spec
+      id: spec
+      shell: bash
+      run: |
+        set -euo pipefail
+        spec=$(jq -c --arg f "${{ inputs.family }}" \
+          '.[$f] as $fam | $fam.components | map_values(.paths + $fam.machinery)' \
+          "${{ inputs.spec }}")
+        echo "filters=${spec}" >> "${GITHUB_OUTPUT}"
+
+    - uses: dorny/paths-filter@v4
+      id: filter
+      with:
+        filters: ${{ steps.spec.outputs.filters }}
+
+    # Look each matched name back up to get the job it needs. `include:` is not
+    # used to select: an include entry matching no existing combination creates
+    # a new one, which would quietly build every component on every run.
+    - name: Assemble matrix
+      id: assemble
+      shell: bash
+      env:
+        CHANGED: ${{ steps.filter.outputs.changes }}
+      run: |
+        set -euo pipefail
+        matrix=$(jq -c --arg f "${{ inputs.family }}" --argjson names "${CHANGED}" \
+          '.[$f].components
+           | to_entries
+           | map(select(.key as $k | $names | index($k)))
+           | map({component: .key} + (.value | del(.paths)))' \
+          "${{ inputs.spec }}")
+        echo "matrix=${matrix}" | tee -a "${GITHUB_OUTPUT}"
