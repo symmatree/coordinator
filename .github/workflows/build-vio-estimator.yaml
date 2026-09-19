@@ -88,7 +88,9 @@ jobs:
           # push (push-by-digest): no tag -- the image is pushed by digest, the merge job
           # applies the tags to the assembled manifest.
           tags: ${{ github.event_name == 'pull_request' && steps.docker-metadata.outputs.tags || '' }}
-          labels: ${{ steps.docker-metadata.outputs.labels }}
+          labels: |
+            ${{ steps.docker-metadata.outputs.labels }}
+            fleet.source.ref=${{ github.ref }}
           build-args: |
             VINS_FUSION_BRANCH=${{ steps.pins.outputs.vins_fusion_branch }}
             VINS_FUSION_SHA=${{ steps.pins.outputs.vins_fusion_sha }}

@@ -55,6 +55,8 @@ jobs:
           platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.docker-metadata.outputs.tags }}
-          labels: ${{ steps.docker-metadata.outputs.labels }}
+          labels: |
+            ${{ steps.docker-metadata.outputs.labels }}
+            fleet.source.ref=${{ github.ref }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

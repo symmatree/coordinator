@@ -57,3 +57,36 @@ test('shortSha survives an absent revision', () => {
   assert.equal(shortSha(undefined), '');
   assert.equal(shortSha('31bb65c20ba499ecc65c1e3c31e1a533b2c1cda5'), '31bb65c20b');
 });
+
+test('prefers FLEET_SOURCE_REF, fully qualified', () => {
+  const m = parseManifest(
+    'FLEET_SOURCE_REF="refs/heads/main"\nORG_OPENCONTAINERS_IMAGE_VERSION="main"\n',
+  );
+  assert.equal(m.refName, 'refs/heads/main');
+  // Every accepted spelling is consumed, so a fallback does not show up again as an extra.
+  assert.deepEqual(m.extra, {});
+});
+
+test('a tag ref keeps its own name, which need not match the version', () => {
+  // The reason the ref is carried fully qualified: a release is version 1.2.3 and ref
+  // refs/tags/v1.2.3, and neither can be derived from the other without guessing at a `v`.
+  const m = parseManifest(
+    'FLEET_SOURCE_REF="refs/tags/v1.2.3"\nORG_OPENCONTAINERS_IMAGE_VERSION="1.2.3"\n',
+  );
+  assert.equal(m.refName, 'refs/tags/v1.2.3');
+});
+
+test('falls back to VERSION for an image built before the label existed', () => {
+  const m = parseManifest('ORG_OPENCONTAINERS_IMAGE_VERSION="main"\n');
+  assert.equal(m.refName, 'main');
+});
+
+test('falls back to the old REF_NAME spelling the disk image used', () => {
+  const m = parseManifest('ORG_OPENCONTAINERS_IMAGE_REF_NAME="main"\n');
+  assert.equal(m.refName, 'main');
+});
+
+test('no ref at all is undefined rather than a guess', () => {
+  const m = parseManifest('ORG_OPENCONTAINERS_IMAGE_REVISION="abc"\n');
+  assert.equal(m.refName, undefined);
+});
