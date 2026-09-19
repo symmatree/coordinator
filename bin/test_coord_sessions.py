@@ -103,7 +103,11 @@ try:
           f"{summary['sha256'][:16]} vs {actual[:16]}")
 
     # 5. round-trip: every file comes back, and every hash in the manifest is right
-    with tarfile.open(bundle) as tar:
+    # The bundle is zstd, which tarfile cannot open directly; decompress through the
+    # same CLI that wrote it so the test exercises a real round trip.
+    raw_tar = subprocess.run(["zstd", "-d", "-q", "-c", str(bundle)],
+                             capture_output=True, check=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(raw_tar)) as tar:
         names = tar.getnames()
         mf = json.loads(tar.extractfile("campod-se/11111111-aaaa/manifest.json").read())
         bad = []
@@ -142,7 +146,7 @@ try:
 
     # 8. delete takes a list, and takes the bundle with the session
     make_session(captures, "campod-se", "33333333-cccc", frames=2)
-    bundle_before = list(out_dir.glob("campod-se_11111111-aaaa.tar.gz"))
+    bundle_before = list(out_dir.glob("campod-se_11111111-aaaa.tar.zst"))
     check("the packaged bundle is on disk before deleting", len(bundle_before) == 1)
     freed_expect = sum(p.stat().st_size for p in closed.rglob("*") if p.is_file()) \
         + bundle_before[0].stat().st_size
@@ -157,7 +161,7 @@ try:
     check("removes the bundle with its session", not bundle_before[0].exists())
     by_s = {r["session"]: r for r in res["deleted"]}
     check("reports the bundle it removed",
-          by_s["11111111-aaaa"]["bundle"].endswith("campod-se_11111111-aaaa.tar.gz"))
+          by_s["11111111-aaaa"]["bundle"].endswith("campod-se_11111111-aaaa.tar.zst"))
     check("counts session plus bundle bytes",
           by_s["11111111-aaaa"]["bytes"] == freed_expect,
           f"{by_s['11111111-aaaa']['bytes']} vs {freed_expect}")

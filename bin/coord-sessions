@@ -26,6 +26,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import time
@@ -34,10 +35,15 @@ from pathlib import Path
 STACKS_ROOT = Path("/opt/stacks")
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 
-# JPEG does not compress, and it is the larger half of a session. The accelerometer
-# jsonl is the half that does, and it gets most of its win at level 1. Higher levels
-# spend Zero 2 W minutes re-proving that JPEG is incompressible.
-COMPRESS_LEVEL = 1
+# zstd rather than gzip: faster at a better ratio, and it recognises incompressible
+# input rather than grinding on it -- which matters here because JPEG is the larger
+# half of a session and will not shrink at any level. The accelerometer jsonl is the
+# half that does compress. Level 3 is zstd's default and is already well past gzip;
+# -T0 uses the Zero's four cores, which are idle by the time this runs.
+#
+# The CLI, not a library: trixie ships Python 3.13 and stdlib zstd landed in 3.14.
+# roles/coord-stack installs the package.
+ZSTD_LEVEL = 3
 
 # Headroom over the session's own size. The bundle lands on the same filesystem as
 # the thing it contains, so packaging needs room for both at once (#223: ~1.3 GB per
@@ -79,7 +85,7 @@ def resolve(captures: Path, session: str) -> tuple[str, Path] | None:
 
 
 def bundle_path(out_dir: Path, node: str, session: str) -> Path:
-    return out_dir / f"{node}_{session}.tar.gz"
+    return out_dir / f"{node}_{session}.tar.zst"
 
 
 def sidecar_utc(path: Path) -> str | None:
@@ -194,9 +200,17 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
     bundle = bundle_path(out_dir, node, session)
     partial = bundle.with_suffix(".partial")
     started = time.time()
+    proc = None
     try:
         entries = {}
-        with tarfile.open(partial, "w:gz", compresslevel=COMPRESS_LEVEL) as tar:
+        # Stream the tar straight into zstd rather than building it first: one pass,
+        # and the uncompressed archive never exists on a card that has room for it
+        # only just.
+        proc = subprocess.Popen(
+            ["zstd", "-q", f"-{ZSTD_LEVEL}", "-T0", "-o", str(partial)],
+            stdin=subprocess.PIPE,
+        )
+        with tarfile.open(fileobj=proc.stdin, mode="w|") as tar:
             for path in files:
                 rel = path.relative_to(session_dir)
                 entries[str(rel)] = {
@@ -219,8 +233,14 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
             info.size = len(blob)
             info.mtime = int(started)
             tar.addfile(info, io.BytesIO(blob))
+        proc.stdin.close()
+        if proc.wait() != 0:
+            raise RuntimeError(f"zstd exited {proc.returncode}")
         partial.replace(bundle)
     except Exception as exc:  # noqa: BLE001  any failure must not leave a partial bundle
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
         partial.unlink(missing_ok=True)
         print(f"coord-sessions: packaging {session} failed: {exc}", file=sys.stderr)
         return 1
