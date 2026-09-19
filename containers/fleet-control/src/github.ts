@@ -223,13 +223,19 @@ export async function registryImage(imageRef: string): Promise<RegistryImage | u
   const digest = idxRes.headers.get('docker-content-digest') ?? undefined;
   if (digest === undefined) throw new Error(`GHCR returned no digest for ${repo}:${tag}`);
 
-  // Multi-arch: the index lists per-platform manifests, and the labels live on the config of
-  // one of them. Any is fine -- they are built from one commit.
+  // Multi-arch: the index lists per-platform manifests and the labels live on an image
+  // config. Pick by PLATFORM, not by position: buildx also publishes an attestation manifest
+  // as `unknown/unknown`, which carries no image config. It happens to sort second today,
+  // and taking [0] would silently yield no revision the day that changed.
   const idx = (await idxRes.json()) as {
-    manifests?: Array<{ digest: string }>;
+    manifests?: Array<{ digest: string; platform?: { os?: string; architecture?: string } }>;
     config?: { digest: string };
   };
-  const manifestDigest = idx.manifests?.[0]?.digest;
+  const real = (idx.manifests ?? []).filter(
+    (m) => m.platform?.os !== undefined && m.platform.os !== 'unknown',
+  );
+  const manifestDigest = (real.find((m) => m.platform?.architecture === 'arm64') ?? real[0])
+    ?.digest;
   let configDigest = idx.config?.digest;
   if (manifestDigest !== undefined) {
     const m = (await (
