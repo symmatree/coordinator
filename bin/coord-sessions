@@ -180,7 +180,8 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
     raw = sum(p.stat().st_size for p in files)
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    free = os.statvfs(out_dir).f_bavail * os.statvfs(out_dir).f_frsize
+    st = os.statvfs(out_dir)
+    free = st.f_bavail * st.f_frsize
     need = int(raw * FREE_MARGIN)
     if free < need:
         print(
