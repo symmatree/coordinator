@@ -10,12 +10,48 @@
 // which hosts are acceptable.
 
 import { execFile } from 'node:child_process';
+import { connect } from 'node:net';
 import { promisify } from 'node:util';
 import { hostOf, type FleetNode } from './inventory.js';
 import { parseProbe, type Probe } from './manifest.js';
 import type { ActionContext } from './actions.js';
 
 const run = promisify(execFile);
+
+/**
+ * How long to wait for a TCP connection before calling a machine unreachable.
+ *
+ * Short on purpose. Accepting a connection is kernel-side and stays cheap on a machine that
+ * is merely busy -- it is the BANNER that is userspace and slow, which is how a loaded Zero
+ * can complete a handshake and then take a minute to say hello. So this separates "off the
+ * network" from "on but working hard", where shortening ssh's own ConnectTimeout would
+ * conflate them, because that bounds the banner too.
+ */
+const REACH_TIMEOUT_MS = 4000;
+
+/**
+ * Can we open a TCP connection to sshd at all?
+ *
+ * This is a NECESSARY CONDITION for the probe, not a guess at one: ssh needs this same
+ * connection, so a failure here is proof the probe cannot succeed rather than a prediction
+ * that it might not. It is worth doing because the alternative is waiting out a 120s timeout
+ * for a machine that is simply switched off, and these get switched off constantly.
+ *
+ * It deliberately does NOT try to conclude anything from success.
+ */
+async function canConnect(host: string, port = 22): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = connect({ host, port });
+    const done = (ok: boolean): void => {
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.setTimeout(REACH_TIMEOUT_MS);
+    sock.once('connect', () => done(true));
+    sock.once('timeout', () => done(false));
+    sock.once('error', () => done(false));
+  });
+}
 
 /** What the device prints. `coord` is on PATH at /usr/local/bin (coordinator#327). */
 export const PROBE_COMMAND = 'coord version';
@@ -75,6 +111,17 @@ export async function probeNode(node: FleetNode, ctx: ActionContext): Promise<No
   };
   const timeoutMs = (ctx.sshTimeoutSec + 30) * 1000;
   const startedMs = Date.now();
+
+  // Machines here are switched off, rebooted and worked on as a matter of course. Finding
+  // that out in four seconds rather than two minutes is the difference between a refresh
+  // that is usable with half the fleet down and one that is not.
+  if (!(await canConnect(host))) {
+    return {
+      ...base,
+      error: `nothing listening on ${host}:22 within ${REACH_TIMEOUT_MS / 1000}s`,
+    };
+  }
+
   try {
     const { stdout } = await run(
       'ssh',
