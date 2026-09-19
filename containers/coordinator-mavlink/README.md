@@ -25,7 +25,7 @@ The FC link needs the Pi's primary UART freed and at high baud — the coordinat
 
 ## CI / GHCR
 
-`.github/workflows/build-coordinator-mavlink.yaml` builds natively on `ubuntu-24.04-arm` (running the isolation test) and pushes to `ghcr.io/symmatree/coordinator-mavlink` on push to `main`.
+`.github/workflows/build.yaml` builds natively on `ubuntu-24.04-arm` (running the isolation test) and pushes to `ghcr.io/symmatree/coordinator-mavlink` on push to `main`.
 
 ## Compose
 

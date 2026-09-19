@@ -1,0 +1,40 @@
+name: "build-firmware"
+description: >-
+  Build one firmware target in its own container and upload the artifact it
+  produces. Shared by every entry of build.yaml's `firmware` matrix.
+inputs:
+  target:
+    description: "Firmware target name; also the artifact name prefix"
+    required: true
+  context:
+    description: "Directory holding the target's Dockerfile"
+    required: true
+  output_mount:
+    description: "Path inside the container that the build writes its output to"
+    required: true
+  artifact_glob:
+    description: "Glob of the produced files, relative to the output directory"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Build firmware image
+      shell: bash
+      run: |
+        set -euo pipefail
+        docker build -t "rekon10-${{ inputs.target }}" "${{ inputs.context }}"
+
+    - name: Produce firmware artifact
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p out
+        docker run --rm -v "$PWD/out:${{ inputs.output_mount }}" "rekon10-${{ inputs.target }}"
+        sha256sum out/${{ inputs.artifact_glob }}
+
+    - name: Upload firmware artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.target }}-firmware
+        path: out/${{ inputs.artifact_glob }}
+        if-no-files-found: error
