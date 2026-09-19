@@ -36,6 +36,30 @@ export interface NodeStatus {
 }
 
 /**
+ * Say what happened, and do not guess at why.
+ *
+ * A killed process has EMPTY stderr, so the old fallback reported node-js's generic
+ * `Command failed: ssh ...` -- which reads like the device refused us, when in fact it
+ * answered nothing within our own timeout. Those want different responses, so the
+ * distinction is worth drawing.
+ *
+ * What is NOT worth drawing is a conclusion. A machine that does not answer may be powered
+ * off, mid-reboot, busy with someone working on it, or genuinely wedged, and nothing here can
+ * tell those apart. Report the observation and the elapsed time; the operator knows which of
+ * their machines they just unplugged.
+ */
+function describeFailure(err: unknown, elapsedMs: number, timeoutMs: number): string {
+  const e = err as { stderr?: string; message?: string; killed?: boolean; signal?: string };
+  const secs = Math.round(elapsedMs / 1000);
+  if (e.killed === true || e.signal != null) {
+    return `no answer within ${Math.round(timeoutMs / 1000)}s (gave up after ${secs}s)`;
+  }
+  const stderr = (e.stderr ?? '').trim();
+  if (stderr.length > 0) return `${stderr.split('\n').slice(-2).join(' ').slice(0, 280)} (after ${secs}s)`;
+  return `${(e.message ?? 'ssh failed').slice(0, 200)} (after ${secs}s)`;
+}
+
+/**
  * Probe one node.
  *
  * Never throws. Unreachable, no `coord`, or unparseable output all resolve to a status
@@ -49,6 +73,8 @@ export async function probeNode(node: FleetNode, ctx: ActionContext): Promise<No
     role: node.role,
     probedAt: new Date().toISOString(),
   };
+  const timeoutMs = (ctx.sshTimeoutSec + 30) * 1000;
+  const startedMs = Date.now();
   try {
     const { stdout } = await run(
       'ssh',
@@ -63,13 +89,11 @@ export async function probeNode(node: FleetNode, ctx: ActionContext): Promise<No
       ],
       // A probe is small. This bounds a device that connects and then says nothing, which is
       // a shape we have actually seen -- the cap is on output, the timeout below on the wait.
-      { maxBuffer: 4 * 1024 * 1024, timeout: (ctx.sshTimeoutSec + 30) * 1000 },
+      { maxBuffer: 4 * 1024 * 1024, timeout: timeoutMs },
     );
     return { ...base, probe: parseProbe(stdout) };
   } catch (err) {
-    const e = err as { stderr?: string; message?: string };
-    const why = (e.stderr ?? '').trim() || e.message || 'ssh failed';
-    return { ...base, error: why.split('\n').slice(-2).join(' ').slice(0, 300) };
+    return { ...base, error: describeFailure(err, Date.now() - startedMs, timeoutMs) };
   }
 }
 
