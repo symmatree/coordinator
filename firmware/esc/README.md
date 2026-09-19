@@ -35,7 +35,7 @@ docker run --rm -v "$PWD/out:/work/obj" rekon10-esc
 The Dockerfile clones AM32 at the **v2.20 tag** (the release the ESCs shipped with, so the only
 delta is the patch), lets `make arm_sdk_install` self-fetch the pinned xPack arm-none-eabi-gcc
 10.3.1 into the tree, applies the patch, and `make TBS_6S_4IN1_F421`. Builds are deterministic
-(same md5 every run), so CI ([`build.yaml`](../../.github/workflows/build.yaml))
+(same md5 every run), so CI ([`build-firmware.yaml`](../../.github/workflows/build-firmware.yaml))
 publishes the `.hex` as a workflow artifact (`esc-firmware`) -- download it from the
 Actions run (or `gh run download -n esc-firmware`) rather than committing it to the tree.
 

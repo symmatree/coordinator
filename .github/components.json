@@ -2,12 +2,15 @@
   "containers": {
     "machinery": [
       ".github/components.json",
-      ".github/workflows/build.yaml",
+      ".github/workflows/build-containers.yaml",
+      ".github/actions/resolve-components/**",
       ".github/actions/build-container/**"
     ],
     "components": {
       "campod-camera": {
-        "paths": ["containers/campod-camera/**"],
+        "paths": [
+          "containers/campod-camera/**"
+        ],
         "image": "ghcr.io/symmatree/coordinator-campod-camera",
         "context": "containers/campod-camera",
         "dockerfile": "containers/campod-camera/Dockerfile",
@@ -16,7 +19,9 @@
         "lockfile": "containers/campod-camera/upstream.lock"
       },
       "coordinator-mavlink": {
-        "paths": ["containers/coordinator-mavlink/**"],
+        "paths": [
+          "containers/coordinator-mavlink/**"
+        ],
         "image": "ghcr.io/symmatree/coordinator-mavlink",
         "context": "containers/coordinator-mavlink",
         "dockerfile": "containers/coordinator-mavlink/Dockerfile",
@@ -25,7 +30,10 @@
         "lockfile": ""
       },
       "fleet-control": {
-        "paths": ["containers/fleet-control/**", "host/ansible/**"],
+        "paths": [
+          "containers/fleet-control/**",
+          "host/ansible/**"
+        ],
         "image": "ghcr.io/symmatree/coordinator-fleet-control",
         "context": ".",
         "dockerfile": "containers/fleet-control/Dockerfile",
@@ -34,7 +42,9 @@
         "lockfile": ""
       },
       "sh1106-display": {
-        "paths": ["containers/sh1106-display/**"],
+        "paths": [
+          "containers/sh1106-display/**"
+        ],
         "image": "ghcr.io/symmatree/coordinator-sh1106-display",
         "context": "containers/sh1106-display",
         "dockerfile": "containers/sh1106-display/Dockerfile",
@@ -47,18 +57,23 @@
   "firmware": {
     "machinery": [
       ".github/components.json",
-      ".github/workflows/build.yaml",
+      ".github/workflows/build-firmware.yaml",
+      ".github/actions/resolve-components/**",
       ".github/actions/build-firmware/**"
     ],
     "components": {
       "esc": {
-        "paths": ["firmware/esc/**"],
+        "paths": [
+          "firmware/esc/**"
+        ],
         "context": "firmware/esc",
         "output_mount": "/work/obj",
         "artifact_glob": "*.hex"
       },
       "backpack": {
-        "paths": ["firmware/backpack/**"],
+        "paths": [
+          "firmware/backpack/**"
+        ],
         "context": "firmware/backpack",
         "output_mount": "/out",
         "artifact_glob": "*.bin"

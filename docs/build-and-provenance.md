@@ -9,7 +9,7 @@ about to add or rename one, read [Load-bearing labels](#load-bearing-labels) fir
 
 ## Container images
 
-`.github/workflows/build.yaml`, one matrix entry per image, all the same shape --
+`.github/workflows/build-containers.yaml`, one matrix entry per image, all the same shape --
 `.github/actions/build-container` does the work and `.github/components.json` says what
 each image is built from. See [ci.md](ci.md) for why it is one workflow.
 

@@ -22,8 +22,9 @@ do_download() {
 	rm -f "$FWDIR"/*.bin
 	echo ">> fetching latest backpack-firmware from main (needs internet + gh)..." >&2
 	local rid
-	# Ask for the artifact by name, not for the newest successful run: build.yaml
-	# builds backpack only when firmware/backpack changed, so most of its runs
+	# Ask for the artifact by name, not for the newest successful run:
+	# build-firmware.yaml builds backpack only when firmware/backpack
+	# changed, so most of its runs
 	# carry no backpack artifact. This also skips runs whose artifacts expired.
 	rid="$(gh api \
 		"repos/symmatree/coordinator/actions/artifacts?name=backpack-firmware&per_page=50" \
