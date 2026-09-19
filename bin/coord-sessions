@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+"""List capture sessions on this device, and package one into a verified bundle (#302).
+
+Device-side half of post-flight recovery. Two operations, no service and no state:
+`list` says what is here, `package` turns one session into a single file plus a
+manifest that describes it. Who moves the bytes afterwards is a transport question
+and is not here.
+
+A SESSION IS A BOOT. capture.py and campod-accel each read
+/proc/sys/kernel/random/boot_id and write to <captures>/<node>/<boot-id>/, so they
+agree on a directory without one handing it to the other. Nothing semantically
+closes a session -- there is no signal that reaches a campod to say we landed --
+so a session is bounded by the machine rebooting, and is per power cycle rather
+than per flight. A bench day leaves several per node, most of them junk.
+
+Output is JSON, not the TOML that bin/coord-version emits. That format exists so a
+manifest can be sourced by a shell and read by systemd; this is nested data with
+lists in it, and has no such caller.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import io
+import json
+import os
+import shutil
+import sys
+import tarfile
+import time
+from pathlib import Path
+
+STACKS_ROOT = Path("/opt/stacks")
+BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
+
+# JPEG does not compress, and it is the larger half of a session. The accelerometer
+# jsonl is the half that does, and it gets most of its win at level 1. Higher levels
+# spend Zero 2 W minutes re-proving that JPEG is incompressible.
+COMPRESS_LEVEL = 1
+
+# Headroom over the session's own size. The bundle lands on the same filesystem as
+# the thing it contains, so packaging needs room for both at once (#223: ~1.3 GB per
+# pod per flight). 5% covers the tar headers and the compressed jsonl being
+# non-zero; it does not pretend to know the compression ratio.
+FREE_MARGIN = 1.05
+
+
+def boot_id() -> str:
+    try:
+        return BOOT_ID.read_text().strip()
+    except OSError:
+        return ""
+
+
+def state_root() -> Path | None:
+    """/var/lib/<stack> for the sole installed stack, or None if that is ambiguous."""
+    stacks = sorted(p.name for p in STACKS_ROOT.glob("*")) if STACKS_ROOT.is_dir() else []
+    return Path("/var/lib") / stacks[0] if len(stacks) == 1 else None
+
+
+def sidecar_utc(path: Path) -> str | None:
+    try:
+        return json.loads(path.read_text()).get("wall_clock_utc")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
+
+
+def describe(session_dir: Path, node: str, current_boot: str) -> dict:
+    """One session. Frame count, bytes and span, because the name carries no clock.
+
+    The directory is a boot id, so there is nothing in it to sort or judge by. What
+    tells a 25-minute flight from a failed-lock power cycle is ~1500 frames against
+    tens, the total size, and the span between the first and last sidecar -- and the
+    sidecar clock is the device's, with no PPS wired (#11).
+    """
+    files = [p for p in session_dir.rglob("*") if p.is_file()]
+    sidecars = sorted(p for p in files if p.suffix == ".json" and p.parent == session_dir)
+    first = sidecar_utc(sidecars[0]) if sidecars else None
+    last = sidecar_utc(sidecars[-1]) if sidecars else None
+    return {
+        "node": node,
+        "session": session_dir.name,
+        "path": str(session_dir),
+        # Only a reboot closes a session, so the current boot's directory can be
+        # written into again at any moment -- `coord start` alone reopens it.
+        "open": session_dir.name == current_boot,
+        "bytes": sum(p.stat().st_size for p in files),
+        "files": len(files),
+        "frames": sum(1 for p in files if p.suffix == ".jpg"),
+        "accel": sorted(p.name for p in files if p.name.startswith("accel-")),
+        "manifests": sorted(p.name for p in (session_dir / "manifests").glob("*")),
+        "first_utc": first,
+        "last_utc": last,
+    }
+
+
+def find_sessions(captures: Path, current_boot: str) -> list[dict]:
+    out = []
+    for node_dir in sorted(p for p in captures.glob("*") if p.is_dir()):
+        for session_dir in sorted(p for p in node_dir.glob("*") if p.is_dir()):
+            out.append(describe(session_dir, node_dir.name, current_boot))
+    return out
+
+
+def cmd_list(captures: Path) -> int:
+    current = boot_id()
+    print(json.dumps({
+        "captures_root": str(captures),
+        "boot_id": current,
+        "sessions": find_sessions(captures, current),
+    }, indent=2))
+    return 0
+
+
+def add_hashed(tar: tarfile.TarFile, path: Path, arcname: str) -> str:
+    """Add one file and return its sha256, reading it through a single open handle."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+        fh.seek(0)
+        info = tar.gettarinfo(str(path), arcname=arcname)
+        tar.addfile(info, fh)
+    return h.hexdigest()
+
+
+def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
+    current = boot_id()
+    matches = [
+        (node_dir.name, node_dir / session)
+        for node_dir in sorted(p for p in captures.glob("*") if p.is_dir())
+        if (node_dir / session).is_dir()
+    ]
+    if not matches:
+        print(f"coord-sessions: no session {session} under {captures}", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"coord-sessions: {session} exists under several nodes", file=sys.stderr)
+        return 1
+    node, session_dir = matches[0]
+
+    # Refused rather than snapshotted or rotated. Only a reboot closes a session, so
+    # there is no quiescent moment to snapshot, and "rotate" would mean rebooting the
+    # vehicle to take a copy. In the flow this serves it never bites: recovery starts
+    # by swapping the BEC for an umbilical, which is a power cycle, so the flight's
+    # session is already closed by the time anyone asks for it (#302).
+    if session_dir.name == current:
+        print(
+            f"coord-sessions: {session} is the current boot and can still be written "
+            "to; reboot to close it",
+            file=sys.stderr,
+        )
+        return 1
+
+    files = sorted(p for p in session_dir.rglob("*") if p.is_file())
+    if not files:
+        print(f"coord-sessions: {session} is empty", file=sys.stderr)
+        return 1
+    raw = sum(p.stat().st_size for p in files)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    free = os.statvfs(out_dir).f_bavail * os.statvfs(out_dir).f_frsize
+    need = int(raw * FREE_MARGIN)
+    if free < need:
+        print(
+            f"coord-sessions: {need} bytes needed to package {session} beside itself, "
+            f"{free} free on {out_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    bundle = out_dir / f"{node}_{session}.tar.gz"
+    partial = bundle.with_suffix(".partial")
+    started = time.time()
+    try:
+        entries = {}
+        with tarfile.open(partial, "w:gz", compresslevel=COMPRESS_LEVEL) as tar:
+            for path in files:
+                rel = path.relative_to(session_dir)
+                entries[str(rel)] = {
+                    "bytes": path.stat().st_size,
+                    "sha256": add_hashed(tar, path, f"{node}/{session}/{rel}"),
+                }
+            # Inside the bundle, so an extracted directory can be checked on its own
+            # without the file that carried it.
+            manifest = {
+                "schema": 1,
+                "node": node,
+                "session": session,
+                "packaged_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "packaged_by_boot": current,
+                "source_bytes": raw,
+                "files": entries,
+            }
+            blob = json.dumps(manifest, indent=2, sort_keys=True).encode()
+            info = tarfile.TarInfo(f"{node}/{session}/manifest.json")
+            info.size = len(blob)
+            info.mtime = int(started)
+            tar.addfile(info, io.BytesIO(blob))
+        partial.replace(bundle)
+    except Exception as exc:  # noqa: BLE001  any failure must not leave a partial bundle
+        partial.unlink(missing_ok=True)
+        print(f"coord-sessions: packaging {session} failed: {exc}", file=sys.stderr)
+        return 1
+
+    h = hashlib.sha256()
+    with bundle.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    # Small enough to read without extracting anything: what to fetch, what it should
+    # hash to, and what it came from. The per-file hashes are inside.
+    print(json.dumps({
+        "node": node,
+        "session": session,
+        "bundle": str(bundle),
+        "bytes": bundle.stat().st_size,
+        "sha256": h.hexdigest(),
+        "source_bytes": raw,
+        "files": len(entries),
+        "seconds": round(time.time() - started, 1),
+    }, indent=2))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--captures-root", type=Path, help="default: <state root>/captures")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list", help="every session on this device, as JSON")
+    pkg = sub.add_parser("package", help="one closed session into a verified bundle")
+    pkg.add_argument("session")
+    pkg.add_argument("--out-dir", type=Path, help="default: <state root>/bundles")
+    args = ap.parse_args(argv)
+
+    root = state_root()
+    captures = args.captures_root or (root / "captures" if root else None)
+    if captures is None:
+        print(
+            "coord-sessions: cannot tell which stack's captures to read; "
+            "pass --captures-root",
+            file=sys.stderr,
+        )
+        return 2
+    if not captures.is_dir():
+        print(f"coord-sessions: no captures directory at {captures}", file=sys.stderr)
+        return 2
+
+    if args.cmd == "list":
+        return cmd_list(captures)
+    out_dir = args.out_dir or (root / "bundles" if root else captures.parent / "bundles")
+    return cmd_package(captures, args.session, out_dir)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
