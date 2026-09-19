@@ -5,6 +5,12 @@ campods) -- and, deliberately, how that is **not** a develop-on-the-box workflow
 management-layer companion to [power-loss-filesystem.md](power-loss-filesystem.md) (the
 substrate) and [architecture.md](architecture.md) (what runs).
 
+**How the image itself is built is not here.** That lives with the code, in
+[`dotfiles-symm/pi-image/PIPELINE.md`](https://github.com/symmatree/dotfiles-symm/blob/main/pi-image/PIPELINE.md)
+-- the path from a git push to a card, which decisions belong to the image versus to
+provisioning versus to ansible, and the traps in that build. This doc starts where that one
+ends: the card is in the Pi, and now config has to get deployed and stay deployed.
+
 Captured from a 2026-07-29 design pass. Parts are **decided but not yet built**; the
 "decided vs built" table at the end says which is which, and nothing here should be read as
 describing current runtime until it lands. Tracking: [#48](https://github.com/symmatree/coordinator/issues/48),
@@ -17,7 +23,7 @@ owner, so there is never a question of where the source of truth is.
 
 | Tier | Contents | How it changes | Source of truth |
 |------|----------|----------------|-----------------|
-| **Immutable image** ([#96](https://github.com/symmatree/coordinator/issues/96)) | OS + btrfs layout + Pi kernel/firmware + **baked container images** ([#90](https://github.com/symmatree/coordinator/issues/90)) + the checkout + the ansible recipe | **rebuild + reflash** (versioned, per-role, CI) | git / CI |
+| **Immutable image** ([#96](https://github.com/symmatree/coordinator/issues/96)) | OS + btrfs layout + Pi kernel/firmware, device tree, the initramfs, and the fleet-wide system facts (no swap, no scheduled maintenance, passwordless sudo). **Not** the container images ([#90](https://github.com/symmatree/coordinator/issues/90), not built) and **not** the checkout, which ansible creates. [What goes in and why](https://github.com/symmatree/dotfiles-symm/blob/main/pi-image/PIPELINE.md) | **rebuild + reflash** (versioned, per-role, CI) | git / CI |
 | **Persisted data** (`@home`, `@data`) | captures, journald, operator scratch | written at runtime; survives reflash | the box |
 | **Convergence** (ansible) | app/config reconcile on boot; `remount,rw /usr` wrapper for maintenance | re-runnable; `git pull` == deploy | git |
 
@@ -160,7 +166,7 @@ Dockge itself does not.
 | Config is git-authoritative, no on-box override | **decided** |
 | Runtime change is a MAVLink channel, not a config file | **decided** (build is its own track) |
 | Dockge dropped | **decided** |
-| btrfs subvolume substrate ([#41](https://github.com/symmatree/coordinator/issues/41)/[#96](https://github.com/symmatree/coordinator/issues/96)) | decided; **not built** (only the pipboy NVMe layout exists in `dotfiles-symm/pi-storage`) |
+| btrfs subvolume substrate ([#41](https://github.com/symmatree/coordinator/issues/41)/[#96](https://github.com/symmatree/coordinator/issues/96)) | **built**; boots on all three roles from `dotfiles-symm/pi-image`. Base is Trixie ([#238](https://github.com/symmatree/coordinator/issues/238)) |
 | Copy -> symlink deploy ([#48](https://github.com/symmatree/coordinator/issues/48)) | **built** |
 | Split `dist-upgrade` out of the config deploy (`-e dist_upgrade=true`, default false) | **built** |
 | Convergence driven from another machine over SSH; `one_time.sh` and its `/usr` shell helper deleted | **built** |
@@ -172,3 +178,5 @@ Dockge itself does not.
 - [power-loss-filesystem.md](power-loss-filesystem.md) -- the storage substrate this rides on
 - [architecture.md](architecture.md) -- host-vs-container split, runtime paths, UC1/UC2
 - [host-setup.md](host-setup.md) / [host/README.md](../host/README.md) -- current provisioning mechanics
+- [`dotfiles-symm/pi-image/PIPELINE.md`](https://github.com/symmatree/dotfiles-symm/blob/main/pi-image/PIPELINE.md)
+  -- how the image is built, and the image/provisioning/ansible layer split
