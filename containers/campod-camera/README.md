@@ -42,7 +42,7 @@ the same vibration writes **2.4x more bands** here. Binning is a lever if it eve
 | Camera passthrough | `privileged: true` + `/run/udev` (in `stacks/campod/compose.yaml`); fall back to explicit device mounts if enumeration fails. |
 | Frame sync (the oddball bit) | The CM3 has no XVS hardware trigger, so multi-campod alignment uses libcamera **software sync** (one server/pacesetter, the rest clients). `capture.py` has a guarded `CAMPOD_SYNC_MODE` hook, **default off** -- the exact picamera2 control surface (`SyncMode` server/client) is not hardware-verified, so a wrong control logs a warning instead of crashing. Wired properly in Phase 3 (#24); standalone capture is unaffected. |
 | Exposure cap | libcamera has no max-AE-exposure control, and `FrameDurationLimits` can't stand in (the 12 MP mode's minimum frame duration is already ~70 ms). The lever is the exposure/gain split from libcamera 0.4: `ExposureTimeMode=Manual` + `ExposureTime` pins the shutter while `AnalogueGainMode=Auto` lets the AEGC make up the light in gain. Best-effort -- unsupported means a warning, not a crash, and the sidecar records what the sensor actually did. |
-| Focus units | `LensPosition` is **dioptres** (1/metres): `0.0` infinity, `0.5` = 2 m, `2.0` = 0.5 m. Deliberately *not* the OAK-D's 0-255 VCM scale -- `OAK_STILL_FOCUS=125` would ask for 8 mm here. Default `auto` because an uncalibrated fixed position is worse than AF (T10). |
+| Focus units | `LensPosition` is **dioptres** (1/metres): `0.0` infinity, `0.5` = 2 m, `2.0` = 0.5 m. Deliberately *not* the OAK-D's 0-255 VCM scale -- `OAK_STILL_FOCUS=125` would ask for 8 mm here. The stack sets `0.8` (1.25 m), the hyperfocal distance. |
 | Build | arm64 in CI ([`.github/workflows/build-campod-camera.yaml`](../../.github/workflows/build-campod-camera.yaml)), pulled on the Zero -- never built on the Zero. |
 
 ## Config (in `stacks/campod/compose.yaml`)
@@ -55,7 +55,7 @@ the same vibration writes **2.4x more bands** here. Binning is a lever if it eve
 | `CAMPOD_CAPTURE_WIDTH` / `_HEIGHT` | `0` | `0` = sensor full resolution (4608x2592) |
 | `CAMPOD_JPEG_QUALITY` | `90` | JPEG quality 1-100 |
 | `CAMPOD_STILL_MAX_EXPOSURE_US` | `5000` | caps the shutter; `0` = uncapped AE |
-| `CAMPOD_STILL_FOCUS` | `auto` | `auto` \| `infinity` \| lens position in **dioptres** |
+| `CAMPOD_STILL_FOCUS` | `infinity` | `infinity` \| lens position in **dioptres** |
 | `CAMPOD_SYNC_MODE` | `off` | `off` \| `server` \| `client` (Phase 3) |
 
 ## ADXL345 vibration logging (#211)

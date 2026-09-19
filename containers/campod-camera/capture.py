@@ -16,7 +16,7 @@ Config via environment (all optional):
   CAMPOD_JPEG_QUALITY    1-100 (default: 90)
   CAMPOD_STILL_MAX_EXPOSURE_US
                       cap the shutter (default: 5000; 0 = uncapped AE)
-  CAMPOD_STILL_FOCUS     auto | infinity | <dioptres> (default: auto)
+  CAMPOD_STILL_FOCUS     infinity | <dioptres> (default: infinity)
   CAMPOD_SYNC_MODE       off | server | client (default: off) -- see note below
 """
 
@@ -99,7 +99,7 @@ def _apply_exposure_cap(picam2, max_us):
 
 
 def _apply_focus(picam2, focus):
-    """Fix the lens, or leave autofocus running.
+    """Fix the lens at a given position. Fatal if it cannot.
 
     The CM3 focuses with a voice coil, so AF can hunt mid-flight and the lens is
     free to move under vibration (docs/campod.md: prefer a locked lens, and
@@ -109,29 +109,18 @@ def _apply_focus(picam2, focus):
     DIOPTRES, the reciprocal of focus distance in metres. 0.0 is infinity, 0.5 is
     2 m, 2.0 is 0.5 m. Copying OAK_STILL_FOCUS=125 here would ask for 8 mm.
 
-    Default is `auto`, deliberately: a wrong fixed position is worse than AF, and
-    the bench calibration that would justify a number (X17's campod equivalent) has
-    not been run. Set it once the flight distance is known.
+    Not caught: every frame of a survey is taken at whatever this sets, so a run
+    whose lens position is unknown is not worth flying.
     """
-    if focus in ("", "auto"):
-        return "auto"
-    try:
-        from libcamera import controls  # noqa: PLC0415  (version-dependent)
+    from libcamera import controls  # noqa: PLC0415  (version-dependent)
 
-        dioptres = 0.0 if focus == "infinity" else float(focus)
-        picam2.set_controls(
-            {"AfMode": controls.AfModeEnum.Manual, "LensPosition": dioptres}
-        )
-        distance = "infinity" if dioptres <= 0 else f"{1.0 / dioptres:.2f} m"
-        print(f"capture: lens fixed at {dioptres} dioptres ({distance}), AF off", flush=True)
-        return dioptres
-    except Exception as exc:  # noqa: BLE001  a failed lock leaves AF running
-        print(
-            f"capture: WARNING could not fix focus to {focus!r}: {exc}. "
-            "Continuing with autofocus.",
-            flush=True,
-        )
-        return "auto"
+    dioptres = 0.0 if focus == "infinity" else float(focus)
+    picam2.set_controls(
+        {"AfMode": controls.AfModeEnum.Manual, "LensPosition": dioptres}
+    )
+    distance = "infinity" if dioptres <= 0 else f"{1.0 / dioptres:.2f} m"
+    print(f"capture: lens fixed at {dioptres} dioptres ({distance}), AF off", flush=True)
+    return dioptres
 
 
 def _maybe_apply_sync(picam2, mode):
@@ -331,7 +320,7 @@ def main():
     height = _env_int("CAMPOD_CAPTURE_HEIGHT", 0)
     quality = _env_int("CAMPOD_JPEG_QUALITY", 90)
     max_exposure_us = _env_int("CAMPOD_STILL_MAX_EXPOSURE_US", 5000)
-    focus = (os.getenv("CAMPOD_STILL_FOCUS") or "auto").strip().lower()
+    focus = (os.getenv("CAMPOD_STILL_FOCUS") or "infinity").strip().lower()
     sync_mode = (os.getenv("CAMPOD_SYNC_MODE") or "off").strip().lower()
 
     interval = 1.0 / hz if hz > 0 else 1.0
