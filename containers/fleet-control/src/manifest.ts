@@ -15,15 +15,40 @@
 export const CONTROLLED = {
   source: 'ORG_OPENCONTAINERS_IMAGE_SOURCE',
   revision: 'ORG_OPENCONTAINERS_IMAGE_REVISION',
-  refName: 'ORG_OPENCONTAINERS_IMAGE_REF_NAME',
+  /**
+   * Fully-qualified git ref, e.g. `refs/heads/main` or `refs/tags/v1.2.3`.
+   *
+   * Ours, not OCI's, because OCI defines no key for "the ref this was built from" -- see
+   * docs/build-and-provenance.md. Fully qualified so nothing has to guess whether a name is
+   * a branch or a tag, or whether a tag carries a `v` its version does not.
+   */
+  sourceRef: 'FLEET_SOURCE_REF',
 } as const;
+
+/**
+ * Keys accepted for the ref, in preference order.
+ *
+ * `ORG_OPENCONTAINERS_IMAGE_VERSION` is a fallback for images built before the label existed:
+ * `docker/metadata-action` fills it from the branch, so it happens to carry `main` today. It
+ * stops being the ref the moment anything is tagged with a version, which is exactly why it
+ * is a fallback and not the answer. `..._REF_NAME` is the spelling the disk image used before
+ * this changed. Both can go once nothing older is deployed.
+ */
+const REF_KEYS = [
+  CONTROLLED.sourceRef,
+  'ORG_OPENCONTAINERS_IMAGE_REF_NAME',
+  'ORG_OPENCONTAINERS_IMAGE_VERSION',
+] as const;
 
 export interface Manifest {
   /** Browsable repo URL, for linking. */
   source?: string;
   /** Full git sha this was built from. */
   revision?: string;
-  /** Branch or tag it was built off. */
+  /**
+   * The ref it was built from, fully qualified where the artifact says so -- `refs/heads/main`
+   * or `refs/tags/v1.2.3`. Passed to the API verbatim; both forms resolve.
+   */
   refName?: string;
   /**
    * Everything else, verbatim and in file order. Artifact-specific by design: an image adds
@@ -54,10 +79,17 @@ export function parseManifest(text: string): Manifest {
     delete extra[key];
     return v;
   };
+  // First key present wins, but every one of them is consumed, so a fallback spelling does
+  // not linger in `extra` and get rendered as though it were something else.
+  let refName: string | undefined;
+  for (const k of REF_KEYS) {
+    const v = take(k);
+    refName ??= v;
+  }
   return {
     source: take(CONTROLLED.source),
     revision: take(CONTROLLED.revision),
-    refName: take(CONTROLLED.refName),
+    refName,
     extra,
   };
 }
