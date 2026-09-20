@@ -79,7 +79,7 @@ async function coordSessions<T>(
         `${ctx.inventory.user}@${host}`,
         'coord', 'sessions', ...args,
       ],
-      // Packaging a session is minutes of gzip on a Zero, so this is the caller's to set.
+      // Packaging a session is minutes of zstd on a Zero, so this is the caller's to set.
       { maxBuffer: 16 * 1024 * 1024, timeout: timeoutSec * 1000 },
     );
     return JSON.parse(stdout) as T;
@@ -102,7 +102,7 @@ export async function listSessions(node: FleetNode, ctx: ActionContext): Promise
 /**
  * Package one session on the device.
  *
- * Generous timeout: this is gzip over hundreds of megabytes on a 512 MB Zero, and the device
+ * Generous timeout: this is zstd over hundreds of megabytes on a 512 MB Zero, and the device
  * checks it has room before writing anything. Long is expected; the bound is against a hang.
  */
 export async function packageSession(

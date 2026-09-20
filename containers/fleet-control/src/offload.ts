@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { hostOf, type FleetNode } from './inventory.js';
 import type { ActionContext } from './actions.js';
@@ -126,7 +126,11 @@ export async function offloadSession(
   const bundle: Bundle = await packageSession(node, ctx, session);
   say(`${node.name}: packaged ${(bundle.bytes / 1e6).toFixed(0)} MB in ${bundle.seconds}s`);
 
-  const file = `${node.name}_${session}.tar.gz`;
+  // THE DEVICE NAMES THE BUNDLE, so the landed file takes that name rather than one
+  // reconstructed here. Reconstructing it is how this carried `.tar.gz` past #344's switch to
+  // zstd -- a file whose name said gzip and whose bytes did not. The device's name cannot go
+  // stale against its own compression, and `<node>_<session>` is already the shape it uses.
+  const file = basename(bundle.bundle);
   const got = await fetchFile(node, ctx, bundle.bundle, join(dir, file));
   say(`${node.name}: fetched ${(got.bytes / 1e6).toFixed(0)} MB`);
 
