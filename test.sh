@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Run the Python tests that have no container of their own.
+# Run the Python tests whose environment is the JupyterHub notebook image:
+# analysis/ and harness/ tooling, and the bin/ host CLI. CI runs this script in
+# that image, which is where that code runs.
 #
 # They were written as standalone scripts run by hand, each exiting non-zero on
 # failure, so this runs them rather than introducing a framework they do not use.
 # Each runs from its own directory because several resolve paths relative to
 # themselves.
 #
-# docs/ci.md records where the rest of the suite runs.
+# Code that ships inside a device image is tested at that image's build time
+# instead; docs/ci.md lists both.
 
 set -uo pipefail
 cd "$(dirname "$0")" || exit 2

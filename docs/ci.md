@@ -59,8 +59,11 @@ being reached is not the same as passing.
 
 ## Where the Python tests run
 
-Every test that has a container of its own runs at that image's build time, in
-the environment it targets:
+Every test runs in the image its code runs in. There is no category of test
+that runs "on a machine" -- the two cases are just two different images.
+
+For code that ships inside a device image, that image is the environment, and
+the test is a build gate: the build failing is the test failing.
 
 | test | gate |
 |---|---|
@@ -69,12 +72,12 @@ the environment it targets:
 | `containers/campod-camera/test_capture_wait.py` | `Dockerfile:123` |
 | `containers/campod-camera/accel` (`go vet`, `go test`) | `Dockerfile:36` |
 
-The rest have no container to be tested inside. `analysis/` is workstation
-tooling and `harness/` is bench tooling, neither of which ships to a device,
-and `bin/coord` is the host CLI that drives compose. `tests.yaml` runs those in
-the JupyterHub notebook image, which is where that code is run -- so its
-pillow, scipy, numpy and pymavlink are the versions a person gets, and there is
-no dependency list here to drift from it.
+For `analysis/`, `harness/` and `bin/`, the environment is the **JupyterHub
+notebook image**. That tooling is run on a workstation and a bench rather than
+on a device, and the notebook image is what a person has in front of them when
+they run it. `tests.yaml` runs `test.sh` in that image, so its pillow, scipy,
+numpy and pymavlink are the versions a person gets and there is no dependency
+list here to drift from it.
 
 ## Per-component checks
 
