@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { reboot, stop } from '../src/actions.js';
+import { reboot, rebootStarted, stop } from '../src/actions.js';
 import type { ActionContext } from '../src/actions.js';
 
 // No ansible and no device. TEST-NET-3 (203.0.113.0/24) is reserved and routable nowhere, so
@@ -21,22 +21,45 @@ describe('stop', () => {
 });
 
 describe('reboot', () => {
-  it('STOPS FIRST, so an unreachable device fails before any playbook runs', async () => {
-    // The ordering is the whole design: the containers get our timeout rather than whatever
-    // the shutdown allows. If the play ran first this would fail with ansible-runner's error
-    // (which is what `ansible.test.ts` sees, since it is not installed) instead of ssh's.
+  it('is ONE command, gated on nothing -- no stop is attempted first', async () => {
+    // A reboot is the way out of a stuck box, so it must not depend on anything else
+    // working. If it quiesced first, an unreachable device would say so about the stop.
     const lines: string[] = [];
-    await assert.rejects(
-      () => reboot(node, ctx, { runId: 'unused' }, (_s, l) => lines.push(l)),
-      (err: Error) => {
-        assert.match(err.message, /^campod-se: /);
-        assert.doesNotMatch(err.message, /ansible-runner/);
-        return true;
-      },
-    );
-    // It says what it is doing before it does it, so a run that dies here is legible...
-    assert.ok(lines.some((l) => l.includes('rebooting campod-se')), JSON.stringify(lines));
-    // ...and it does NOT claim the stack stopped, because it did not.
-    assert.ok(!lines.some((l) => l.includes('stack stopped')), JSON.stringify(lines));
+    await assert.rejects(() => reboot(node, ctx, (_s, l) => lines.push(l)));
+    assert.ok(!lines.some((l) => /stop/i.test(l)), JSON.stringify(lines));
+    assert.deepEqual(lines, ['[fleet-control] rebooting campod-se (203.0.113.9)']);
+  });
+
+  it('fails for real when the device was never reached', async () => {
+    // A connect timeout is not a reboot. Distinguishing the two is the whole job of
+    // rebootStarted, so the unreachable case must still surface as a failure.
+    await assert.rejects(() => reboot(node, ctx), /^Error: campod-se: /);
+  });
+});
+
+describe('rebootStarted', () => {
+  // sshd is killed a moment after the request is accepted, so the exit status can be lost in
+  // transit even though the reboot is happening. Reading that as success is only safe if it
+  // is distinguishable from never having got a command in.
+  it('reads a dropped connection as the device going down', () => {
+    for (const said of [
+      'Connection to 10.0.5.237 closed by remote host.',
+      'client_loop: send disconnect: Broken pipe',
+      'Connection reset by 10.0.5.237 port 22',
+    ]) {
+      assert.equal(rebootStarted(said), true, said);
+    }
+  });
+
+  it('does NOT read never-reached as the device going down', () => {
+    for (const said of [
+      'ssh: connect to host 203.0.113.9 port 22: Connection timed out',
+      'ssh: connect to host 10.0.5.237 port 22: Connection refused',
+      'pi@10.0.5.237: Permission denied (publickey).',
+      'Host key verification failed.',
+      '',
+    ]) {
+      assert.equal(rebootStarted(said), false, JSON.stringify(said));
+    }
   });
 });

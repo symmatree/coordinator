@@ -18,6 +18,10 @@ import { hostOf, type FleetNode, type Inventory } from './inventory.js';
 import { converge as runPlaybook, type EventSink } from './ansible.js';
 import { forgetHostKey } from './knownhosts.js';
 import { stopCapture } from './sessions.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const run = promisify(execFile);
 
 export class ActionError extends Error {}
 
@@ -98,46 +102,62 @@ export async function stop(node: FleetNode, ctx: ActionContext, sink?: EventSink
 }
 
 /**
- * Stop the stack, then reboot and wait for the device to answer again.
+ * Reboot a device. One command, gated on nothing.
  *
- * Stopping first is not politeness: it gives the containers OUR timeout rather than whatever
- * the shutdown allows, and on campod-se the camera took 19 seconds to go after the signal.
+ * NO STOP FIRST. A reboot is the way out of a stuck box -- the thing that was being done by
+ * hand over ssh, or by pulling power -- so it must not depend on anything else working. The
+ * containers get systemd's shutdown signal on the way down; if you want them stopped on our
+ * timeout instead, that is the Stop button, pressed first, deliberately.
  *
- * The device ends this RUNNING, not quiesced -- the boot unit starts the stack again. That is
- * the point for the reason this button mostly exists: a capture session is a kernel boot id,
- * so **only a reboot closes one**, and nothing can be packaged off a device until its session
- * has been closed (#302).
+ * NOTHING WAITS for it to come back, the same as everything else here (#326): the device
+ * answers again or it does not, and the status screen is the check. In the normal case the
+ * run ends and the operator pulls the plug -- there is nothing after this in the UI.
+ *
+ * `systemctl --no-block` queues the job and returns rather than blocking on the transition,
+ * so ssh gets a real exit status instead of racing sshd's own shutdown. That race is not
+ * fully closable from here, so a connection that drops is read as the reboot starting.
  */
-export async function reboot(
-  node: FleetNode,
-  ctx: ActionContext,
-  opts: { runId: string },
-  sink?: EventSink,
-): Promise<void> {
+export async function reboot(node: FleetNode, ctx: ActionContext, sink?: EventSink): Promise<void> {
   const host = hostOf(node);
   note(sink, `rebooting ${node.name} (${host})`);
-  await stopCapture(node, ctx);
-  note(sink, 'stack stopped; rebooting');
 
-  const rc = await runPlaybook({
-    runId: opts.runId,
-    playbook: 'reboot.yaml',
-    host,
-    user: ctx.inventory.user,
-    privateKeyPath: ctx.privateKeyPath,
-    sshTimeoutSec: ctx.sshTimeoutSec,
-    knownHostsPath: ctx.knownHostsPath,
-    extraVars: {},
-    sink,
-  });
-
-  if (rc !== 0) {
-    throw new ActionError(
-      `${node.name}: reboot failed (ansible-runner exit ${rc}). The device may be down or may ` +
-        'be taking longer than the play waited; probe it to see whether it came back.',
+  try {
+    await run(
+      'ssh',
+      [
+        '-i', ctx.privateKeyPath,
+        '-o', 'BatchMode=yes',
+        '-o', 'StrictHostKeyChecking=accept-new',
+        '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
+        '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
+        `${ctx.inventory.user}@${host}`,
+        'sudo systemctl --no-block reboot',
+      ],
+      { maxBuffer: 1024 * 1024, timeout: 60_000 },
     );
+  } catch (err) {
+    const e = err as { stderr?: string; message?: string; killed?: boolean };
+    if (e.killed === true) throw new ActionError(`${node.name}: reboot request gave up after 60s`);
+    const why = (e.stderr ?? '').trim() || e.message || 'ssh failed';
+    if (!rebootStarted(why)) {
+      throw new ActionError(`${node.name}: ${why.split('\n').slice(-2).join(' ').slice(0, 300)}`);
+    }
+    note(sink, 'connection dropped, which is what a reboot looks like from here');
   }
-  note(sink, `${node.name} is back, with the stack started again`);
+
+  note(sink, `${node.name} is going down; refresh status to see it come back`);
+}
+
+/**
+ * Is this ssh failure the device going down, rather than a device we never reached?
+ *
+ * sshd is killed a moment after the request is accepted, so the exit status can be lost in
+ * transit even though the command ran. These are the shapes that means, and they are
+ * distinguishable from `Connection refused` / `Connection timed out` / a key rejection, which
+ * all mean we never got a command in at all.
+ */
+export function rebootStarted(stderr: string): boolean {
+  return /closed by remote host|Connection reset|Broken pipe/i.test(stderr);
 }
 
 /**

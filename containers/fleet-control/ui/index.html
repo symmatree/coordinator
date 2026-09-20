@@ -113,9 +113,10 @@
       'stopped. NOT a sticky off: the boot unit starts the stack again on the next power ' +
       'cycle, so nothing has to remember to undo this.',
     reboot:
-      'Stops the stack, reboots, and waits for the device to answer again. It comes back ' +
-      'RUNNING. This is how a capture session is closed -- a session is the kernel boot id, ' +
-      'so only a reboot ends one and nothing can be retrieved off a device until it has.',
+      'One command, gated on nothing: the way out of a stuck box, so it does not depend on ' +
+      'anything else working first. Nothing waits for it to come back -- refresh status when ' +
+      'you want to know. Press Stop first if you want the containers to go down on our ' +
+      'timeout rather than the shutdown\u2019s.',
     reimage:
       'Fetches the newest disk image for this role, stages it in the FAT partition, and ' +
       'arms the tryboot flasher. The device drops off the network and comes back on the new ' +
