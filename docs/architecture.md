@@ -104,7 +104,7 @@ safely) are the next conversation.
 | Grafana Alloy (later) | container | Isolated observability |
 | Pi Zero campod control API (later) | container or host | App logic; may share network with router |
 | chrony + PPS discipline | **host** | GPIO `/dev/pps0`, `SYS_TIME` |
-| USB gadget `br0` + DHCP | **host** | Dynamic `usb*` interfaces; not a Docker bridge problem |
+| USB gadget `br0` (static, **no DHCP**) | **host** | Dynamic `usb*` interfaces; not a Docker bridge problem. Built and working -- [coordinator-network.md](coordinator-network.md#usb-gadget-network-coordinator---campods) |
 | WiFi AP / station / off | **host** (or D-Bus-mounted utility container later) | NetworkManager integration |
 | Docker Engine | **host** | Generic runtime |
 
