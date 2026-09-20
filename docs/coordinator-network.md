@@ -108,11 +108,8 @@ across reboots without a per-pod profile.
 Measured with `nc` and `dd`, 150 MB per transfer, 2026-09-20. A single pod does not
 saturate the USB 2.0 bus -- running two pods concurrently raised the aggregate from 199 to
 241 Mbit/s while each pod's share fell, so the per-pod ceiling is somewhere other than the
-bus. Four pods concurrently has not been measured.
-
-The WiFi comparison is the same two machines over their WiFi addresses, so the path is
-campod -> AP -> coordinator: two traversals of a shared 2.4 GHz medium, not a
-point-to-point radio link.
+bus. Four pods concurrently has not been measured. The WiFi row is the same two machines
+over their WiFi addresses, as a reference point.
 
 ### Which layer owns which half
 
