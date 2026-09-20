@@ -49,6 +49,45 @@ default_service() {
 	fi
 }
 
+# Overridable so the selection can be tested against a fake tree; nothing but the
+# test sets it.
+COORD_PROC="${COORD_PROC:-/proc}"
+
+# The program inside each container. Every image we run on a device has
+# ENTRYPOINT ["/usr/bin/dumb-init", "--", ...], and every entrypoint script
+# `exec`s its program, so at runtime dumb-init's child IS the binary -- there is
+# no shell in between. That holds for all six: capture.py, campod-accel,
+# router.py, display.py, vins_fusion, feature_tracker.
+#
+# So this needs no table of binary names to keep in sync with six Dockerfiles,
+# and discovers nothing we already know: dumb-init is the one name, and we put it
+# there ourselves.
+container_binary_pids() {
+	local comm pid
+	for comm in "${COORD_PROC}"/[0-9]*/comm; do
+		[[ -r ${comm} ]] || continue
+		[[ $(<"${comm}") == dumb-init ]] || continue
+		pid=${comm#"${COORD_PROC}"/}
+		pid=${pid%/comm}
+		cat "${COORD_PROC}/${pid}/task/${pid}/children" 2>/dev/null
+	done
+}
+
+stop_processes() {
+	local pids
+	# shellcheck disable=SC2207  # word splitting is the point
+	pids=($(container_binary_pids))
+	if ((${#pids[@]} == 0)); then
+		echo "coord: no container processes found" >&2
+		return 0
+	fi
+	local pid
+	for pid in "${pids[@]}"; do
+		echo "coord: SIGTERM ${pid} ($(tr -d '\0' <"${COORD_PROC}/${pid}/cmdline" 2>/dev/null))" >&2
+		kill -TERM "${pid}" 2>/dev/null || true
+	done
+}
+
 usage() {
 	cat <<'EOF'
 Usage: coord <command> [args]
@@ -122,11 +161,26 @@ start)
 	compose up -d --pull never "$@"
 	;;
 stop)
-	# `stop`, not `down`: keep the containers so state/metadata survive and the
-	# boot unit (coordinator-stack.service) brings them straight back on a power
-	# bounce. Use `teardown` to actually remove them. (#97)
-	require_compose_file
-	compose stop
+	# SIGTERM the program inside each container and let the existing machinery do
+	# the rest: the binary exits, dumb-init sees its child go, containerd reports
+	# the task exit, and dockerd runs handleContainerExit -- which tears the
+	# container down the same way regardless of who caused the exit. That is the
+	# ordinary path for any program in a container finishing.
+	#
+	# Not `docker compose stop`, which on a campod does not finish. Of four
+	# measured attempts one returned (51s) and three never did, twice taking the
+	# machine down. dockerd is the layer that degrades: `docker ps` measured at
+	# 16-19s while containerd answered the equivalent in 126-213ms and the kernel
+	# in ~50ms. Compose also enumerates the project and resolves its resources
+	# before signalling anything (pkg/compose/stop.go), which is several daemon
+	# round-trips we do not need -- our stacks pin container_name.
+	# See analysis/pi-zero-unresponsiveness-experiments.md.
+	#
+	# No escalation to SIGKILL here on purpose. Signal, wait, send a different
+	# signal is what docker already does, and doing it ourselves would just be
+	# the same thrashing one layer up. If a container does not exit, that is a
+	# result worth seeing rather than something to force.
+	stop_processes
 	;;
 teardown)
 	require_compose_file
