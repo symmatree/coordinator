@@ -74,7 +74,7 @@
     #
     # rc=1 means pkill matched nothing, which is fine.
     - name: Stop data collection before staging
-      ansible.builtin.raw: pkill -x -TERM dumb-init
+      ansible.builtin.raw: pkill -x -TERM dumb-init; i=0; while pgrep -x dumb-init >/dev/null 2>&1 && [ $i -lt 40 ]; do sleep 1; i=$((i+1)); done
       register: reimage_quiesced
       changed_when: reimage_quiesced.rc == 0
       failed_when: reimage_quiesced.rc not in [0, 1]

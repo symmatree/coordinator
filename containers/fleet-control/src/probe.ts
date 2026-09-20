@@ -12,6 +12,7 @@
 import { execFile } from 'node:child_process';
 import { connect } from 'node:net';
 import { promisify } from 'node:util';
+import { quiesced } from './quiesce.js';
 import { hostOf, type FleetNode } from './inventory.js';
 import { parseProbe, type Probe } from './manifest.js';
 import type { ActionContext } from './actions.js';
@@ -53,8 +54,14 @@ async function canConnect(host: string, port = 22): Promise<boolean> {
   });
 }
 
-/** What the device prints. `coord` is on PATH at /usr/local/bin (coordinator#327). */
-export const PROBE_COMMAND = 'coord version';
+/**
+ * What the device prints. `coord` is on PATH at /usr/local/bin (coordinator#327).
+ *
+ * Quiesced: probing a capturing campod takes minutes, because `coord version` makes five
+ * dockerd round-trips. `coord version` itself stays read-only -- the stop is a separate
+ * statement, not something the verb does.
+ */
+export const PROBE_COMMAND = quiesced('coord version');
 
 export interface NodeStatus {
   node: string;
