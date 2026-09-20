@@ -1,0 +1,37 @@
+name: "tests"
+# No `paths:` filter: a workflow skipped by path filtering never reports a
+# check, so it could not be required. See docs/ci.md.
+#
+# test.sh runs inside the JupyterHub notebook image rather than on the runner.
+# That image is where analysis/ and harness/ are actually run, so its pillow,
+# scipy, numpy and pymavlink are the versions a human gets -- there is no
+# second dependency list here to drift from it. Everything with a container of
+# its own is tested at that image's build time instead and is not in test.sh.
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      # Built by symmatree/tiles (.github/workflows/build-datascience-notebook-ssh.yaml)
+      # and public, so no registry login. linux/amd64, matching the runner.
+      - name: Run workstation tests in the notebook image
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -w /repo \
+            ghcr.io/symmatree/tiles/datascience-notebook-ssh:main \
+            ./test.sh
