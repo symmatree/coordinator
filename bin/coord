@@ -53,32 +53,32 @@ default_service() {
 # test sets it.
 COORD_PROC="${COORD_PROC:-/proc}"
 
-# The program inside each container. Every image we run on a device has
-# ENTRYPOINT ["/usr/bin/dumb-init", "--", ...], and every entrypoint script
-# `exec`s its program, so at runtime dumb-init's child IS the binary -- there is
-# no shell in between. That holds for all six: capture.py, campod-accel,
-# router.py, display.py, vins_fusion, feature_tracker.
+# Each container's init. Every image we run on a device has
+# ENTRYPOINT ["/usr/bin/dumb-init", "--", ...], so this is one name we put there
+# ourselves -- nothing is guessed and there is no table to keep in sync.
 #
-# So this needs no table of binary names to keep in sync with six Dockerfiles,
-# and discovers nothing we already know: dumb-init is the one name, and we put it
-# there ourselves.
-container_binary_pids() {
+# Signalling dumb-init rather than the program is not indirection: proxying is
+# what it is for, and it does more than we would. dumb-init.c:66 sends the signal
+# to -child_pid, the child's whole process GROUP (use_setsid defaults to 1), and
+# after the child exits it forwards SIGTERM to any remaining children (line 113).
+# Signalling the program directly would reach only that one process. We pass no
+# --rewrite, so SIGTERM stays SIGTERM.
+container_inits() {
 	local comm pid
 	for comm in "${COORD_PROC}"/[0-9]*/comm; do
 		[[ -r ${comm} ]] || continue
 		[[ $(<"${comm}") == dumb-init ]] || continue
 		pid=${comm#"${COORD_PROC}"/}
-		pid=${pid%/comm}
-		cat "${COORD_PROC}/${pid}/task/${pid}/children" 2>/dev/null
+		echo "${pid%/comm}"
 	done
 }
 
 stop_processes() {
 	local pids
 	# shellcheck disable=SC2207  # word splitting is the point
-	pids=($(container_binary_pids))
+	pids=($(container_inits))
 	if ((${#pids[@]} == 0)); then
-		echo "coord: no container processes found" >&2
+		echo "coord: no container init processes found" >&2
 		return 0
 	fi
 	local pid
