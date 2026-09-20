@@ -57,6 +57,25 @@ gate. They run unconditionally and inspect `needs.*.result` themselves.
 The same trap applies to anything else that becomes a required check here:
 being reached is not the same as passing.
 
+## Where the Python tests run
+
+Every test that has a container of its own runs at that image's build time, in
+the environment it targets:
+
+| test | gate |
+|---|---|
+| `containers/coordinator-mavlink/test_router.py` | `Dockerfile:37` |
+| `containers/sh1106-display/test_display.py` | `Dockerfile:38` |
+| `containers/campod-camera/test_capture_wait.py` | `Dockerfile:123` |
+| `containers/campod-camera/accel` (`go vet`, `go test`) | `Dockerfile:36` |
+
+The rest have no container to be tested inside. `analysis/` is workstation
+tooling and `harness/` is bench tooling, neither of which ships to a device,
+and `bin/coord` is the host CLI that drives compose. `tests.yaml` runs those in
+the JupyterHub notebook image, which is where that code is run -- so its
+pillow, scipy, numpy and pymavlink are the versions a person gets, and there is
+no dependency list here to drift from it.
+
 ## Per-component checks
 
 Checks that belong to one component live in its Dockerfile where they can --
