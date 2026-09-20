@@ -94,6 +94,9 @@ campod  usb0 (g_ether)  --micro-USB--> hub --> coordinator usbN (cdc_ether) --> 
 | coordinator | `10.55.0.1` on `br0` |
 | campods | `.11` ne, `.12` se, `.13` sw, `.14` nw |
 | measured | ~0.35 ms RTT, MTU 1500 |
+| throughput, one pod | 24.9 MB/s (199 Mbit/s) |
+| throughput, two pods at once | 17.1 + 16.2 MB/s, **aggregate 30.2 MB/s** (241 Mbit/s) |
+| same pair over WiFi, for comparison | 5.0-5.3 MB/s (40-42 Mbit/s) |
 | contract | `host/ansible/vars/gadget-net.yml` -- one file both roles read |
 
 Static rather than DHCP (#211): nothing has to run on the coordinator, and a campod's
@@ -101,6 +104,15 @@ address does not depend on a lease. The MACs are derived from the hostname
 (`02:` + five bytes of `sha256("campod-dev:"<hostname>)`, and `campod-host:` for the other
 end) and pinned as `g_ether` module parameters, so a pod's identity on the wire is stable
 across reboots without a per-pod profile.
+
+Measured with `nc` and `dd`, 150 MB per transfer, 2026-09-20. A single pod does not
+saturate the USB 2.0 bus -- running two pods concurrently raised the aggregate from 199 to
+241 Mbit/s while each pod's share fell, so the per-pod ceiling is somewhere other than the
+bus. Four pods concurrently has not been measured.
+
+The WiFi comparison is the same two machines over their WiFi addresses, so the path is
+campod -> AP -> coordinator: two traversals of a shared 2.4 GHz medium, not a
+point-to-point radio link.
 
 ### Which layer owns which half
 

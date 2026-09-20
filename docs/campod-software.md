@@ -359,7 +359,9 @@ the bench over lab WiFi and false in the field. The options, with the numbers th
   ~1 GB over USB.
 - **The USB gadget link is not the constraint.** An image update is an occasional bulk
   transfer with no latency requirement, not a stream -- capture data never leaves the
-  node's own SD by design. Even a pessimistic few MB/s finishes in minutes.
+  node's own SD by design. Measured 2026-09-20: 24.9 MB/s to a single pod, 30.2 MB/s
+  aggregate across two at once. A 241 MB image reaches one node in ~10 s and all of them
+  in well under a minute.
 - **A transparent registry mirror does not work for GHCR.** Docker's `registry-mirrors` is
   Docker Hub only -- *"It's currently not possible to mirror another private registry. Only
   the central Hub can be mirrored."* Serving images locally therefore means either a

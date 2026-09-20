@@ -169,10 +169,12 @@ Only now is anything wired. Each item added here is added against devices that a
 so a failure is attributable to the thing just connected.
 
 - **USB gadget network.** Campods enumerate as peripherals; the coordinator is the host and
-  bridges them. Both halves are configured in the repo but **no link has ever been brought
-  up** -- throughput and stability are unmeasured, and the link was specified for commands
-  rather than bulk transfer. See [#12](https://github.com/symmatree/coordinator/issues/12) /
-  [#24](https://github.com/symmatree/coordinator/issues/24).
+  bridges them. **Up as of 2026-09-20**, with both converged campods on the bridge at once:
+  0% loss, ~0.35-0.4 ms, 199 Mbit/s to a single pod and 241 Mbit/s aggregate across two.
+  That is bulk-transfer capable, not command-only -- a 1.3 GB session moves in about a
+  minute. Two silent defects were in the way and are fixed
+  ([#354](https://github.com/symmatree/coordinator/pull/354)); the link layer is described
+  in [coordinator-network.md](coordinator-network.md#usb-gadget-network-coordinator---campods).
 - **Cameras.** OAK-D on the coordinator; Camera Module 3 on each campod. Nothing in the campod
   capture path has run on real hardware.
 - **Accelerometers.** ADXL345 over SPI, colocated with the camera and at the arm end
