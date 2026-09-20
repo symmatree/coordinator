@@ -77,11 +77,26 @@ Every line a run produces also goes to **the pod's own stdout/stderr**, tagged
 in memory, so a pod restart takes its whole history with it -- and that is exactly the run
 someone comes asking about afterwards. Log collection reads the pod's streams and outlives it.
 
-And **ansible-runner's private data directory is kept unless the play exited 0.** Its
-`artifacts/<ident>/` holds each task's whole result object, which is what says *how* a play
-ended when the rendered lines do not; the service names the path on the run's stderr when it
-keeps one. It is `/tmp` inside the container, so it still goes when the pod does -- the stdout
-echo is the half that survives that. Nothing evicts these, and a successful run leaves none.
+And **ansible-runner's private data directory is kept unless the play exited 0**, named after
+the run rather than `mkdtemp`'d, so two routes can serve it with no mapping to keep:
+
+```sh
+curl -s https://fleet.tiles.symmatree.com/runs/<id>/log    > converge.log     # as ansible printed it
+curl -s https://fleet.tiles.symmatree.com/runs/<id>/events > events.ndjson    # every task's result object
+```
+
+`/events` is the one that says *how* a play ended -- an async timeout is distinguishable from
+an `UNREACHABLE` from a lost connection -- and `GET /runs` reports an `events` count per run so
+you can see which ones kept anything.
+
+**Only `job_events/` is served, and that is a boundary rather than a convenience.** Beside it
+the runner writes a `command` file recording the **entire process environment** it launched
+ansible with, which in this pod includes `FLEET_GITHUB_TOKEN`. So there is no route that hands
+out the directory, and there should not be one.
+
+It is `/tmp` inside the container, so a kept directory still goes when the pod does -- the
+stdout echo is the half that survives that. Nothing evicts these, and a successful run leaves
+none.
 
 ## curl, not just the browser
 
@@ -101,6 +116,8 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
+| `GET /runs/:id/log` | a failed play as ansible printed it |
+| `GET /runs/:id/events` | its ansible events, one JSON object per line |
 | `GET /images/builds` | recent successful builds on the tracked ref, newest first |
 | `GET /images/cached` | what the image cache holds |
 | `POST /images/:role/fetch[?sha=]` | put a build in the cache -- the only route needing a token |

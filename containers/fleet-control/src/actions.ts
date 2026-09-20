@@ -38,7 +38,7 @@ function note(sink: EventSink | undefined, msg: string): void {
 export async function converge(
   node: FleetNode,
   ctx: ActionContext,
-  opts: { reflashed?: boolean } = {},
+  opts: { runId: string; reflashed?: boolean },
   sink?: EventSink,
 ): Promise<void> {
   const host = hostOf(node);
@@ -50,6 +50,7 @@ export async function converge(
   }
 
   const rc = await runPlaybook({
+    runId: opts.runId,
     host,
     user: ctx.inventory.user,
     privateKeyPath: ctx.privateKeyPath,
@@ -81,15 +82,17 @@ export async function converge(
 export async function reimage(
   node: FleetNode,
   ctx: ActionContext,
-  image: { url: string; sha256: string; sha: string },
+  opts: { runId: string; image: { url: string; sha256: string; sha: string } },
   sink?: EventSink,
 ): Promise<void> {
   const host = hostOf(node);
+  const { image } = opts;
   note(sink, `reimaging ${node.name} (${host}) as ${node.role}`);
   note(sink, `image built from ${image.sha.slice(0, 10)}`);
   note(sink, `device fetches ${image.url}`);
 
   const rc = await runPlaybook({
+    runId: opts.runId,
     playbook: 'reimage.yaml',
     host,
     user: ctx.inventory.user,

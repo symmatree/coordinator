@@ -1,19 +1,21 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
-import { converge, renderEvent } from '../src/ansible.js';
+import { converge, renderEvent, runDir } from '../src/ansible.js';
 
 // converge() spawns `ansible-runner`. These tests exercise what this module is actually
 // responsible for -- turning the event stream into operator-readable lines, and reporting the
 // exit code honestly -- without requiring ansible or a node.
 
 describe('converge -- when ansible-runner is not installed', () => {
-  /** Run a converge that cannot start, returning the lines it emitted. */
-  async function failedConverge(): Promise<string[]> {
+  /** Run a converge that cannot start, under a run id of our choosing. */
+  async function failedConverge(runId: string): Promise<string[]> {
     const lines: string[] = [];
     await assert.rejects(
       () =>
         converge({
+          runId,
           host: '10.0.0.1',
           user: 'pi',
           privateKeyPath: '/dev/null',
@@ -26,27 +28,27 @@ describe('converge -- when ansible-runner is not installed', () => {
   }
 
   it('says so rather than failing as an unexplained nonzero', async () => {
-    const kept = keptDir(await failedConverge());
-    if (kept !== undefined) rmSync(kept, { recursive: true, force: true });
+    const id = randomUUID();
+    await failedConverge(id);
+    rmSync(runDir(id), { recursive: true, force: true });
   });
 
   // The run that prompted this was a converge whose `coord stop` never returned. Its rendered
   // lines died with the pod, and the runner's own artifacts -- which hold every task's whole
   // result object, and so say HOW it ended -- had already been deleted by a `finally` that
   // did not care whether the play worked.
-  it('KEEPS the runner data directory and says where it is', async () => {
-    const kept = keptDir(await failedConverge());
-    assert.ok(kept !== undefined, 'no line named the kept directory');
-    assert.ok(existsSync(kept), `${kept} should still be on disk`);
-    rmSync(kept, { recursive: true, force: true });
+  it('KEEPS the runner data directory, named after the run', async () => {
+    const id = randomUUID();
+    const lines = await failedConverge(id);
+    // Named after the run, not mkdtemp'd, so a route can find it with no mapping to keep.
+    assert.ok(existsSync(runDir(id)), `${runDir(id)} should still be on disk`);
+    assert.ok(
+      lines.some((l) => l.includes(`/runs/${id}/events`)),
+      `nothing pointed at the route: ${JSON.stringify(lines)}`,
+    );
+    rmSync(runDir(id), { recursive: true, force: true });
   });
 });
-
-/** The directory a failed converge said it kept, out of the lines it emitted. */
-function keptDir(lines: string[]): string | undefined {
-  const said = lines.find((l) => l.includes('ansible artifacts kept at'));
-  return said?.split('ansible artifacts kept at ').pop();
-}
 
 describe('renderEvent -- a failed command task', () => {
   // The shape that cost us an hour: `coord start` returned non-zero on the coordinator and
