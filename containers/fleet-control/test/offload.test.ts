@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { validFlightName, type FlightRecord } from '../src/offload.js';
+import { readBundle, validFlightName, type FlightRecord } from '../src/offload.js';
 
 test('a flight name has to be one safe path segment', () => {
   // It becomes a directory under the datasets share, so this is the only thing standing
@@ -41,4 +41,20 @@ test('the flight record survives being read back', () => {
   assert.equal(back.collected[0]?.sourceDeleted, true);
   // The session id is the boot id and must round-trip exactly -- it is what delete is given.
   assert.equal(back.collected[0]?.session, 'a0760391-8e43-49f2-98fb-9d9e9fe15595');
+});
+
+test('reading a bundle needs root, like everything else in this chain', () => {
+  // The capture tree is written by root-running containers, so `package` builds a root-owned
+  // bundle (#366, #371). Reasoning about whether `pi` could read it anyway has been wrong on
+  // a device twice. The reason is here so this does not get tidied back out.
+  const cmd = readBundle('/var/lib/campod/bundles/campod-se_abc.tar.zst');
+  assert.match(cmd, /sudo cat '\/var\/lib\/campod\/bundles\/campod-se_abc\.tar\.zst'/);
+  // Quiesced like every other command, and the quiesce is itself root (#366).
+  assert.ok(cmd.startsWith('sudo pkill'), cmd);
+});
+
+test('a quote in the path cannot end the quoting', () => {
+  // The path comes from the device's own output, but it still goes into a remote shell.
+  const cmd = readBundle("/tmp/it's here.tar.zst");
+  assert.ok(cmd.endsWith(`sudo cat '/tmp/it'\\''s here.tar.zst'`), cmd);
 });

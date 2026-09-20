@@ -51,6 +51,29 @@ export function validFlightName(name: string): boolean {
  * of re-reading hundreds of megabytes afterwards. Writes to `.part` and renames, so an
  * interrupted transfer never leaves a short file that looks complete.
  */
+/**
+ * The command that reads one bundle off a device.
+ *
+ * **sudo**, for the third time in this chain and the same reason as the other two: the capture
+ * tree is written by containers running as root on the host, so the bundle `coord sessions
+ * package` builds from it is root-owned too (#366, #371). `bundles/` is not in
+ * `coord_state_subdirs` either, so it is created by `coord-sessions` rather than by ansible at
+ * a known mode -- whether `pi` could traverse in and read the file would come down to root's
+ * umask. Twice now that reasoning has been wrong on a device; this removes the question
+ * instead of answering it.
+ *
+ * Quiesced like every other command we send a device. Safe to prefix a binary stream: pkill
+ * and sleep write nothing to stdout and pgrep is redirected, and neither does sudo, so only
+ * cat's bytes come back. By this point `package` has usually stopped things already; this
+ * costs nothing when there is nothing to stop.
+ *
+ * Quoted: the path comes from the device's own package output, but it is still a string going
+ * into a remote shell and there is no reason to let it be anything else.
+ */
+export function readBundle(remotePath: string): string {
+  return quiesced(`sudo cat '${remotePath.replace(/'/g, "'\\''")}'`);
+}
+
 async function fetchFile(
   node: FleetNode,
   ctx: ActionContext,
@@ -65,14 +88,7 @@ async function fetchFile(
     '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
     '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
     `${ctx.inventory.user}@${hostOf(node)}`,
-    // Quiesced like every other command we send a device. Safe to prefix a binary stream:
-    // pkill and sleep write nothing to stdout and pgrep is redirected, so only cat's bytes
-    // come back. By this point `package` has usually stopped things already; this costs
-    // nothing when there is nothing to stop.
-    //
-    // Quoted: the path comes from the device's own package output, but it is still a string
-    // going into a remote shell and there is no reason to let it be anything else.
-    quiesced(`cat '${remotePath.replace(/'/g, "'\\''")}'`),
+    readBundle(remotePath),
   ]);
 
   const hash = createHash('sha256');
