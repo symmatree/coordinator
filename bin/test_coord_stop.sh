@@ -32,15 +32,15 @@ mk 6000 "dumb-init" ""          # container init with no child yet
 mk 5001 "python3" ""            # the binary itself
 mk 7000 "dumb-init-ish" "7001"  # near-miss name must not match
 
-pick() { bash -c 'source <(sed -n "/^COORD_PROC=/,/^}/p" ./coord); container_binary_pids'; }
+pick() { bash -c 'source <(sed -n "/^COORD_PROC=/,/^}/p" ./coord); container_inits'; }
 
 got=$(COORD_PROC="$root" pick | tr '\n' ' ' | tr -s ' ')
 echo "     selected: $got"
-want "picks the children of a container init" 5001
-want "picks every child, not just the first" 5002
-reject "does not match a near-miss comm" 7001
+want "finds a container init" 5000
+want "finds every container init, not just the first" 6000
+reject "does not match a near-miss comm" 7000
 reject "ignores ordinary host processes" 1234
-reject "signals the children, not dumb-init itself" 5000
+reject "does not descend to the child; dumb-init proxies for it" 5001
 
 # Real /proc: this box runs no containers, so nothing should be selected.
 real=$(pick | tr -d '[:space:]')
