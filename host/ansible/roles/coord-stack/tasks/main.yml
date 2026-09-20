@@ -137,11 +137,18 @@
   register: coord_stack_pull
   changed_when: "'Pulled' in coord_stack_pull.stderr or 'Pulled' in coord_stack_pull.stdout"
 
-- name: Start the stack
-  # Idempotent: up -d on an already-running stack does nothing. Uses the same
-  # never-pull path the boot unit takes, so a converge exercises exactly what a
-  # power-up will do rather than a more forgiving variant of it.
-  ansible.builtin.command:
-    cmd: /usr/local/bin/coord start
-  register: coord_stack_start
-  changed_when: "'Started' in coord_stack_start.stderr or 'Created' in coord_stack_start.stderr"
+# Deliberately NOT followed by a start. The converge ends by rebooting -- bootstrap
+# remounts /usr read-write to do its work and that task is changed_when: true, so
+# site.yaml's reboot condition is met on every run -- and the boot unit starts the
+# stack on the way back up. The reboot is what restarts collection.
+#
+# Starting it here restarted capture in the MIDDLE of maintenance, with eighteen
+# further tasks then competing with a pod writing full-resolution JPEGs to the same
+# card. Starting the stack has itself been measured at 3m33s and 3m54s with a
+# sustained ~20 MiB/s read storm (analysis/pi-zero-unresponsiveness-experiments.md),
+# which is the last thing to introduce before the rest of the play runs. It also
+# meant a converge left the device capturing, so the next converge began against a
+# busy box instead of a quiet one.
+#
+# "Stop is not a sticky off" means the reboot brings it back, not that the play
+# restarts it in place.
