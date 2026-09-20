@@ -1,6 +1,11 @@
-// What this service does to a node: converge it.
+// What this service does to a node: converge it, stop it, reboot it, reimage it.
 //
-// ONE action, not two. `bootstrap` and `update` used to differ because a fresh card needed a
+// Converge is the one that changes a device. THE OTHER THREE ARE NOT SMALLER CONVERGES --
+// they are the things a converge does to the device on its way past, offered on their own
+// because the operator wants them on their own: a stack that is off while you read the card,
+// a reboot that closes a capture session, a card that is rewritten.
+//
+// Converge: ONE action, not two. `bootstrap` and `update` used to differ because a fresh card needed a
 // remount, an apt install, a clone, and an exit-1 reboot dance that an already-provisioned
 // node did not. #263 deletes all of that: the same playbook handles a virgin unit and a
 // running one, and presenting two buttons that run identical commands would be a lie about
@@ -12,6 +17,7 @@
 import { hostOf, type FleetNode, type Inventory } from './inventory.js';
 import { converge as runPlaybook, type EventSink } from './ansible.js';
 import { forgetHostKey } from './knownhosts.js';
+import { stopCapture } from './sessions.js';
 
 export class ActionError extends Error {}
 
@@ -67,6 +73,71 @@ export async function converge(
     );
   }
   note(sink, `${node.name} converged`);
+}
+
+/**
+ * Stop the container set on a node, and nothing else.
+ *
+ * ONE SIGNAL OVER PLAIN SSH, no playbook. What sits between ssh and the kill is the whole
+ * question on a box that cannot `stat` a file inside its own timeout (#362), and a signal
+ * needs nothing of ours installed -- so this works on a card that has never converged, and on
+ * one too loaded to run an ansible module.
+ *
+ * NOT A STICKY OFF. The boot unit's ExecStart is unconditional (#97), so the stack comes back
+ * on the next power cycle and nothing has to remember to undo this. To keep a device down
+ * across a reboot, disable the unit; that is a deliberate act and not a button.
+ *
+ * The wait for the containers to actually exit lives in `stopCapture`, shared with post-flight
+ * and the playbooks, so there is one definition of what stopping means.
+ */
+export async function stop(node: FleetNode, ctx: ActionContext, sink?: EventSink): Promise<void> {
+  const host = hostOf(node);
+  note(sink, `stopping the stack on ${node.name} (${host})`);
+  await stopCapture(node, ctx);
+  note(sink, `${node.name} stopped; it will come back up on the next boot`);
+}
+
+/**
+ * Stop the stack, then reboot and wait for the device to answer again.
+ *
+ * Stopping first is not politeness: it gives the containers OUR timeout rather than whatever
+ * the shutdown allows, and on campod-se the camera took 19 seconds to go after the signal.
+ *
+ * The device ends this RUNNING, not quiesced -- the boot unit starts the stack again. That is
+ * the point for the reason this button mostly exists: a capture session is a kernel boot id,
+ * so **only a reboot closes one**, and nothing can be packaged off a device until its session
+ * has been closed (#302).
+ */
+export async function reboot(
+  node: FleetNode,
+  ctx: ActionContext,
+  opts: { runId: string },
+  sink?: EventSink,
+): Promise<void> {
+  const host = hostOf(node);
+  note(sink, `rebooting ${node.name} (${host})`);
+  await stopCapture(node, ctx);
+  note(sink, 'stack stopped; rebooting');
+
+  const rc = await runPlaybook({
+    runId: opts.runId,
+    playbook: 'reboot.yaml',
+    host,
+    user: ctx.inventory.user,
+    privateKeyPath: ctx.privateKeyPath,
+    sshTimeoutSec: ctx.sshTimeoutSec,
+    knownHostsPath: ctx.knownHostsPath,
+    extraVars: {},
+    sink,
+  });
+
+  if (rc !== 0) {
+    throw new ActionError(
+      `${node.name}: reboot failed (ansible-runner exit ${rc}). The device may be down or may ` +
+        'be taking longer than the play waited; probe it to see whether it came back.',
+    );
+  }
+  note(sink, `${node.name} is back, with the stack started again`);
 }
 
 /**

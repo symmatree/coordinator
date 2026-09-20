@@ -6,9 +6,9 @@ linux/amd64. Child of [#223](https://github.com/symmatree/coordinator/issues/223
 
 Live at `https://fleet.{cluster}.symmatree.com`; deployment lives in `tiles`.
 
-## One action
+## Converge
 
-**Converge.** The service runs `host/ansible/site.yaml` against the node, here on the control
+The service runs `host/ansible/site.yaml` against the node, here on the control
 node, and reports the exit code. **0 means converged.**
 
 ```
@@ -16,10 +16,12 @@ ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
   -e device_role=<coordinator|campod>
 ```
 
-There used to be two actions, `bootstrap` and `update`.
+There used to be two of these, `bootstrap` and `update`.
 [#263](https://github.com/symmatree/coordinator/pull/263) made the playbook handle a virgin
 unit and a converged one the same way, so two buttons issuing identical commands would
-misdescribe what the service does.
+misdescribe what the service does. The other actions below are not smaller converges -- they
+are things a converge does on its way past, offered alone because the operator wants them
+alone.
 
 The playbook owns the whole sequence. This service adds nothing to it except a button and a log.
 
@@ -63,6 +65,34 @@ Host keys really are checked: `accept-new`, not disabled. Turning the check off 
 clearing keys on reflash would be theatre — the clear only means anything if the check is real.
 Both ssh and the clear are pointed at one explicit `known_hosts` file rather than the account
 default, which in a container is neither predictable nor persistent.
+
+## Stop and reboot
+
+```sh
+curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/stop"
+curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/reboot"
+```
+
+**Stop** signals the container set and waits for it to exit. One signal over plain ssh, no
+playbook: what sits between ssh and the kill is the whole question on a box that cannot `stat`
+a file inside its own timeout ([#362](https://github.com/symmatree/coordinator/pull/362)), and
+a signal needs nothing of ours installed -- so it works on a card that has never converged. It
+is **not a sticky off**: the boot unit's `ExecStart` is unconditional
+([#97](https://github.com/symmatree/coordinator/issues/97)), so the stack returns on the next
+power cycle and nothing has to remember to undo this. Keeping a device down across a reboot
+means disabling that unit, which is a deliberate act and not a button.
+
+**Reboot** stops the stack, reboots, and **waits for the device to answer again** -- the one
+place this service waits for a device rather than re-asking. It is a playbook
+(`host/ansible/reboot.yaml`) for exactly that reason: `ansible.builtin.reboot` survives the
+connection dropping underneath it and then waits, and has been rebooting these devices from
+`site.yaml` since #263. The play carries no quiesce of its own; the caller sends the signal
+first, so stopping has one definition rather than a third restatement.
+
+The device comes back **running**, not quiesced. That is the point of the button: a capture
+session is the kernel boot id, so **only a reboot closes one**, and nothing can be retrieved
+off a device until its session has been closed
+([#302](https://github.com/symmatree/coordinator/issues/302)).
 
 ## Progress comes from events, not scraped text
 
@@ -114,6 +144,8 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /healthz` | liveness |
 | `GET /nodes` | the roster |
 | `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
+| `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
+| `POST /nodes/:name/reboot` | stop, reboot, wait for it to answer again |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
 | `GET /runs/:id/log` | a failed play as ansible printed it |

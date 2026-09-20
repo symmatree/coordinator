@@ -16,8 +16,9 @@
   .name { font-weight:700; font-size:1.05rem; }
   .meta { color:var(--dim); font-size:.82rem; margin-top:8px; word-break:break-word; }
   .warn { color:var(--warn); }
-  .btns { display:flex; gap:10px; margin-top:12px; }
-  button { flex:1; min-height:56px; font-size:1rem; font-weight:650; border-radius:10px;
+  /* wrap: a node card carries four buttons and four across is unreadable on a phone */
+  .btns { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+  button { flex:1 1 40%; min-height:56px; font-size:1rem; font-weight:650; border-radius:10px;
            border:1px solid var(--line); background:#242938; color:var(--fg); cursor:pointer; }
   button:disabled { opacity:.45; cursor:default; }
   button.primary { background:#25406b; border-color:#375d99; }
@@ -106,6 +107,15 @@
     'converge?reflashed=true':
       'As above, and clears the recorded SSH host key first -- for a card that has just been ' +
       'reflashed and therefore presents a new key.',
+    stop:
+      'Signals the container set and waits for it to exit. Nothing else -- packages, config ' +
+      'and images are untouched, and a card that has never been converged can still be ' +
+      'stopped. NOT a sticky off: the boot unit starts the stack again on the next power ' +
+      'cycle, so nothing has to remember to undo this.',
+    reboot:
+      'Stops the stack, reboots, and waits for the device to answer again. It comes back ' +
+      'RUNNING. This is how a capture session is closed -- a session is the kernel boot id, ' +
+      'so only a reboot ends one and nothing can be retrieved off a device until it has.',
     reimage:
       'Fetches the newest disk image for this role, stages it in the FAT partition, and ' +
       'arms the tryboot flasher. The device drops off the network and comes back on the new ' +
@@ -146,6 +156,8 @@
       btns.append(
         mk('Converge', 'converge', true),
         mk('Reflashed', 'converge?reflashed=true', false),
+        mk('Stop', 'stop', false),
+        mk('Reboot', 'reboot', false),
       );
       card.append(btns);
 
