@@ -115,7 +115,7 @@ export class RunRegistry {
    * concurrent `coord pull`s on the same device fight over the docker daemon and the checkout,
    * and the failure is confusing rather than loud.
    */
-  start(action: string, node: string, work: (emit: Listener) => Promise<void>): Run {
+  start(action: string, node: string, work: (emit: Listener, runId: string) => Promise<void>): Run {
     const busy = this.activeFor(node);
     if (busy) {
       throw new Error(
@@ -146,7 +146,7 @@ export class RunRegistry {
       for (const fn of this.listeners.get(run.id) ?? []) fn(l);
     };
 
-    void work(emit)
+    void work(emit, run.id)
       .then(() => {
         run.status = 'succeeded';
       })

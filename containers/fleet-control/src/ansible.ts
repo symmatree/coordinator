@@ -11,16 +11,37 @@
 // real gap and it is not fixed by moving where Ansible runs.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /** Where the image keeps `host/ansible/**`. Only the playbook comes from here; see site.yaml. */
 export const PLAYBOOK_DIR = process.env.FLEET_PLAYBOOK_DIR ?? '/app/ansible';
 
+/** Where ansible-runner's private data directories live, one per run. */
+export const RUNS_ROOT = join(tmpdir(), 'fleet-runs');
+
+/**
+ * The runner data directory for one run.
+ *
+ * NAMED AFTER THE RUN rather than randomly, which is the whole reason a route can serve it:
+ * there is no id-to-path mapping to keep, nothing to record and nothing to lose on a restart.
+ * The directory that is there IS the answer, and the one that is not is a 404.
+ */
+export function runDir(runId: string): string {
+  return join(RUNS_ROOT, runId);
+}
+
+/** Where ansible-runner writes its per-run event files, under `runDir`. */
+export function jobEventsDir(runId: string, ident: string): string {
+  return join(runDir(runId), 'artifacts', ident, 'job_events');
+}
+
 export type EventSink = (stream: 'stdout' | 'stderr', line: string) => void;
 
 export interface ConvergeOptions {
+  /** The run this belongs to. Names the data directory, so `/runs/:id/events` can find it. */
+  runId: string;
   /** Which playbook in PLAYBOOK_DIR to run. */
   playbook?: string;
   /** Address or hostname to converge. A bare `addr,` is a valid inventory. */
@@ -150,7 +171,7 @@ function lineSplitter(emit: (line: string) => void): { push(c: Buffer): void; en
 export async function converge(opts: ConvergeOptions): Promise<number> {
   // ansible-runner wants a private data directory: project/ holds the playbook, env/ the
   // settings and extra vars, inventory/ the hosts.
-  const pdd = mkdtempSync(join(tmpdir(), 'fleet-converge-'));
+  const pdd = runDir(opts.runId);
   let succeeded = false;
   try {
     mkdirSync(join(pdd, 'env'), { recursive: true });
@@ -246,7 +267,15 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
     //
     // This is /tmp inside the container, so it still goes when the pod does. What outlives a
     // pod is the stdout echo in runs.ts; these are two halves of one fix.
+    //
+    // `/runs/:id/events` serves the job events out of here, so reading them is a GET rather
+    // than a kubectl exec. It serves job_events/ ONLY -- see the route for why.
     if (succeeded) rmSync(pdd, { recursive: true, force: true });
-    else opts.sink?.('stderr', `[fleet-control] ansible artifacts kept at ${pdd}`);
+    else {
+      opts.sink?.(
+        'stderr',
+        `[fleet-control] ansible events kept: GET /runs/${opts.runId}/events, /runs/${opts.runId}/log`,
+      );
+    }
   }
 }
