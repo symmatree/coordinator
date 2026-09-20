@@ -116,7 +116,8 @@
       );
       card.append(btns);
 
-      if (st.status) card.append(renderUnits(st.status, n.name));
+      if (st.probing) card.append($({ className: 'meta', textContent: 'asking...' }));
+      else if (st.status) card.append(renderUnits(st.status, n.name));
 
       if (st.log?.length) {
         const pre = document.createElement('pre');
@@ -188,24 +189,53 @@
   /**
    * Probe on demand, never on a timer and never on load. Nothing should touch the fleet
    * while it is flying, and a button is the whole scheduling policy.
+   *
+   * ONE REQUEST PER NODE, not one for the fleet. The fleet-wide route exists and is still
+   * there for curl, but as a page it was the wrong shape: a sweep takes as long as the
+   * slowest machine -- measured at 102s with one busy Zero -- and a single request means
+   * nothing is shown until all of it lands, so the screen sits blank and then reports
+   * "failed to fetch" if you navigate away from it. Per node, each row fills in as its
+   * machine answers and a slow one costs only its own row.
    */
   async function refreshStatus() {
     const btn = document.getElementById('refresh');
+    const stamp = document.getElementById('stamp');
     btn.disabled = true;
-    document.getElementById('stamp').textContent = 'probing...';
-    try {
-      for (const s of await j('/status')) {
-        const st = state.get(s.node) ?? {};
-        st.status = s;
-        state.set(s.node, st);
-      }
-      document.getElementById('stamp').textContent = 'as of ' + new Date().toLocaleTimeString();
-    } catch (e) {
-      document.getElementById('stamp').textContent = 'probe failed: ' + e.message;
-    } finally {
-      btn.disabled = false;
-      render(await j('/nodes'));
+
+    const nodes = await j('/nodes');
+    let done = 0;
+    const tick = () => {
+      stamp.textContent = done < nodes.length
+        ? `probing... ${done}/${nodes.length}`
+        : 'as of ' + new Date().toLocaleTimeString();
+    };
+    // Mark every node in flight up front, so a slow machine reads as "still asking" rather
+    // than as a row that has not been touched.
+    for (const n of nodes) {
+      const st = state.get(n.name) ?? {};
+      st.probing = true;
+      state.set(n.name, st);
     }
+    tick();
+    render(nodes);
+
+    await Promise.all(nodes.map(async (n) => {
+      const st = state.get(n.name) ?? {};
+      try {
+        st.status = await j(`/nodes/${n.name}/status`);
+      } catch (e) {
+        // A request that fails is this node's answer, not the screen's. The commonest cause
+        // is navigating away mid-probe, which the browser reports as "failed to fetch".
+        st.status = { node: n.name, error: `could not ask: ${e.message}` };
+      }
+      st.probing = false;
+      state.set(n.name, st);
+      done += 1;
+      tick();
+      render(nodes);
+    }));
+
+    btn.disabled = false;
   }
   document.getElementById('refresh').onclick = refreshStatus;
 
