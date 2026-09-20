@@ -200,6 +200,6 @@
       slave-type=bridge
 
       [match]
-      driver={{ campod_gadget_host_drivers }}
+      driver={{ campod_gadget_host_drivers | join(';') }};
   when: campod_gadget_enabled | bool
   notify: Reload NetworkManager connections

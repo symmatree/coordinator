@@ -1,10 +1,44 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { RunRegistry, sinkFor } from '../src/runs.js';
+import { RunRegistry, sinkFor, type Echo } from '../src/runs.js';
 
 const settle = () => new Promise((r) => setTimeout(r, 10));
 
+/** Collect what a registry would have written to the pod's streams. */
+function collector(): { lines: string[]; echo: Echo } {
+  const lines: string[] = [];
+  return { lines, echo: (run, l) => lines.push(`[${run.action} ${run.node} ${run.id.slice(0, 8)}] ${l.line}`) };
+}
+
 describe('RunRegistry', () => {
+  // The registry is in-memory, so its whole history dies with the pod -- which is exactly the
+  // run someone comes asking about afterwards. stdout is collected off the pod and outlives
+  // it, so every line goes there too.
+  it('echoes every line, tagged with the run', async () => {
+    const { lines, echo } = collector();
+    const runs = new RunRegistry(echo);
+    const run = runs.start('converge', 'campod-se', async (emit) => {
+      sinkFor(emit)('stdout', 'TASK [Stop data collection] ok');
+    });
+    await settle();
+    assert.equal(runs.get(run.id)?.status, 'succeeded');
+    assert.ok(
+      lines.some((l) => /^\[converge campod-se [0-9a-f]{8}\] TASK \[Stop data collection\] ok$/.test(l)),
+      JSON.stringify(lines),
+    );
+  });
+
+  it('echoes HOW the run ended, which is the line worth having later', async () => {
+    const { lines, echo } = collector();
+    const runs = new RunRegistry(echo);
+    runs.start('converge', 'campod-se', async () => {
+      throw new Error('no answer within 120s');
+    });
+    await settle();
+    assert.ok(lines.some((l) => l.endsWith('no answer within 120s')), JSON.stringify(lines));
+    assert.ok(lines.some((l) => l.endsWith('[fleet-control] run failed')), JSON.stringify(lines));
+  });
+
   it('returns immediately and finishes in the background', async () => {
     const runs = new RunRegistry();
     const run = runs.start('update', 'campod-sw', async () => {});

@@ -158,6 +158,32 @@
             | regex_replace('(..)(?!$)', '\1:') }}
   when: campod_gadget_enabled | bool
 
+- name: Let NetworkManager manage the gadget interface
+  # Without this the campod-gadget profile below is INERT. NetworkManager ships
+  # /usr/lib/udev/rules.d/85-nm-unmanaged.rules, which sets NM_UNMANAGED=1 for
+  # every DEVTYPE=gadget interface -- and NM will not apply a profile to a device
+  # it does not manage. The symptom is a correct-looking keyfile, an interface
+  # that stays DOWN with no address, and no error anywhere: the host end then
+  # never sees carrier, so the coordinator's bridge port never activates either.
+  #
+  # 90- sorts after 85-, so this assignment wins, and it is scoped to the one
+  # interface we actually use rather than un-doing the vendor rule wholesale.
+  #
+  # Ordered BEFORE the module load on purpose. NM caches a device's managed state
+  # from when the device appeared and does not re-evaluate it on a udev change or
+  # a config reload -- verified on campod-sw. Writing the rule first means usb0 is
+  # managed the moment g_ether creates it; an already-running gadget needs the
+  # reboot this play ends with.
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/90-campod-gadget.rules
+    mode: "0644"
+    content: |
+      # Managed by roles/campod. Counters 85-nm-unmanaged.rules for this one
+      # interface; see the task comment for why the profile is dead without it.
+      SUBSYSTEM=="net", ACTION=="add|change|move", ENV{DEVTYPE}=="gadget", ENV{INTERFACE}=="{{ campod_gadget_iface }}", ENV{NM_UNMANAGED}="0"
+  when: campod_gadget_enabled | bool
+  notify: Reload udev rules
+
 - name: Load the USB gadget modules at boot
   ansible.builtin.copy:
     dest: /etc/modules-load.d/campod-gadget.conf

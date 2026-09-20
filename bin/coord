@@ -61,6 +61,9 @@ Commands:
   restart           docker compose restart [service]
   status            docker compose ps
   version           print what this machine is running, one TOML table per unit
+  sessions list     capture sessions on this device, as JSON
+  sessions package  one closed session into a verified bundle
+  sessions delete   remove sessions and their bundles (capture must be stopped)
   logs [service]    Follow logs (default: all services)
   shell [service]   Interactive shell in service (default: stack's first service)
   exec <service> <cmd...>  Run command in service container
@@ -142,6 +145,11 @@ version)
 	# with no stack installed, which is one of the things the caller needs to be
 	# able to tell apart from a machine that did not answer (#326).
 	exec /usr/local/bin/coord-version "$@"
+	;;
+sessions)
+	# Same reasoning: captures outlive any stack, and a machine whose stack was
+	# removed still has data worth listing and packaging (#302).
+	exec /usr/local/bin/coord-sessions "$@"
 	;;
 logs)
 	require_compose_file

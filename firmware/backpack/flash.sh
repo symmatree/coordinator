@@ -22,10 +22,17 @@ do_download() {
 	rm -f "$FWDIR"/*.bin
 	echo ">> fetching latest backpack-firmware from main (needs internet + gh)..." >&2
 	local rid
-	rid="$(gh run list -R symmatree/coordinator --workflow build-backpack.yaml \
-		--branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+	# Ask for the artifact by name, not for the newest successful run:
+	# build-firmware.yaml builds backpack only when firmware/backpack
+	# changed, so most of its runs
+	# carry no backpack artifact. This also skips runs whose artifacts expired.
+	rid="$(gh api \
+		"repos/symmatree/coordinator/actions/artifacts?name=backpack-firmware&per_page=50" \
+		--jq 'first(.artifacts[]
+			| select(.expired == false and .workflow_run.head_branch == "main")
+			| .workflow_run.id)')"
 	[[ -n $rid ]] || {
-		echo "!! no successful build-backpack run found" >&2
+		echo "!! no unexpired backpack-firmware artifact found on main" >&2
 		exit 1
 	}
 	gh run download -R symmatree/coordinator "$rid" -n backpack-firmware -D "$FWDIR" >&2

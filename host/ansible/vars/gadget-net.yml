@@ -32,7 +32,14 @@ campod_gadget_bridge: br0
 # one, and the primary is path-based (enp1s0u1u2...), i.e. determined by which hub
 # port the campod is plugged into rather than by which campod it is. Matching a name
 # glob would be matching cabling. The driver is the actual invariant.
-campod_gadget_host_drivers: cdc_ether rndis_host cdc_subset
+# A LIST, not a space-separated string. NetworkManager keyfile list properties
+# are ';'-separated; a value with spaces in it is one pattern, not three, and
+# match.driver then matches no device at all. NM reports this as "device does
+# not satisfy match.driver property" while the profile looks correct on disk.
+campod_gadget_host_drivers:
+  - cdc_ether
+  - rndis_host
+  - cdc_subset
 
 # Addressing. Static on both ends, no DHCP and nothing to run on the coordinator
 # (#211). PROPOSED, pending the #12 contract -- this is the one thing here that is

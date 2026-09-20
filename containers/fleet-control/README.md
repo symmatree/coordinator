@@ -70,6 +70,19 @@ default, which in a container is neither predictable nor persistent.
 rather than parsing `-v` output, which is not a stable interface and prints each task's entire
 result object — one `docker.service` fact block is several kilobytes.
 
+### The run log outlives the run
+
+Every line a run produces also goes to **the pod's own stdout/stderr**, tagged
+`[<action> <node> <run-id8>]`, as well as to `/runs/:id` and the event stream. The registry is
+in memory, so a pod restart takes its whole history with it -- and that is exactly the run
+someone comes asking about afterwards. Log collection reads the pod's streams and outlives it.
+
+And **ansible-runner's private data directory is kept unless the play exited 0.** Its
+`artifacts/<ident>/` holds each task's whole result object, which is what says *how* a play
+ended when the rendered lines do not; the service names the path on the run's stderr when it
+keeps one. It is `/tmp` inside the container, so it still goes when the pod does -- the stdout
+echo is the half that survives that. Nothing evicts these, and a successful run leaves none.
+
 ## curl, not just the browser
 
 The UI is one client of the routes; it has no private endpoints.

@@ -77,6 +77,95 @@ ssh.exe pi@coordinator.local.symmatree.com
 
 1Password prompts for approval on first key use per parent shell (subsequent connections in that shell reuse it). WSL-native `ssh` does not see the 1Password agent.
 
+## USB gadget network (coordinator <-> campods)
+
+**Working as of 2026-09-20**, first verified between `campod-sw` and the coordinator. Each
+campod presents itself as a USB Ethernet device; the coordinator bridges them all onto one
+L2 segment and holds a single address.
+
+```
+campod  usb0 (g_ether)  --micro-USB--> hub --> coordinator usbN (cdc_ether) --> br0
+        10.55.0.13/24                                                          10.55.0.1/24
+```
+
+| | |
+|---|---|
+| subnet | `10.55.0.0/24`, **static on both ends, no DHCP** |
+| coordinator | `10.55.0.1` on `br0` |
+| campods | `.11` ne, `.12` se, `.13` sw, `.14` nw |
+| measured | ~0.35 ms RTT, MTU 1500 |
+| contract | `host/ansible/vars/gadget-net.yml` -- one file both roles read |
+
+Static rather than DHCP (#211): nothing has to run on the coordinator, and a campod's
+address does not depend on a lease. The MACs are derived from the hostname
+(`02:` + five bytes of `sha256("campod-dev:"<hostname>)`, and `campod-host:` for the other
+end) and pinned as `g_ether` module parameters, so a pod's identity on the wire is stable
+across reboots without a per-pod profile.
+
+### Which layer owns which half
+
+- **Image** -- `dtoverlay=dwc2,dr_mode=peripheral` on the campod only. Device tree, so it
+  has to come from the image. The coordinator is the USB *host* and needs nothing.
+- **Ansible, campod** -- load `dwc2`/`g_ether`, pin the MACs, the `campod-gadget`
+  NetworkManager profile carrying the static address, and the udev rule below.
+- **Ansible, coordinator** -- `br0`, and one `campod-bridge-port` profile with
+  `multi-connect=3` that enslaves every matching interface as it appears. It matches on
+  **driver**, not interface name: the primary name of a USB NIC here is path-based
+  (`enp1s0u1u2...`), which identifies the hub port rather than the campod.
+
+### Two things that make this not work, both since fixed
+
+Recorded because both failed **silently** and each one alone is enough to leave the link
+dead (coordinator [#354](https://github.com/symmatree/coordinator/pull/354)).
+
+**NetworkManager will not manage a USB gadget interface.** It ships
+`/usr/lib/udev/rules.d/85-nm-unmanaged.rules` containing
+`ENV{DEVTYPE}=="gadget", ENV{NM_UNMANAGED}="1"`, and NM does not apply a profile to a device
+it does not manage -- so a perfectly correct campod keyfile is inert and `usb0` stays DOWN
+with no address and no error. The fix is a `90-` udev rule clearing the property, ordered
+before the module load. An NM `conf.d` `managed=1` block does **not** work, and reloading
+udev does not help a live interface: NM caches the managed state from when the device
+appeared.
+
+**NM keyfile list properties are `;`-separated.** `match.driver` written as
+`cdc_ether rndis_host cdc_subset` is one pattern, not three, and matches nothing. On disk it
+looks right; during autoconnect NM silently falls back to a default `Wired connection N`
+profile and runs DHCP against nothing. Asking by hand is what says it plainly:
+`device does not satisfy match.driver property`.
+
+These were coupled, which is what made it confusing: because the gadget end never came up,
+the host end never saw carrier, so the coordinator's bridge port never activated either --
+one campod-side rule disabled both halves.
+
+### Checking it
+
+```bash
+# campod
+ip -br addr show usb0            # UP, 10.55.0.x/24
+nmcli -g GENERAL.CONNECTION device show usb0   # campod-gadget
+# coordinator
+ls /sys/class/net/br0/brif/      # the usbN interfaces currently enslaved
+ping -c3 10.55.0.13
+```
+
+`/sys/class/udc/` being non-empty on a campod shows the image's half took effect; the claim
+check in `dotfiles-symm/pi-image` asserts that.
+
+### One wedge during bring-up, with a known cause
+
+While the campod's `usb0` was still DOWN (the udev bug above), the coordinator had already
+enumerated the gadget, bound `cdc_ether` and was bridging to it. `g_ether` does not service
+its OUT endpoint with the netdev down, so the host's transmits had nowhere to land:
+`NETDEV WATCHDOG: transmit queue 0 timed out`, 60 tx_errors, and eventually control
+transfers returning `-ETIMEDOUT` so the driver could not even rebind. Recovery needed
+`modprobe -r g_ether && modprobe g_ether` **on the campod** -- an NM reconnect and a driver
+unbind on the coordinator both failed.
+
+That is a deterministic consequence of one end being misconfigured, not a property of the
+link. It has not recurred since both ends were configured correctly, across a cold boot,
+two converges and several reboots, with zero tx errors. Noted so the symptom is
+recognisable, not as something to design around.
+
 ## Related
 
 - [host-setup.md](host-setup.md) — base flash + Imager settings

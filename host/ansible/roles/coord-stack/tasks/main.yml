@@ -93,6 +93,27 @@
     dest: /usr/local/bin/coord-version
     mode: "0755"
 
+# coord-sessions pipes its tar through the zstd CLI. Not a library: trixie ships
+# Python 3.13 and stdlib zstd arrived in 3.14. Declared next to the tool that needs
+# it rather than in bootstrap's prerequisites, where the reason would be invisible.
+- name: Install zstd (the session packager compresses with it)
+  ansible.builtin.apt:
+    install_recommends: false
+    name: zstd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Post-flight recovery's device half (#302). Installed the same way and for the
+# same reason: `coord sessions` execs it, and the platform can also call it over
+# plain SSH without ansible in the path.
+- name: Install the session packager
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ coord_checkout }}/bin/coord-sessions"
+    dest: /usr/local/bin/coord-sessions
+    mode: "0755"
+
 # Fetch the images as part of convergence, not as a step somebody has to remember
 # afterwards. This is what makes `coord start --pull never` safe: a converged node
 # has its images by definition, so a missing one at boot means something is wrong

@@ -1,0 +1,73 @@
+name: "build-firmware"
+# No `paths:` filter, for the same reason as build-containers.yaml: a workflow
+# skipped by path filtering never reports, so it cannot be a required check.
+# See docs/ci.md.
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: build-firmware-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/resolve-components
+        id: resolve
+        with:
+          family: firmware
+
+  build:
+    name: build (${{ matrix.component }})
+    needs: changes
+    if: needs.changes.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-firmware
+        with:
+          target: ${{ matrix.component }}
+          context: ${{ matrix.context }}
+          output_mount: ${{ matrix.output_mount }}
+          artifact_glob: ${{ matrix.artifact_glob }}
+
+  # The required check for firmware. See the note on containers-ok: `always()`
+  # is what stops a failed build from being reported as a skipped-and-therefore
+  # passing gate.
+  firmware-ok:
+    needs: [changes, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "upstream results: ${RESULTS}"
+          for result in ${RESULTS}; do
+            case "${result}" in
+              success | skipped) ;;
+              *)
+                echo "::error::a firmware job reported '${result}'"
+                exit 1
+                ;;
+            esac
+          done
+          echo "every firmware job succeeded or was not needed"
