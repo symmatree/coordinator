@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Checks how bin/coord picks the processes to signal, against a fake /proc.
+# Checks bin/coord's stop against real processes named dumb-init.
 # Run by hand: bash bin/test_coord_stop.sh
+#
+# Uses a copy of /bin/sleep named dumb-init, because pkill -x matches comm --
+# which comes from the executable name, not argv[0], so `exec -a` would not do.
 set -uo pipefail
 cd "$(dirname "$0")" || exit 2
 
@@ -10,43 +13,42 @@ bad() {
 	echo "FAIL $1  ${2:-}"
 	fail=$((fail + 1))
 }
-want() { # description, needle -- present in $got
-	if grep -qw "$2" <<<"$got"; then ok "$1"; else bad "$1" "missing $2 from '$got'"; fi
-}
-reject() { # description, needle -- absent from $got
-	if grep -qw "$2" <<<"$got"; then bad "$1" "leaked $2"; else ok "$1"; fi
-}
 
-root=$(mktemp -d)
-trap 'rm -rf "$root"' EXIT
-
-mk() { # pid, comm, children
-	mkdir -p "$root/$1/task/$1"
-	echo "$2" >"$root/$1/comm"
-	if [[ -n ${3:-} ]]; then echo "$3" >"$root/$1/task/$1/children"; fi
-}
-
-mk 1234 "sshd" ""               # ordinary host process
-mk 5000 "dumb-init" "5001 5002" # container init, two children
-mk 6000 "dumb-init" ""          # container init with no child yet
-mk 5001 "python3" ""            # the binary itself
-mk 7000 "dumb-init-ish" "7001"  # near-miss name must not match
-
-pick() { bash -c 'source <(sed -n "/^COORD_PROC=/,/^}/p" ./coord); container_inits'; }
-
-got=$(COORD_PROC="$root" pick | tr '\n' ' ' | tr -s ' ')
-echo "     selected: $got"
-want "finds a container init" 5000
-want "finds every container init, not just the first" 6000
-reject "does not match a near-miss comm" 7000
-reject "ignores ordinary host processes" 1234
-reject "does not descend to the child; dumb-init proxies for it" 5001
-
-# Real /proc: this box runs no containers, so nothing should be selected.
-real=$(pick | tr -d '[:space:]')
-if [[ -z $real ]]; then ok "selects nothing on a host with no containers"; else
-	bad "selects nothing on a host with no containers" "got '$real'"
+if pgrep -x dumb-init >/dev/null 2>&1; then
+	echo "SKIP: a real dumb-init is running here; this test would signal it"
+	exit 0
 fi
+
+d=$(mktemp -d)
+trap 'rm -rf "$d"' EXIT
+cp /bin/sleep "$d/dumb-init"
+cp /bin/sleep "$d/dumb-initish"
+
+run_stop() { bash -c 'source <(sed -n "/^# Each container/,/^}/p" ./coord); stop_processes' 2>&1; }
+
+out=$(run_stop)
+if grep -q "no container init processes found" <<<"$out"; then
+	ok "reports nothing to do when no container is running"
+else bad "reports nothing to do when no container is running" "$out"; fi
+
+"$d/dumb-init" 30 &
+victim=$!
+"$d/dumb-initish" 30 &
+bystander=$!
+sleep 0.3
+
+out=$(run_stop)
+sleep 0.5
+if grep -q "SIGTERM dumb-init" <<<"$out"; then ok "reports what it signalled"; else
+	bad "reports what it signalled" "$out"
+fi
+if kill -0 "$victim" 2>/dev/null; then bad "signals a process whose comm is dumb-init" "still alive"; else
+	ok "signals a process whose comm is dumb-init"
+fi
+if kill -0 "$bystander" 2>/dev/null; then ok "leaves a near-miss comm alone"; else
+	bad "leaves a near-miss comm alone" "killed dumb-initish too"
+fi
+kill "$bystander" 2>/dev/null
 
 echo
 if ((fail == 0)); then
