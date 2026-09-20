@@ -82,17 +82,21 @@ is **not a sticky off**: the boot unit's `ExecStart` is unconditional
 power cycle and nothing has to remember to undo this. Keeping a device down across a reboot
 means disabling that unit, which is a deliberate act and not a button.
 
-**Reboot** stops the stack, reboots, and **waits for the device to answer again** -- the one
-place this service waits for a device rather than re-asking. It is a playbook
-(`host/ansible/reboot.yaml`) for exactly that reason: `ansible.builtin.reboot` survives the
-connection dropping underneath it and then waits, and has been rebooting these devices from
-`site.yaml` since #263. The play carries no quiesce of its own; the caller sends the signal
-first, so stopping has one definition rather than a third restatement.
+**Reboot** is one command over ssh, `sudo systemctl --no-block reboot`, **gated on nothing**.
+It does not stop the stack first: a reboot is the way out of a stuck box -- the thing that was
+otherwise done by hand over ssh or by pulling power -- so it must not depend on anything else
+working. The containers get systemd's shutdown signal on the way down; press **Stop** first if
+you want them to go on our timeout instead.
 
-The device comes back **running**, not quiesced. That is the point of the button: a capture
-session is the kernel boot id, so **only a reboot closes one**, and nothing can be retrieved
-off a device until its session has been closed
-([#302](https://github.com/symmatree/coordinator/issues/302)).
+**Nothing waits for it to come back.** Same as everything else here: the device answers again
+or it does not, and the status screen is the check
+([#326](https://github.com/symmatree/coordinator/issues/326)).
+
+`--no-block` queues the job and returns rather than blocking on the transition, so ssh gets a
+real exit status instead of racing sshd's own shutdown. That race is not fully closable from
+here, so a connection that drops (`closed by remote host`, `Broken pipe`, `Connection reset`)
+is read as the reboot starting, while `Connection timed out`, `refused` and a rejected key
+still fail -- those mean no command got in at all.
 
 ## Progress comes from events, not scraped text
 
@@ -145,7 +149,7 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /nodes` | the roster |
 | `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
 | `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
-| `POST /nodes/:name/reboot` | stop, reboot, wait for it to answer again |
+| `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
 | `GET /runs/:id/log` | a failed play as ansible printed it |

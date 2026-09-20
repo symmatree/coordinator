@@ -38,10 +38,10 @@ COPY host/ansible /app/ansible
 # The playbook runs local-connection on purpose so the same recipes work inside an image build
 # (see site.yaml). Use that here: a syntax error fails CI rather than a provisioning run.
 #
-# ALL THREE the service can invoke, not just site.yaml. reimage.yaml and reboot.yaml were
-# reachable from a button with nothing checking them, which is the case this guard exists for.
+# BOTH the service can invoke, not just site.yaml. reimage.yaml was reachable from a button
+# with nothing checking it, which is the case this guard exists for.
 RUN ansible-playbook --syntax-check -i localhost, --connection=local \
-      /app/ansible/site.yaml /app/ansible/reimage.yaml /app/ansible/reboot.yaml
+      /app/ansible/site.yaml /app/ansible/reimage.yaml
 
 USER node
 EXPOSE 8080

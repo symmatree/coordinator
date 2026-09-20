@@ -65,18 +65,18 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
   });
 
   /**
-   * Stop, reboot, and wait for the device to answer again.
+   * Stop the stack and reboot. Returns once the device has taken the request.
    *
-   * The run ends when the machine is back, which is the one place this service waits for a
-   * device rather than re-asking: a reboot is what CLOSES a capture session, so "is it back"
-   * is the operator's next question every time and there is nothing else to do meanwhile.
+   * Nothing waits for it to come back -- the status screen is the check, as for everything
+   * else here. A stop that fails does not stop the reboot: being unable to quiesce is one of
+   * the states this gets pressed in.
    */
   app.post<{ Params: { name: string } }>('/nodes/:name/reboot', async (req, reply) => {
     const node = findNode(cfg.inventory, req.params.name);
     if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
     try {
-      const run = runs.start('reboot', node.name, (emit, runId) =>
-        reboot(node, cfg.action, { runId }, sinkFor(emit)),
+      const run = runs.start('reboot', node.name, (emit) =>
+        reboot(node, cfg.action, sinkFor(emit)),
       );
       return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
     } catch (err) {
