@@ -1,0 +1,35 @@
+name: "tests"
+# No `paths:` filter: a workflow skipped by path filtering never reports a
+# check, so it could not be required. See docs/ci.md.
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      # The JupyterHub notebook image, built by symmatree/tiles and public, so
+      # no registry login. --user because its default is jovyan (uid 1000)
+      # while the checkout belongs to the runner, and HOME with it since
+      # /home/jovyan belongs to uid 1000.
+      - name: Run in the notebook image
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -v "${PWD}:/repo" \
+            -w /repo \
+            ghcr.io/symmatree/tiles/datascience-notebook-ssh:main \
+            ./test.sh
