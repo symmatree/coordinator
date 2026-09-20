@@ -26,6 +26,7 @@ the startup-side numbers were first measured).
 | journal | ansible task invocations, async countdowns, systemd shutdown sequence, `coord-throttle-log` every 30s | `journalctl -b -N` | persistent (#100) |
 | docker logs | `capture: received signal 15`, frame counts, accel session summaries | `docker logs -t <container>` | survive reboots; containers are reused, not recreated |
 | `docker inspect` | `ExitCode`, `FinishedAt` | | 137 = 128+9 = SIGKILL |
+| **per-process counters** | `rchar`/`wchar` vs `read_bytes`/`write_bytes`; minor and major fault counts | `/proc/<pid>/io`, fields 10-13 of `/proc/<pid>/stat` | **the only source that attributes I/O to a process** -- collectd is whole-disk. Must be sampled *during* the episode: read twice ~20s apart and difference. Used this way by os-and-driver-guy on the import storm |
 | off-box TCP/banner probe | responsive / accepts-TCP-but-silent / no-TCP | notebook | **only measures sshd**, says nothing about docker or load |
 
 Counters not rates was the right call: gaps across a power cut are visible and the
@@ -45,6 +46,13 @@ Teardown, campod-se 2026-09-20, across a stop:
 
 ~56 MiB allocated, ~70 MiB of page cache evicted. No swap, so only file-backed pages
 are reclaimable; everything whose text was evicted must be re-read.
+
+**The attribution comes from per-process counters, not from the disk totals.** On the
+import storm, os-and-driver-guy sampled `/proc/<pid>/io` twice 20s apart and found
+`rchar` near zero while `read_bytes` was large -- i.e. the process was not issuing
+`read()` calls at all. The volume was page faults on mapped text being pulled back in.
+That is what distinguishes T1 from "something is reading a lot of files", and no
+whole-disk counter can make that distinction.
 
 Startup, from #316: `workingset_refault_file` ~6,000 pages/s during the camera import
 against 6.9/s idle. 6000 x 4 KiB = **~24.6 MB/s**, which is the read rate measured at
@@ -185,11 +193,15 @@ Read this before trusting any timeline.
 3. **The off-box probe only measures sshd.** A banner returning means sshd could fork, not
    that docker finished, load dropped, or anything completed. This was misread once as
    "recovered" when the stop had already failed six minutes earlier.
-4. **Observation costs load.** A handful of `docker ps` calls pushed load to 7.4 and made
+4. **On-box sampling during an episode IS feasible**, contrary to a claim I made while
+   investigating. The machine is slow, not dead -- two reads of `/proc/<pid>/io` 20s
+   apart succeed, and that pair is what produced the page-fault attribution. Do not
+   conclude that a window is unmeasurable because sshd is slow to answer.
+5. **Observation costs load.** A handful of `docker ps` calls pushed load to 7.4 and made
    sshd miss its window for 7s. Any on-box sampling perturbs the thing being measured.
-5. **Counters reset across a boot**, producing one nonsensical sample (~1000 MiB/s on both
+6. **Counters reset across a boot**, producing one nonsensical sample (~1000 MiB/s on both
    read and write). Discard rather than interpret.
-6. **Almost everything here is n=1.** The ledger says so per row.
+7. **Almost everything here is n=1.** The ledger says so per row.
 
 ## Next experiments
 
@@ -204,3 +216,9 @@ Read this before trusting any timeline.
    actually happens in flight is untested.
 5. Identify the ~56 MiB allocation (T5): resident set of the docker CLI and compose
    plugin on arm64 during a stop.
+6. **During the next episode**, take the per-process pair: `/proc/<pid>/io` and the
+   fault counts from `/proc/<pid>/stat`, twice ~20s apart, for dockerd, the compose
+   process, capture.py and campod-accel. `rchar` against `read_bytes` says whether each
+   is reading or faulting; major faults say who is thrashing. This is the measurement
+   that would attribute the teardown storm the way the import storm was attributed, and
+   nothing collected so far does it.
