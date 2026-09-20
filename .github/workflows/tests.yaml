@@ -27,10 +27,18 @@ jobs:
 
       # Built by symmatree/tiles (.github/workflows/build-datascience-notebook-ssh.yaml)
       # and public, so no registry login. linux/amd64, matching the runner.
+      # --user: the image's default is jovyan (uid 1000) and the checkout
+      # belongs to the runner, so the container would find the repository
+      # read-only. bin/test_coord_version.py writes a fixture into the
+      # repository root and removes it again, which is fine in the clone a
+      # human owns; this gives the container the same view.
+      # HOME goes to /tmp with it, since /home/jovyan belongs to uid 1000.
       - name: Run workstation tests in the notebook image
         run: |
           set -euo pipefail
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
             -v "${PWD}:/repo" \
             -w /repo \
             ghcr.io/symmatree/tiles/datascience-notebook-ssh:main \
