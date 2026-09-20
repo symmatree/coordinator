@@ -1,0 +1,35 @@
+---
+# Reboot a device and wait for it to answer again. The whole playbook.
+#
+#   ansible-playbook host/ansible/reboot.yaml -i '10.0.5.237,' -u pi
+#
+# WHY THIS IS A PLAYBOOK AND `stop` IS NOT. A stop is one signal and wants nothing
+# between ssh and the kernel (#362). A reboot has to survive the connection dropping
+# underneath it and then wait for the machine to come back, and `ansible.builtin.reboot`
+# already does both -- correctly, and on this hardware, since site.yaml has rebooted
+# these devices this way since #263.
+#
+# THERE IS NO QUIESCE HERE, deliberately. The caller sends the stop signal over plain
+# ssh first (`containers/fleet-control` `stopCapture`), so "how to stop a container set"
+# has one definition rather than a third restatement of it. Rebooting without that first
+# would still work -- systemd signals the containers on the way down -- but it would give
+# them the shutdown's timeout rather than ours.
+#
+# The stack comes back up: the boot unit's ExecStart is unconditional (#97), so this
+# ends with the device running, not quiesced. Closing a capture session is what it is
+# for -- a session is a boot id, so only a reboot ends one and nothing can be packaged
+# until it has (#302).
+
+- name: Rekon reboot
+  hosts: all
+  become: true
+  # Nothing here reads a fact.
+  gather_facts: false
+
+  tasks:
+    # reboot_timeout is the module's own 600s. A Zero 2 W takes well under that and a
+    # box that needs longer is not coming back on its own; no number of ours would be
+    # better informed than the default.
+    - name: Reboot and wait for the device to come back
+      ansible.builtin.reboot:
+        msg: Rekon fleet-control -- operator-requested reboot
