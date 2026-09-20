@@ -78,7 +78,10 @@ async function coordSessions<T>(
         '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
         '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
         `${ctx.inventory.user}@${host}`,
-        quiesced(['coord', 'sessions', ...args].join(' ')),
+        // sudo for the same reason the quiesce needs it: the capture tree is written by
+        // containers running as root, so `delete` cannot rmtree it and `package` cannot
+        // read it as `pi`. Reported as EACCES per session, which looked like a coord bug.
+        quiesced(['sudo', 'coord', 'sessions', ...args].join(' ')),
       ],
       // Packaging a session is minutes of zstd on a Zero, so this is the caller's to set.
       { maxBuffer: 16 * 1024 * 1024, timeout: timeoutSec * 1000 },
