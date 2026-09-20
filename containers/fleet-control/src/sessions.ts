@@ -9,6 +9,7 @@
 // point: the path is resolved where the data lives, and an id containing a separator is
 // refused there rather than interpreted here.
 
+import { QUIESCE, quiesced } from './quiesce.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { hostOf, type FleetNode } from './inventory.js';
@@ -77,7 +78,7 @@ async function coordSessions<T>(
         '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
         '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
         `${ctx.inventory.user}@${host}`,
-        'coord', 'sessions', ...args,
+        quiesced(['coord', 'sessions', ...args].join(' ')),
       ],
       // Packaging a session is minutes of zstd on a Zero, so this is the caller's to set.
       { maxBuffer: 16 * 1024 * 1024, timeout: timeoutSec * 1000 },
@@ -152,9 +153,7 @@ export async function stopCapture(node: FleetNode, ctx: ActionContext): Promise<
         '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
         '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
         `${ctx.inventory.user}@${host}`,
-        // pkill exits 1 when nothing matched, which is the normal already-stopped case;
-        // anything else is a real failure and must still surface.
-        'pkill -x -TERM dumb-init || [ $? -eq 1 ]',
+        QUIESCE,
       ],
       // Bounded, but this returns as soon as the signal is sent -- it does not wait for the
       // containers to exit. On campod-se that was 1.1s for the accel and 19.0s for the camera

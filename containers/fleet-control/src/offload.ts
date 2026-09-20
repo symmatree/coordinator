@@ -9,6 +9,7 @@
 // partially assembled flight" a state something has to detect and clean up; naming first
 // means the directory either has every node's contribution or is visibly short one.
 
+import { quiesced } from './quiesce.js';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
@@ -64,9 +65,14 @@ async function fetchFile(
     '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
     '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
     `${ctx.inventory.user}@${hostOf(node)}`,
+    // Quiesced like every other command we send a device. Safe to prefix a binary stream:
+    // pkill and sleep write nothing to stdout and pgrep is redirected, so only cat's bytes
+    // come back. By this point `package` has usually stopped things already; this costs
+    // nothing when there is nothing to stop.
+    //
     // Quoted: the path comes from the device's own package output, but it is still a string
     // going into a remote shell and there is no reason to let it be anything else.
-    'cat', `'${remotePath.replace(/'/g, "'\\''")}'`,
+    quiesced(`cat '${remotePath.replace(/'/g, "'\\''")}'`),
   ]);
 
   const hash = createHash('sha256');
