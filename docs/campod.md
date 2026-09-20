@@ -5,6 +5,10 @@
 Each of the four arms carries some amount of sensing. Currently this is a campod: a pi zero 2 w driving a camera module, collecting from a pair of accelerometers, and
 talking to the coordinator over a gadget network on USB.
 
+On the Zero 2 W's behaviour under load -- it becomes barely able to make progress when
+the capture stack starts and when it stops, sometimes for minutes -- see
+[analysis/pi-zero-unresponsiveness-experiments.md](../analysis/pi-zero-unresponsiveness-experiments.md).
+
 Campods are mounted at the **arm-frame junction** (where the arm meets the central frame plates -- the structurally stiffest point of the arm). The mount is a clamshell clamping the arm,
 with the pi zero mounted on the top side and the camera in the lower half, with a gap between the clamshell faces so the arm-faces are compression loaded for friction, as well as
 a certain amount of geometric constraint (the arms are not quite parallel sections in that region). Currently held on with two zipties around the outside, in grooves at each end of the
