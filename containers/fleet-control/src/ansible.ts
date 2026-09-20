@@ -151,6 +151,7 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
   // ansible-runner wants a private data directory: project/ holds the playbook, env/ the
   // settings and extra vars, inventory/ the hosts.
   const pdd = mkdtempSync(join(tmpdir(), 'fleet-converge-'));
+  let succeeded = false;
   try {
     mkdirSync(join(pdd, 'env'), { recursive: true });
     mkdirSync(join(pdd, 'inventory'), { recursive: true });
@@ -227,15 +228,25 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
     child.stdout.on('data', (c: Buffer) => out.push(c));
     child.stderr.on('data', (c: Buffer) => err.push(c));
 
-    return await new Promise<number>((resolve, reject) => {
+    const code = await new Promise<number>((resolve, reject) => {
       child.on('error', (e) => reject(new Error(`could not run ansible-runner: ${e.message}`)));
-      child.on('close', (code) => {
+      child.on('close', (c) => {
         out.end();
         err.end();
-        resolve(code ?? -1);
+        resolve(c ?? -1);
       });
     });
+    succeeded = code === 0;
+    return code;
   } finally {
-    rmSync(pdd, { recursive: true, force: true });
+    // KEPT UNLESS THE PLAY SUCCEEDED. `artifacts/<ident>/` holds the raw job events -- every
+    // task's whole result object, which is what says HOW a play ended when the rendered lines
+    // do not. Deleting it unconditionally threw that away at precisely the moment it was
+    // wanted; a run that exited 0 has nothing in it anyone will read.
+    //
+    // This is /tmp inside the container, so it still goes when the pod does. What outlives a
+    // pod is the stdout echo in runs.ts; these are two halves of one fix.
+    if (succeeded) rmSync(pdd, { recursive: true, force: true });
+    else opts.sink?.('stderr', `[fleet-control] ansible artifacts kept at ${pdd}`);
   }
 }
