@@ -5,9 +5,14 @@
 // request open for the duration, and the caller polls or streams. That is also what makes the
 // actions reachable by something that is not a browser: `curl` can start a run and follow it.
 //
-// In-memory and bounded. History across restarts is not a goal -- the run log is an
-// operational view of what is happening now, not a record of the fleet. What IS durable is
-// the node state itself, which `probe` reads back from the node at any time.
+// In-memory and bounded. The registry is an operational view of what is happening now, and
+// what IS durable about the fleet is the node state itself, which `probe` reads back from a
+// node at any time.
+//
+// But the LINES are not only an operational view. A play that hung, and then a pod restart,
+// used to leave no record anywhere of how it ended -- and that is exactly the run someone
+// comes asking about. So every line also goes to the pod's stdout, which is collected off the
+// pod and outlives it. The screen is unchanged; the record just stops dying with the process.
 
 import { randomUUID } from 'node:crypto';
 
@@ -37,11 +42,33 @@ const MAX_LINES = 5_000;
 
 type Listener = (line: RunLine) => void;
 
+/** Where run lines are echoed, in addition to the registry. */
+export type Echo = (run: Run, line: RunLine) => void;
+
+/**
+ * Write one line to the pod's own streams, where log collection will pick it up.
+ *
+ * Prefixed with the action, the node and the run, because runs against different nodes
+ * interleave here and a bare line could have come from any of them. `stderr` lines go to
+ * stderr so the two streams stay distinguishable after they leave this process.
+ */
+export const echoToProcess: Echo = (run, l) => {
+  const where = `[${run.action} ${run.node} ${run.id.slice(0, 8)}]`;
+  (l.stream === 'stderr' ? process.stderr : process.stdout).write(`${where} ${l.line}\n`);
+};
+
 export class RunRegistry {
   private runs = new Map<string, Run>();
   private listeners = new Map<string, Set<Listener>>();
   /** Fired once per watcher when a run finishes, after its last line. */
   private enders = new Map<string, Set<() => void>>();
+
+  /**
+   * `echo` is injectable for the same reason the lookups in `status.ts` are: so the behaviour
+   * can be asserted without capturing the process's own streams, which a test runner is also
+   * writing to.
+   */
+  constructor(private readonly echo: Echo = echoToProcess) {}
 
   /** Is an action already running against this node? */
   activeFor(node: string): Run | undefined {
@@ -109,6 +136,9 @@ export class RunRegistry {
     this.prune();
 
     const emit: Listener = (l) => {
+      this.echo(run, l);
+      // The cap is on what this process HOLDS. stdout above is already written, so a run that
+      // overruns is truncated on the screen and complete in the pod log.
       if (run.lines.length < MAX_LINES) run.lines.push(l);
       else if (run.lines.length === MAX_LINES) {
         run.lines.push({ t: l.t, stream: 'stderr', line: `[fleet-control] output truncated at ${MAX_LINES} lines` });
@@ -127,9 +157,11 @@ export class RunRegistry {
       })
       .finally(() => {
         run.endedAt = new Date().toISOString();
-        for (const fn of this.listeners.get(run.id) ?? []) {
-          fn({ t: run.endedAt, stream: 'stdout', line: `[fleet-control] run ${run.status}` });
-        }
+        // How the run ENDED is the single line most worth having later, so it is echoed too
+        // -- not only handed to whoever happens to be watching.
+        const last: RunLine = { t: run.endedAt, stream: 'stdout', line: `[fleet-control] run ${run.status}` };
+        this.echo(run, last);
+        for (const fn of this.listeners.get(run.id) ?? []) fn(last);
         this.listeners.delete(run.id);
         for (const fn of this.enders.get(run.id) ?? []) fn();
         this.enders.delete(run.id);
