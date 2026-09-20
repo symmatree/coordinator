@@ -49,43 +49,29 @@ default_service() {
 	fi
 }
 
-# Overridable so the selection can be tested against a fake tree; nothing but the
-# test sets it.
-COORD_PROC="${COORD_PROC:-/proc}"
-
 # Each container's init. Every image we run on a device has
 # ENTRYPOINT ["/usr/bin/dumb-init", "--", ...], so this is one name we put there
-# ourselves -- nothing is guessed and there is no table to keep in sync.
+# ourselves -- nothing guessed, no table to keep in sync.
+#
+# pkill -x matches comm exactly, the same selection the playbooks make with
+# `raw: pkill -x -TERM dumb-init`. One implementation, two callers.
 #
 # Signalling dumb-init rather than the program is not indirection: proxying is
-# what it is for, and it does more than we would. dumb-init.c:66 sends the signal
-# to -child_pid, the child's whole process GROUP (use_setsid defaults to 1), and
-# after the child exits it forwards SIGTERM to any remaining children (line 113).
-# Signalling the program directly would reach only that one process. We pass no
-# --rewrite, so SIGTERM stays SIGTERM.
-container_inits() {
-	local comm pid
-	for comm in "${COORD_PROC}"/[0-9]*/comm; do
-		[[ -r ${comm} ]] || continue
-		[[ $(<"${comm}") == dumb-init ]] || continue
-		pid=${comm#"${COORD_PROC}"/}
-		echo "${pid%/comm}"
-	done
-}
-
+# what it is for, and it does more than we would. dumb-init.c:66 sends the
+# signal to -child_pid, the child's whole process GROUP (use_setsid defaults to
+# 1), and after the child exits it forwards SIGTERM to any remaining children
+# (line 113). We pass no --rewrite, so SIGTERM stays SIGTERM.
+#
+# rc=1 from pkill means nothing matched, which is not an error here.
 stop_processes() {
-	local pids
-	# shellcheck disable=SC2207  # word splitting is the point
-	pids=($(container_inits))
-	if ((${#pids[@]} == 0)); then
+	local before
+	before=$(pgrep -x -d' ' dumb-init 2>/dev/null || true)
+	if [[ -z ${before} ]]; then
 		echo "coord: no container init processes found" >&2
 		return 0
 	fi
-	local pid
-	for pid in "${pids[@]}"; do
-		echo "coord: SIGTERM ${pid} ($(tr -d '\0' <"${COORD_PROC}/${pid}/cmdline" 2>/dev/null))" >&2
-		kill -TERM "${pid}" 2>/dev/null || true
-	done
+	echo "coord: SIGTERM dumb-init [${before}]" >&2
+	pkill -x -TERM dumb-init || true
 }
 
 usage() {
@@ -95,7 +81,7 @@ Usage: coord <command> [args]
 Commands:
   pull [args]       Stop stack, pull images (args go to `compose pull`), start stack
   start [service...] Start what is on the box; never pulls (no args: the full set)
-  stop              docker compose stop (containers remain; a boot unit re-ups them)
+  stop              SIGTERM each container's init (containers remain; a boot unit re-ups them)
   teardown          docker compose down (remove containers + networks)
   restart           docker compose restart [service]
   status            docker compose ps

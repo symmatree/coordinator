@@ -64,32 +64,20 @@
           rather than part-way through a reflash.
         quiet: true
 
-    # Quiesce before staging 693 MiB onto the card the payload is writing to.
-    # Bounded for the reason site.yaml records.
-    - name: Stat the coord CLI
-      ansible.builtin.stat:
-        path: /usr/local/bin/coord
-      register: reimage_coord_cli
-
-    - name: Stat the stack compose file
-      ansible.builtin.stat:
-        path: "/opt/stacks/{{ device_role }}/compose.yaml"
-      register: reimage_stack_compose
-
+    # Quiesce before staging 693 MiB onto the card the payload is writing to,
+    # and do it with as little in front of it as possible.
+    #
+    # `raw` so ansible does not start python3.13 on the target to run it -- on a
+    # loaded Zero that interpreter startup costs far more than the command, and
+    # page-faulting large binaries is the failure mode we are avoiding. Same
+    # reasoning and same selection as site.yaml; see there for the detail.
+    #
+    # rc=1 means pkill matched nothing, which is fine.
     - name: Stop data collection before staging
-      ansible.builtin.command:
-        cmd: /usr/local/bin/coord stop
-      environment:
-        COORD_STACK: "{{ device_role }}"
-      async: 180
-      poll: 5
+      ansible.builtin.raw: pkill -x -TERM dumb-init
       register: reimage_quiesced
-      changed_when: >-
-        'Stopping' in reimage_quiesced.stderr
-        or 'Stopped' in reimage_quiesced.stderr
-      when:
-        - reimage_coord_cli.stat.exists
-        - reimage_stack_compose.stat.exists
+      changed_when: reimage_quiesced.rc == 0
+      failed_when: reimage_quiesced.rc not in [0, 1]
 
   tasks:
     # Only one compressed image fits in p1. Removed before the space check so the
