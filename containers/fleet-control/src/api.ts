@@ -6,7 +6,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import { findNode } from './inventory.js';
 import { RunRegistry, sinkFor } from './runs.js';
-import { converge, reimage } from './actions.js';
+import { converge, reboot, reimage, stop } from './actions.js';
 import { ImageCache } from './imagecache.js';
 import { probeAll, probeNode } from './probe.js';
 import { deleteSessions, listSessions, stopCapture } from './sessions.js';
@@ -45,6 +45,44 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
       }
     },
   );
+
+  /**
+   * Stop the container set, and nothing else.
+   *
+   * Its own route rather than a flag on converge, because the operator wants it on its own:
+   * a converge is twenty minutes of apt to achieve a stop, and a card that has never been
+   * converged can still be stopped -- a signal needs nothing installed.
+   */
+  app.post<{ Params: { name: string } }>('/nodes/:name/stop', async (req, reply) => {
+    const node = findNode(cfg.inventory, req.params.name);
+    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+    try {
+      const run = runs.start('stop', node.name, (emit) => stop(node, cfg.action, sinkFor(emit)));
+      return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
+    } catch (err) {
+      return reply.code(409).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * Stop, reboot, and wait for the device to answer again.
+   *
+   * The run ends when the machine is back, which is the one place this service waits for a
+   * device rather than re-asking: a reboot is what CLOSES a capture session, so "is it back"
+   * is the operator's next question every time and there is nothing else to do meanwhile.
+   */
+  app.post<{ Params: { name: string } }>('/nodes/:name/reboot', async (req, reply) => {
+    const node = findNode(cfg.inventory, req.params.name);
+    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+    try {
+      const run = runs.start('reboot', node.name, (emit, runId) =>
+        reboot(node, cfg.action, { runId }, sinkFor(emit)),
+      );
+      return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
+    } catch (err) {
+      return reply.code(409).send({ error: (err as Error).message });
+    }
+  });
 
   // ---- status -------------------------------------------------------------------------
   // On demand, never polled: nothing should touch the fleet while it is flying, and a probe
