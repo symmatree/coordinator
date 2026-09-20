@@ -152,15 +152,19 @@ export async function stopCapture(node: FleetNode, ctx: ActionContext): Promise<
         '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
         '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
         `${ctx.inventory.user}@${host}`,
-        `COORD_STACK=${node.role} coord stop`,
+        // pkill exits 1 when nothing matched, which is the normal already-stopped case;
+        // anything else is a real failure and must still surface.
+        'pkill -x -TERM dumb-init || [ $? -eq 1 ]',
       ],
-      // Bounded, because this is the step that has hung before (#281): a wedged docker leaves
-      // `compose stop` waiting on a container that never exits.
-      { maxBuffer: 1024 * 1024, timeout: 180_000 },
+      // Bounded, but this returns as soon as the signal is sent -- it does not wait for the
+      // containers to exit. On campod-se that was 1.1s for the accel and 19.0s for the camera
+      // AFTER the command had already returned, so a caller that reads the device straight
+      // afterwards is racing a shutdown in flight.
+      { maxBuffer: 1024 * 1024, timeout: 60_000 },
     );
   } catch (err) {
     const e = err as { stderr?: string; message?: string; killed?: boolean };
-    if (e.killed === true) throw new Error(`${node.name}: coord stop gave up after 180s`);
+    if (e.killed === true) throw new Error(`${node.name}: stop signal gave up after 60s`);
     const why = (e.stderr ?? '').trim() || e.message || 'ssh failed';
     throw new Error(`${node.name}: ${why.split('\n').slice(-2).join(' ').slice(0, 300)}`);
   }
