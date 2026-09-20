@@ -11,7 +11,15 @@
 set -uo pipefail
 cd "$(dirname "$0")" || exit 2
 
-# Run everywhere.
+# Four of these need packages nothing in the repo declares: pillow (analysis,
+# sh1106-display), numpy and scipy (analysis), pymavlink (router_telem, and
+# router_stack via fake_fc). The other four are stdlib only. So this passes on a
+# box that already has a scientific stack and will not on a bare runner.
+# Declaring them is open and not settled here.
+#
+# luma is deliberately NOT among them: display.py imports it inside main() so the
+# render path stays testable without the I2C stack, so test_display needs only
+# pillow.
 TESTS=(
 	analysis/test_analysis_modules.py
 	bin/test_coord_version.py
