@@ -16,17 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      # Tests with no container of their own. Each runs from its own directory
-      # because several resolve paths relative to themselves. docs/ci.md says
-      # where the rest of the suite runs.
-      TESTS: |
-        analysis/test_analysis_modules.py
-        bin/test_coord_version.py
-        bin/test_coord_sessions.py
-        harness/test_input_replayer.py
-        harness/test_router_stack.py
-        harness/test_router_telem.py
     steps:
       - uses: actions/checkout@v6
 
@@ -40,16 +29,7 @@ jobs:
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -e HOME=/tmp \
-            -e TESTS \
             -v "${PWD}:/repo" \
             -w /repo \
             ghcr.io/symmatree/tiles/datascience-notebook-ssh:main \
-            bash -c '
-              rc=0
-              while read -r t; do
-                [ -n "${t}" ] || continue
-                printf "\n=== %s\n" "${t}"
-                ( cd "$(dirname "${t}")" && python3 "$(basename "${t}")" ) || rc=1
-              done <<< "${TESTS}"
-              exit "${rc}"
-            '
+            ./test.sh
