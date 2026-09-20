@@ -126,14 +126,10 @@ def checkout(path: Path) -> dict[str, str]:
         return base | {"FLEET_PROBE_ERROR": f"git rev-parse failed in {path}"}
     _, ref = run("git", "-C", str(path), "rev-parse", "--abbrev-ref", "HEAD")
     _, url = run("git", "-C", str(path), "config", "--get", "remote.origin.url")
-    rc, dirty = run("git", "-C", str(path), "status", "--porcelain")
     pairs = base | {
         "ORG_OPENCONTAINERS_IMAGE_SOURCE": url,
         "ORG_OPENCONTAINERS_IMAGE_REVISION": sha,
         "ORG_OPENCONTAINERS_IMAGE_REF_NAME": ref,
-        # A dirty checkout means the sha above does not describe what is
-        # deployed, which the caller cannot infer from the sha alone.
-        "FLEET_CHECKOUT_DIRTY": "true" if dirty else "false",
     }
     return pairs
 
@@ -162,25 +158,45 @@ def containers() -> tuple[list[tuple[str, dict[str, str]]], str]:
         return [], ""
 
     tables: list[tuple[str, dict[str, str]]] = []
-    for line in out.splitlines():
-        name, image, state = (line.split("\t") + ["", ""])[:3]
+    rows = [(c + ["", ""])[:3] for c in (ln.split("\t") for ln in out.splitlines())]
+
+    # One inspect for every distinct image, not two per container. A campod runs both
+    # of its containers from the SAME image, so this is 4 dockerd round-trips replaced
+    # by 1 -- and dockerd is the thing that costs 2.1-22.0s per call while capture is
+    # running. Whole probe: 5 round-trips down to 2.
+    #
+    # The RepoDigests guard matters: a locally built image that was never pushed has
+    # none, and `index` on an empty list aborts the template for EVERY object in the
+    # call, not just that one.
+    meta: dict[str, tuple[str, str]] = {}
+    images = list(dict.fromkeys(image for _, image, _ in rows))
+    if images:
+        rc, blob = run(
+            "docker", "inspect", *images, "--format",
+            "{{json .Config.Labels}}\t{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}",
+        )
+        if rc == 0:
+            for image, line in zip(images, blob.splitlines()):
+                labels, _, digest = line.partition("\t")
+                meta[image] = (labels, digest)
+
+    for name, image, state in rows:
         pairs = {
             "FLEET_UNIT_KIND": "container",
             "FLEET_UNIT_ID": name,
             "FLEET_CONTAINER_IMAGE": image,
             "FLEET_CONTAINER_STATE": state,
         }
-        rc, blob = run("docker", "inspect", image, "--format", "{{json .Config.Labels}}")
-        if rc == 0 and blob and blob != "null":
+        labels, digest = meta.get(image, ("", ""))
+        if labels and labels != "null":
             try:
-                for label, value in (json.loads(blob) or {}).items():
+                for label, value in (json.loads(labels) or {}).items():
                     pairs[key_of(label)] = value
             except json.JSONDecodeError:
                 pairs["FLEET_PROBE_ERROR"] = "image labels did not parse"
         else:
             pairs["FLEET_PROBE_ERROR"] = f"no labels readable for {image}"
-        rc, digest = run("docker", "inspect", image, "--format", "{{index .RepoDigests 0}}")
-        if rc == 0 and digest:
+        if digest:
             pairs["FLEET_CONTAINER_IMAGE_DIGEST"] = digest
         tables.append((f"container_{name}", pairs))
     return tables, ""

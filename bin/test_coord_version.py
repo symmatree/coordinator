@@ -199,6 +199,75 @@ check(
     cv.data_volume(["definitely-not-a-stack"])["FLEET_DATA_FREE_BYTES"] == "",
 )
 
+# 9. Containers: one inspect for every distinct image, not two per container. A campod
+#    runs BOTH containers from the same image, so this is the difference between 1
+#    dockerd round-trip and 4 -- and dockerd is what costs 2.1-22.0s per call under load.
+calls = []
+real_run, real_which = cv.run, cv.shutil.which
+cv.shutil.which = lambda _: "/usr/bin/docker"
+
+
+def fake_run(*cmd, timeout=20):
+    calls.append(cmd)
+    if cmd[:2] == ("docker", "ps"):
+        return 0, "campod_camera\timg:main\trunning\ncampod_accel\timg:main\trunning"
+    if cmd[:2] == ("docker", "inspect"):
+        return 0, '{"org.opencontainers.image.revision":"abc"}\timg@sha256:dd'
+    return 1, ""
+
+
+cv.run = fake_run
+tables, err = cv.containers()
+inspects = [c for c in calls if c[:2] == ("docker", "inspect")]
+check("enumeration succeeded", err == "", err)
+check("one inspect call, not one per container", len(inspects) == 1, str(len(inspects)))
+check("and it asks for the image once, not twice",
+      sum(1 for a in inspects[0] if a == "img:main") == 1, str(inspects[0]))
+check("both containers got the labels", sum(
+    1 for _, p in tables if p.get("ORG_OPENCONTAINERS_IMAGE_REVISION") == "abc") == 2)
+check("both containers got the digest", sum(
+    1 for _, p in tables if p.get("FLEET_CONTAINER_IMAGE_DIGEST") == "img@sha256:dd") == 2)
+check("no probe error when it worked",
+      not any("FLEET_PROBE_ERROR" in p for _, p in tables))
+
+# 10. An image never pushed has no RepoDigests. `index` on an empty list aborts the
+#     template for EVERY object in the call, so the guard is not optional.
+def fake_no_digest(*cmd, timeout=20):
+    calls.append(cmd)
+    if cmd[:2] == ("docker", "ps"):
+        return 0, "c1\timg:local\trunning"
+    if cmd[:2] == ("docker", "inspect"):
+        return 0, '{"a":"b"}\t'
+    return 1, ""
+
+
+cv.run = fake_no_digest
+tables, _ = cv.containers()
+check("no digest is not an error", not any("FLEET_PROBE_ERROR" in p for _, p in tables))
+check("and no empty digest key is emitted",
+      not any("FLEET_CONTAINER_IMAGE_DIGEST" in p for _, p in tables))
+check("the template guards RepoDigests",
+      any("if .RepoDigests" in a for c in calls if c[:2] == ("docker", "inspect") for a in c))
+
+# 11. A failed inspect is a per-container error, not a lost unit.
+def fake_bad(*cmd, timeout=20):
+    if cmd[:2] == ("docker", "ps"):
+        return 0, "c1\timg:x\trunning"
+    return 1, ""
+
+
+cv.run = fake_bad
+tables, _ = cv.containers()
+check("inspect failure still yields the unit", len(tables) == 1)
+check("and records why", any("FLEET_PROBE_ERROR" in p for _, p in tables))
+
+cv.run, cv.shutil.which = real_run, real_which
+
+# 12. The dirty check is gone, and with it the working-tree walk.
+src = (HERE / "coord-version").read_text()
+check("no git status tree walk", "status" not in src or "--porcelain" not in src)
+check("FLEET_CHECKOUT_DIRTY retired", "FLEET_CHECKOUT_DIRTY" not in src)
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)
