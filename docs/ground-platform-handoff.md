@@ -60,9 +60,12 @@ tiles#674's roller now handles the rolling.
 **Live and working.** The terraform-managed SSH key, converge, the status probe, the image
 cache and the reimage plumbing are all deployed.
 
-**Post-flight is merged end to end** -- the device half (#344), the routes (#346), the screen
-(#347) -- and **has still never run against a device.** The blocker the last edition named is
-gone; the one that replaced it is below.
+**Post-flight has now run against a device, partly.** Merged end to end -- the device half
+(#344), the routes (#346), the screen (#347) -- and Seth drove it on campod-se: **list
+sessions worked**; **delete failed on privileges** and is fixed (#371); **retrieve has not
+been tried.** He skipped "Stop capture on all" because the probe quiesces now, which is the
+step working as intended rather than a step being missed. The session list needs UX work and
+he wants examples before anyone touches it -- **do not go and redesign it.**
 
 **Also landed today, all in this lane:** per-node probing (#350), a run log that outlives the
 pod plus kept ansible artifacts (#353) and the routes that serve them (#357), Stop and Reboot
@@ -74,17 +77,20 @@ now points at them (tiles#789).
 `fleet_subnet`, deliberately without a default because reserving the devices where DHCP
 dropped them would freeze an accident.
 
-**Blocking, and it is the whole board:** **#355** -- stopping the stack on a campod is slow
-and sometimes never returns. Four recorded attempts; in three of them the box stopped
-answering SSH for minutes and the containers never stopped at all. Everything this service
-does to a campod begins with a quiesce, so until that is understood, converge, probe and
-post-flight are all downstream of it. It is flight-sw's and Seth is working it directly;
-#359 is the experiments log. **Do not go and analyse it.**
+**Not blocked.** An earlier draft of this section called **#355** -- stopping the stack on a
+campod is slow and sometimes never returns -- the thing the whole board waited on. That was
+wrong within the hour. Quiescing on the probe (#363/#366) was enough for Seth to iterate until
+the containers were really stopped, and from there converge ran and the **USB gadget network
+was tested for the first time and worked.** #355 is still open and still real; it is
+flight-sw's, #359 is the experiments log, and **it is not yours to analyse.** Recorded here
+because the lesson is about this file: a section that names a blocker ages faster than
+anything else in it.
 
 ## What must not be dropped
 
-**Post-flight is written end to end and has never run against a device.** Nothing in that path
-is proven, including the parts that look obviously right.
+**Most of post-flight still has not run against a device.** List works; delete's first real
+run found a privilege bug; **retrieve has never been exercised at all**, and it is the step
+that moves bytes and then deletes the source.
 
 **Neither have Stop or Reboot.** Reboot is `sudo systemctl --no-block reboot` over ssh, and
 which of two paths it takes on a Zero -- a clean exit, or the connection dropping before the
@@ -98,6 +104,12 @@ budget to design against, and attempts to invent one were correctly rejected.
 
 **The coordinator has not been re-converged since #331** fixed the i2c ordering that broke its
 stack start, so that fix is unverified on the live system.
+
+**Everything this service sends a device runs as `pi`, and the payload data is root's.**
+Three bugs in one week from that: the quiesce (#366), `coord sessions` (#371) and the bundle
+read (#375). Each was shipped after being hand-tested *with* `sudo` and then written without
+it. If a new command touches `/var/lib/<stack>`, it needs root; the probe (`coord version`)
+does not, and is the exception rather than the rule.
 
 **Do not serve ansible-runner's data directory wholesale.** Beside `job_events/` it writes a
 `command` file holding the entire process environment it launched ansible with, which in this
