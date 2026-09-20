@@ -32,8 +32,9 @@ that goes stale fastest** -- treat a date older than a week or two as archaeolog
   #341 may replace the checkout tier with a payload artifact.
 - **#223** the epic. **#31** carries the post-flight design of record, including the bench flow
   and why session selection sorts on frames and span rather than on the directory name.
-- **#312** reimage, **#302**/**#344** device-side session packaging, **#341** the payload
-  tarball, **tiles#674** the image roller, **tiles#735** fleet address reservations.
+- **#355** the stop problem, which is currently in front of everything. **#312** reimage,
+  **#341** the payload tarball, **tiles#735** fleet address reservations. #302/#344
+  (device-side session packaging) and tiles#674 (the image roller) are done.
 
 In code, read **`src/status.ts`** before anything else. Currency is the part most likely to be
 wrong again, because "is this current" has a different correct answer per artifact kind and
@@ -54,25 +55,40 @@ frozen at image build time**. A merged ansible fix is not live until the pod rol
 deliberate -- the service cannot invoke a playbook it was never built against -- and
 tiles#674's roller now handles the rolling.
 
-## Where things stand (2026-09-20)
+## Where things stand (2026-09-20, evening)
 
 **Live and working.** The terraform-managed SSH key, converge, the status probe, the image
-cache and the reimage plumbing are all deployed. campod-se converged successfully once --
-16m12s, `ok=58 changed=37 failed=0` -- with camera and accelerometer attached for the first
-time and both payload containers running.
+cache and the reimage plumbing are all deployed.
 
-**Open, mine:** #343 (a probe timeout reports itself as one), #346 (post-flight API plus
-stop-capture), #347 (post-flight screen), #350 (per-node probing; fixes a 102-second blank
-screen). **tiles#780** is a draft needing one decision: `fleet_subnet`, deliberately without a
-default because reserving the devices where DHCP dropped them would freeze an accident.
+**Post-flight is merged end to end** -- the device half (#344), the routes (#346), the screen
+(#347) -- and **has still never run against a device.** The blocker the last edition named is
+gone; the one that replaced it is below.
 
-**Blocking:** #344 is flight-sw's and is the device half of post-flight. Until it merges,
-`coord sessions` exists nowhere and #346/#347 cannot be exercised at all.
+**Also landed today, all in this lane:** per-node probing (#350), a run log that outlives the
+pod plus kept ansible artifacts (#353) and the routes that serve them (#357), Stop and Reboot
+buttons (#364, reshaped by #367), quiesce-before-every-command (#363) and the `sudo` it was
+missing (#366). In `tiles`, the fleet-control README stopped duplicating this repo's docs and
+now points at them (tiles#789).
+
+**Open, mine:** nothing. **tiles#780** is still a draft needing one decision from Seth:
+`fleet_subnet`, deliberately without a default because reserving the devices where DHCP
+dropped them would freeze an accident.
+
+**Blocking, and it is the whole board:** **#355** -- stopping the stack on a campod is slow
+and sometimes never returns. Four recorded attempts; in three of them the box stopped
+answering SSH for minutes and the containers never stopped at all. Everything this service
+does to a campod begins with a quiesce, so until that is understood, converge, probe and
+post-flight are all downstream of it. It is flight-sw's and Seth is working it directly;
+#359 is the experiments log. **Do not go and analyse it.**
 
 ## What must not be dropped
 
 **Post-flight is written end to end and has never run against a device.** Nothing in that path
 is proven, including the parts that look obviously right.
+
+**Neither have Stop or Reboot.** Reboot is `sudo systemctl --no-block reboot` over ssh, and
+which of two paths it takes on a Zero -- a clean exit, or the connection dropping before the
+status gets back -- is unverified. Both are handled; nobody has seen which happens.
 
 **The reimage path is worse.** The button exists and the playbook is merged, but
 `dotfiles-symm#53`'s flasher **has never booted on any hardware**, and tryboot on the Zero 2 W
@@ -83,6 +99,11 @@ budget to design against, and attempts to invent one were correctly rejected.
 **The coordinator has not been re-converged since #331** fixed the i2c ordering that broke its
 stack start, so that fix is unverified on the live system.
 
+**Do not serve ansible-runner's data directory wholesale.** Beside `job_events/` it writes a
+`command` file holding the entire process environment it launched ansible with, which in this
+pod includes `FLEET_GITHUB_TOKEN`. `/runs/:id/events` and `/runs/:id/log` serve the events
+only, on purpose. Verified by running ansible-runner 2.4.3 and reading the file.
+
 **The `FLEET_SOURCE_REF` fallbacks in `manifest.ts`** exist only for cards flashed before
 dotfiles-symm#65. Delete them once every card has been reflashed; they are load-bearing today
 (campod-se's card still emits the old spelling).
@@ -92,7 +113,25 @@ ground-platform code should need a real edit rather than a rename.
 
 ## How to work here
 
-The failure mode to watch for in yourself is **generating structure instead of checking
+**You are the critic you are arguing with.** This edition's sharpest correction, and it cost
+Seth two rounds. A PR shipped a section headed "Why Reboot earns a button at all" -- for a
+button he had just asked for -- and the line "that asymmetry is the design, not an
+inconsistency." There was no objector. There was a real doubt about the design, it was mine,
+and instead of saying so it got projected onto an invented opponent who could then be beaten.
+Both of the choices being defended turned out to be wrong the moment he read them.
+
+So: if a sentence exists to pre-empt a complaint, cut it, and ask who you thought was going
+to make it. If the answer is you, **that is the question to put to him** -- he is right there.
+Reasons that record a measurement or a constraint stay; reasons that defend a choice against
+nobody go. The tell is rhetoric that scores points.
+
+**A correction is the start of a conversation, not a work order.** When he says something that
+shows a premise was wrong, do not open a worktree. Three decisions got made inside one reply
+here -- deleting a playbook merged an hour earlier, rebooting despite a failed stop, treating a
+dropped connection as success -- and he changed two of them once he finally saw them. Ask what
+he wants changed while you are both still in the conversation about it.
+
+The other failure mode to watch for is **generating structure instead of checking
 something**. Risk sections, preconditions, ordering dependencies, recovery procedures -- all
 invented over one session, all correctly knocked down, each costing Seth time to argue against.
 The test that works is: **can a person substitute for this?** If yes it is quality of life,
@@ -102,6 +141,12 @@ never a gate. Before writing that something is a blocker, name who is blocked.
 check `origin/main` before asserting any repo or device fact. In this repo "I verified this"
 has a shelf life of about an hour -- a session-identity scheme was described accurately, landed
 in two issues, and was wrong by the time anyone read it.
+
+**Run the artifact, not just the code that makes it.** Installing ansible-runner 2.4.3 in a
+scratch venv and driving a deliberately failing play took ten minutes and produced three
+things reading could not: the `command` file's environment dump, the fact that event files
+need numeric ordering (`10-` sorts before `2-`), and that each log line needs its own
+terminator. All three would have shipped wrong.
 
 **Almost every genuine bug came from running the thing, not reading it.** A 102-second blank
 screen, containers reported stale while exactly correct, a probe timeout masquerading as a
