@@ -32,6 +32,21 @@ services:
     # privileged also covers /dev/spidev* for the ADXL345 reader (#211), which is
     # why no explicit device list is needed for it either. The host still needs
     # dtparam=spi=on for those nodes to exist at all.
+    # SIGTERM -> SIGKILL grace. Docker's default is 10s and nothing here set it,
+    # which is below the only complete graceful exit we have measured: under
+    # systemd's shutdown both containers took 35.0s and exited 0. Under a 10s
+    # grace the camera is SIGKILLed (137) instead, so we were cutting the shutdown
+    # off at under a third of what it needed and never seeing it finish.
+    #
+    # 90s because that is the ceiling the successful exit actually ran under
+    # (systemd's DefaultTimeoutStopSec), rather than a number picked for feel.
+    # Compose has been measured taking ~20s to deliver the signal at all on a
+    # loaded pod, so 20 + 90 = 110s worst case, inside the 180s async ceiling on
+    # the stop task in site.yaml with room to spare.
+    #
+    # This does not claim to fix the stop hanging (#355). It removes one ceiling
+    # known to be set below a measured completion time.
+    stop_grace_period: 90s
     privileged: true
     volumes:
       # /var/lib/campod is where the image mounts the @data btrfs subvolume; see
@@ -84,6 +99,21 @@ services:
     # for those nodes to exist at all. No /run/udev and no /config: SPI has no
     # enumeration, so there is nothing to discover and nothing to configure --
     # a DEVID read is the only presence test there is.
+    # SIGTERM -> SIGKILL grace. Docker's default is 10s and nothing here set it,
+    # which is below the only complete graceful exit we have measured: under
+    # systemd's shutdown both containers took 35.0s and exited 0. Under a 10s
+    # grace the camera is SIGKILLed (137) instead, so we were cutting the shutdown
+    # off at under a third of what it needed and never seeing it finish.
+    #
+    # 90s because that is the ceiling the successful exit actually ran under
+    # (systemd's DefaultTimeoutStopSec), rather than a number picked for feel.
+    # Compose has been measured taking ~20s to deliver the signal at all on a
+    # loaded pod, so 20 + 90 = 110s worst case, inside the 180s async ceiling on
+    # the stop task in site.yaml with room to spare.
+    #
+    # This does not claim to fix the stop hanging (#355). It removes one ceiling
+    # known to be set below a measured completion time.
+    stop_grace_period: 90s
     privileged: true
     volumes:
       - /var/lib/campod/captures:/captures
