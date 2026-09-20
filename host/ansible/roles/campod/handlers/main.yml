@@ -3,3 +3,13 @@
   ansible.builtin.command: nmcli connection reload
   changed_when: true
   failed_when: false
+
+- name: Reload udev rules
+  # Makes the rule effective for devices that appear from here on. It does NOT
+  # change an already-created interface: NetworkManager caches the managed state
+  # from when the device appeared and ignores a later udev change -- verified on
+  # campod-sw, where NM_UNMANAGED flipped to 0 and NM still reported "unmanaged
+  # via udev rule". The reboot at the end of the play is what covers that case.
+  ansible.builtin.command: udevadm control --reload-rules
+  changed_when: true
+  failed_when: false
