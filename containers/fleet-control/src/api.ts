@@ -106,7 +106,7 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
   /**
    * Package, fetch, verify and delete one session into a named flight.
    *
-   * One session per call rather than a batch: each is minutes of gzip plus a transfer, and a
+   * One session per call rather than a batch: each is minutes of zstd plus a transfer, and a
    * failure should cost that session rather than the operator's whole selection. The caller
    * loops, and the flight directory accumulates.
    */

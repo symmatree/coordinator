@@ -27,7 +27,7 @@ test('the flight record survives being read back', () => {
       {
         node: 'campod-se',
         session: 'a0760391-8e43-49f2-98fb-9d9e9fe15595',
-        file: 'campod-se_a0760391-8e43-49f2-98fb-9d9e9fe15595.tar.gz',
+        file: 'campod-se_a0760391-8e43-49f2-98fb-9d9e9fe15595.tar.zst',
         bytes: 1_500_000_000,
         sha256: 'f'.repeat(64),
         collectedAt: '2026-09-19T23:05:00Z',
