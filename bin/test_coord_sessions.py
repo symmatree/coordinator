@@ -60,6 +60,8 @@ try:
 
     # The open session is whichever equals the current boot id, so pin it.
     cs.boot_id = lambda: "22222222-bbbb"
+    # This host is not called campod-se; sessions are anchored on the node name.
+    cs.node_name = lambda: "campod-se"
 
     # 1. list
     buf = io.StringIO()
@@ -81,6 +83,19 @@ try:
     check("names the accel files", a["accel"] == ["accel-camera.jsonl"])
     check("bytes is the real tree size",
           a["bytes"] == sum(p.stat().st_size for p in closed.rglob("*") if p.is_file()))
+
+    # 1b. A directory under captures/ that is not this node is not a node. The
+    #     coordinator's captures/ holds an OAK-D tree named for the camera's MxId, and
+    #     walking it reported that serial as a node (`no such node: 18443010B1D8BC0800`).
+    make_session(captures, "18443010B1D8BC0800", "99999999-zzzz", frames=1)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cs.cmd_list(captures)
+    doc2 = json.loads(buf.getvalue())
+    nodes = {s["node"] for s in doc2["sessions"]}
+    check("a foreign subtree is not reported as a node", nodes == {"campod-se"}, str(nodes))
+    check("and delete cannot reach into it",
+          cs.resolve(captures, "99999999-zzzz") is None)
 
     # 2. packaging refuses the open session
     rc = cs.cmd_package(captures, "22222222-bbbb", out_dir)
