@@ -28,3 +28,10 @@ test('quiesced() writes nothing to stdout, so it can prefix a binary stream', ()
   assert.ok(!/echo|printf/.test(QUIESCE));
   assert.match(QUIESCE, /pgrep[^;]*>\/dev\/null/);
 });
+
+test('signals as root, because dumb-init is root and we connect as pi', () => {
+  // Without sudo the signal silently goes nowhere, the wait spins its full bound, and the
+  // real command runs against a box that is still capturing. The playbooks avoided this
+  // only because the play is `become: true`.
+  assert.match(QUIESCE, /^sudo pkill/);
+});
