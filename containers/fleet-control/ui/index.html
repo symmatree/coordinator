@@ -55,7 +55,12 @@
   .sess { display:flex; gap:10px; align-items:flex-start; padding:8px 0;
         border-bottom:1px solid var(--line); font-size:.85rem; }
   .sess input[type=checkbox] { width:22px; height:22px; margin-top:2px; flex:0 0 auto; }
-  .sess .who { font-weight:600; }
+  .srcgroup { margin-top:12px; }
+  .srcgroup .src { display:flex; gap:8px; align-items:baseline; padding:6px 0 2px;
+                   border-bottom:1px solid var(--line); }
+  .srcgroup .src .name { font-weight:700; font-size:.9rem; }
+  .srcgroup .src .count { color:var(--dim); font-size:.76rem; }
+  .srcgroup .src .count.err { color:var(--bad); }
   .sess .num { color:var(--dim); font-family:ui-monospace, monospace; font-size:.78rem; }
   .sess .why { flex-basis:100%; color:var(--dim); font-size:.76rem; margin-left:32px; }
   .sess.open { opacity:.55; }
@@ -329,7 +334,16 @@
   // open session is shown but cannot be ticked -- only a reboot closes one, so it is not
   // packageable and saying so beats omitting it and leaving the list looking short.
 
-  const pf = { sessions: [], picked: new Set() };
+  // `asked` is the render order, the grouping, AND the only copy of what is on the cards: one
+  // block per node we put the question to, including the ones that answered with nothing.
+  // Keeping a second flat array beside it meant a prune could filter one and not the other and
+  // leave deleted sessions on screen.
+  const pf = { picked: new Set(), asked: [] };
+
+  /** What a tick is. Keyed on the node we ASKED, not the name the device reports itself as. */
+  const key = (srcName, s) => `${srcName}/${s.session}`;
+  /** Every session on screen, with the device it came from. */
+  const allSessions = () => pf.asked.flatMap((src) => src.sessions.map((s) => ({ src, s })));
   const pfLog = document.getElementById('pfLog');
 
   function log(line) {
@@ -345,34 +359,64 @@
     return secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
   };
 
+  /**
+   * One block per device, because a semantic session is one session from EACH device and the
+   * choice is made per device. Flat, the campods' sessions interleave and picking one from
+   * each means reading the node column on every row.
+   *
+   * There is nothing to align them by yet: a session directory is a boot id with no clock in
+   * it, and the sidecar times come from a device with no RTC that jumps when NTP lands. So the
+   * grouping is the whole affordance -- pick the long one in each block.
+   *
+   * A device that answered with NOTHING still gets its block. The coordinator does exactly
+   * that (coordinator#371: it has no campod-shaped sessions), and "coordinator -- no sessions"
+   * is a different statement from a list that quietly omits it.
+   */
   function renderSessions() {
     const root = document.getElementById('pfSessions');
     root.textContent = '';
-    if (pf.sessions.length === 0) {
+    if (pf.asked.length === 0) {
       root.append($({ className: 'meta', textContent: 'nothing listed yet' }));
       return;
     }
-    for (const s of pf.sessions) {
-      const key = `${s.node}/${s.session}`;
-      const row = $({ className: 'sess' + (s.open ? ' open' : '') });
-      const box = document.createElement('input');
-      box.type = 'checkbox';
-      box.disabled = !!s.open;
-      box.checked = pf.picked.has(key);
-      box.onchange = () => { box.checked ? pf.picked.add(key) : pf.picked.delete(key); };
-      row.append(
-        box,
-        $({ className: 'who', textContent: s.node }),
-        // Frames and span are what tell a flight from a failed-lock power cycle; the
-        // directory name is a boot id and carries no clock at all.
-        $({ className: 'num', textContent: `${s.frames} frames` }),
-        $({ className: 'num', textContent: span(s) }),
-        $({ className: 'num', textContent: MB(s.bytes) }),
+    for (const src of pf.asked) {
+      const group = $({ className: 'srcgroup' });
+      const head = $({ className: 'src' });
+      head.append($({ className: 'name', textContent: src.name }));
+      head.append(
+        src.error
+          ? $({ className: 'count err', textContent: src.error })
+          : $({
+              className: 'count',
+              textContent: src.sessions.length === 1 ? '1 session' : `${src.sessions.length} sessions`,
+            }),
       );
-      if (s.open) row.append($({ className: 'why', textContent: 'current boot -- only a reboot closes a session, so this one cannot be packaged' }));
-      else row.append($({ className: 'why', textContent: s.session }));
-      root.append(row);
+      group.append(head);
+      for (const session of src.sessions) group.append(sessionRow(src, session));
+      root.append(group);
     }
+  }
+
+  /** One session. The node is on the group heading, so the row does not repeat it. */
+  function sessionRow(src, s) {
+    const row = $({ className: 'sess' + (s.open ? ' open' : '') });
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.disabled = !!s.open;
+    const k = key(src.name, s);
+    box.checked = pf.picked.has(k);
+    box.onchange = () => { box.checked ? pf.picked.add(k) : pf.picked.delete(k); };
+    row.append(
+      box,
+      // Frames and span are what tell a flight from a failed-lock power cycle; the
+      // directory name is a boot id and carries no clock at all.
+      $({ className: 'num', textContent: `${s.frames} frames` }),
+      $({ className: 'num', textContent: span(s) }),
+      $({ className: 'num', textContent: MB(s.bytes) }),
+    );
+    if (s.open) row.append($({ className: 'why', textContent: 'current boot -- only a reboot closes a session, so this one cannot be packaged' }));
+    else row.append($({ className: 'why', textContent: s.session }));
+    return row;
   }
 
   document.getElementById('pfStop').onclick = async () => {
@@ -384,13 +428,20 @@
   };
 
   document.getElementById('pfList').onclick = async () => {
-    pf.sessions = [];
     pf.picked.clear();
+    pf.asked = [];
     for (const n of await j('/nodes')) {
+      // Recorded before the request, so a node that is still being asked is visible as an
+      // empty block rather than as an absence.
+      const src = { name: n.name, sessions: [] };
+      pf.asked.push(src);
+      renderSessions();
       try {
-        const r = await j(`/nodes/${n.name}/sessions`);
-        pf.sessions.push(...r.sessions);
-      } catch (e) { log(`${n.name}: ${e.message}`); }
+        src.sessions = (await j(`/nodes/${n.name}/sessions`)).sessions;
+      } catch (e) {
+        src.error = e.message;
+        log(`${n.name}: ${e.message}`);
+      }
       renderSessions();
     }
   };
@@ -419,19 +470,19 @@
 
   /** Everything not ticked, per node. Confirms, because it is the irreversible one. */
   document.getElementById('pfPrune').onclick = async () => {
-    const doomed = pf.sessions.filter((s) => !pf.picked.has(`${s.node}/${s.session}`));
+    const doomed = allSessions().filter(({ src, s }) => !pf.picked.has(key(src.name, s)));
     if (doomed.length === 0) return log('nothing to delete');
     document.getElementById('cTitle').textContent = `Delete ${doomed.length} session(s)?`;
     document.getElementById('cWhat').textContent =
       `Removes them and their bundles from the devices, freeing about ` +
-      `${MB(doomed.reduce((a, s) => a + s.bytes, 0))}. Anything you ticked is left alone. ` +
+      `${MB(doomed.reduce((a, { s }) => a + s.bytes, 0))}. Anything you ticked is left alone. ` +
       `This cannot be undone, and anything not already retrieved is gone.`;
     dlg.showModal();
     document.getElementById('cNo').onclick = () => dlg.close();
     document.getElementById('cYes').onclick = async () => {
       dlg.close();
       const byNode = {};
-      for (const s of doomed) (byNode[s.node] ??= []).push(s.session);
+      for (const { src, s } of doomed) (byNode[src.name] ??= []).push(s.session);
       for (const [node, sessions] of Object.entries(byNode)) {
         try {
           const r = await j(`/nodes/${node}/sessions/delete`, {
@@ -442,7 +493,8 @@
           log(`${node}: freed ${MB(r.bytes)}`);
         } catch (e) { log(`${node}: ${e.message}`); }
       }
-      pf.sessions = pf.sessions.filter((s) => pf.picked.has(`${s.node}/${s.session}`));
+      // Drop what was deleted from the one list there is, so the screen is what is left.
+      for (const src of pf.asked) src.sessions = src.sessions.filter((s) => pf.picked.has(key(src.name, s)));
       renderSessions();
     };
   };
