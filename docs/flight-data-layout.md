@@ -239,7 +239,9 @@ so they are unaffected.
 ## Reading the data
 
 This document says **where things are**. What the fields mean, which clock to trust, and how a
-sortie appears in a log are in [flight-data-interpretation.md](flight-data-interpretation.md) --
+sortie appears in a log are in [flight-data-interpretation.md](flight-data-interpretation.md);
+how to get the artifacts off the vehicle and the cluster and into one of these directories is
+[post-flight-collection.md](post-flight-collection.md) --
 the two are meant to be read together and neither repeats the other.
 
 ## Related

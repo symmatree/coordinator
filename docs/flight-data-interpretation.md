@@ -259,7 +259,8 @@ ground segment.
 ## Log naming, and what a 1980 date does and does not tell you
 
 The FC has no RTC battery, so a log file is named from wall-clock time **at the moment the file is
-created**. With `LOG_DISARMED=2` (log from boot, needed for `LOG_REPLAY`) and `LOG_FILE_DSRMROT=1`
+created**. With `LOG_DISARMED=2` (**"Disabled on USB connection"** per `AP_Logger.cpp` -- so it logs
+from boot *except* while USB is connected; `LOG_REPLAY` accepts 1 or 2) and `LOG_FILE_DSRMROT=1`
 (rotate at each disarm), files get created at boot *and* at every disarm -- so within one day you can
 get both kinds of name. The corpus splits cleanly at the point from-boot logging went on:
 
