@@ -339,10 +339,27 @@
   }
 
   const MB = (n) => `${(n / 1e6).toFixed(0)} MB`;
+  const clock = (iso) => `${iso.slice(11, 19)}Z`;
+
+  /**
+   * What the sidecar times say -- which for the session you most want is not a duration.
+   *
+   * `last_utc` is null when the final sidecar cannot be read, and a session that ended in a
+   * POWER CUT ends exactly that way: the last `.json` is written and never flushed, leaving
+   * it zero-length while its `.jpg` is intact. Observed on the first real retrieval
+   * (260923-test-mission): frame 299 of 300, `…121148_631601Z.json`, 0 bytes.
+   *
+   * This used to return 'no frames' for that, so a 300-frame flight was labelled empty --
+   * the one row in the list that must not be mistaken for junk. A missing end is now said as
+   * a missing end, and 'no frames' is reserved for a session that really has none.
+   */
   const span = (s) => {
-    if (!s.first_utc || !s.last_utc) return 'no frames';
-    const secs = Math.round((Date.parse(s.last_utc) - Date.parse(s.first_utc)) / 1000);
-    return secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
+    if (s.first_utc && s.last_utc) {
+      const secs = Math.round((Date.parse(s.last_utc) - Date.parse(s.first_utc)) / 1000);
+      return secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
+    }
+    if (s.first_utc) return `from ${clock(s.first_utc)}`;
+    return s.frames > 0 ? 'no times' : 'no frames';
   };
 
   function renderSessions() {
