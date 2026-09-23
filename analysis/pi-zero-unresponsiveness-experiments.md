@@ -66,10 +66,16 @@ cause or consequence.
 Predicts a write burst on stop. Measured: writes *fall* from ~1.6 MiB/s to ~0.0-0.5
 during the storm, in all three stops with samples.
 
-Not disproven, because reads can be performed **in service of** writes: btrfs with zstd
-does read-modify-write, so a compressed filesystem could produce read volume driven by
-a small write stream. Low write volume at the block layer is not "nothing is being
-written".
+Not disproven, because reads can be performed **in service of** writes: low write volume
+at the block layer is not "nothing is being written".
+
+**btrfs compression is not available as that mechanism for these observations.**
+`compress=zstd` reached every fstab line only between `dotfiles-symm` `f1bb7db`
+(2026-09-12) and `011eb43` (2026-09-16), which removed it; before 09-12 it was on some
+lines and silently cleared by a later mount. E1-E11 were taken on `campod-pi-20260918`
+(`2bc2aec`) and `campod-pi-20260919` (`1622c85`), both built after the removal, and
+`/proc/mounts` on those cards carries no `compress`. An observation from a card flashed
+inside that four-day window would be a different matter.
 
 Also relevant: a graceful reboot, which completes in 52s without the storm, **lost no
 data** (see ledger E6). If the storm were the data-preservation work, skipping it should
@@ -101,10 +107,12 @@ reverse.
 
 ### T5 -- The docker CLI plus compose plugin are the ~56 MiB allocation -- **candidate, unconfirmed**
 
-`docker` is 43.5 MiB and the compose plugin 47.2 MiB (amd64 on a workstation; arm64 on
-the Pi not measured). Faulting in a large fraction of two ~45 MiB Go binaries is a
-comfortable fit for ~56 MiB. Nothing has confirmed the allocator, and no measurement
-has been taken of what the resident set actually is on the Pi.
+Measured on campod-sw 2026-09-23: `/usr/bin/docker` is **42.6 MiB** and
+`/usr/libexec/docker/cli-plugins/docker-compose` **28.8 MiB** -- 71.5 MiB for the pair.
+(The earlier figures here, 43.5 and 47.2 MiB, were amd64 from a workstation.) Faulting in
+~56 MiB is 78% of both binaries, so the fit is tighter than the amd64 numbers suggested.
+Nothing has confirmed the allocator, and no measurement has been taken of what the
+resident set actually is on the Pi.
 
 Consistent with the containerd asymmetry in T7: `ctr` is small and containerd was
 already resident.
@@ -114,10 +122,21 @@ already resident.
 `RuntimeWatchdogSec=1m` from stock RPi `40-rpi-enable-watchdog.conf`; systemd pings
 `/dev/watchdog0` every 30s and the BCM2835 resets the board if PID 1 stops for 60s.
 
-But `/sys/class/watchdog/watchdog0/bootstatus` reads `0`, which is either "did not fire"
-or "not reported by this driver", and nothing collected distinguishes those. `bootstatus`
-also reads 0 after a deliberate reboot, so that tells us nothing about whether the field
-works. No check was made of whether PID 1 was missing pings before or during a stop.
+`/sys/class/watchdog/watchdog0/bootstatus` reads `0`, and **it always will on this
+hardware** -- that ambiguity is resolvable from the driver. `bcm2835_wdt.c` declares
+`options = WDIOF_SETTIMEOUT | WDIOF_MAGICCLOSE | WDIOF_KEEPALIVEPING`, without
+`WDIOF_CARDRESET`, and never assigns `bootstatus` anywhere; `PM_RSTS_HADWRH_SET`
+(`0x00000040`) is defined and never used. So the field is not reporting "did not fire",
+it is not reporting at all, and no amount of collecting it will distinguish the cases.
+
+What might substitute: the firmware publishes the raw `PM_RSTS` value at
+`/proc/device-tree/chosen/bootloader/rsts`. Measured `0x20` on every normal boot of a
+campod and the coordinator on 2026-09-19/20, and `0x21` after `reboot '1'` (the partition
+bit). The driver names bit 6 `HADWRH`. **Whether the firmware sets that bit on a watchdog
+reset is unverified** -- but it costs nothing to capture, and
+`dotfiles-symm/pi-image/probe-claims.py` already records it on every run.
+
+No check was made of whether PID 1 was missing pings before or during a stop.
 
 Treat as unevidenced. Two boots ended with no systemd shutdown sequence at all, so
 *something* reset them; the watchdog is one candidate among others.
