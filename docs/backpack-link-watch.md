@@ -8,6 +8,30 @@ The endpoint exists because of the WiFi-robustness patch in
 [`firmware/backpack/`](../firmware/backpack/README.md) -- stock firmware reports RF-link stats
 but nothing about the backpack's own WiFi. It is the only view we have of that hop.
 
+## There are two paths, and the always-on one is not this script
+
+**If you want link data for a window that has already happened, look in Mimir, not on disk.**
+The Alloy `Probe` scrapes the same endpoint continuously, so the history exists whether or not
+anyone remembered to start anything.
+
+| | live metrics | this script |
+|---|---|---|
+| runs | always, in the cluster | by hand, when someone starts it |
+| where | `backpack-mavlink` Probe, `mavproxy` namespace ([`tiles`](https://github.com/symmatree/tiles/blob/main/tanka/environments/mavproxy/README.md)) | anywhere with network reach to the backpack |
+| cadence | 30 s | `INTERVAL`, default 5 s |
+| lands in | Mimir, `job="backpack"`, the cluster's own tenant | `ground/backpack-link.jsonl` beside the flight |
+| carries | ten `backpack_*` series | the whole endpoint payload, per poll |
+
+Nothing installs or starts this script -- no unit, no ansible task, no compose service. So a
+flight with no `backpack-link.jsonl` is the normal case, not a fault, and **looking for the
+file first is the wrong move**: that cost a session real time on 2026-09-23, because this doc
+said the live path did not exist yet.
+
+The script still earns its place for a flight you are setting up deliberately: 5 s instead of
+30 s, and the raw payload rather than the ten mapped series -- the fields below are read off
+the JSON, and several of them (`drops_down`, `reconnects`) need the caveats recorded here
+before they mean anything.
+
 ## Run it
 
 ```sh
@@ -67,9 +91,15 @@ flights/rekon10/<flight>/ground/backpack-link.jsonl
 [`docs/flight-data-layout.md`](flight-data-layout.md) as immutable ground-side source, alongside
 the FC `.bin`, `captures/` and `derived/` (it had been an undocumented convention; #137).
 
-## This should not stay a script
+## #190 landed: the endpoint is scraped continuously
 
-[#190](https://github.com/symmatree/coordinator/issues/190) tracks scraping this endpoint into
-Mimir via Alloy on a ~30 s cadence, which is the right home: always-on, dashboarded, and not
-dependent on somebody remembering to start a poller. Until that lands, this script is the
-stopgap.
+[#190](https://github.com/symmatree/coordinator/issues/190) wanted this endpoint in Mimir via
+Alloy rather than depending on somebody remembering to start a poller. **It is deployed.** This
+section used to say "until that lands, this script is the stopgap", which was read as meaning
+there was nothing to query -- there is, with over a month of history.
+
+It lives in `tiles`, and is documented there rather than restated here:
+[`tanka/environments/mavproxy/README.md`](https://github.com/symmatree/tiles/blob/main/tanka/environments/mavproxy/README.md)
+carries the Probe, the `json-exporter` module that maps the JSON to metrics, the cadence, the
+series names and the dashboard. That file is next to the thing it describes; a copy this far
+away from it goes stale without anyone noticing, which is what happened here.
