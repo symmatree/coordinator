@@ -67,6 +67,6 @@ VISO_TYPE,0
 # not exist in the FC's param set at all -- the export drops from 1293 to 1283 params and
 # verify.py reports them [missing]. A fragment can only pin a param the FC has.
 #
-# They were measurements, not tuning guesses, so they are recorded in
-# docs/ardupilot-vio.md ("Measured VISO values") rather than lost. Restore them here when
-# VISO_TYPE goes non-zero and the params come back.
+# Their last values are held in docs/ardupilot-vio.md ("VISO values held from the VIO
+# attempt") so the work behind them is not repeated. That is salvage, not a config to
+# restore: no VIO run ever met the bar, and the extrinsics were never calibrated (#138).

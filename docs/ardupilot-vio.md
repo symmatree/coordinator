@@ -27,27 +27,45 @@ Topics to work through when an FC is attached:
 
 Record outcomes in a new param export in facts when there is something real to commit.
 
-## Measured VISO values
+## VISO values held from the VIO attempt
 
-Held here rather than in `ardupilot/inputs/ekf-vio.param`. At `VISO_TYPE=0` these seven
-params **do not exist in the FC's param set** -- the export drops from 1293 to 1283 params
-and `verify.py` reports them `[missing]` -- so the fragment cannot pin them. They are
-measurements, not tuning guesses, and re-deriving the lever arm costs a bench session.
+**No VIO run ever met the bar.** These are the last values that were on the FC when
+`VISO_TYPE` went to 0 ([#313](https://github.com/symmatree/coordinator/issues/313)), kept so
+the work behind them is not repeated -- not a configuration to restore and trust. Two of the
+things that would have to be true for them to be good are still open:
+[#138](https://github.com/symmatree/coordinator/issues/138) (the extrinsics were never
+calibrated) and [#156](https://github.com/symmatree/coordinator/issues/156) (output stalls
+blocked VIO-as-position regardless of tuning).
 
-Restore them to the fragment when `VISO_TYPE` goes non-zero and the params come back.
+They live here rather than in `ardupilot/inputs/ekf-vio.param` because at `VISO_TYPE=0` they
+**do not exist in the FC's param set** -- the export drops from 1293 to 1283 params and
+`verify.py` reports them `[missing]`, so the fragment cannot pin them.
 
-| param | value | provenance |
+### Grounded in something
+
+| param | value | what it came from |
 |---|---|---|
-| `VISO_DELAY_MS` | `100` | Measured VINS->FC transport latency ~100 ms. ArduPilot's default is 10 ms, which is not this link. |
-| `VISO_POS_X` | `0.072` | OAK-D -> FC lever arm, metres FRD. |
-| `VISO_POS_Y` | `-0.0375` | Same; Y carries a half-baseline offset because VINS reports in the cam0/left-imager frame. Coupled to the camera extrinsics in `oak_d.yaml`. |
+| `VISO_DELAY_MS` | `100` | VINS->FC transport latency measured on the link. ArduPilot's default is 10 ms, which is not this link. Re-measure if the path changes. |
+| `VISO_POS_X` | `0.072` | OAK-D -> FC lever arm, metres FRD, taken off the mount geometry. |
+| `VISO_POS_Y` | `-0.0375` | Same. Y carries a half-baseline offset because VINS reports in the cam0/left-imager frame; coupled to the camera extrinsics in `oak_d.yaml`. |
 | `VISO_POS_Z` | `-0.116` | Same. |
-| `VISO_POS_M_NSE` | `0.2` | Position noise floor. Floors the per-sample covariance the router sends; keep it below `MAVLINK_POS_NSE_BASE` or it clobbers the base. |
-| `VISO_VEL_M_NSE` | `0.1` | Velocity noise. The FC ignores `VISION_SPEED_ESTIMATE.covariance` and fuses at this param, so a router velocity covariance only takes effect if mirrored here. |
-| `VISO_YAW_M_NSE` | `0.2` | Yaw noise. Inert under `EK3_SRC_YAW=compass`. |
 
-Fusion mechanics for these: [ardupilot-extnav-fusion.md](ardupilot-extnav-fusion.md). Router
-side: [coordinator-mavlink.md](coordinator-mavlink.md).
+The lever arm is mount geometry, not a calibration result -- calibrating it is the open work
+in #138, and it is only valid for the OAK-D mount it was taken from.
+
+### Not validated
+
+| param | value | |
+|---|---|---|
+| `VISO_POS_M_NSE` | `0.2` | Floors the per-sample position covariance the router sends. Chosen to sit below the router's `MAVLINK_POS_NSE_BASE` (0.30) so the floor does not clobber the base -- a consistency constraint, not a measurement. |
+| `VISO_VEL_M_NSE` | `0.1` | The FC ignores `VISION_SPEED_ESTIMATE.covariance` and fuses velocity at this param, so a router velocity covariance only takes effect if mirrored here. The router's measured 0.15 m/s was never mirrored into it. |
+| `VISO_YAW_M_NSE` | `0.2` | Inert under `EK3_SRC_YAW=compass`. |
+
+If VIO is revisited, the first block saves re-deriving; the second carries no evidence and
+should be set deliberately rather than inherited.
+
+Fusion mechanics: [ardupilot-extnav-fusion.md](ardupilot-extnav-fusion.md). Router side:
+[coordinator-mavlink.md](coordinator-mavlink.md).
 
 ## Bench checks
 
