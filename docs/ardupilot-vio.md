@@ -37,9 +37,19 @@ things that would have to be true for them to be good are still open:
 calibrated) and [#156](https://github.com/symmatree/coordinator/issues/156) (output stalls
 blocked VIO-as-position regardless of tuning).
 
-They live here rather than in `ardupilot/inputs/ekf-vio.param` because at `VISO_TYPE=0` they
-**do not exist in the FC's param set** -- the export drops from 1293 to 1283 params and
-`verify.py` reports them `[missing]`, so the fragment cannot pin them.
+They live here rather than in `ardupilot/inputs/ekf-vio.param` because at `VISO_TYPE=0` a
+**param download cannot enumerate them**: `VISO_TYPE` is declared with `AP_PARAM_FLAG_ENABLE`
+(`AP_VisualOdom.cpp:37`), and `AP_Param::next()` skips the rest of the subtree while an
+enable param reads 0 (`AP_Param.cpp:1813-1818`). So the export drops from 1293 to 1283
+params, the flight log's `PARM` block likewise carries only `VISO_TYPE`, and `verify.py`
+reports the other seven `[missing]`. A fragment cannot round-trip against an export that is
+structurally unable to contain it.
+
+**They are not gone from the FC.** Enumeration hides them; storage keeps them, and a direct
+`PARAM_REQUEST_READ` by name still answers. Measured on the vehicle 2026-09-23 with
+`VISO_TYPE=0`: `VISO_POS_X` returned `0.072` and `VISO_DELAY_MS` returned `100`. They are
+written down here because a doc survives a reflash, a defaults reset or a swapped board --
+not because the values were at risk of vanishing the moment VIO went off.
 
 ### Grounded in something
 

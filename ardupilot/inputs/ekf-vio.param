@@ -63,10 +63,15 @@ EK3_ALT_M_NSE,2
 #   provenance: coordinator#313 2026-09-17
 VISO_TYPE,0
 #
-# The seven remaining VISO_* params are NOT pinned here, because at VISO_TYPE=0 they do
-# not exist in the FC's param set at all -- the export drops from 1293 to 1283 params and
-# verify.py reports them [missing]. A fragment can only pin a param the FC has.
+# The seven remaining VISO_* params are NOT pinned here, because at VISO_TYPE=0 a param
+# DOWNLOAD cannot see them: VISO_TYPE carries AP_PARAM_FLAG_ENABLE
+# (AP_VisualOdom.cpp:37), so AP_Param::next() skips the rest of the subtree while it
+# reads 0 (AP_Param.cpp:1813-1818). The export drops 1293 -> 1283 params and verify.py
+# reports them [missing]. Nothing here can round-trip against an export that cannot
+# contain it.
 #
-# Their last values are held in docs/ardupilot-vio.md ("VISO values held from the VIO
-# attempt") so the work behind them is not repeated. That is salvage, not a config to
-# restore: no VIO run ever met the bar, and the extrinsics were never calibrated (#138).
+# They are NOT gone from the FC. A direct read by name still answers -- measured on the
+# vehicle 2026-09-23 with VISO_TYPE=0: VISO_POS_X 0.072, VISO_DELAY_MS 100. Their last
+# values are also written down in docs/ardupilot-vio.md, which is where to look, and
+# which survives a reflash. That is salvage, not a config to restore: no VIO run ever met
+# the bar and the extrinsics were never calibrated (#138).
