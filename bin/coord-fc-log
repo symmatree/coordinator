@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""List and pull the flight controller's dataflash logs, over the link we already have.
+
+The coordinator is wired to the FC on /dev/ttyAMA0 and is the only thing that is. So the
+.bin comes off the FC through here -- no second device on the FC, no pulling its card
+(#77). Proven on 2026-09-23: 154,894,336 bytes with zero missing ranges, verified against
+an independent ground-side observer.
+
+    coord fc-log list
+    coord fc-log pull <id> <outfile>
+
+THE PORT MUST BE FREE. coordinator-mavlink holds /dev/ttyAMA0 while the stack is up, and
+two readers on one UART get half a byte stream each. Quiesce first -- which is what
+fleet-control's probe/offload already do, so in the post-flight flow the port is free by
+the time you get here.
+
+WHY THIS RUNS IN A CONTAINER. pymavlink is not installed on the host and should not be:
+the host is ansible-managed and this is the only thing that would want it. The
+coordinator-mavlink image already carries it (pinned 2.4.49), so when the import fails we
+re-exec ourselves inside that image with the device passed through. One implementation,
+runnable either way.
+
+WHICH LOG IS THE FLIGHT -- the ground picks, this only reports. `list` prints what the FC
+has; the caller matches it against the armed window, which it knows from the ground-side
+mavproxy console without needing anything from the vehicle. The rule, for a human reading
+the list: LOG_ENTRY.time_utc is LAST-MODIFIED, NOT CREATION -- with LOG_FILE_DSRMROT=1 the
+flight log is the one whose time_utc sits a few seconds after the disarm, because that
+rotation is what closed it. The check that settles it: LOG_DISARMED is 1 or 2, so a log
+MUST have been created at boot; if no entry carries a boot-time stamp, the field is not
+creation time.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+DEVICE = os.environ.get("COORD_FC_DEVICE", "/dev/ttyAMA0")
+BAUD = int(os.environ.get("COORD_FC_BAUD", "1500000"))
+IMAGE = os.environ.get("COORD_FC_IMAGE", "ghcr.io/symmatree/coordinator-mavlink:main")
+
+# Bytes per LOG_REQUEST_DATA window. Bounded on purpose -- see pull().
+WINDOW = int(os.environ.get("COORD_FC_WINDOW", str(256 * 1024)))
+
+# Our MAVLink identity. Not 1 (the FC) and not 255 (a GCS): a distinct component so a
+# concurrent GCS session is distinguishable in the FC's MAV log records.
+SRC_SYSTEM = 250
+SRC_COMPONENT = 1
+
+
+def reexec_in_container() -> "None":
+    """Re-run this script inside the mavlink image, which has pymavlink.
+
+    --entrypoint python3 is required: the image's entrypoint runs the router, and without
+    the override our arguments are parsed as router flags and the run dies on
+    'unrecognized arguments'.
+    """
+    if shutil.which("docker") is None:
+        sys.exit("coord-fc-log: no pymavlink and no docker; cannot reach the FC")
+    me = os.path.abspath(__file__)
+    cmd = [
+        "docker", "run", "--rm", "--entrypoint", "python3",
+        "--device", f"{DEVICE}:{DEVICE}",
+        "-v", f"{me}:{me}:ro",
+    ]
+    # Bind the output directory so `pull` writes where the caller asked, not into a
+    # container layer that --rm throws away.
+    out = next((a for a in sys.argv[1:] if a.startswith("/")), None)
+    if out:
+        d = os.path.dirname(os.path.abspath(out)) or "/"
+        cmd += ["-v", f"{d}:{d}"]
+    cmd += [IMAGE, me] + sys.argv[1:]
+    os.execvp("docker", cmd)
+
+
+try:
+    from pymavlink import mavutil  # noqa: E402
+except ImportError:
+    reexec_in_container()
+
+
+def connect():
+    os.environ["MAVLINK20"] = "1"
+    m = mavutil.mavlink_connection(
+        DEVICE, baud=BAUD, source_system=SRC_SYSTEM,
+        source_component=SRC_COMPONENT, dialect="ardupilotmega")
+    if m.wait_heartbeat(timeout=20) is None:
+        sys.exit(f"coord-fc-log: no heartbeat from the FC on {DEVICE}")
+    return m
+
+
+def end_any_transfer(m) -> None:
+    """Leave whatever state a previous, aborted transfer left the FC in.
+
+    MEASURED 2026-09-23: kill a download mid-stream and the FC keeps streaming the old log
+    and IGNORES EVERY LOG_REQUEST_LIST. That presents as an empty log list -- i.e.
+    indistinguishable from 'that log does not exist' -- until something ends the transfer.
+    Every entry point calls this first, so a single aborted run cannot poison the session.
+    """
+    m.mav.log_request_end_send(m.target_system, m.target_component)
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if m.recv_match(type=["LOG_DATA", "LOG_ENTRY"], blocking=True, timeout=0.5) is None:
+            return
+
+
+def list_logs(m) -> "dict[int, int]":
+    """Return {id: size}.
+
+    ASK FOR THE WHOLE LIST, NOT ONE ENTRY. A single-id request --
+    log_request_list_send(sys, comp, n, n) -- returned nothing on 2026-09-23, while
+    (0, 0xffff) and filtering worked. Recorded as observed; not explained.
+    """
+    end_any_transfer(m)
+    for _ in range(3):
+        m.mav.log_request_list_send(m.target_system, m.target_component, 0, 0xffff)
+        logs: dict[int, tuple[int, int]] = {}
+        expected = None
+        while True:
+            e = m.recv_match(type="LOG_ENTRY", blocking=True, timeout=3)
+            if e is None:
+                break
+            expected = e.num_logs or expected
+            logs[e.id] = (e.size, e.time_utc)
+            if expected and len(logs) >= expected:
+                break
+        if logs:
+            return logs
+        end_any_transfer(m)
+    return {}
+
+
+def cmd_list(_args) -> int:
+    m = connect()
+    logs = list_logs(m)
+    if not logs:
+        print("coord-fc-log: the FC reported no logs", file=sys.stderr)
+        return 1
+    print(f"{'id':>5}  {'bytes':>13}  {'MiB':>8}  time_utc (LAST-MODIFIED, not creation)")
+    for i in sorted(logs):
+        size, tutc = logs[i]
+        when = (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tutc)) if tutc
+                else "(no GPS time)")
+        print(f"{i:>5}  {size:>13}  {size / 1048576.0:>8.1f}  {when}")
+    return 0
+
+
+def pull(m, log_id: int, out_path: str) -> int:
+    """Fetch one log with bounded windows, repairing gaps inside each window.
+
+    A SINGLE STREAMING REQUEST FOR THE WHOLE FILE DOES NOT SELF-REPAIR. Measured
+    2026-09-23: when a packet is lost the contiguous pointer stops while later bytes keep
+    arriving, so nothing notices and nothing re-requests the hole until the stream ends --
+    the transfer looked alive at 122 KiB/s while stuck at 2.8%. Bounded windows make the
+    gap visible while the window is still the unit being worked on.
+    """
+    logs = list_logs(m)
+    if log_id not in logs:
+        print(f"coord-fc-log: no log with id {log_id}; try `coord fc-log list`",
+              file=sys.stderr)
+        return 1
+    size = logs[log_id][0]
+    print(f"coord-fc-log: log id={log_id} size={size} bytes ({size / 1048576.0:.1f} MiB)",
+          flush=True)
+
+    buf = bytearray(size)
+    have = bytearray(size)
+    ts, tc = m.target_system, m.target_component
+    t0 = time.time()
+    last_report = t0
+    got = 0
+    base = 0
+
+    while base < size:
+        wlen = min(WINDOW, size - base)
+        for _attempt in range(12):
+            miss = next((i for i in range(base, base + wlen) if not have[i]), None)
+            if miss is None:
+                break
+            m.mav.log_request_data_send(ts, tc, log_id, miss, base + wlen - miss)
+            quiet = 0
+            while quiet < 3:
+                d = m.recv_match(type="LOG_DATA", blocking=True, timeout=2)
+                if d is None:
+                    quiet += 1
+                    continue
+                quiet = 0
+                if d.id != log_id or d.count == 0 or d.ofs >= size:
+                    continue
+                n = min(d.count, size - d.ofs)
+                buf[d.ofs:d.ofs + n] = bytes(d.data[:n])
+                for j in range(d.ofs, d.ofs + n):
+                    if not have[j]:
+                        have[j] = 1
+                        got += 1
+                if d.ofs + n >= base + wlen:
+                    break
+            now = time.time()
+            if now - last_report >= 15:
+                el = now - t0
+                rate = got / el
+                print(f"  {100.0 * got / size:.1f}%  {rate / 1024.0:.0f} KiB/s  "
+                      f"eta={(size - got) / rate:.0f}s", flush=True)
+                last_report = now
+        else:
+            print(f"coord-fc-log: window at {base} still incomplete; continuing",
+                  file=sys.stderr, flush=True)
+        base += wlen
+
+    missing = have.count(0)
+    with open(out_path, "wb") as f:
+        f.write(buf)
+    el = time.time() - t0
+    print(f"coord-fc-log: wrote {out_path}: {size} bytes, {missing} missing, "
+          f"{el:.0f}s, {got / el / 1024.0:.0f} KiB/s", flush=True)
+    # A short file is a failure even though the bytes we did get are good. Say so in the
+    # exit status so a caller does not file a truncated log as a flight record.
+    return 0 if missing == 0 else 2
+
+
+def cmd_pull(args) -> int:
+    return pull(connect(), args.id, args.out)
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(
+        prog="coord fc-log", description="List and pull FC dataflash logs over ttyAMA0.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list", help="list the logs the FC holds").set_defaults(fn=cmd_list)
+    q = sub.add_parser("pull", help="fetch one log to a file")
+    q.add_argument("id", type=int)
+    q.add_argument("out")
+    q.set_defaults(fn=cmd_pull)
+    args = p.parse_args()
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

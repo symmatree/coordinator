@@ -86,6 +86,8 @@ Commands:
   restart           docker compose restart [service]
   status            docker compose ps
   version           print what this machine is running, one TOML table per unit
+  fc-log list       FC dataflash logs, over ttyAMA0 (stack must be stopped)
+  fc-log pull <id> <out>  fetch one FC log to a file
   sessions list     capture sessions on this device, as JSON
   sessions package  one closed session into a verified bundle
   sessions delete   remove sessions and their bundles (capture must be stopped)
@@ -190,6 +192,13 @@ sessions)
 	# Same reasoning: captures outlive any stack, and a machine whose stack was
 	# removed still has data worth listing and packaging (#302).
 	exec /usr/local/bin/coord-sessions "$@"
+	;;
+fc-log)
+	# Same reasoning again, plus one of its own: the FC's logs are not ours and do
+	# not depend on our stack at all -- but the port does. coordinator-mavlink holds
+	# /dev/ttyAMA0 while the stack is up, so `coord stop` (or any quiesced command)
+	# has to have run first. #77.
+	exec /usr/local/bin/coord-fc-log "$@"
 	;;
 logs)
 	require_compose_file
