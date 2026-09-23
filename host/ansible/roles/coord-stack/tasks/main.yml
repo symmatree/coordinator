@@ -114,6 +114,19 @@
     dest: /usr/local/bin/coord-sessions
     mode: "0755"
 
+# The FC dataflash puller (#77). Same install, same reason -- but only where there
+# is an FC to talk to: the campods have no serial link to one, so installing it
+# there would advertise a verb that cannot work. It carries no deps of its own; it
+# re-execs into the coordinator-mavlink image for pymavlink rather than putting
+# that on the host.
+- name: Install the FC dataflash puller
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ coord_checkout }}/bin/coord-fc-log"
+    dest: /usr/local/bin/coord-fc-log
+    mode: "0755"
+  when: device_role == "coordinator"
+
 # Fetch the images as part of convergence, not as a step somebody has to remember
 # afterwards. This is what makes `coord start --pull never` safe: a converged node
 # has its images by definition, so a missing one at boot means something is wrong
