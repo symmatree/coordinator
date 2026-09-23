@@ -107,6 +107,18 @@ To get structural properties **uncontaminated by the drive**, excite the structu
 impulse and watch it ring down with the motors off. Not yet done; this section is the intent
 and the method, and should be replaced with results.
 
+The **analysis** for it exists and is tested, so the bench session only has to produce the
+capture: [`analysis/ringdown.py`](../../analysis/ringdown.py) reads a `campod-accel` jsonl
+directly and reports frequency and damping per tap, with the scatter across taps as the error
+bar, plus a `compare_arms` pairing for the SE/SW control below. Point it at the capture:
+`python3 analysis/ringdown.py <se-arm.jsonl> <sw-arm.jsonl>`.
+
+It **refuses** a record that is not impulses-in-silence. That guard is not hypothetical: run
+against the fan captures in section 1 -- a steady source with no taps at all -- the fitter
+returned five confident "modes" at 37.3 / 110.1 / 147.1 / 183.3 / 441.3 Hz, which are that
+fan's own shaft harmonics from the table above, each with a plausible damping ratio attached.
+Kill the motors before tapping, and check the record is quiet between taps.
+
 Method notes, for whoever does it first:
 
 - **Attach the accelerometer rigidly to the arm** -- tape, wax, or glue. A breadboard has its
