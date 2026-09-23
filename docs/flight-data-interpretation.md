@@ -45,7 +45,9 @@ Two independent routes; use both, because neither is self-validating.
 * **`VISP.RTimeUS` against FC `TimeUS`** -- the FC logs the coordinator's own timestamp next to its
   own for every pose it received, so regressing one on the other gives coordinator -> FC time with no
   GPS arithmetic and no working NTP. On 260814 the fit residual is **1.2 ms rms, 3.8 ms max** over
-  2652 samples (`capture_align.fc_time_from_visp`). Requires VIO to have been streaming.
+  2652 samples (`capture_align.fc_time_from_visp`). Requires VIO to have been streaming --
+  so this route is **unavailable from 260923 onward**, where `VISO_TYPE=0` and the log's `VISP`
+  count is 0. For those flights `timesync.jsonl` is the only route to FC time.
 * **`timesync.jsonl`** (#167 / #208) -- every TIMESYNC exchange, pairing the FC's clock with our
   realtime and monotonic. Works whether or not VIO is running. Written from 2026-09-05 on, so flights
   before that do not have it.
@@ -173,6 +175,62 @@ varies per frame.
 
 ---
 
+### An enable-gated subtree is absent from both the export and `PARM`
+
+`VISO_TYPE` is declared with `AP_PARAM_FLAG_ENABLE` (`AP_VisualOdom.cpp:37`), and
+`AP_Param::next()` sets `last_disabled` and skips the rest of the subtree while such a param
+reads 0 (`AP_Param.cpp:1813-1818`). A param *download* therefore omits the whole group -- so
+turning VIO off took the export from 1293 to 1283 names, and the 260923 log's `PARM` block
+likewise carries only `VISO_TYPE`.
+
+**The values are still on the FC.** Enumeration hides them; storage keeps them, and a direct
+`PARAM_REQUEST_READ` by name answers. Measured on the vehicle 2026-09-23 with `VISO_TYPE=0`:
+`VISO_POS_X` returned `0.072`, `VISO_DELAY_MS` returned `100`, neither present in that day's
+export or `PARM`. The last known values are written down in
+[ardupilot-vio.md](ardupilot-vio.md).
+
+So "absent from `PARM`" means one of two different things and they are not distinguishable
+from the log alone: the parameter does not exist on that firmware, or it exists and its
+enable gate is off. `ardupilot/verify.py` reports the second case as `[missing]`.
+
+### Which OAK-D capture session was the armed one, without forensics
+
+Stills are arm-gated (`OAK_ARM_FILE`, `feature_tracker.cpp`, #88), so **a session directory
+containing JPEGs is a session that was armed, and one containing only `.feat` never was.**
+On 260923 exactly one of the coordinator's sessions held stills and it was the flight; the
+rest of that day's sessions held `.feat` alone.
+
+This is the cheap answer to the question that cost exposure/ISO forensics on 260730 (#157).
+Two cautions:
+
+- A session can span more than one day and its directory name is the coordinator's wall clock
+  at session *start*, not the flight date. 260923's flight session is named `20260922T122804Z`
+  because it opened on the previous day and ran a ~24 h boot. Check the name against the
+  session's own `start_unix` in its `.feat.json` before reading anything into it.
+- The stills bracket the armed window only loosely, because their sidecar timestamps are
+  written after encoding (see above). For the window itself, prefer the FC's `ARM`/`EV10`/
+  `EV11` records or a ground-side observer.
+
+### Ground-side logs are the one absolute-time reference
+
+All four clocks in the table above live on the vehicle or the coordinator, and two of them are
+untrustworthy. The cluster-side observers are not: `mavproxy`'s console log and the Mimir
+metrics are stamped by machines with working NTP, so they are the outside check on any
+absolute time derived from vehicle data.
+
+Worked example, 260923 -- the FC dataflash and the mavproxy console share no clock, the first
+mapped to UTC through its own `GPS` week/ms and the second stamped by the cluster:
+
+| event | dataflash | mavproxy | delta |
+|---|---|---|---|
+| ARM | 12:09:10.4 | 12:09:11.7 | 1.3 s |
+| DISARM | 12:11:49.9 | 12:11:50.8 | 0.9 s |
+
+Agreement at that level corroborates the clock join, the log decode and the state model at
+once, the same way the explicit-vs-derived liftoff check does below. It is a sanity check, not
+a calibration: the residual here is dominated by a two-point linear fit plus MAVLink transport
+latency, and is not good enough to key a join on.
+
 ## The sortie, as it appears in a log
 
 **Ground time before arming is long and is supposed to be.** The operator holds until the F9P
@@ -272,6 +330,13 @@ real dates    every flight through 2026-06-29
 `260814-woods` has both: `2026-08-14 08-54-19.bin` (the drive to the site, created with GPS time in
 hand) and `1980-01-11 08-00-07.bin` (the flight, created at the field after a reboot, before lock).
 
+**`LOG_ENTRY.time_utc` over MAVLink is last-modified, not creation.** This is the field a log
+download shows you, and it decides which log is the flight. The check: `LOG_DISARMED` is 1 or
+2, so a log MUST have been created at boot -- if no entry carries a boot-time stamp, the field
+is not creation time. With `LOG_FILE_DSRMROT=1` the flight log is then the one whose
+`time_utc` sits a few seconds after the disarm, because that rotation closed it. On 260923 the
+disarm was 12:11:50.8Z and the flight log's `time_utc` was 12:12:00Z.
+
 **A 1980 name means "no GPS time when this file was created" and nothing else.** It does not mean the
 log lacks GPS time -- 260814's flight log reaches a 3D fix at t=7.4 s. And **the filename is not the
 flight date**: derive that from the `GPS` records, or from `telemetry.jsonl` once #220 lands.
@@ -297,7 +362,7 @@ underlying quantities, different message set and different names.
 |---|---|---|
 | `.feat` feature payloads | feature supply, stereo depth, frame-loss accounting, local relative pose | anything absolute -- there is no world frame in it |
 | `.feat` device timestamps | counting dropped frames: they sit on an exact frame grid (residual **0.0000 s** on 260814), so skipped frames are countable | -- |
-| `.feat` IMU | the OAK-D IMU at ~100 Hz | **vibration spectra** -- Nyquist is 50 Hz and the motor rev line (~115 Hz) and blade pass (~350 Hz) both alias. Use the FC's raw IMU (`LOG_BITMASK` bit 19, on since `5e89402`) |
+| `.feat` IMU | the OAK-D IMU at ~100 Hz | **vibration spectra** -- Nyquist is 50 Hz and the motor rev line (~115 Hz) and blade pass (~350 Hz) both alias. Use the FC's raw IMU: `ACC` / `GYR`, from `LOG_BITMASK` bit 19 (`MASK_LOG_IMU_RAW`, on since `5e89402`). **Not `ISBH`/`ISBD`** -- those are the batch sampler, a separate feature gated by `INS_LOG_BAT_MASK`, which is 0 on this vehicle. A log can be full of raw IMU and still have zero `ISBH` |
 | `VISP` / `VISV` | the onboard pose exactly as the FC received it, on the FC clock | truth of any kind |
 | `XKF1` | truth-ish -- but only while RTK holds (see above) | under canopy |
 | `ESC` | per-motor RPM, **indexed by output channel, not ArduPilot motor number** -- map through `SERVOn_FUNCTION` ([#169](https://github.com/symmatree/coordinator/issues/169) has the table) | reading motor 1/2/3/4 straight off `Instance` -- that mis-sorts a fore/aft split into a diagonal one |
@@ -306,7 +371,7 @@ underlying quantities, different message set and different names.
 | `TSYN` | the FC's own record of TIMESYNC exchanges, **with the peer SysID** and round-trip time (33 exchanges on 260814, RTT median 1007 us). A third, FC-side route to the clock bridge | high-rate work -- it is ~0.1 Hz |
 | colour stills | the mapping product | anything needing their own timestamp -- see above |
 | `mono_rect_left` | the actual VIO input, global shutter and fixed focus | only 260814 has it; capture is off by default from #216 |
-| `PARM` | **the complete parameter set the vehicle actually flew.** 1293 entries on 260814 -- the same count as the FC export, with none missing. The authoritative answer to how the vehicle was configured when this data was recorded | the vehicle's configuration *now*; it is a record of that boot |
+| `PARM` | **the parameter set the vehicle actually flew, as far as a param download can see it.** 1293 names on 260814, 1283 on 260923 -- both equal to the FC export of the day. The authoritative answer to how the vehicle was configured when this data was recorded | the vehicle's configuration *now* (it is a record of that boot); and **not quite complete** -- see the enable-gated note below |
 
 **Configuration changes between flights, so cross-flight comparisons need dating.** The clearest
 example: `MAV3_OPTIONS` went to 2 (`NO_FORWARD`, stopping VIO traffic being forwarded onto the ELRS
