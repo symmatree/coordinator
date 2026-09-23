@@ -15,6 +15,7 @@ exist because a notebook or a script here got it wrong first.
 | [`still_banding.py`](still_banding.py) | scene-cancelled measurement of the horizontal blur banding in the 12 MP stills: register two frames of the same scene, ratio their per-row gradient energy, fit a pitch (E34). Reports the periodogram and rejects peaks at the search bound. CLI: `python3 analysis/still_banding.py <session-dir>`. |
 | [`local_pose.py`](local_pose.py) | Step A -- frame-to-frame relative pose direct from the tracker features, VINS out of the loop; rotation from bearings, translation from depth-scaled RANSAC, integration that never bridges a dropped-frame gap (E35). |
 | [`test_analysis_modules.py`](test_analysis_modules.py) | synthetic-fixture tests for the four modules above. No NAS, no hardware, no pytest: `python3 analysis/test_analysis_modules.py`. |
+| [`vibration-spectrogram.ipynb`](vibration-spectrogram.ipynb) | vibration spectrum over time for **every accelerometer on the vehicle** -- FC raw `ACC` plus each campod ADXL345 pair -- on one shared FC time axis, with the per-motor rev and blade-pass lines overlaid from ESC RPM. Fits each ADXL345's rate per capture (never the header's nominal), places the pod on the FC clock by motion cross-correlation rather than by its wall clock, and reports amplitude ratios between mounting points. Parameterized by the FC `.bin`; emits `vibration-spectrogram.{png,json}`. |
 | [`vio-input-alignment.ipynb`](vio-input-alignment.ipynb) | aligns a `vio-ipc-record` fixture to the FC `.bin` by motion cross-correlation, compares OAK-D IMU vs FC IMU, and asks whether the camera IMU sees motor vibration (coordinator [#42](https://github.com/symmatree/coordinator/issues/42)). Run manually; not part of the nightly cron. |
 | [`vio_ekf_compare.py`](vio_ekf_compare.py) | vetted comparison lib: load VINS pose + FC EKF, time-align by angular-rate cross-correlation, Umeyama scale/rotation, ATE over the usable window. Imported by `vio-quality.ipynb`. |
 | [`estimator-input-audit.ipynb`](estimator-input-audit.ipynb) | **input-side** audit for one flight, parameterized by the FC `.bin`: clock tie and airborne window, frame loss, feature supply and scene depth, local relative pose, still banding, contact sheet. Wires up the four modules above and emits `estimator-input-audit.json` alongside the input. Regenerates E30-E32, E34, E35. |
@@ -29,13 +30,13 @@ exist because a notebook or a script here got it wrong first.
 
 > **`tiles/tanka/environments/flight-analysis/`** — [`main.jsonnet`](https://github.com/symmatree/tiles/blob/main/tanka/environments/flight-analysis/main.jsonnet), [`runner.py`](https://github.com/symmatree/tiles/blob/main/tanka/environments/flight-analysis/runner.py), [`README.md`](https://github.com/symmatree/tiles/blob/main/tanka/environments/flight-analysis/README.md) ← the authoritative doc.
 
-**The runner has not been repointed yet.** `tiles` `runner.py` still clones
-`https://github.com/symmatree/fables.git` and runs `Drones/rekon10/flight-analysis.ipynb`.
-The notebook moved here, so the nightly job breaks until `tiles` is changed. `instrument.sha`
-provenance follows the move: it starts tracking coordinator commits, not fables ones.
-Repointing the clone is the minimum fix; the coupling itself is the real smell -- a cron in
-one repo hard-coding another repo's URL and internal layout. Publishing the notebook as a
-release artifact (tarball or OCI image) the runner just pulls would decouple them.
+**The runner has been repointed** (coordinator#213): `tiles` `runner.py` clones
+`https://github.com/symmatree/coordinator.git` and runs `docs/rekon10/flight-analysis.ipynb`.
+`instrument.sha` is the notebook's own **git blob hash**, not the repo HEAD -- in a low-traffic
+docs repo those were nearly the same thing, but in an active repo keying freshness on HEAD
+would re-run every log on every unrelated commit. The coupling itself is still a smell -- a
+cron in one repo hard-coding another repo's URL and internal layout. Publishing the notebook
+as a release artifact (tarball or OCI image) the runner just pulls would decouple them.
 
 Locally (this machine): `~/tiles/tanka/environments/flight-analysis/`.
 
