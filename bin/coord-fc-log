@@ -33,6 +33,7 @@ creation time.
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import shutil
 import subprocess
@@ -41,7 +42,14 @@ import time
 
 DEVICE = os.environ.get("COORD_FC_DEVICE", "/dev/ttyAMA0")
 BAUD = int(os.environ.get("COORD_FC_BAUD", "1500000"))
-IMAGE = os.environ.get("COORD_FC_IMAGE", "ghcr.io/symmatree/coordinator-mavlink:main")
+# The image to borrow pymavlink from. NOT a literal: it is already declared once, as
+# service coordinator-mavlink in the stack's compose.yaml, and that file says plainly that
+# a value lives there and nowhere else. A copy here would be a second config surface that
+# drifts silently the first time the tag moves or a digest is pinned -- and the failure
+# would be "ran against the wrong image", which looks like nothing.
+IMAGE_ENV = os.environ.get("COORD_FC_IMAGE")
+MAVLINK_CONTAINER = "coordinator_mavlink"
+MAVLINK_SERVICE = "coordinator-mavlink"
 
 # Bytes per LOG_REQUEST_DATA window. Bounded on purpose -- see pull().
 WINDOW = int(os.environ.get("COORD_FC_WINDOW", str(256 * 1024)))
@@ -50,6 +58,43 @@ WINDOW = int(os.environ.get("COORD_FC_WINDOW", str(256 * 1024)))
 # concurrent GCS session is distinguishable in the FC's MAV log records.
 SRC_SYSTEM = 250
 SRC_COMPONENT = 1
+
+
+def resolve_image() -> str:
+    """Ask the box which image the mavlink service uses, rather than repeating it.
+
+    The container is created by `coord start` with a fixed container_name, so inspecting
+    it works whether it is running or stopped -- and after a quiesce it is stopped, which
+    is exactly when this script runs. Falling back to the compose file covers a box that
+    has pulled but never started.
+    """
+    if IMAGE_ENV:
+        return IMAGE_ENV
+    rc, out = _run("docker", "inspect", "--format", "{{.Config.Image}}", MAVLINK_CONTAINER)
+    if rc == 0 and out:
+        return out
+    compose_file = os.environ.get("COORD_COMPOSE_FILE")
+    if not compose_file:
+        found = sorted(glob.glob("/opt/stacks/*/compose.yaml"))
+        compose_file = found[0] if len(found) == 1 else None
+    if compose_file:
+        rc, out = _run("docker", "compose", "-f", compose_file, "config", "--images")
+        if rc == 0:
+            for line in out.splitlines():
+                if MAVLINK_SERVICE in line:
+                    return line.strip()
+    sys.exit(
+        "coord-fc-log: cannot determine the mavlink image. Expected container "
+        f"{MAVLINK_CONTAINER} or a stack declaring {MAVLINK_SERVICE}; run `coord pull` "
+        "first, or set COORD_FC_IMAGE.")
+
+
+def _run(*cmd: str) -> "tuple[int, str]":
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        return p.returncode, p.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return 1, ""
 
 
 def reexec_in_container() -> "None":
@@ -73,7 +118,7 @@ def reexec_in_container() -> "None":
     if out:
         d = os.path.dirname(os.path.abspath(out)) or "/"
         cmd += ["-v", f"{d}:{d}"]
-    cmd += [IMAGE, me] + sys.argv[1:]
+    cmd += [resolve_image(), me] + sys.argv[1:]
     os.execvp("docker", cmd)
 
 
