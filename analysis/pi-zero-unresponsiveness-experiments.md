@@ -129,12 +129,10 @@ hardware** -- that ambiguity is resolvable from the driver. `bcm2835_wdt.c` decl
 (`0x00000040`) is defined and never used. So the field is not reporting "did not fire",
 it is not reporting at all, and no amount of collecting it will distinguish the cases.
 
-What might substitute: the firmware publishes the raw `PM_RSTS` value at
-`/proc/device-tree/chosen/bootloader/rsts`. Measured `0x20` on every normal boot of a
-campod and the coordinator on 2026-09-19/20, and `0x21` after `reboot '1'` (the partition
-bit). The driver names bit 6 `HADWRH`. **Whether the firmware sets that bit on a watchdog
-reset is unverified** -- but it costs nothing to capture, and
-`dotfiles-symm/pi-image/probe-claims.py` already records it on every run.
+If a reset ever does need attributing, the firmware publishes the raw `PM_RSTS` value at
+`/proc/device-tree/chosen/bootloader/rsts` (`0x20` on every normal boot measured
+2026-09-19/20, `0x21` after `reboot '1'`), and the driver names bit 6 `HADWRH`. Whether
+the firmware sets it on a watchdog reset is unverified.
 
 No check was made of whether PID 1 was missing pings before or during a stop.
 
