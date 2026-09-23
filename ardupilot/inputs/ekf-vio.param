@@ -63,19 +63,10 @@ EK3_ALT_M_NSE,2
 #   provenance: coordinator#313 2026-09-17
 VISO_TYPE,0
 #
-# The VISO values below are inert while VISO_TYPE=0. They are kept because they are
-# measurements, not tuning guesses: the lever arm came off the OAK-D mount and the
-# delay was measured on the link. Re-deriving them would cost a bench session.
-# Measured VINS->FC transport latency ~100 ms (not the 10 ms default).
-VISO_DELAY_MS,100
-# OAK-D -> FC lever arm, metres FRD. Y carries a half-baseline offset (VINS reports in
-#   the cam0/left-imager frame). Coupled to the camera extrinsics (oak_d.yaml).
-VISO_POS_X,0.072
-VISO_POS_Y,-0.0375
-VISO_POS_Z,-0.116
-# Fusion noise. Position covariance is floored by POS_M_NSE; VIO velocity ignores the
-#   message covariance and fuses at VEL_M_NSE (so a router vel covariance only takes
-#   effect if mirrored here).
-VISO_POS_M_NSE,0.2
-VISO_VEL_M_NSE,0.1
-VISO_YAW_M_NSE,0.2
+# The seven remaining VISO_* params are NOT pinned here, because at VISO_TYPE=0 they do
+# not exist in the FC's param set at all -- the export drops from 1293 to 1283 params and
+# verify.py reports them [missing]. A fragment can only pin a param the FC has.
+#
+# They were measurements, not tuning guesses, so they are recorded in
+# docs/ardupilot-vio.md ("Measured VISO values") rather than lost. Restore them here when
+# VISO_TYPE goes non-zero and the params come back.

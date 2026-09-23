@@ -27,6 +27,28 @@ Topics to work through when an FC is attached:
 
 Record outcomes in a new param export in facts when there is something real to commit.
 
+## Measured VISO values
+
+Held here rather than in `ardupilot/inputs/ekf-vio.param`. At `VISO_TYPE=0` these seven
+params **do not exist in the FC's param set** -- the export drops from 1293 to 1283 params
+and `verify.py` reports them `[missing]` -- so the fragment cannot pin them. They are
+measurements, not tuning guesses, and re-deriving the lever arm costs a bench session.
+
+Restore them to the fragment when `VISO_TYPE` goes non-zero and the params come back.
+
+| param | value | provenance |
+|---|---|---|
+| `VISO_DELAY_MS` | `100` | Measured VINS->FC transport latency ~100 ms. ArduPilot's default is 10 ms, which is not this link. |
+| `VISO_POS_X` | `0.072` | OAK-D -> FC lever arm, metres FRD. |
+| `VISO_POS_Y` | `-0.0375` | Same; Y carries a half-baseline offset because VINS reports in the cam0/left-imager frame. Coupled to the camera extrinsics in `oak_d.yaml`. |
+| `VISO_POS_Z` | `-0.116` | Same. |
+| `VISO_POS_M_NSE` | `0.2` | Position noise floor. Floors the per-sample covariance the router sends; keep it below `MAVLINK_POS_NSE_BASE` or it clobbers the base. |
+| `VISO_VEL_M_NSE` | `0.1` | Velocity noise. The FC ignores `VISION_SPEED_ESTIMATE.covariance` and fuses at this param, so a router velocity covariance only takes effect if mirrored here. |
+| `VISO_YAW_M_NSE` | `0.2` | Yaw noise. Inert under `EK3_SRC_YAW=compass`. |
+
+Fusion mechanics for these: [ardupilot-extnav-fusion.md](ardupilot-extnav-fusion.md). Router
+side: [coordinator-mavlink.md](coordinator-mavlink.md).
+
 ## Bench checks
 
 **Vision only (no FC -- `coord start vio-tracker vio-estimator`):**
