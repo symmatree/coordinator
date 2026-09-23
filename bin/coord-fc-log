@@ -107,8 +107,13 @@ def reexec_in_container() -> "None":
     if shutil.which("docker") is None:
         sys.exit("coord-fc-log: no pymavlink and no docker; cannot reach the FC")
     me = os.path.abspath(__file__)
+    # --pull never: the image is a stack service, so a converged vehicle has it by
+    # definition and a missing one means something is wrong rather than merely absent.
+    # Without this, `docker run` reaches for the network -- on a vehicle that may have no
+    # wifi at all, and in the middle of post-flight recovery. Same reasoning, and the same
+    # flag, as `coord start --pull never`.
     cmd = [
-        "docker", "run", "--rm", "--entrypoint", "python3",
+        "docker", "run", "--rm", "--pull", "never", "--entrypoint", "python3",
         "--device", f"{DEVICE}:{DEVICE}",
         "-v", f"{me}:{me}:ro",
     ]
