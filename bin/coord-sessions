@@ -6,12 +6,10 @@ Device-side half of post-flight recovery. Two operations, no service and no stat
 manifest that describes it. Who moves the bytes afterwards is a transport question
 and is not here.
 
-A SESSION IS A BOOT. capture.py and campod-accel each read
-/proc/sys/kernel/random/boot_id and write to <captures>/<node>/<boot-id>/, so they
-agree on a directory without one handing it to the other. Nothing semantically
-closes a session -- there is no signal that reaches a campod to say we landed --
-so a session is bounded by the machine rebooting, and is per power cycle rather
-than per flight. A bench day leaves several per node, most of them junk.
+A SESSION IS A BOOT, and CAPTURE IS ASSUMED STOPPED for all three verbs -- both are
+properties of every script in here rather than of this one, so they live in
+bin/README.md. The short of it: a session directory is a kernel boot id, only a
+reboot ends one, and nothing here checks that capture has stopped.
 
 Output is JSON, not the TOML that bin/coord-version emits. That format exists so a
 manifest can be sourced by a shell and read by systemd; this is nested data with
@@ -108,8 +106,9 @@ def describe(session_dir: Path, node: str, current_boot: str) -> dict:
         "node": node,
         "session": session_dir.name,
         "path": str(session_dir),
-        # Only a reboot closes a session, so the current boot's directory can be
-        # written into again at any moment -- `coord start` alone reopens it.
+        # This boot's directory, which `coord start` would append to. NOT "something
+        # is writing": with capture stopped it is as finished as any other, and
+        # package treats it that way.
         "open": session_dir.name == current_boot,
         "bytes": sum(p.stat().st_size for p in files),
         "files": len(files),
@@ -183,19 +182,6 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
         print(f"coord-sessions: no session {session} under {captures}", file=sys.stderr)
         return 1
     node, session_dir = found
-
-    # Refused rather than snapshotted or rotated. Only a reboot closes a session, so
-    # there is no quiescent moment to snapshot, and "rotate" would mean rebooting the
-    # vehicle to take a copy. In the flow this serves it never bites: recovery starts
-    # by swapping the BEC for an umbilical, which is a power cycle, so the flight's
-    # session is already closed by the time anyone asks for it (#302).
-    if session_dir.name == current:
-        print(
-            f"coord-sessions: {session} is the current boot and can still be written "
-            "to; reboot to close it",
-            file=sys.stderr,
-        )
-        return 1
 
     files = sorted(p for p in session_dir.rglob("*") if p.is_file())
     if not files:
@@ -288,15 +274,9 @@ def cmd_delete(captures: Path, sessions: list[str], out_dir: Path) -> int:
     The transfer deletes each session as it verifies it, and the operator prunes
     whatever was not selected in one go (#302, #31). Same operation either way.
 
-    CAPTURE IS ASSUMED STOPPED. That is Seth's precondition for list, package and
-    delete alike, not something checked here. Note what the check would have to be
-    if it were ever wanted: the writers are in containers, so their /proc fd links
-    resolve in their own mount namespace and a path comparison would not see them.
-
-    The open session is NOT refused. Nothing is writing, by that precondition, and
-    a new boot gets a new id so it does not come back. Refusing would make the
-    current boot's directory the one thing that cannot be pruned without a reboot,
-    which is the disk filling up -- the reason this verb exists.
+    The current boot's session is not special here, any more than it is in package.
+    Refusing it would make it the one directory that cannot be pruned without a
+    reboot, which is the disk filling up -- the reason this verb exists.
 
     Absent is not an error. The wanted end state is that it is gone, and a transfer
     loop retrying a delete should not fail; the result says `absent` so a caller can
