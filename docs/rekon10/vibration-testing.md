@@ -123,7 +123,133 @@ Method notes, for whoever does it first:
   fastener, a cracked layer, a different cable route -- rather than a property of the design.
   That comparison is worth more than either measurement alone.
 
-## 5. Cross-checking against the flight controller
+## 5. A blur accounting was attempted on 260923, and this is what is wrong with it
+
+An attempt was made to decompose the blur in the 260923 stills into named terms in pixels --
+defocus, rotor vibration, low-frequency attitude, translation -- and to rank them. **That
+accounting is not established and should not be quoted.** It is written down here rather than
+deleted because the failure modes are the useful part, and because a tidy table of attributed
+costs is exactly the kind of thing that gets believed on sight.
+
+Two properties of how it was produced should colour everything below. It was assembled by
+running analyses and reporting each result as it came, so the conclusion moved repeatedly --
+at one point the rotor term was 0.95 px, later 2.8 px, then ~2 px, each stated to two or three
+significant figures. **A number whose value reverses while its precision does not is a
+conclusion wearing the costume of a measurement.** And the only end-to-end test of the whole
+chain -- does predicted blur actually predict still sharpness -- came back weak, and the chain
+was carried on being quoted anyway.
+
+### 5.1 `blur = angular rate x exposure` is wrong above ~90 Hz
+
+This is the load-bearing formula and it is false in exactly the band the rotor lines occupy.
+It holds only while the rate is roughly constant across the exposure. Above `f * t_exp ~ 0.45`
+the motion reverses *within* the exposure, the smear saturates at the angular amplitude, and
+the formula keeps growing linearly with rate. Measured against a simulated sinusoid at a 5 ms
+exposure:
+
+| f | 60 Hz | 120 | 200 | 300 | 500 | 800 |
+|---|---|---|---|---|---|---|
+| formula overstates by | 1.19x | 1.48x | 2.22x | 3.33x | 5.55x | 8.89x |
+
+Every rotor-band figure produced this way is inflated, worse the higher the band. The
+low-frequency attitude terms (1-6 Hz) are affected by only ~10%.
+
+### 5.2 Quadrature summation assumes things not in evidence
+
+Terms were combined as `sqrt(sum of squares)`. That assumes they are independent and have
+comparable point-spread shapes. Defocus is a disc; motion blur is a line; rolling-shutter
+banding is neither. Nothing was done to justify combining them this way.
+
+### 5.3 The pod's angular rate is a chain of four assumptions
+
+Angular rate at the pod was derived as `alpha = (a_arm - R a_cam) / |r|`, then integrated to
+rate. In order:
+
+- **Perpendicularity.** `alpha = diff/|r|` recovers only the component perpendicular to the
+  separation vector. Which sensor axis points outboard along the arm is **not recorded
+  anywhere** -- not in `campod-electrical.md`, not in the sidecars -- so the decomposition
+  cannot be done and the result is an upper bound on one component.
+- **The centripetal term `omega x (omega x r)` was dropped** without estimating it.
+- **A 30 Hz validity threshold was asserted, not derived.** Below it the differential is
+  dominated by calibration residual: at 1-6 Hz the method reported 0.268 g of differential
+  between two points 127 mm apart, which would require ~1186 deg/s^2 and is plainly not real.
+  The frequency at which leakage stops dominating was eyeballed from that failure, not
+  computed from the calibration error.
+- **`R` carries 12 degrees of unexplained misalignment** from the nearest exact axis
+  permutation. Two boards on a rigid mount should sit within a few degrees. The camera-side
+  sensor is taped against an oval with no flat, which is a plausible cause, but it is a
+  hypothesis and not a measurement.
+
+### 5.4 The calibration behind `R` is weaker than it looks
+
+`R` and the per-axis scale/bias came from a bench tumble on 2026-09-24 (`campod-sw`, session
+`8d6f79ec`), **not from flight data**. Three problems:
+
+- The intended method was a six-position calibration from *static* holds. The procedure
+  actually requested was "slow continuous tumble", so the static intervals all landed in
+  essentially one orientation -- direction-covariance eigenvalues `[0.986, 0.0135, 0.0006]`,
+  rank 1. That was an error in the instruction, not in the tumbling.
+- Falling back to low-passed *moving* data recovers the coverage (`[0.862, 0.074, 0.064]`) but
+  contaminates the sphere fit with hand-motion linear acceleration. The post-fit `|g|` spread
+  of 0.0097 g **is** that contamination and is not a precision figure.
+- An unbounded fit of the same model ran away to a 0.011 scale and a 92 g bias, which also
+  satisfies `|S(x-b)| = 1`. Bounds were then imposed to stop it. A model that needs bounds to
+  avoid absurdity is under-constrained by the data it was given.
+
+### 5.5 The comparison against the FC gyro conflates two things
+
+The pod was reported as seeing 4.5x the FC's rotational rate above 30 Hz. The FC is on
+isolation bobbins **and** behind the IMU's own anti-alias filtering, and nothing here separates
+those. The ratio is not a mount transmissibility and should not be read as one. Separately,
+the FC gyro was used as a proxy for the OAK-D on the grounds that both are bobbin-mounted --
+but they are different bobbins carrying different masses.
+
+### 5.6 The optical constants are published specifications, not measurements
+
+The IFOV figures (509 urad/px campod, 327 urad/px OAK-D) come from vendor focal lengths and
+pixel pitches. Every blur figure in pixels scales linearly with them. The defocus figures
+additionally assume the commanded lens position (0.8 dioptres) is *achieved*, which has never
+been checked against a target at a known distance.
+
+### 5.7 The images do not confirm any of it
+
+This is the part that should have stopped the accounting being quoted. Testing predicted blur
+against measured sharpness over 140 campod stills from 260923, trimmed 10 s inside each end of
+the armed window:
+
+- `corr(predicted blur, log sharpness)` = **-0.28**
+- across terciles, predicted blur spans **7x** while median sharpness moves **13%**
+
+The tercile ordering is monotonic, so motion blur is doing *something*. But a model that
+predicts a 7x change and produces a 13% response has not been validated by that test; it has
+been weakly survived by it. The reading offered at the time -- that a large constant term is
+swamping a variable one -- is consistent with the data and is also exactly what one would say
+to keep a model alive.
+
+`var_laplacian` is also not scene-normalised, and across frames of changing ground it tracks
+scene content. At n=140 over a moving scene that is plenty to hide the effect, which means
+**the test as run cannot distinguish "the model is wrong" from "the test is too weak"**. That
+is a reason to build a better test, not a reason to keep the model.
+
+### 5.8 What would actually settle it
+
+Each of these attacks one step rather than producing another table:
+
+- **Re-derive the blur kernel** as the integral of angular displacement over the exposure,
+  per band, instead of `rate x exposure`. Cheap, no new data, and it is the largest single
+  correction identified so far.
+- **Six-position calibration with held poses**, which is a different procedure from a
+  continuous tumble and needs to be asked for as such.
+- **A bench shot of a flat textured target at known distances**, which settles the achieved
+  focus, the real depth of field against a photogrammetry criterion rather than a 2 px circle
+  of confusion, and whether the frame has a spatial defect -- with no motion and no scene
+  change to confound it.
+- **Which sensor axis points outboard**, which is a fact about the hardware and unblocks the
+  perpendicular decomposition.
+- **A sharpness metric that survives a changing scene**, without which no in-flight test of
+  any of this has the power to confirm or refute it.
+
+## 6. Cross-checking against the flight controller
 
 The FC logs raw IMU, so once it is powered on the bench alongside the pods there is a third
 independent instrument looking at the same structure. Agreement on a common line -- with three
