@@ -97,10 +97,17 @@ try:
     check("and delete cannot reach into it",
           cs.resolve(captures, "99999999-zzzz") is None)
 
-    # 2. packaging refuses the open session
-    rc = cs.cmd_package(captures, "22222222-bbbb", out_dir)
-    check("refuses to package the current boot", rc == 1)
-    check("and writes no bundle for it", not list(out_dir.glob("*22222222*")))
+    # 2. the current boot's session packages like any other. It used to be refused,
+    #    which forced a reboot to retrieve a session that had merely been stopped --
+    #    and the reboot opened a fresh session that was then equally unretrievable.
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cs.cmd_package(captures, "22222222-bbbb", out_dir)
+    check("packages the current boot rather than refusing it", rc == 0)
+    open_summary = json.loads(buf.getvalue())
+    check("and writes its bundle", Path(open_summary["bundle"]).is_file())
+    check("whose manifest hashes every file in it",
+          open_summary["files"] > 0 and len(open_summary["sha256"]) == 64)
 
     # 3. package the closed one, for real
     buf = io.StringIO()
