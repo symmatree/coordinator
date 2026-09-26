@@ -98,6 +98,30 @@ here, so a connection that drops (`closed by remote host`, `Broken pipe`, `Conne
 is read as the reboot starting, while `Connection timed out`, `refused` and a rejected key
 still fail -- those mean no command got in at all.
 
+## The FC's dataflash logs
+
+The third thing a flight is assembled from, beside a campod session and the coordinator's.
+Device side is [#384](https://github.com/symmatree/coordinator/pull/384) /
+[#395](https://github.com/symmatree/coordinator/pull/395); only the coordinator has an FC,
+because it is the only thing wired to `/dev/ttyAMA0`.
+
+`coord fc-log list` prints JSON and `pull <id>` streams the log to **stdout**, reporting progress
+and its own sha256 on **stderr as JSON Lines**. So nothing lands on the device, this side invents
+no path there, and the transfer is one pass rather than a serial download followed by a copy. The
+received bytes are checked against the digest the device computed while sending; a `pull` that
+reports `error` leaves a `.part` and files nothing.
+
+**`time_utc` is LAST-MODIFIED, not creation.** With `LOG_FILE_DSRMROT=1` the flight's log is the
+one stamped a few seconds *after* the disarm, because that rotation is what closed it. The screen
+labels the column "last written" for that reason: called anything else it leads straight to
+picking the wrong log.
+
+It is its own run. The pull holds the serial port with the stack quiesced for as long as it takes
+-- 147.7 MB at 84-85 KiB/s measured 2026-09-23, so about half an hour -- which is a different
+operational state from the minutes everything else here takes. Nothing is deleted afterwards: the
+log stays on the FC's own card, rotated at disarm with `LOG_MAX_FILES=500`, so unlike a device
+card it is not the thing that fills.
+
 ## Progress comes from events, not scraped text
 
 `ansible-runner` emits a structured JSON event per task and per host. The service renders those
@@ -150,6 +174,8 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
 | `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
 | `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first |
+| `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |
+| `POST /nodes/:name/fc-log?id=&flight=` | stream one dataflash log into a flight dir -> `202 {id}` |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
 | `GET /runs/:id/log` | a failed play as ansible printed it |
