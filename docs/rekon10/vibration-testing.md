@@ -212,13 +212,10 @@ it today.
 **All of it bounded by the base not having been clamped.** These are distances to a mode frequency
 measured on a hand-held vehicle.
 
-## 6. The 1x rev band does not need a prop-imbalance explanation
-
-A strong line at 1x rotation is the textbook imbalance signature, and imbalance is the reading it
-invites. Here the amplitude pattern contradicts it.
+## 6. The 1x rev amplitudes, measured
 
 Rev-line PSD on the arm-end sensor, 260923 hover. **Both sensors are on the rear-left arm**, which
-is motor2's:
+is motor2's, so motor2 is the sensors' own motor:
 
 | motor | position | rpm | rev Hz | PSD on arm sensor |
 |---|---|---|---|---|
@@ -227,24 +224,101 @@ is motor2's:
 | motor3 | front-left | 7173 | 119.59 | 2.922 |
 | motor1 | front-right | 6903 | 116.05 | 1.169 |
 
-**The slowest motors produce the strongest 1x lines, by up to 3.7x.** Two mechanisms would make a
-1x line strong and both predict the opposite ordering:
+The slowest motors give the strongest 1x lines, by up to 3.7x. What that does and does not imply --
+and why prop imbalance is no longer the leading explanation for the 1x band -- is graded in section
+7 rather than argued here.
 
-- **Imbalance forcing grows as the square of speed.** For identical residual eccentricity on every
-  prop, the front pair at 1.29x the rear speed produces 1.67x the force. Front should lead.
-- **Proximity to 152.9 Hz.** The front rev lines at 116-120 Hz sit closer to the mode than the rear
-  at 87-94 Hz, amplifying 2.3-2.6x against 1.5-1.6x. Front should lead again.
+## 7. Open issues, graded
 
-Measured ordering is rear-leading, and the strongest of all is the sensors' own motor. So neither
-RPM-squared forcing nor the structural mode sets the 1x amplitudes -- **what orders them is the
-structural path from each motor to the sensor.** Own arm first, the other rear arm next, the far
-front arm last, with the near front arm out of order.
+Following the form of `fables/Datasets/experiments-house-model.md`: findings held at explicit
+confidence, and **dead theories kept visible with what killed them** rather than deleted. Several
+of the entries below were stated to me as results before they were withdrawn, which is exactly why
+they are recorded here instead of in a commit message nobody reads twice. **This topic closes when
+the confirmed set explains the observed behaviour.**
 
-That means a difference in imbalance between props is not needed to explain the pattern, which is
-consistent with the pattern surviving a change to four new freshly-mounted props (set A to set B,
-[props.md](props.md)) -- four independent props sharing one imbalance not being a plausible story.
+### Confirmed
 
-## 7. Cross-checking against the flight controller
+- **A mode at 152.9 Hz on the SW arm.** Two sensors 127 mm apart fitted independently: 152.92 and
+  152.94 Hz, 160 ppm apart, on 3 and 5 of 16 strikes, r2 0.983 and 0.987. Survives every band-count
+  cap tried, and no mode in the sweep is non-monotone in the cap. *(260926, hand-held base.)*
+- **Motor2's blade-pass at 261.80 Hz is the largest line measured anywhere on this airframe.** PSD
+  7.187 on the arm-end sensor, against 4.286 for that motor's own rev line. Motor2 is the rear-left
+  motor and both sensors are on the rear-left arm. *(260923.)*
+- **The forcing lines are three-blade.** Predicted 3rd-harmonic lines land within ~1 Hz on four
+  independent instruments -- motor1 predicted 348.14 Hz, measured 347.23-349.37. *(260923.)*
+- **Nothing drives 152.9 Hz at current hover RPM.** Nearest line is motor2's 2nd harmonic at
+  174.53 Hz, 21.4 Hz above, amplifying about 3.3x against a 40x or 14x peak -- and that line's PSD
+  is 0.738, a tenth of the blade-pass line above it.
+- **The 1x rev amplitudes are rear-leading**: 4.286 / 4.212 / 2.922 / 1.169 at 5230 / 5608 / 7173 /
+  6903 rpm. The slowest motors give the strongest lines.
+- **campod-sw is on the rear-left arm**, motor2's. Operator-confirmed 2026-09-26.
+
+### Current theories
+
+- **The 1x ordering is set by the structural path from each motor to the sensor** -- own arm
+  loudest, the other rear arm next, the far front arm last. Consistent with every number above, and
+  **not tested.** The discriminating probe is the SE arm: it makes a different motor the "own" one,
+  so the ordering should follow the sensor rather than the motor.
+- **A sensor mount contributes damping of its own**, which would account for Q 14 against Q 40 at
+  one frequency. Equally consistent with two modes inside one band that the two positions weight
+  differently. Neither is tested, so **the damping from the bump test is not usable** and only the
+  frequency is.
+
+### Weakened
+
+- ~~The 1x rev band is prop imbalance.~~ Both mechanisms that would make a 1x line strong predict
+  **front**-leading -- imbalance forcing grows as speed squared, so the front pair at 1.29x speed
+  makes 1.67x the force for identical eccentricity, and proximity to 152.9 Hz favours the front
+  lines at 2.3-2.6x over the rear at 1.5-1.6x -- and the measurement is rear-leading. The line also
+  survived replacing all four props (set A to set B, [props.md](props.md)), which four independent
+  new props would not do if it were their balance state. **Not disproven:** a motor-side
+  eccentricity is untouched by a prop change. But prop imbalance is no longer the leading
+  explanation, and no prop-side story is needed to explain the pattern.
+
+### Disproven
+
+- ~~A mode at 242.5 Hz, sitting 1.4% from the 239.18 Hz forcing line.~~ Reported and withdrawn the
+  same day, 2026-09-26. It appeared only under an arbitrary 120 Hz band floor at `n=6`, which freed
+  a slot in the band list; deriving the floor from the data removed it. It was the most striking
+  number in that run. Both the floor and the count are now non-arbitrary and asserted non-binding.
+- ~~"Blade-pass" at 174-239 Hz.~~ Those are 2x rev. The analysis computed order 2 and labelled it
+  blade-pass on a three-blade aircraft, which is where the real blade-pass at 261-359 Hz -- and the
+  largest line on the airframe -- was hiding.
+- ~~The camera sensor being taped on is why it reports more damping.~~ Asserted without a
+  measurement. Decay rate belongs to the mode and does not depend on where it is observed, so the
+  Q spread does need an explanation; this was a story, not one of them.
+- ~~Set A may be unbalanced after the crash, so a cross-set vibration comparison is confounded.~~
+  No measurement behind it, and the inference ran backwards: the set change is a natural experiment
+  that already ran, and its result is the Weakened entry above.
+- ~~The pod can be placed on the FC clock by fitting motion cross-correlation.~~ The timestamp chain
+  and the fit agree to one envelope bin (+0.00 s camera, +0.10 s arm, NCC 0.675 and 0.759), so the
+  fit was reproducing what the timestamps already said, one bin coarser -- and that bin was then
+  applied as a correction, injecting 25 cycles of phase at 250 Hz.
+- ~~The rest-magnitude departure is a scale error.~~ |a| must read 1.000 g on a bench and camera
+  reads 1.0879 against arm 0.9874. A perfect scale with a bias along gravity reads identically: one
+  orientation is one equation with two unknowns.
+
+### Next steps
+
+- [ ] **Clamp the base and repeat.** Every frequency above is of a hand-restrained assembly. This is
+  the one that makes 152.9 Hz decision-grade rather than indicative.
+- [ ] **Do the SE arm.** Both the control the method notes ask for, and the discriminating probe for
+  the structural-path theory.
+- [ ] **Softer impactor.** +/-16 g is the ADXL345's maximum and the hook exceeded it -- 71 and 143
+  railed samples inside the strike window.
+- [ ] **Mount both sensors the same way**, to remove the mounting from the Q question.
+- [ ] **Fit the six held poses** in the 260926 capture, which separates scale from bias and makes
+  cross-sensor amplitude comparison mean something.
+- [ ] **Run `still_banding.py` on the 300 campod stills from 260923** at the 68.1 ms readout. The
+  camera is on the arm carrying the loudest line, and at that readout rev writes 5.9 bands against
+  11.9 for the 2nd harmonic -- a factor of two, where the OAK-D's 33 ms crowded 4 against 5 and left
+  T11 resting on an eyeball count. It will not separate 152.9 Hz (10.4 bands) from the 2nd harmonic
+  (11.9), which is a 14% pitch difference.
+- [ ] **Fly the two-blade set.** It moves blade-pass without moving rev, which is the only clean
+  separation of blade-rate from rotational-harmonic effects -- and it walks the dominant line from
+  71% above the mode to roughly 14-30% above it.
+
+## 8. Cross-checking against the flight controller
 
 The FC logs raw IMU, so once it is powered on the bench alongside the pods there is a third
 independent instrument looking at the same structure. Agreement on a common line -- with three
