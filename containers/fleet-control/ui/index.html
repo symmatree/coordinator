@@ -102,6 +102,18 @@
 <script type="module">
   const $ = (h) => Object.assign(document.createElement('div'), h);
   const state = new Map();
+  /**
+   * One `<pre>` per node, kept across renders.
+   *
+   * `render()` rebuilds the whole fleet on every streamed line, and a freshly created element
+   * starts at scrollTop 0 -- which is why the log jumped back to the oldest lines on every
+   * update. Reusing the element is also what makes the scroll position readable at all: a
+   * detached element reports scrollTop 0, so it cannot be recovered after the rebuild.
+   */
+  const logs = new Map();
+
+  /** Within a couple of px of the bottom. Fractional scroll heights make == useless. */
+  const atBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 4;
   const dlg = document.getElementById('confirm');
 
   const WHAT = {
@@ -138,6 +150,11 @@
 
   function render(nodes) {
     const root = document.getElementById('fleet');
+    // Read scroll state BEFORE the rebuild, while the elements still have layout boxes.
+    // Follow the tail unless the operator has deliberately scrolled up to read something --
+    // pinning unconditionally would make a running converge impossible to look back through.
+    const following = new Map();
+    for (const [name, pre] of logs) following.set(name, atBottom(pre));
     root.textContent = '';
     for (const n of nodes) {
       const st = state.get(n.name) ?? {};
@@ -171,11 +188,22 @@
       else if (st.status) card.append(renderUnits(st.status, n.name));
 
       if (st.log?.length) {
-        const pre = document.createElement('pre');
+        let pre = logs.get(n.name);
+        if (!pre) {
+          pre = document.createElement('pre');
+          logs.set(n.name, pre);
+          // A log that has just appeared has nothing to preserve, so it starts at the tail.
+          following.set(n.name, true);
+        }
         pre.textContent = st.log.join('\n');
         card.append(pre);
       }
       root.append(card);
+    }
+
+    // After everything is attached, so scrollHeight is real.
+    for (const [name, pre] of logs) {
+      if (following.get(name) !== false) pre.scrollTop = pre.scrollHeight;
     }
   }
 
