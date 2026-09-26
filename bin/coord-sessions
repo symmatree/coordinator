@@ -187,17 +187,35 @@ def journal_for(session: str) -> bytes:
     """This boot's journal. Exact, because A SESSION IS A BOOT and journald indexes by
     boot id -- so the session id IS the selector, with no time window and no wall clock.
 
+    THE DASHES HAVE TO GO. /proc/sys/kernel/random/boot_id -- and so a session name --
+    is a dashed UUID; `journalctl -b` takes the 32-char undashed hex and rejects the
+    dashed form outright with "Failed to add match ...: Invalid argument". Passing the
+    session id straight through made this return nothing for every session ever, which
+    the swallow below then made look deliberate.
+
     Persistent journald is on both device kinds (roles/power-resilience, #100), so a
-    past boot's journal is still here. Failure is not fatal: a session is worth
-    collecting without its journal, and the manifest records what is in the bundle, so
-    an absent journal.log is visible rather than silent.
+    past boot's journal is still here unless it has aged out of the bounded store.
+
+    Failure is not fatal -- a session is worth collecting without its journal -- but it
+    says so on stderr. An empty journal is indistinguishable from a broken selector
+    otherwise, which is how the dash bug survived being written and reviewed.
     """
+    boot = session.replace("-", "")
     try:
-        p = subprocess.run(["journalctl", "-b", session, "-o", "short-iso-precise",
+        p = subprocess.run(["journalctl", "-b", boot, "-o", "short-iso-precise",
                             "--no-pager"], capture_output=True, timeout=120)
-        return p.stdout if p.returncode == 0 else b""
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return b""
+        if p.returncode == 0:
+            return p.stdout
+        err = p.stderr.decode(errors="replace").strip().splitlines()
+        print(f"coord-sessions: no journal for boot {boot}: "
+              f"{err[-1] if err else 'journalctl exited %d' % p.returncode}",
+              file=sys.stderr)
+    except FileNotFoundError:
+        print("coord-sessions: journalctl not installed; no journal in the bundle",
+              file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print("coord-sessions: journalctl did not finish within 120s", file=sys.stderr)
+    return b""
 
 
 def collectd_for(session: str) -> list[Path]:

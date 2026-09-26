@@ -131,6 +131,30 @@ try:
           any(n.endswith("collectd/campod-se/cpu/x-2026-09-26") for n in names), str(names))
     check("another boot's collectd does not", not any("leak" in n for n in names))
 
+    # 2c. journal_for strips the dashes. `journalctl -b` takes 32-char undashed hex and
+    #     rejects a dashed UUID with "Invalid argument", so passing a session id through
+    #     unchanged returned nothing for every session -- silently, until it said so.
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        class R:
+            returncode = 0
+            stdout = b"journal body\n"
+            stderr = b""
+        return R()
+
+    real_run, cs.subprocess.run = cs.subprocess.run, fake_run
+    try:
+        body = cs.journal_for("22222222-bbbb-4444-8888-aaaaaaaaaaaa")
+    finally:
+        cs.subprocess.run = real_run
+    check("journal_for asks journalctl for the undashed boot id",
+          "22222222bbbb44448888aaaaaaaaaaaa" in seen["cmd"], str(seen["cmd"]))
+    check("and no dashed form is passed",
+          "22222222-bbbb-4444-8888-aaaaaaaaaaaa" not in seen["cmd"])
+    check("and returns the journal body", body == b"journal body\n")
+
     # 3. package the closed one, for real
     buf = io.StringIO()
     with redirect_stdout(buf):
