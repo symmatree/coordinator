@@ -29,11 +29,17 @@ mechanism.
 | labels | A1, A2, A3, A4 |
 | status | removed from the airframe and labelled, retained |
 | what they carry | **the only vibration data predating the ADXL345 pods.** Every flight before 260923 is set A |
-| caveat | **possibly unbalanced after the crash** (260712). Not measured |
+| history | flew through the 260712 crash |
 
-Set A's possible post-crash imbalance is the reason a cross-set vibration comparison cannot be
-read as a prop-design comparison: a difference between set A and set B flights may be damage
-rather than design.
+**The set change is a natural experiment that already ran, and its result is about the 1x line.**
+A strong line at 1x rotation is the textbook prop-imbalance signature. That line is present on
+set B, which is four new props mounted fresh -- so it is not coming from a particular set's
+balance state, because four independent new props do not share one imbalance. Replacing every
+prop did not remove it.
+
+What that leaves, if the 1x line is to be an eccentricity at all, is the motor side rather than
+the prop side -- a bell running off centre. Nothing here measures that, and it is not being
+claimed; it is named only because eliminating the props narrows what is left.
 
 ## Blade count by era
 
