@@ -138,6 +138,12 @@ except ImportError:
     reexec_in_container()
 
 
+def ev(obj: dict) -> None:
+    """One JSONL event on stderr. stdout belongs to the log bytes."""
+    sys.stderr.write(json.dumps(obj) + "\n")
+    sys.stderr.flush()
+
+
 def iso_or_none(tutc: int) -> "str | None":
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tutc)) if tutc else None
 
@@ -247,8 +253,18 @@ def pull(m, log_id: int) -> int:
     until complete and only then flushed, which is what makes a strictly ordered stream
     safe to emit at all.
 
-    Progress and the digest go to STDERR. Anything printed to stdout would land in the
-    middle of the log.
+    STDOUT IS THE LOG. STDERR IS JSONL -- one JSON object per line, so a caller reads
+    progress and the final digest without scraping prose:
+
+        {"event":"start","id":3,"bytes":154894336}
+        {"event":"progress","sent":...,"bytes":...,"rate_kib_s":84,"eta_s":...}
+        {"event":"done","node":"coordinator","id":3,"bytes":...,"sha256":"...","seconds":...}
+        {"event":"error","id":3,"sent":...,"bytes":...,"message":"..."}
+
+    The digest is of what this wrote, so the caller can check the file it received
+    against the writer rather than against itself -- the same check a session bundle
+    gets. Exactly one `done` or one `error` is emitted, and `error` means the stream is
+    short and must not be filed.
     """
     logs = list_logs(m)
     if log_id not in logs:
@@ -256,8 +272,7 @@ def pull(m, log_id: int) -> int:
               file=sys.stderr)
         return 1
     size = logs[log_id][0]
-    print(f"coord-fc-log: log id={log_id} size={size} bytes ({size / 1048576.0:.1f} MiB)",
-          file=sys.stderr, flush=True)
+    ev({"event": "start", "id": log_id, "bytes": size})
 
     ts, tc = m.target_system, m.target_component
     out = sys.stdout.buffer
@@ -300,17 +315,17 @@ def pull(m, log_id: int) -> int:
                 el = now - t0
                 rate = sent / el if el else 0
                 eta = (size - sent) / rate if rate else 0
-                print(f"  {100.0 * sent / size:.1f}%  {rate / 1024.0:.0f} KiB/s  "
-                      f"eta={eta:.0f}s", file=sys.stderr, flush=True)
+                ev({"event": "progress", "sent": sent, "bytes": size,
+                    "rate_kib_s": round(rate / 1024.0, 1), "eta_s": round(eta)})
                 last_report = now
 
         if have.find(0) >= 0:
             # Cannot emit a hole and cannot skip it without corrupting every offset
             # after it. Stop, non-zero, with the stream short -- a partial dataflash
             # must not be filed as a flight record on a zero exit.
-            print(f"coord-fc-log: window at {base} incomplete after 12 tries; "
-                  f"stopping with {sent} of {size} bytes sent", file=sys.stderr, flush=True)
             out.flush()
+            ev({"event": "error", "id": log_id, "sent": sent, "bytes": size,
+                "message": f"window at {base} incomplete after 12 tries"})
             return 2
 
         out.write(buf)
@@ -320,9 +335,8 @@ def pull(m, log_id: int) -> int:
 
     out.flush()
     el = time.time() - t0
-    print(f"coord-fc-log: sent {sent} bytes in {el:.0f}s "
-          f"({sent / el / 1024.0:.0f} KiB/s)\ncoord-fc-log: sha256 {digest.hexdigest()}",
-          file=sys.stderr, flush=True)
+    ev({"event": "done", "node": host_name(), "id": log_id, "bytes": sent,
+        "sha256": digest.hexdigest(), "seconds": round(el, 1)})
     return 0
 
 

@@ -199,9 +199,20 @@ reintroduce an on-device path: `/tmp` there is tmpfs, so a 1.8 GB log written to
 1.8 GB of RAM on a 3.7 GB box, and the card is not a place to leave a copy of something
 whose home is the archive.
 
-Progress and the sha256 go to stderr, so they do not land in the middle of the log. A window
-that cannot be completed stops the transfer with a non-zero exit and a short stream -- a
-partial dataflash must not be filed as a flight record.
+**stdout is the log; stderr is JSONL**, one object per line, so a caller reads progress and
+the digest without scraping prose:
+
+```
+{"event":"start","id":3,"bytes":154894336}
+{"event":"progress","sent":...,"bytes":...,"rate_kib_s":84,"eta_s":...}
+{"event":"done","node":"coordinator","id":3,"bytes":...,"sha256":"...","seconds":...}
+```
+
+Exactly one `done` or one `error` is emitted. The digest is of what the device wrote, so a
+caller checks the file it received against the writer rather than against itself -- the same
+check a session bundle gets. An `error` means a window could not be completed: the exit is
+non-zero and the stream is short, and a partial dataflash must not be filed as a flight
+record.
 
 `coord-fc-log` re-execs itself into the `coordinator-mavlink` image for `pymavlink`, which
 the host does not have and should not: the host is ansible-managed and this is the only
