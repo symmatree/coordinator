@@ -101,29 +101,127 @@ heavily scimitared, which plausibly suppresses blade-pass relative to motor nois
 "strongest peak" and "blade-pass" are not the same thing, and an unexplained harmonic index is
 not evidence of a resonance.
 
-## 4. Bump testing (planned)
+## 4. Bump testing -- first result, 260926
 
-To get structural properties **uncontaminated by the drive**, excite the structure with an
-impulse and watch it ring down with the motors off. Not yet done; this section is the intent
-and the method, and should be replaced with results.
+Done once, on the SW arm, and it produced one number worth carrying: **a mode at 152.9 Hz.**
 
-Method notes, for whoever does it first:
+| | camera-colocated sensor | arm-end sensor |
+|---|---|---|
+| frequency | 152.92 +/- 0.04 Hz | 152.94 +/- 0.02 Hz |
+| strikes fitted | 3 of 16 | 5 of 16 |
+| r2 | 0.983 | 0.987 |
+| zeta / Q | 0.0357 / 14.0 | 0.0124 / 40.2 |
 
-- **Attach the accelerometer rigidly to the arm** -- tape, wax, or glue. A breadboard has its
-  own modes and they will dominate anything the arm does. Measuring a loose sensor measures
-  the mounting.
-- **Tap several times and analyse each ringdown separately.** Welch-averaging across taps
-  smears the transients; each individual decay is an independent estimate of both frequency
-  *and* damping.
-- **Damping is the useful number.** A lightly-damped resonance near a rotor harmonic is a
-  problem; the same frequency heavily damped is not. That is the quantity a spectrum of a
-  running motor cannot give you.
-- **Do both the SE and SW arms.** They should be identical but mirrored, so they are each
-  other's control: a mode that appears on one and not the other is an asymmetry -- a loose
-  fastener, a cracked layer, a different cable route -- rather than a property of the design.
-  That comparison is worth more than either measurement alone.
+Two sensors 127 mm apart on one arm, fitted independently, 160 ppm apart. Notebook:
+`analysis/bump-test-ringdown.ipynb`, run against `260926-sixpose-and-bump`. The arm sensor also
+holds modes at 37.2 and 51.0 Hz on 3 and 5 strikes which the camera sensor does not see at all;
+the vehicle was hand-held and moving under the strikes, so those are candidates for whole-vehicle
+motion in a grip rather than anything structural.
 
-## 5. Cross-checking against the flight controller
+**The damping is not usable, which was supposed to be the point of the exercise.** Q 14 against
+Q 40 at the same frequency is not a geometry effect: mode shape sets how much each point moves --
+a free end swings and a root does not -- but the decay RATE belongs to the mode and is the same
+wherever it is observed. So a 2.9x spread means either the band holds more than one mode that the
+two positions weight differently, or a sensor mount has dynamics of its own. Neither is tested.
+
+Corrections to the method notes above, from doing it:
+
+- **Tape is questionable after all.** The note says tape, wax or glue are all fine. The taped
+  sensor is the one reporting 2.9x more damping, which is what a lossy mounting looks like. Not
+  established -- it is also what a second mode in the band looks like -- but it is the first thing
+  to remove next time by mounting both sensors the same way.
+- **The base has to be genuinely clamped.** Held down by hand is not a boundary condition: the
+  vehicle moved under every strike, so 152.9 Hz is a mode of the hand-restrained assembly and the
+  arm-root condition on a flying vehicle is different.
+- **+/-16 g is not enough range for a metal hook.** Peaks reached 26.4 g (camera) and 27.7 g
+  (arm), with 71 and 143 railed samples inside the strike window. +/-16 g is the ADXL345's
+  maximum full scale, so the fix is a softer impactor, not a range setting.
+- **Only one arm was done.** The SE-vs-SW comparison the notes ask for -- each arm as the other's
+  control -- is still open, and it is the check that says whether 152.9 Hz is a design property or
+  an asymmetry in one arm.
+
+## 5. Where 152.9 Hz sits relative to what actually drives the airframe
+
+A mode matters only if something excites it. The forcing on this airframe is the rotors: each
+motor puts a line at its rev frequency and at multiples of it. Props are **Master Airscrew MR
+10x4.5 2-blade**, so blade-pass is the 2nd harmonic.
+
+Measured in the 260923 hover window (FC 245-354 s), with the output-to-motor map read from
+`SERVOn_FUNCTION`. `|H|` is single-degree-of-freedom amplification at the mode,
+`1/sqrt((1-r^2)^2 + (2*zeta*r)^2)` with `r = f/152.93`:
+
+| forcing line | position | Hz | r | \|H\| at Q=40 | \|H\| at Q=14 | RPM shift to land on the mode |
+|---|---|---|---|---|---|---|
+| motor2 rev | rear-left, 5230 rpm | 87.17 | 0.570 | 1.48 | 1.48 | +75.4% |
+| motor4 rev | rear-right, 5608 rpm | 93.47 | 0.611 | 1.60 | 1.59 | +63.6% |
+| motor1 rev | front-right, 6903 rpm | 115.05 | 0.752 | 2.30 | 2.29 | +32.9% |
+| motor3 rev | front-left, 7173 rpm | 119.54 | 0.782 | 2.57 | 2.54 | +27.9% |
+| motor2 blade-pass | rear-left | 174.33 | 1.140 | 3.32 | 3.22 | -12.3% |
+| motor4 blade-pass | rear-right | 186.93 | 1.222 | 2.02 | 1.99 | -18.2% |
+| motor1 blade-pass | front-right | 230.10 | 1.505 | 0.79 | 0.79 | -33.5% |
+| motor3 blade-pass | front-left | 239.08 | 1.563 | 0.69 | 0.69 | -36.0% |
+
+**Nothing is on it now.** The closest line is motor2's blade-pass at 174.33 Hz, 21.4 Hz above,
+which is 5.6 half-power bandwidths away at Q=40 and 2.0 at Q=14. It still picks up about 3.3x
+amplification over static, against a 40x or 14x peak.
+
+**The unusable damping does not block this question.** Off resonance the response is set by the
+stiffness term `(1-r^2)`, not by damping, which is why the Q=40 and Q=14 columns above are
+effectively identical. Damping only decides the answer when a line is ON the mode -- so the
+number that is missing is exactly the number needed to say how bad landing on it would be, and
+not needed to say that nothing is on it today.
+
+**Which direction each prop change moves things**, as arithmetic:
+
+- **Smaller diameter** raises hover RPM, walking every rev line up. The front pair at 115-120 Hz
+  reaches 152.9 Hz on a +28 to +33% RPM increase; the rear pair needs +64 to +75%.
+- **Blade count changes where blade-pass sits without moving rev.** At 2 blades the current
+  blade-pass lines are 174-239 Hz, straddling the mode from above. At 3 blades and the same RPM
+  they move to 261-359 Hz, away from it -- while the rev lines stay where they are.
+- So the two changes move different lines in different directions, and a diameter change is the
+  one that walks a line toward 152.9 Hz from below.
+
+**All of this is bounded by the base not having been clamped.** The shift percentages are
+distances to a mode frequency measured on a hand-held vehicle. A clamped measurement is what
+would make them decision-grade.
+
+## 6. The 1x rev band does not need a prop-imbalance explanation
+
+A strong line at 1x rotation is the textbook imbalance signature, and imbalance is the reading it
+invites. On this airframe that reading is not supported by the amplitude pattern, and it was never
+written down here -- this section exists so it does not get re-invented.
+
+Rev-line PSD on the arm-end sensor, 260923 hover, from
+`derived/vibration-spectrogram.json`:
+
+| motor | position | rpm | rev Hz | PSD on arm sensor |
+|---|---|---|---|---|
+| motor2 | rear-left | 5230 | 87.27 | 4.286 |
+| motor4 | rear-right | 5608 | 93.97 | 4.212 |
+| motor3 | front-left | 7173 | 119.59 | 2.922 |
+| motor1 | front-right | 6903 | 116.05 | 1.169 |
+
+**The slowest motors produce the strongest 1x lines, by up to 3.7x.** Two mechanisms would make a
+1x line strong and both predict the opposite ordering:
+
+- **Imbalance forcing grows as the square of speed.** For the same residual mass eccentricity on
+  every prop, the front pair at 1.29x the rear speed produces 1.67x the force. Front should lead.
+- **Proximity to 152.9 Hz.** The front rev lines at 115-120 Hz sit closer to the mode than the
+  rear at 87-94 Hz, and amplify 2.3-2.6x against 1.5-1.6x. Front should lead again.
+
+Measured ordering is rear-leading. So neither RPM-squared forcing nor the structural mode is what
+sets the 1x amplitudes, and a difference in imbalance between props is not needed to explain the
+pattern -- which is consistent with the pattern surviving a change to four new props, freshly
+mounted, where four independent new props sharing one imbalance is not a plausible story.
+
+What the ordering is consistent with is the structural path from each motor to the sensor: both
+sensors are on one arm, and the two motors nearest it in the structure dominate. **Confirming that
+requires knowing which arm the pod is on, and this repo does not record it** -- the SE/SW naming
+plus the mirrored-arm framing in section 4 suggests the two rear arms, but that is an inference.
+It should be written down, because it determines how every per-motor amplitude in this document is
+read.
+
+## 7. Cross-checking against the flight controller
 
 The FC logs raw IMU, so once it is powered on the bench alongside the pods there is a third
 independent instrument looking at the same structure. Agreement on a common line -- with three
