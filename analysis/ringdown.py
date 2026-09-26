@@ -219,15 +219,21 @@ def candidate_bands(t, a, fmin=20.0, fmax=None, n=6, rel_width=0.06, prominence_
     return [(c * (1 - rel_width), c * (1 + rel_width)) for c, _ in sorted(out)]
 
 
-def analyze(t, a, bands=None, n_expected=None, post_s=0.5, **kw):
+def analyze(t, a, bands=None, n_expected=None, post_s=0.5, tap_kw=None, **kw):
     """Full pipeline for one channel: find taps, fit every candidate band in each.
 
     Returns dict(taps=[{t_s, modes=[fit, ...]}, ...], bands=[...]). Every tap appears, including
     ones where nothing fitted, so a caller can see the attempt rate rather than only successes.
+
+    `tap_kw` goes to find_taps and `**kw` goes to fit_ringdown. They are separated because the
+    detection threshold is not a fit parameter and a caller has to be able to set it: on a real
+    capture the default floor merged consecutive strikes on one sensor (2 groups) while splitting
+    them on the other (21), so the two sensors fitted different impulse sets and nothing could be
+    compared between them. Reaching find_taps through **kw was impossible, which hid that.
     """
     t = np.asarray(t, float)
     a = np.asarray(a, float)
-    taps = find_taps(t, a, n_expected=n_expected)
+    taps = find_taps(t, a, n_expected=n_expected, **(tap_kw or {}))
     if bands is None:
         bands = candidate_bands(t, a)
     out = []
