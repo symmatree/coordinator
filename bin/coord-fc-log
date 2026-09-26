@@ -34,8 +34,11 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
+import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -116,6 +119,9 @@ def reexec_in_container() -> "None":
         "docker", "run", "--rm", "--pull", "never", "--entrypoint", "python3",
         "--device", f"{DEVICE}:{DEVICE}",
         "-v", f"{me}:{me}:ro",
+        # Our own hostname in there is a docker id. Same mount, and the same reason, as
+        # the stack gives vio-tracker and campod-camera.
+        "-v", "/etc/hostname:/etc/host-hostname:ro",
     ]
     # Bind the output directory so `pull` writes where the caller asked, not into a
     # container layer that --rm throws away.
@@ -131,6 +137,22 @@ try:
     from pymavlink import mavutil  # noqa: E402
 except ImportError:
     reexec_in_container()
+
+
+def iso_or_none(tutc: int) -> "str | None":
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tutc)) if tutc else None
+
+
+def host_name() -> str:
+    """The HOST's name. Read from the mount when we are the re-exec'd container copy,
+    whose own hostname is a docker id."""
+    try:
+        n = open("/etc/host-hostname").read().strip()
+        if n:
+            return n
+    except OSError:
+        pass
+    return socket.gethostname()
 
 
 def connect():
@@ -184,18 +206,30 @@ def list_logs(m) -> "dict[int, int]":
     return {}
 
 
-def cmd_list(_args) -> int:
+def cmd_list(args) -> int:
     m = connect()
     logs = list_logs(m)
     if not logs:
         print("coord-fc-log: the FC reported no logs", file=sys.stderr)
         return 1
+    if args.json:
+        # For a caller enumerating what is retrievable, so it does not parse a table
+        # meant for a person. `time_utc` is the FC's own field and is LAST-MODIFIED --
+        # with LOG_FILE_DSRMROT=1 the flight's log is the one stamped a few seconds
+        # after the disarm, because that rotation closed it.
+        print(json.dumps({
+            "node": host_name(),
+            "logs": [
+                {"id": i, "bytes": logs[i][0], "time_utc": iso_or_none(logs[i][1])}
+                for i in sorted(logs)
+            ],
+        }, indent=2))
+        return 0
     print(f"{'id':>5}  {'bytes':>13}  {'MiB':>8}  time_utc (LAST-MODIFIED, not creation)")
     for i in sorted(logs):
         size, tutc = logs[i]
-        when = (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tutc)) if tutc
-                else "(no GPS time)")
-        print(f"{i:>5}  {size:>13}  {size / 1048576.0:>8.1f}  {when}")
+        print(f"{i:>5}  {size:>13}  {size / 1048576.0:>8.1f}  "
+              f"{iso_or_none(tutc) or '(no GPS time)'}")
     return 0
 
 
@@ -264,9 +298,15 @@ def pull(m, log_id: int, out_path: str) -> int:
     missing = have.count(0)
     with open(out_path, "wb") as f:
         f.write(buf)
+    # The download is already self-verifying against the FC: `missing` is zero only when
+    # every byte of LOG_ENTRY.size arrived. This digest is for the NEXT hop -- whoever
+    # copies the file off the device can check it landed intact, the way a session bundle
+    # reports one. Not a per-file manifest: this is one file.
+    digest = hashlib.sha256(buf).hexdigest()
     el = time.time() - t0
     print(f"coord-fc-log: wrote {out_path}: {size} bytes, {missing} missing, "
-          f"{el:.0f}s, {got / el / 1024.0:.0f} KiB/s", flush=True)
+          f"{el:.0f}s, {got / el / 1024.0:.0f} KiB/s\n"
+          f"coord-fc-log: sha256 {digest}", flush=True)
     # A short file is a failure even though the bytes we did get are good. Say so in the
     # exit status so a caller does not file a truncated log as a flight record.
     return 0 if missing == 0 else 2
@@ -280,7 +320,9 @@ def main() -> int:
     p = argparse.ArgumentParser(
         prog="coord fc-log", description="List and pull FC dataflash logs over ttyAMA0.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("list", help="list the logs the FC holds").set_defaults(fn=cmd_list)
+    lp = sub.add_parser("list", help="list the logs the FC holds")
+    lp.add_argument("--json", action="store_true", help="machine-readable")
+    lp.set_defaults(fn=cmd_list)
     q = sub.add_parser("pull", help="fetch one log to a file")
     q.add_argument("id", type=int)
     q.add_argument("out")

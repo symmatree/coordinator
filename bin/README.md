@@ -52,11 +52,15 @@ a compose file: a machine with no stack installed still has to answer the probe,
 stack was removed still has data worth listing and packaging. Distinguishing "nothing
 installed" from "did not answer" is the whole point of the probe (#326).
 
-**The coordinator's OAK-D captures are not reachable through `coord-sessions`.**
-`find_sessions` and `resolve` are anchored on the hostname, and the tracker keys its captures
-by the camera's MxId, so the coordinator reports zero sessions while holding many.
-Tracked in [#386](https://github.com/symmatree/coordinator/issues/386); do not read an empty
-list from a coordinator as "nothing to collect".
+**The coordinator lists its OAK-D captures, but only the ones written since #386.**
+`find_sessions` and `resolve` are anchored on the hostname. The tracker now writes
+`captures/<hostname>/<boot-id>/`, so those appear like a campod's. Sessions written before
+that change are under the camera's MxId with an ISO-stamped name and are invisible here --
+they cannot be renamed, because which boot each belonged to was never recorded, so there is
+no migration. Collect those by hand; `docs/post-flight-collection.md` has the procedure.
+
+`coord fc-log` is the third kind and has its own verbs. It lists and pulls the FC's own
+dataflash logs over `ttyAMA0`, which are not on this device's disk at all.
 
 ## Related
 

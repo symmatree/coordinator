@@ -23,7 +23,9 @@ export interface Session {
   /** The kernel boot id. No clock in it -- see first_utc/last_utc. */
   session: string;
   path: string;
-  /** True for the current boot. Cannot be packaged; capture would be writing to it. */
+  /** True for the current boot. Says which boot the directory belongs to, NOT that
+   * anything is writing to it: with capture quiesced it packages like any other, and
+   * coordinator#391 removed the refusal that used to force a reboot to retrieve one. */
   open: boolean;
   bytes: number;
   frames: number;
