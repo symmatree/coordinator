@@ -110,6 +110,38 @@ static const char* env_or(const char* name, const char* dflt) {
 // SD space and lifetime on pictures of the desk. The .feat (IMU + features) is NOT gated:
 // the FC starts its EKF before arm, so a replayable fixture needs the pre-arm stream. No
 // file / unreadable => DISARMED (default: do not capture images).
+// First line of a file, trimmed, or "" -- for /etc/host-hostname and boot_id below.
+static std::string read_line(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return "";
+    char b[256] = {0};
+    if (!fgets(b, sizeof(b), f)) { fclose(f); return ""; }
+    fclose(f);
+    std::string v(b);
+    while (!v.empty() && (v.back() == '\n' || v.back() == '\r' || v.back() == ' ')) v.pop_back();
+    return v;
+}
+
+// THE HOST's name, not ours. Our hostname inside the container is an ephemeral docker
+// id, so the stack bind-mounts the host's /etc/hostname the way campod-camera already
+// does -- which makes the host the single source of truth and keeps a per-unit literal
+// out of a shared compose file (#272).
+static std::string host_name() {
+    std::string n = read_line("/etc/host-hostname");
+    if (!n.empty()) return n;
+    char hn[256] = {0};
+    gethostname(hn, sizeof(hn));
+    return hn;
+}
+
+// A SESSION IS A BOOT, the same rule and the same source campod's capture.py uses, so
+// one reading of "session" covers every device. boot_id is not namespaced, so this is
+// the host's even from in here. No fallback: this is linux functionality, and inventing
+// a session name when it is missing would produce a session nothing else agrees on.
+static std::string boot_id() {
+    return read_line("/proc/sys/kernel/random/boot_id");
+}
+
 static bool read_armed(const std::string& path) {
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return false;
@@ -118,8 +150,10 @@ static bool read_armed(const std::string& path) {
     return c == '1';
 }
 
-// <node>_<seq:08>_<YYYYmmddTHHMMSS_ffffffZ> -- matches the phase-1 still writer (#73).
-static std::string make_stem(const std::string& node, long seq,
+// <cam>_<seq:08>_<YYYYmmddTHHMMSS_ffffffZ> -- matches the phase-1 still writer (#73).
+// Prefixed by the CAMERA (MxId), not by the path label: the directory says which machine,
+// the filename says which sensor produced the frame.
+static std::string make_stem(const std::string& cam, long seq,
                              std::chrono::system_clock::time_point wall) {
     std::time_t tt = std::chrono::system_clock::to_time_t(wall);
     long long us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -129,7 +163,7 @@ static std::string make_stem(const std::string& node, long seq,
     char b[24];
     strftime(b, sizeof(b), "%Y%m%dT%H%M%S", &tv);
     char out[96];
-    snprintf(out, sizeof(out), "%s_%08ld_%s_%06lldZ", node.c_str(), seq, b, us);
+    snprintf(out, sizeof(out), "%s_%08ld_%s_%06lldZ", cam.c_str(), seq, b, us);
     return out;
 }
 
@@ -149,7 +183,7 @@ static bool due(std::chrono::steady_clock::time_point& last, double hz) {
 // Phase-1-compatible JSON sidecar (#73). exposure_us < 0 omits exposure/iso (disparity).
 // #89: returns the JSON as a string so the background writer persists it durably
 // alongside the image (tmp -> fsync -> rename), instead of an un-fsynced fopen here.
-static std::string build_sidecar(const std::string& node, long seq,
+static std::string build_sidecar(const std::string& cam, long seq,
                                  const std::string& file, const char* kind,
                                  std::chrono::system_clock::time_point wall, long long sensor_ns,
                                  int device_seq, int width, int height, long long exposure_us, int iso) {
@@ -168,9 +202,9 @@ static std::string build_sidecar(const std::string& node, long seq,
             "{\"node\":\"%s\",\"seq\":%ld,\"file\":\"%s\",\"kind\":\"%s\","
             "\"wall_clock_utc\":\"%s\",\"wall_clock_unix\":%.6f,\"monotonic_ns\":%lld,"
             "\"sensor_timestamp_ns\":%lld,\"device_seq\":%d,\"width\":%d,\"height\":%d",
-            node.c_str(), seq, file.c_str(), kind, iso_s, wall_unix, mono_ns,
+            cam.c_str(), seq, file.c_str(), kind, iso_s, wall_unix, mono_ns,
             sensor_ns, device_seq, width, height);
-    // snprintf returns the would-be length; clamp so a long node name can't make us
+    // snprintf returns the would-be length; clamp so a long name can't make us
     // read past buf (it never approaches 512 B in practice).
     size_t use = 0;
     if (len > 0) use = (size_t)len < sizeof(buf) ? (size_t)len : sizeof(buf) - 1;
@@ -252,9 +286,12 @@ int main(int argc, char **argv) {
     // #72: capture config (opt-in). Unset OAK_CAPTURE_DIR => no color cam, no disk writes.
     const char* capture_dir = getenv("OAK_CAPTURE_DIR");
     bool capture = capture_dir && *capture_dir;
-    // #32: if OAK_NODE_NAME is unset, key captures by the OAK-D MxId (stable per camera),
-    // resolved once the device opens below -- NOT the container hostname, which is an
-    // ephemeral docker id useless for calibration keying. Left empty here on purpose.
+    // The first level of captures/ is the MACHINE, so it matches what the platform
+    // addresses (/nodes/<node>/...) and what a campod writes. It used to be the OAK-D
+    // MxId, which made the coordinator's captures unaddressable: coord-sessions anchors
+    // on the hostname, so it reported zero sessions while holding 26 (#386). The MxId
+    // keying #32 wanted is kept where it belongs -- in every filename, see `cam` below.
+    // OAK_NODE_NAME still overrides, for a bench run that wants its own subtree.
     std::string node = env_or("OAK_NODE_NAME", "");
     double disp_hz = atof(env_or("OAK_DISPARITY_HZ", "1.0"));
     double still_hz = atof(env_or("OAK_STILL_HZ", "0.2"));
@@ -406,15 +443,13 @@ int main(int argc, char **argv) {
     std::cout << "Device name: " << device.getDeviceName() << " Product name: " << device.getProductName() << "\n";
     if (device.getDeviceName() == "OAK-D") dev_type = OAK_D; else dev_type = OAK_D_PRO;
 
-    // #32: emit the OAK-D MxId (stable per-camera serial) for calibration keying, and use it
-    // as the capture node label when OAK_NODE_NAME is unset -- so captures group by *camera*,
-    // not by ephemeral container id. Falls back to hostname only if the MxId is unavailable.
+    // #32: the MxId is the stable per-camera serial, so it prefixes every file this
+    // session writes and remains the key calibration is tied to. It is no longer the
+    // directory name -- see the note on `node` above.
     std::string mxid = device.getMxId();
     std::cout << "OAK-D MxId: " << mxid << "\n";
-    if (node.empty()) {
-        if (!mxid.empty()) node = mxid;
-        else { char hn[256]; gethostname(hn, sizeof(hn)); node = hn; }
-    }
+    std::string cam = mxid.empty() ? host_name() : mxid;
+    if (node.empty()) node = host_name();
 
     dai::CalibrationHandler calibData = device.readCalibration2();
     double f, cx, cy;
@@ -453,9 +488,12 @@ int main(int argc, char **argv) {
     bool armed = false;
     auto last_arm_check = last_disp_save;
     if (capture) {
-        std::time_t st = std::time(nullptr);
-        struct tm stv; gmtime_r(&st, &stv);
-        char sess[24]; strftime(sess, sizeof(sess), "%Y%m%dT%H%M%SZ", &stv);
+        // A session is a boot, as it is on a campod. The ISO stamp this used to be was
+        // working around timestamps being a poor uniquifier on a box with unstable power
+        // and no RTC -- which is the problem boot_id exists to solve. It also makes
+        // coord-sessions' `open` flag (session == current boot) mean something here.
+        std::string sess = boot_id();
+        if (sess.empty()) { std::cerr << "capture: cannot read boot_id; refusing to guess a session name\n"; return 1; }
         session_dir = std::string(capture_dir) + "/" + node + "/" + sess;
         mkdir_p(session_dir);
         writer.reset(new capture::Writer(session_dir, 4));  // #89
@@ -466,7 +504,7 @@ int main(int argc, char **argv) {
                   << " still_hz=" << still_hz << " mono_hz=" << mono_hz << " jpeg_q=" << jpeg_q << "\n";
 
         // #78: open the .feat input tee + write its manifest (matches vio-ipc-record v1).
-        std::string feat_path = session_dir + "/" + node + "_" + sess + ".feat";
+        std::string feat_path = session_dir + "/" + cam + "_" + sess + ".feat";
         feat_file = fopen(feat_path.c_str(), "wb");
         if (feat_file) {
             FILE* mf = fopen((feat_path + ".json").c_str(), "w");
@@ -536,7 +574,7 @@ int main(int argc, char **argv) {
             disp_frame = disp_data->getData();
             if (capture && armed && disp_hz > 0 && due(last_disp_save, disp_hz)) {  // #72 save disparity, #88 arm-gated
                 auto wall = std::chrono::system_clock::now();
-                std::string stem = make_stem(node, disp_saved, wall);
+                std::string stem = make_stem(cam, disp_saved, wall);
                 std::string base = session_dir + "/" + stem;
                 cv::Mat dm(CAM_H, CAM_W, CV_8UC1, disp_frame.data());  // 8-bit 640x400
                 // #89: encode here (hot path, as before), hand the bytes to the durable
@@ -545,7 +583,7 @@ int main(int argc, char **argv) {
                 if (cv::imencode(".png", dm, job.bytes)) {
                     job.path = base + ".png";
                     job.sidecar_path = base + ".json";
-                    job.sidecar = build_sidecar(node, disp_saved, stem + ".png", "disparity", wall,
+                    job.sidecar = build_sidecar(cam, disp_saved, stem + ".png", "disparity", wall,
                                                 ts_ns(disp_data->getTimestampDevice()), disp_seq,
                                                 CAM_W, CAM_H, -1, 0);
                     if (writer->submit(std::move(job))) ++disp_saved;
@@ -556,7 +594,7 @@ int main(int argc, char **argv) {
             auto mono_data = mono_queue->get<dai::ImgFrame>();
             if (capture && armed && mono_hz > 0 && due(last_mono_save, mono_hz)) {  // #88 arm-gated
                 auto wall = std::chrono::system_clock::now();
-                std::string stem = make_stem(node, mono_saved, wall);
+                std::string stem = make_stem(cam, mono_saved, wall);
                 std::string base = session_dir + "/" + stem;
                 auto mono_bytes = mono_data->getData();
                 cv::Mat mm(CAM_H, CAM_W, CV_8UC1, mono_bytes.data());  // 8-bit 640x400 grayscale
@@ -566,7 +604,7 @@ int main(int argc, char **argv) {
                         mono_data->getExposureTime()).count();  // 0 if the rectified frame carries no metadata
                     job.path = base + ".png";
                     job.sidecar_path = base + ".json";
-                    job.sidecar = build_sidecar(node, mono_saved, stem + ".png", "mono_rect_left", wall,
+                    job.sidecar = build_sidecar(cam, mono_saved, stem + ".png", "mono_rect_left", wall,
                                                 ts_ns(mono_data->getTimestampDevice()), mono_data->getSequenceNum(),
                                                 CAM_W, CAM_H, (long long)exp_us, mono_data->getSensitivity());
                     if (writer->submit(std::move(job))) ++mono_saved;
@@ -606,7 +644,7 @@ int main(int argc, char **argv) {
         } else if (q_name == "still") {  // #72: a triggered RGB still arrived
             auto still = still_queue->get<dai::ImgFrame>();
             auto wall = std::chrono::system_clock::now();
-            std::string stem = make_stem(node, still_saved, wall);
+            std::string stem = make_stem(cam, still_saved, wall);
             std::string base = session_dir + "/" + stem;
             std::vector<int> jp = {cv::IMWRITE_JPEG_QUALITY, jpeg_q};
             // NV12 -> BGR by hand: depthai-core here is built WITHOUT its OpenCV support,
@@ -622,7 +660,7 @@ int main(int argc, char **argv) {
                                        still->getExposureTime()).count();
                 job.path = base + ".jpg";
                 job.sidecar_path = base + ".json";
-                job.sidecar = build_sidecar(node, still_saved, stem + ".jpg", "still", wall,
+                job.sidecar = build_sidecar(cam, still_saved, stem + ".jpg", "still", wall,
                                             ts_ns(still->getTimestampDevice()), still->getSequenceNum(),
                                             still->getWidth(), still->getHeight(),
                                             exp_us > 0 ? exp_us : -1, still->getSensitivity());

@@ -45,6 +45,11 @@ services:
       - /var/lib/coordinator/config:/config:ro
       # #72: periodic disparity + RGB stills land here when OAK_CAPTURE_DIR is set.
       - /var/lib/coordinator/captures:/captures
+      # The node's own name, for the first level of captures/. A container's hostname is
+      # its container id -- meaningless, and different after every recreate -- so the
+      # host's name has to be mounted in. Byte-identical to the two lines campod's stack
+      # carries for the same reason (#272, #386).
+      - /etc/hostname:/etc/host-hostname:ro
     environment:
       # Enables in-tracker capture (disparity + stills) alongside VIO. This is the
       # CONTAINER path. Unset it and the tracker is byte-for-byte upstream: no
