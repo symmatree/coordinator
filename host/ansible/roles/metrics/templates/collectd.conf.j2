@@ -71,7 +71,15 @@ LoadPlugin csv
 </Plugin>
 
 <Plugin csv>
-  DataDir "/var/log/collectd"
+  # A symlink to /var/log/collectd/<this boot's id>, made by
+  # collectd-per-boot-datadir before the service starts (roles/metrics). A SESSION IS
+  # A BOOT, so keying the tree by boot id makes a session's samples an exact
+  # selection -- copy one directory -- instead of a row filter on a wall clock that is
+  # wrong from boot until NTP lands, and never corrected at all in the field.
+  #
+  # Via /run rather than a symlink inside the tree: /run is tmpfs, so a stale link
+  # cannot outlive the boot it names, and the retention cleanup never sees it.
+  DataDir "/run/collectd-datadir"
   # Raw counters, not rates. Counters are lossless: a gap across a power cut is
   # visible and the rate is still derivable afterwards. Pre-computed rates throw
   # that away, and the analysis side is where the arithmetic belongs anyway.

@@ -61,6 +61,14 @@ correct, not stale.
 
 ## 2. Coordinator host artifacts
 
+> **From #386 onward most of this rides in the session bundle.** `coord sessions package`
+> now carries this boot's `journal.log` and `collectd/`, and `coordinator-mavlink` writes
+> `timesync.jsonl` and `vehicle.tlog` into the session directory rather than the captures
+> root -- all three selected by boot id, not by a time window. The steps below are what you
+> need for a boot that predates that, and for the two things that are still not per-boot:
+> the container logs and `coord version`.
+
+
 ```sh
 C="$FLIGHT_DIR/coordinator"
 

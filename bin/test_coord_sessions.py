@@ -109,6 +109,28 @@ try:
     check("whose manifest hashes every file in it",
           open_summary["files"] > 0 and len(open_summary["sha256"]) == 64)
 
+    # 2b. the bundle carries this boot's context, selected by boot id rather than by
+    #     time. collectd's tree is keyed by boot id (roles/metrics) so it is a
+    #     directory to name; the journal is indexed by boot id so the session id is
+    #     the selector.
+    cd_root = root / "collectd"
+    (cd_root / "22222222-bbbb" / "campod-se" / "cpu").mkdir(parents=True)
+    (cd_root / "22222222-bbbb" / "campod-se" / "cpu" / "x-2026-09-26").write_text("t,v\n1,2\n")
+    (cd_root / "99999999-other" / "campod-se").mkdir(parents=True)
+    (cd_root / "99999999-other" / "campod-se" / "leak").write_text("must not appear\n")
+    cs.COLLECTD_ROOT = cd_root
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cs.cmd_package(captures, "22222222-bbbb", out_dir)
+    check("packages with collectd present", rc == 0)
+    bundle_p = Path(json.loads(buf.getvalue())["bundle"])
+    raw = subprocess.run(["zstd", "-dc", str(bundle_p)],
+                         capture_output=True, check=True).stdout
+    names = tarfile.open(fileobj=io.BytesIO(raw)).getnames()
+    check("this boot's collectd rides along",
+          any(n.endswith("collectd/campod-se/cpu/x-2026-09-26") for n in names), str(names))
+    check("another boot's collectd does not", not any("leak" in n for n in names))
+
     # 3. package the closed one, for real
     buf = io.StringIO()
     with redirect_stdout(buf):

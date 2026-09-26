@@ -57,13 +57,23 @@ def main():
     slave_name = os.ttyname(slave_fd)
     tmpdir = tempfile.mkdtemp()
     sockpath = os.path.join(tmpdir, "chobits_server")
-    ts_log = os.path.join(tmpdir, "timesync", "timesync.jsonl")  # nested: dir is created
+    # COORD_CAPTURES_DIR is the captures ROOT; the router derives
+    # <root>/<node>/<boot-id>/ itself, because only it knows the boot id. So the test
+    # asserts the DERIVED path rather than dictating one -- which is also the check
+    # that the router and the capture writers land in the same session directory.
+    captures = os.path.join(tmpdir, "captures")
+    node = (open("/etc/host-hostname").readline().strip()
+            if os.path.exists("/etc/host-hostname") else socket.gethostname())
+    boot = open("/proc/sys/kernel/random/boot_id").readline().strip()
+    session = os.path.join(captures, node, boot)
+    ts_log = os.path.join(session, "timesync.jsonl")
+    tlog = os.path.join(session, "vehicle.tlog")
 
     proc = subprocess.Popen(
         [sys.executable, ROUTER, "--device", slave_name, "--baud", "115200",
          "--socket", sockpath, "--source-system", "1", "--source-component", "197"],
         stderr=subprocess.PIPE, text=True,
-        env={**os.environ, "COORD_TIMESYNC_LOG": ts_log},
+        env={**os.environ, "COORD_CAPTURES_DIR": captures},
     )
     try:
         for _ in range(100):
@@ -160,6 +170,14 @@ def main():
 
         # #167: the exchange is also written to the JSONL sink, carrying both our
         # clocks alongside the FC's ts1 -- that pairing is the point of the file.
+        # Both logs must be inside the session directory, not at the captures root --
+        # that is what makes `coord sessions package` collect them (#386).
+        if not os.path.isdir(session):
+            print(f"  FAIL: router did not create the session dir {session}")
+            ok = False
+        if not os.path.exists(tlog):
+            print(f"  FAIL: no vehicle.tlog in the session dir ({session})")
+            ok = False
         lines = [json.loads(ln) for ln in open(ts_log)] if os.path.exists(ts_log) else []
         entry = next((e for e in lines if e.get("fc_ts1_ns") == 12345), None)
         if entry and entry["monotonic_ns"] > 0 and entry["tc1_realtime_ns"] > 0:

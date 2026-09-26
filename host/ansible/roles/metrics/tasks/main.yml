@@ -68,6 +68,43 @@
 # ambiguous between collectd-core's init script and its unit. This task happened to
 # succeed where the handler did not, which makes the ambiguity worse rather than
 # better -- an inconsistency that shows up only sometimes is one nobody debugs.
+# Keyed by boot id so a session's samples are selected rather than filtered -- see the
+# DataDir comment in collectd.conf.j2 for why a wall-clock filter is not an option here.
+#
+# A script rather than an inline `sh -c`: systemd expands $VAR in Exec* lines itself, so
+# a shell variable written inline is substituted away to empty before sh ever sees it.
+- name: Install collectd's per-boot DataDir helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/collectd-per-boot-datadir
+    content: |
+      #!/bin/sh
+      # Managed by ansible (roles/metrics). Point collectd's DataDir at this boot.
+      set -eu
+      boot=$(cat /proc/sys/kernel/random/boot_id)
+      dir="/var/log/collectd/$boot"
+      install -d -m 0755 "$dir"
+      ln -sfn "$dir" /run/collectd-datadir
+    mode: "0755"
+  notify: Restart collectd
+
+# `copy` does not create a dest's parent, and this directory does not exist by default
+# -- the same gotcha roles/power-resilience records for journald.conf.d.
+- name: Ensure the collectd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/collectd.service.d
+    state: directory
+    mode: "0755"
+
+- name: Run the DataDir helper before collectd starts
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/collectd.service.d/10-per-boot-datadir.conf
+    content: |
+      # Managed by ansible (roles/metrics).
+      [Service]
+      ExecStartPre=/usr/local/bin/collectd-per-boot-datadir
+    mode: "0644"
+  notify: Restart collectd
+
 - name: Enable collectd
   ansible.builtin.systemd:
     name: collectd.service

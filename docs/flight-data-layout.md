@@ -83,6 +83,8 @@ that space, even when it has the same shape as a capture. Concretely:
           <MxId>_<seq>_<ts>.json
         timesync.jsonl                   # FC-clock <-> our-monotonic pairs (#167/#208)
         vehicle.tlog                     # every MAVLink frame the FC sent us, tlog format (#220)
+        journal.log                      # journalctl -b <this session>; exact, the id IS the boot id
+        collectd/                        # this boot's samples, from /var/log/collectd/<boot-id>/
       # NO derived files here -- the regenerated pose does NOT live in captures/
 
   # TWO SHAPES EXIST IN THE ARCHIVE, and the older one is not being migrated.
@@ -138,7 +140,7 @@ Two rules make this navigable:
 |----------|---------|-------|---------------|
 | **vio-tracker** tee (#78) | in-flight, on the vehicle | live OAK-D | `captures/<MxId>/<session>/<MxId>_<session>.feat` (+ `.feat.json`, `features/*.json`) |
 | `bin/vio-ipc-record` (bench) | manual bench | estimator sockets | a capture session (same `captures/...` shape) |
-| **coordinator-mavlink** (#208, #220) | in-flight, on the vehicle | FC MAVLink (MAV2) | `captures/timesync.jsonl`, `captures/vehicle.tlog` |
+| **coordinator-mavlink** (#208, #220) | in-flight, on the vehicle | FC MAVLink (MAV2) | `captures/<node>/<boot-id>/timesync.jsonl`, `.../vehicle.tlog` -- inside the session, which is where the tree above has always placed them. They were written to the captures root until #386, which put them outside everything `coord sessions package` collects |
 | ground station (mavproxy, backpack watch) | in-flight, on the ground | the radio link | `ground/*` -- see [#192](https://github.com/symmatree/coordinator/issues/192) for per-session tlog rotation |
 | **flight-analysis** CronJob (tiles) | nightly 04:00 UTC | `<fc-log>.bin` | `flight-analysis-<logstem>.{ipynb,pdf}`, `manifest.json`, `polisher.json` |
 | **vio-offline** CronJob (tiles) | on-demand (manual `create job --from`; #139) | each `*.feat` | `derived/pose/<stem>.vinspose.csv` + sidecar (#139) |
