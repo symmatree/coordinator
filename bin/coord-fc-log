@@ -6,7 +6,7 @@ The coordinator is wired to the FC on /dev/ttyAMA0 and is the only thing that is
 (#77). Proven on 2026-09-23: 154,894,336 bytes with zero missing ranges, verified against
 an independent ground-side observer.
 
-    coord fc-log list [--json]
+    coord fc-log list
     coord fc-log pull <id>              # the log goes to STDOUT, not to a file here
 
 Nothing lands on the device. `pull` streams to stdout so the caller's shell writes the
@@ -205,30 +205,26 @@ def list_logs(m) -> "dict[int, int]":
     return {}
 
 
-def cmd_list(args) -> int:
+def cmd_list(_args) -> int:
+    """What the FC holds, as JSON. One render path, like coord-sessions and coord-version.
+
+    `time_utc` is the FC's own field and is LAST-MODIFIED, not creation. With
+    LOG_FILE_DSRMROT=1 the flight's log is the one stamped a few seconds after the
+    disarm, because that rotation is what closed it. A caller presenting this as a
+    creation time will pick the wrong log.
+    """
     m = connect()
     logs = list_logs(m)
     if not logs:
         print("coord-fc-log: the FC reported no logs", file=sys.stderr)
         return 1
-    if args.json:
-        # For a caller enumerating what is retrievable, so it does not parse a table
-        # meant for a person. `time_utc` is the FC's own field and is LAST-MODIFIED --
-        # with LOG_FILE_DSRMROT=1 the flight's log is the one stamped a few seconds
-        # after the disarm, because that rotation closed it.
-        print(json.dumps({
-            "node": host_name(),
-            "logs": [
-                {"id": i, "bytes": logs[i][0], "time_utc": iso_or_none(logs[i][1])}
-                for i in sorted(logs)
-            ],
-        }, indent=2))
-        return 0
-    print(f"{'id':>5}  {'bytes':>13}  {'MiB':>8}  time_utc (LAST-MODIFIED, not creation)")
-    for i in sorted(logs):
-        size, tutc = logs[i]
-        print(f"{i:>5}  {size:>13}  {size / 1048576.0:>8.1f}  "
-              f"{iso_or_none(tutc) or '(no GPS time)'}")
+    print(json.dumps({
+        "node": host_name(),
+        "logs": [
+            {"id": i, "bytes": logs[i][0], "time_utc": iso_or_none(logs[i][1])}
+            for i in sorted(logs)
+        ],
+    }, indent=2))
     return 0
 
 
@@ -338,9 +334,7 @@ def main() -> int:
     p = argparse.ArgumentParser(
         prog="coord fc-log", description="List and pull FC dataflash logs over ttyAMA0.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    lp = sub.add_parser("list", help="list the logs the FC holds")
-    lp.add_argument("--json", action="store_true", help="machine-readable")
-    lp.set_defaults(fn=cmd_list)
+    sub.add_parser("list", help="the logs the FC holds, as JSON").set_defaults(fn=cmd_list)
     q = sub.add_parser("pull", help="stream one log to stdout")
     q.add_argument("id", type=int)
     q.set_defaults(fn=cmd_pull)
