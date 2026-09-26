@@ -399,36 +399,51 @@ survived, not over what the camera saw.
 
 Both captures that carry `accel-camera.jsonl` / `accel-arm.jsonl` -- 260923 (flight, campod-sw) and
 260924 (bench tumble, campod-sw, same two parts) -- have stretches of elapsed time with no samples
-in them. They are early, they are two distinct failures, and the self-check quoted in the file
-header only covers one of them.
+in them. All of them are early: the last is at capture +80.5 s on 260923 and +13.8 s on 260924.
 
-**The detector is `gap_ns` against the FIFO fill time**, which is 32 samples / the fitted rate =
-9.81 ms (camera) and 10.08 ms (arm) on 260923. The header's note says "a batch with `n` < 32 and
-`ovr` false lost nothing, because the FIFO never filled." That is true, and it is also true of
-461121 of the 461129 batches on 260923 camera: the reader polls far faster than the FIFO fills
-(mean 2.2 samples per read on camera, 2.5 on arm, against a 32-deep FIFO), so a partial read with
-no overrun is the ordinary case and carries no information about loss.
+**A short read is the normal case, not a symptom.** The reader takes whatever each FIFO holds and
+moves on, so the mean batch is 2.2 samples (camera) and 2.5 (arm) against a 32-deep FIFO. `n` < 32
+describes 461121 of the 461129 batches on 260923 camera. It is not evidence of anything.
 
-Sorting the stalls by what `n` says happened separates two mechanisms:
+**`ovr` cannot be used to classify a short read, because it is not sampled on one.** `entries()`
+reads `FIFO_STATUS`, and returns `(n, false, nil)` immediately whenever `n < fifoDepth` -- it only
+goes on to read `INT_SOURCE` when the FIFO came back full. So `ovr` is false by construction on
+every short batch, and the header's rule "a batch with `n` < 32 and `ovr` false lost nothing" rests
+on a flag that was never read. The rule is still sound on its own terms -- nothing drains that FIFO
+but the reader, so a non-full FIFO did not overflow since the last drain -- but it describes the
+instant of the read, not the interval before it, and the interval is where the holes are.
 
-| capture | stream | FIFO overflow (`n`=32, `ovr` set) | device dry (`n`<32, `ovr` clear) | elapsed time with no samples | last stall |
-|---|---|---|---|---|---|
-| 260923 flight | camera | 6 | 4 | 985 ms (3123 ppm of capture) | capture +80.5 s |
-| 260923 flight | arm | 7 | 0 | 505 ms (1606 ppm) | capture +80.5 s |
-| 260924 tumble | camera | 2 | 0 | 363 ms (920 ppm) | capture +13.8 s |
-| 260924 tumble | arm | 2 | 0 | 365 ms (925 ppm) | capture +13.8 s |
+**The detector is `gap_ns` against the FIFO fill time** (32 / the fitted rate; 9.81 ms camera,
+10.08 ms arm on 260923). **The classifier is the other stream:** the two devices are drained by one
+loop, so asking whether the co-stream kept producing at its own expected rate during the gap
+separates a process-level stall from a device-level one. That is a measurement, unlike `ovr`.
 
-* **The overflow stalls are a host event, not a sensor event.** They land on both streams at the
-  same instants and for the same durations -- 260923 at capture +6.3, 12.2, 13.0, 20.0, 20.1, 36.6
-  and 80.5 s, matching to 0.1 s and 1-2 ms; 260924 at +4.5 and 13.8 s. The reader alternates between
-  the two devices, so whatever blocks it lets both FIFOs overflow together. Largest is 355-361 ms,
-  about 1160 samples into a 32-sample FIFO.
-* **The dry stalls are camera-only and 260923-only** -- capture +0.7, 7.4, 26.5 and 80.5 s, the read
-  returning 1 or 8 samples after a 37-361 ms gap, with `drain_ns` 0.04-0.44 ms against 1.24-1.30 ms
-  for a full read. The FIFO discarded nothing; the device was not producing. Whether that is the
-  ADXL, the SPI path, or the reader's configuration sequence is not established here. The timeline
-  has a hole either way, which is why `n` < 32 and `ovr` clear is not sufficient to call a capture
-  clean.
+| capture | stream | stalls | of which loop-blocked | of which co-stream at full rate | elapsed time with no samples | last stall |
+|---|---|---|---|---|---|---|
+| 260923 flight | camera | 10 | 7 (+1 partial) | 2 | 985 ms (3123 ppm of capture) | capture +80.5 s |
+| 260923 flight | arm | 7 | 3 (+4 partial) | 0 | 505 ms (1606 ppm) | capture +80.5 s |
+| 260924 tumble | camera | 2 | 2 | 0 | 363 ms (920 ppm) | capture +13.8 s |
+| 260924 tumble | arm | 2 | 2 | 0 | 365 ms (925 ppm) | capture +13.8 s |
+
+* **Most stalls are process-level.** Both streams go silent at the same instant for the same
+  duration and both come back with `n`=32 and `ovr` set -- 260923 at capture +6.3, 12.2, 13.0, 20.0,
+  20.1, 36.6 and 80.5 s, matching to 0.1 s and 1-2 ms; 260924 at +4.5 and 13.8 s. During those the
+  co-stream emits 0.1-5% of its expected samples. The largest is 355-361 ms, about 1160 samples into
+  a 32-deep FIFO.
+* **Two are camera-only, and the loop was demonstrably running through them** -- capture +7.4 s
+  (115 ms) and +26.5 s (361 ms), during which the arm emitted 369 and 1142 samples against 366 and
+  1146 expected, 100.8% and 99.6%. So the loop polled the camera at full rate for those windows and
+  emitted nothing for it. Two mechanisms produce that and the capture file cannot separate them:
+  `entries()` returning 0 or erroring (both `continue` without emitting and without updating
+  `lastNS`), or the camera's batch pool running dry, whose handler drains the FIFO into a throwaway
+  buffer and discards it -- leaving no record, no `lastNS` update, and a consumed overrun latch. The
+  pool holds 256 batches, which at the camera's 1463 batches/s absorbs 175 ms, so a 361 ms writer
+  stall would exhaust it. Read order does not explain it: camera is `spidev0.0` and is drained
+  *first* each cycle, which is why the arm's batches are the fatter of the two (it accumulates
+  during the camera's 1.2 ms drain), not why the camera has the holes.
+* **The pool-discard path is invisible in the capture.** Its counter is `pool.drops`, printed to
+  stdout once at process exit, so it reaches journald on the pod and not the offload bundle. In the
+  same branch `readErrs.Add(0)` adds zero.
 * **Nothing appears late in either capture.** 260924 was ended by a `quiesced` stop from the fleet
   API -- a graceful SIGTERM -- and shows no stall at the stop, 381 s after its last one. One capture
   is one capture, but the teardown path has not been observed to cost samples.
@@ -451,12 +466,19 @@ calibration data because the vehicle was not flying, and it admits an unwanted r
 bytes are clean. Each analysis should say which of the two it is applying, and a capture can be
 gapless without being in-regime or vice versa.
 
-On 260923 the two happened to nest, which is the kind of coincidence that hides the distinction: the
-last stall is at capture +80.5 s and ARM is at capture +161.0 s, so the flight begins 80.5 s after
-the last hole. (ARM is FC `TimeUS` 214.6 s, GPS-dated to 12:09:10.42Z; the capture-relative figure
-trusts the pod's `started_utc` of 12:06:29.45Z, a wall-clock stamp written 12 s after NTP stepped the
-coordinator -- fresh rather than independently verified.) A stall during a hover would pull them
-apart, and then a single window would have to choose which question to get wrong.
+On 260923 the two nest, and that is operator procedure rather than an accident: the pods are given a
+settle window on the order of 120 s from the start of capture before the vehicle is armed, timed
+against a clock. The measurement is consistent with it -- the last stall is at capture +80.5 s and
+ARM is at capture +161.0 s, so the flight begins 80.5 s after the last hole. (ARM is FC `TimeUS`
+214.6 s, GPS-dated to 12:09:10.42Z; the capture-relative figure trusts the pod's `started_utc` of
+12:06:29.45Z, a wall-clock stamp written 12 s after NTP stepped the coordinator -- fresh rather than
+independently verified.)
+
+The nesting is not what keeps the two windows separate, though, and reading it that way is what
+makes them look like one window with a margin. 260924 is the cleaner case: a bench tumble has no
+armed window at all, so regime is undefined for it and validity is the only boundary there is. The
+two stay separate because they answer different questions, not because a stall might one day land
+inside a hover.
 
 ## The ADXL sample rates are not 3200 Hz, are not equal, and are not constant
 
@@ -526,9 +548,10 @@ Things it would be reasonable to assume and that are **not** established:
   post-NTP case has been measured (-11 ppm on 260814).
 * The exact per-frame still encode lag. Only its distribution is known, and the light-curve check
   cannot resolve it.
-* Whether the 260923 camera-stream dry stalls (`n` < 32, `ovr` clear, 37-361 ms) were the ADXL, the
-  SPI path, or the reader's configuration sequence. Only that the FIFO discarded nothing and the
-  device was not producing.
+* Whether the two camera-only stalls on 260923 (capture +7.4 and +26.5 s, with the arm running at
+  100.8% and 99.6% of expected throughout) were `entries()` returning 0, `entries()` erroring, or the
+  camera batch pool running dry. All three leave the same trace in the capture file, and the counter
+  that would separate the third -- `pool.drops` -- is printed to stdout at exit only.
 * Whether the within-capture rate movement is the ADXL oscillator or the Pi crystal. The fit divides
   by `CLOCK_BOOTTIME` and there is no absolute reference on the pod, so the two are degenerate.
 * Whether the graceful-stop path costs samples. 260924 stopped via `quiesced` with no stall in its
