@@ -259,6 +259,40 @@ def write_arm_file(path, armed):
     os.replace(tmp, path)
 
 
+def read_line(path):
+    """First line of a file, stripped, or "" -- for /etc/host-hostname and boot_id."""
+    try:
+        with open(path) as f:
+            return f.readline().strip()
+    except OSError:
+        return ""
+
+
+def session_dir(root):
+    """<root>/<node>/<boot-id>, created. The session this boot's data belongs to.
+
+    THE SESSION IS A BOOT and three writers agree on it without any of them handing it
+    to the others: vio-tracker, and this router's two logs. Each reads the same boot id
+    and the same host name, which is the pattern capture.py and campod-accel already use
+    on a campod. docs/flight-data-layout.md has always placed timesync.jsonl and
+    vehicle.tlog inside the session; they were being written to the captures ROOT
+    instead, which is what made them look like append-only streams that could not be
+    collected with the session they belong to (#386).
+
+    The node is the HOST's name: ours in here is an ephemeral docker id, so the stack
+    bind-mounts /etc/hostname the way it does for vio-tracker and campod-camera.
+    """
+    node = read_line("/etc/host-hostname") or socket.gethostname()
+    boot = read_line("/proc/sys/kernel/random/boot_id")
+    if not boot:
+        # No fallback. A made-up session name is one nothing else agrees on, and the
+        # whole point is that the writers agree without coordinating.
+        raise RuntimeError("cannot read /proc/sys/kernel/random/boot_id")
+    d = os.path.join(root, node, boot)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def open_timesync_log(path):
     """Append-mode JSONL sink for TIMESYNC exchanges (#167).
 
@@ -337,13 +371,19 @@ def main():
     write_arm_file(arm_file, armed)
 
     # #167: FC-clock <-> our-clock pairs, for joining captures to the FC log.
-    ts_log = open_timesync_log(
-        os.environ.get("COORD_TIMESYNC_LOG", "/tmp/timesync.jsonl"))
-
-    # Coordinator-side tlog: everything the FC sends us (see the module docstring).
-    # Empty COORD_TLOG disables it.
-    tlog_path = os.environ.get("COORD_TLOG", "/tmp/vehicle.tlog")
-    tlog = open_tlog(tlog_path) if tlog_path else None
+    # Both logs land in THIS BOOT's session directory, so collecting the session
+    # collects them. COORD_CAPTURES_DIR is the captures root, not a file path: the
+    # router derives <root>/<node>/<boot-id>/ itself, because a full path handed in
+    # cannot know the boot id. Empty disables both.
+    captures_root = os.environ.get("COORD_CAPTURES_DIR", "")
+    if captures_root:
+        sess = session_dir(captures_root)
+        ts_log = open_timesync_log(os.path.join(sess, "timesync.jsonl"))
+        tlog = open_tlog(os.path.join(sess, "vehicle.tlog"))
+        print(f"coordinator-mavlink: session {sess}", file=sys.stderr, flush=True)
+    else:
+        ts_log = open_timesync_log("/dev/null")
+        tlog = None
 
     last_hb = 0.0  # monotonic ts of the last HEARTBEAT we sent
 

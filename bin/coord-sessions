@@ -171,6 +171,49 @@ def add_hashed(tar: tarfile.TarFile, path: Path, arcname: str) -> str:
     return h.hexdigest()
 
 
+COLLECTD_ROOT = Path("/var/log/collectd")
+
+
+def add_bytes(tar: tarfile.TarFile, blob: bytes, arcname: str, mtime: int) -> str:
+    """Add generated content and return its sha256, so the manifest covers it too."""
+    info = tarfile.TarInfo(arcname)
+    info.size = len(blob)
+    info.mtime = mtime
+    tar.addfile(info, io.BytesIO(blob))
+    return hashlib.sha256(blob).hexdigest()
+
+
+def journal_for(session: str) -> bytes:
+    """This boot's journal. Exact, because A SESSION IS A BOOT and journald indexes by
+    boot id -- so the session id IS the selector, with no time window and no wall clock.
+
+    Persistent journald is on both device kinds (roles/power-resilience, #100), so a
+    past boot's journal is still here. Failure is not fatal: a session is worth
+    collecting without its journal, and the manifest records what is in the bundle, so
+    an absent journal.log is visible rather than silent.
+    """
+    try:
+        p = subprocess.run(["journalctl", "-b", session, "-o", "short-iso-precise",
+                            "--no-pager"], capture_output=True, timeout=120)
+        return p.stdout if p.returncode == 0 else b""
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return b""
+
+
+def collectd_for(session: str) -> list[Path]:
+    """This boot's collectd samples. Also exact: roles/metrics points collectd's
+    DataDir at /var/log/collectd/<boot-id> for exactly this reason, so there is a
+    directory to name rather than rows to filter on a clock we do not trust.
+
+    Empty for a boot that predates that change, which is honest -- those samples are
+    in the old flat tree and cannot be attributed to a boot after the fact.
+    """
+    d = COLLECTD_ROOT / session
+    if not d.is_dir():
+        return []
+    return sorted(p for p in d.rglob("*") if p.is_file())
+
+
 def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
     current = boot_id()
     try:
@@ -220,6 +263,21 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
                 entries[str(rel)] = {
                     "bytes": path.stat().st_size,
                     "sha256": add_hashed(tar, path, f"{node}/{session}/{rel}"),
+                }
+            # Context for the same boot, selected by boot id rather than by time.
+            # Both go through the same manifest, so "did it all arrive" covers them.
+            for path in collectd_for(session):
+                rel = Path("collectd") / path.relative_to(COLLECTD_ROOT / session)
+                entries[str(rel)] = {
+                    "bytes": path.stat().st_size,
+                    "sha256": add_hashed(tar, path, f"{node}/{session}/{rel}"),
+                }
+            jrn = journal_for(session)
+            if jrn:
+                entries["journal.log"] = {
+                    "bytes": len(jrn),
+                    "sha256": add_bytes(tar, jrn, f"{node}/{session}/journal.log",
+                                        int(started)),
                 }
             # Inside the bundle, so an extracted directory can be checked on its own
             # without the file that carried it.

@@ -47,6 +47,16 @@ it cost the workflow: `package` refused the current boot, so a session that had 
 that was equally unretrievable, while restarting collection nobody wanted. The `open` flag in
 `coord-sessions list` says which boot a directory belongs to and nothing more.
 
+**A session bundle carries this boot's context, not just its captures.** `coord sessions
+package` adds `journal.log` (`journalctl -b <session>` -- exact, because the session id IS
+the boot id) and `collectd/` (from `/var/log/collectd/<boot-id>/`, which `roles/metrics`
+keys that way for this reason). Both go through the same per-file sha256 manifest. Neither
+is filtered on a wall clock, because on these boxes it is wrong from boot until NTP lands
+and is never corrected in the field.
+
+Still not per-boot, so still not in a bundle: `docker logs` (a container outlives a boot)
+and `coord version` (a snapshot of now, which for an old session would be a lie).
+
 **These outlive the stack.** `coord version` and `coord sessions` deliberately do not require
 a compose file: a machine with no stack installed still has to answer the probe, and one whose
 stack was removed still has data worth listing and packaging. Distinguishing "nothing

@@ -124,19 +124,31 @@ services:
       - /dev/ttyAMA0:/dev/ttyAMA0
     volumes:
       - /var/lib/coordinator/ipc:/tmp
-      # #167: the TIMESYNC log lands beside the captures so a flight pull carries
-      # the FC-clock <-> monotonic pairs needed to join stills to the FC log.
+      # #167/#220: timesync.jsonl and vehicle.tlog land in THIS BOOT's session
+      # directory under here, so collecting the session collects them. The router
+      # derives <captures>/<node>/<boot-id>/ itself -- see COORD_CAPTURES_DIR below.
       - /var/lib/coordinator/captures:/captures
+      # The node's own name, for that path. A container's hostname is its container
+      # id, so the host's has to be mounted in; identical to the line vio-tracker
+      # and campod-camera carry (#272).
+      - /etc/hostname:/etc/host-hostname:ro
     environment:
       MAVLINK_DEVICE: /dev/ttyAMA0
       MAVLINK_BAUD: "1500000"
       # #88: the router is the writer of the arm-state file vio-tracker reads.
       OAK_ARM_FILE: /tmp/fc_armed
-      COORD_TIMESYNC_LOG: /captures/timesync.jsonl
-      # Everything the FC sends us, in standard tlog format, beside the captures.
-      # MAV2 runs EXT_STAT/POSITION/EXTRA1-3 at 2 Hz with no param change, which
-      # is ~41 msg/s -> ~0.7 MB for a six-minute flight. Set empty to disable.
-      COORD_TLOG: /captures/vehicle.tlog
+      # The captures ROOT, not a file path: the router appends <node>/<boot-id>/ and
+      # writes timesync.jsonl and vehicle.tlog in there. It cannot be handed a full
+      # path because the boot id is not known until boot. Empty disables both.
+      #
+      # These used to be written at the captures root, which put them outside every
+      # session and outside what `coord sessions package` collects -- so a flight's
+      # capture could be retrieved without the FC telemetry recorded alongside it.
+      # docs/flight-data-layout.md always placed them inside the session (#386).
+      #
+      # Volume: MAV2 runs EXT_STAT/POSITION/EXTRA1-3 at 2 Hz with no param change,
+      # ~41 msg/s -> ~0.7 MB for a six-minute flight.
+      COORD_CAPTURES_DIR: /captures
 
   # #115: coordinator front-panel status OLED. Drives the SH1106 on the Pi's I2C
   # (0x3C, /dev/i2c-1) -- a separate bus from the FC's compass. Reads the captures
