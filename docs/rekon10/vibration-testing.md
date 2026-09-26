@@ -105,6 +105,12 @@ not evidence of a resonance.
 
 Done once, on the SW arm, and it produced one number worth carrying: **a mode at 152.9 Hz.**
 
+**Where the pod is: `campod-sw` is on the REAR-LEFT arm**, which carries **motor2**
+(`SERVO4_FUNCTION=34`). Operator-confirmed 2026-09-26, and recorded here because nothing else in
+the repo stated it and every per-motor amplitude below is read against it -- the strongest lines
+turn out to be the sensors' own motor, which is only interpretable once the mounting is known.
+`campod-se` is the mirrored rear-right arm.
+
 | | camera-colocated sensor | arm-end sensor |
 |---|---|---|
 | frequency | 152.92 +/- 0.04 Hz | 152.94 +/- 0.02 Hz |
@@ -142,61 +148,75 @@ Corrections to the method notes above, from doing it:
 
 ## 5. Where 152.9 Hz sits relative to what actually drives the airframe
 
-A mode matters only if something excites it. The forcing on this airframe is the rotors: each
-motor puts a line at its rev frequency and at multiples of it. Props are **Master Airscrew MR
-10x4.5 2-blade**, so blade-pass is the 2nd harmonic.
+A mode matters only if something excites it. The forcing is the rotors: each motor puts a line at
+its rev frequency and at multiples of it. **The props are three-blade** (HQ MacroQuad 10x4.8x3,
+[props.md](props.md)), so **blade-pass is the 3rd harmonic**, and the 2nd harmonic is a rotational
+harmonic with no blade-rate meaning. Getting that wrong moves a named line by a third of its
+frequency; it was wrong here until 2026-09-26.
 
-Measured in the 260923 hover window (FC 245-354 s), with the output-to-motor map read from
-`SERVOn_FUNCTION`. `|H|` is single-degree-of-freedom amplification at the mode,
-`1/sqrt((1-r^2)^2 + (2*zeta*r)^2)` with `r = f/152.93`:
+Measured in the 260923 hover window, output-to-motor map from `SERVOn_FUNCTION`. `|H|` is
+single-degree-of-freedom amplification at the mode, `1/sqrt((1-r^2)^2 + (2*zeta*r)^2)`,
+`r = f/152.93`. PSD is on the arm-end sensor, which with both sensors on the **rear-left** arm
+makes motor2 the sensor's own motor:
 
-| forcing line | position | Hz | r | \|H\| at Q=40 | \|H\| at Q=14 | RPM shift to land on the mode |
+| line | motor position | Hz | arm PSD | r | \|H\| Q=40 | \|H\| Q=14 |
 |---|---|---|---|---|---|---|
-| motor2 rev | rear-left, 5230 rpm | 87.17 | 0.570 | 1.48 | 1.48 | +75.4% |
-| motor4 rev | rear-right, 5608 rpm | 93.47 | 0.611 | 1.60 | 1.59 | +63.6% |
-| motor1 rev | front-right, 6903 rpm | 115.05 | 0.752 | 2.30 | 2.29 | +32.9% |
-| motor3 rev | front-left, 7173 rpm | 119.54 | 0.782 | 2.57 | 2.54 | +27.9% |
-| motor2 blade-pass | rear-left | 174.33 | 1.140 | 3.32 | 3.22 | -12.3% |
-| motor4 blade-pass | rear-right | 186.93 | 1.222 | 2.02 | 1.99 | -18.2% |
-| motor1 blade-pass | front-right | 230.10 | 1.505 | 0.79 | 0.79 | -33.5% |
-| motor3 blade-pass | front-left | 239.08 | 1.563 | 0.69 | 0.69 | -36.0% |
+| motor2 rev | rear-left (own arm) | 87.27 | 4.286 | 0.571 | 1.48 | 1.48 |
+| motor4 rev | rear-right | 93.97 | 4.212 | 0.614 | 1.61 | 1.61 |
+| motor1 rev | front-right | 116.05 | 1.169 | 0.759 | 2.35 | 2.34 |
+| motor3 rev | front-left | 119.59 | 2.922 | 0.782 | 2.57 | 2.54 |
+| motor2 2x | rear-left (own arm) | 174.53 | 0.738 | 1.141 | 3.30 | 3.20 |
+| motor4 2x | rear-right | 187.93 | 1.058 | 1.229 | 1.96 | 1.93 |
+| **motor2 blade-pass 3x** | rear-left (own arm) | **261.80** | **7.187** | 1.712 | 0.52 | 0.52 |
+| motor4 blade-pass 3x | rear-right | 281.90 | 1.067 | 1.843 | 0.42 | 0.42 |
+| motor1 2x | front-right | 232.10 | 0.532 | 1.518 | 0.77 | 0.77 |
+| motor3 2x | front-left | 239.18 | 1.635 | 1.564 | 0.69 | 0.69 |
+| motor1 blade-pass 3x | front-right | 348.14 | 0.976 | 2.276 | 0.24 | 0.24 |
+| motor3 blade-pass 3x | front-left | 358.76 | 1.601 | 2.346 | 0.22 | 0.22 |
 
-**Nothing is on it now.** The closest line is motor2's blade-pass at 174.33 Hz, 21.4 Hz above,
-which is 5.6 half-power bandwidths away at Q=40 and 2.0 at Q=14. It still picks up about 3.3x
-amplification over static, against a 40x or 14x peak.
+**The largest line measured anywhere on this airframe is motor2's blade-pass at 261.80 Hz, PSD
+7.187** -- larger than its own rev line, larger than everything else, and on the arm the sensors
+are bolted to. It was invisible until 2026-09-26 because the analysis computed order 2 and called
+it blade-pass, never computing order 3 at all.
+
+**The mode is not what makes any of it loud.** At 261.80 Hz the mode's amplification is 0.52 -- it
+attenuates. The strongest line and the measured mode are not interacting. Nothing sits on 152.9 Hz:
+the nearest line is motor2's 2nd harmonic at 174.53 Hz, 21.4 Hz above, picking up about 3.3x, and
+that line's PSD is 0.738, a tenth of the blade-pass line 87 Hz further up.
 
 **The unusable damping does not block this question.** Off resonance the response is set by the
-stiffness term `(1-r^2)`, not by damping, which is why the Q=40 and Q=14 columns above are
-effectively identical. Damping only decides the answer when a line is ON the mode -- so the
-number that is missing is exactly the number needed to say how bad landing on it would be, and
-not needed to say that nothing is on it today.
+stiffness term `(1-r^2)`, which is why the Q=40 and Q=14 columns are effectively identical.
+Damping decides the answer only when a line is ON the mode -- so the missing number is exactly
+what is needed to say how bad landing on the mode would be, and is not needed to say nothing is on
+it today.
 
-**Which direction each prop change moves things**, as arithmetic:
+**Prop-change arithmetic**, for the two-blade set that is on hand and unflown:
 
-- **Smaller diameter** raises hover RPM, walking every rev line up. The front pair at 115-120 Hz
-  reaches 152.9 Hz on a +28 to +33% RPM increase; the rear pair needs +64 to +75%.
-- **Blade count changes where blade-pass sits without moving rev.** At 2 blades the current
-  blade-pass lines are 174-239 Hz, straddling the mode from above. At 3 blades and the same RPM
-  they move to 261-359 Hz, away from it -- while the rev lines stay where they are.
-- So the two changes move different lines in different directions, and a diameter change is the
-  one that walks a line toward 152.9 Hz from below.
+- **Blade count moves blade-pass without moving rev.** Going from three blades to two takes
+  blade-pass from order 3 to order 2: on the rear-left motor at its current speed that is 261.80 Hz
+  down to 174.53 Hz. Fewer blades need more RPM for the same thrust, which pushes it back up, so
+  the landing point is somewhere above 174.5 Hz. Either way it moves the **dominant** line from 71%
+  above the mode to roughly 14-30% above it.
+- **Diameter moves every rev line together.** The front pair at 116-120 Hz reaches 152.9 Hz on a
+  +28 to +33% RPM rise; the rear pair needs +63 to +75%.
+- So the two-blade test walks the largest line toward the mode without reaching it, and a diameter
+  reduction walks a rev line onto it from below. Neither is a recommendation; both are the
+  arithmetic that was missing.
 
-**All of this is bounded by the base not having been clamped.** The shift percentages are
-distances to a mode frequency measured on a hand-held vehicle. A clamped measurement is what
-would make them decision-grade.
+**All of it bounded by the base not having been clamped.** These are distances to a mode frequency
+measured on a hand-held vehicle.
 
 ## 6. The 1x rev band does not need a prop-imbalance explanation
 
 A strong line at 1x rotation is the textbook imbalance signature, and imbalance is the reading it
-invites. On this airframe that reading is not supported by the amplitude pattern, and it was never
-written down here -- this section exists so it does not get re-invented.
+invites. Here the amplitude pattern contradicts it.
 
-Rev-line PSD on the arm-end sensor, 260923 hover, from
-`derived/vibration-spectrogram.json`:
+Rev-line PSD on the arm-end sensor, 260923 hover. **Both sensors are on the rear-left arm**, which
+is motor2's:
 
 | motor | position | rpm | rev Hz | PSD on arm sensor |
 |---|---|---|---|---|
-| motor2 | rear-left | 5230 | 87.27 | 4.286 |
+| motor2 | **rear-left -- the sensors' own arm** | 5230 | 87.27 | 4.286 |
 | motor4 | rear-right | 5608 | 93.97 | 4.212 |
 | motor3 | front-left | 7173 | 119.59 | 2.922 |
 | motor1 | front-right | 6903 | 116.05 | 1.169 |
@@ -204,22 +224,19 @@ Rev-line PSD on the arm-end sensor, 260923 hover, from
 **The slowest motors produce the strongest 1x lines, by up to 3.7x.** Two mechanisms would make a
 1x line strong and both predict the opposite ordering:
 
-- **Imbalance forcing grows as the square of speed.** For the same residual mass eccentricity on
-  every prop, the front pair at 1.29x the rear speed produces 1.67x the force. Front should lead.
-- **Proximity to 152.9 Hz.** The front rev lines at 115-120 Hz sit closer to the mode than the
-  rear at 87-94 Hz, and amplify 2.3-2.6x against 1.5-1.6x. Front should lead again.
+- **Imbalance forcing grows as the square of speed.** For identical residual eccentricity on every
+  prop, the front pair at 1.29x the rear speed produces 1.67x the force. Front should lead.
+- **Proximity to 152.9 Hz.** The front rev lines at 116-120 Hz sit closer to the mode than the rear
+  at 87-94 Hz, amplifying 2.3-2.6x against 1.5-1.6x. Front should lead again.
 
-Measured ordering is rear-leading. So neither RPM-squared forcing nor the structural mode is what
-sets the 1x amplitudes, and a difference in imbalance between props is not needed to explain the
-pattern -- which is consistent with the pattern surviving a change to four new props, freshly
-mounted, where four independent new props sharing one imbalance is not a plausible story.
+Measured ordering is rear-leading, and the strongest of all is the sensors' own motor. So neither
+RPM-squared forcing nor the structural mode sets the 1x amplitudes -- **what orders them is the
+structural path from each motor to the sensor.** Own arm first, the other rear arm next, the far
+front arm last, with the near front arm out of order.
 
-What the ordering is consistent with is the structural path from each motor to the sensor: both
-sensors are on one arm, and the two motors nearest it in the structure dominate. **Confirming that
-requires knowing which arm the pod is on, and this repo does not record it** -- the SE/SW naming
-plus the mirrored-arm framing in section 4 suggests the two rear arms, but that is an inference.
-It should be written down, because it determines how every per-motor amplitude in this document is
-read.
+That means a difference in imbalance between props is not needed to explain the pattern, which is
+consistent with the pattern surviving a change to four new freshly-mounted props (set A to set B,
+[props.md](props.md)) -- four independent props sharing one imbalance not being a plausible story.
 
 ## 7. Cross-checking against the flight controller
 
