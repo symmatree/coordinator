@@ -395,6 +395,122 @@ survived, not over what the camera saw.
 
 ---
 
+## Gaps in the campod accel stream, and the two windows that are not the same window
+
+Both captures that carry `accel-camera.jsonl` / `accel-arm.jsonl` -- 260923 (flight, campod-sw) and
+260924 (bench tumble, campod-sw, same two parts) -- have stretches of elapsed time with no samples
+in them. They are early, they are two distinct failures, and the self-check quoted in the file
+header only covers one of them.
+
+**The detector is `gap_ns` against the FIFO fill time**, which is 32 samples / the fitted rate =
+9.81 ms (camera) and 10.08 ms (arm) on 260923. The header's note says "a batch with `n` < 32 and
+`ovr` false lost nothing, because the FIFO never filled." That is true, and it is also true of
+461121 of the 461129 batches on 260923 camera: the reader polls far faster than the FIFO fills
+(mean 2.2 samples per read on camera, 2.5 on arm, against a 32-deep FIFO), so a partial read with
+no overrun is the ordinary case and carries no information about loss.
+
+Sorting the stalls by what `n` says happened separates two mechanisms:
+
+| capture | stream | FIFO overflow (`n`=32, `ovr` set) | device dry (`n`<32, `ovr` clear) | elapsed time with no samples | last stall |
+|---|---|---|---|---|---|
+| 260923 flight | camera | 6 | 4 | 985 ms (3123 ppm of capture) | capture +80.5 s |
+| 260923 flight | arm | 7 | 0 | 505 ms (1606 ppm) | capture +80.5 s |
+| 260924 tumble | camera | 2 | 0 | 363 ms (920 ppm) | capture +13.8 s |
+| 260924 tumble | arm | 2 | 0 | 365 ms (925 ppm) | capture +13.8 s |
+
+* **The overflow stalls are a host event, not a sensor event.** They land on both streams at the
+  same instants and for the same durations -- 260923 at capture +6.3, 12.2, 13.0, 20.0, 20.1, 36.6
+  and 80.5 s, matching to 0.1 s and 1-2 ms; 260924 at +4.5 and 13.8 s. The reader alternates between
+  the two devices, so whatever blocks it lets both FIFOs overflow together. Largest is 355-361 ms,
+  about 1160 samples into a 32-sample FIFO.
+* **The dry stalls are camera-only and 260923-only** -- capture +0.7, 7.4, 26.5 and 80.5 s, the read
+  returning 1 or 8 samples after a 37-361 ms gap, with `drain_ns` 0.04-0.44 ms against 1.24-1.30 ms
+  for a full read. The FIFO discarded nothing; the device was not producing. Whether that is the
+  ADXL, the SPI path, or the reader's configuration sequence is not established here. The timeline
+  has a hole either way, which is why `n` < 32 and `ovr` clear is not sufficient to call a capture
+  clean.
+* **Nothing appears late in either capture.** 260924 was ended by a `quiesced` stop from the fleet
+  API -- a graceful SIGTERM -- and shows no stall at the stop, 381 s after its last one. One capture
+  is one capture, but the teardown path has not been observed to cost samples.
+
+### Two windows, two reasons -- do not AND them into one
+
+There are two separate reasons to restrict an analysis to part of a capture, and they answer
+different questions with different boundaries:
+
+* **Validity** -- is the data trustworthy here? Set by the stalls above and by nothing else. It has
+  nothing to do with the vehicle. A bench tumble for calibration has no armed window at all, and for
+  that work the limit of useful data is the limit of the data: cut what is corrupt and keep the rest,
+  including everything recorded sitting on the bench.
+* **Regime** -- is the vehicle in the physical condition under study? Set by the flight. A vibration
+  spectrum wants rotors turning and the airframe loaded, so time on the ground is the wrong regime.
+  That is not a statement about data quality; those samples are fine and answer a different question.
+
+A single "good window" that intersects the two loses in both directions -- it discards valid
+calibration data because the vehicle was not flying, and it admits an unwanted regime as long as the
+bytes are clean. Each analysis should say which of the two it is applying, and a capture can be
+gapless without being in-regime or vice versa.
+
+On 260923 the two happened to nest, which is the kind of coincidence that hides the distinction: the
+last stall is at capture +80.5 s and ARM is at capture +161.0 s, so the flight begins 80.5 s after
+the last hole. (ARM is FC `TimeUS` 214.6 s, GPS-dated to 12:09:10.42Z; the capture-relative figure
+trusts the pod's `started_utc` of 12:06:29.45Z, a wall-clock stamp written 12 s after NTP stepped the
+coordinator -- fresh rather than independently verified.) A stall during a hover would pull them
+apart, and then a single window would have to choose which question to get wrong.
+
+## The ADXL sample rates are not 3200 Hz, are not equal, and are not constant
+
+`odr_hz_nominal` in the header is 3200 -- what was asked for over SPI, not what happened. The rate
+has to be fitted per capture from the batch stamps, `polyfit(boot_ns / 1e9, i)`
+([#388](https://github.com/symmatree/coordinator/issues/388) adds this as `rate_fitted_hz`).
+
+Fitted over the stall-free part of each capture, same two physical parts both times:
+
+| capture | window (pod boot s) | camera | arm | camera/arm |
+|---|---|---|---|---|
+| 260923 flight | 138.5 - 367.7 | 3269.78 Hz | 3180.51 Hz | 1.028069 |
+| 260924 tumble | 92.7 - 469.0 | 3247.52 Hz | 3162.96 Hz | 1.026734 |
+
+* **The two parts differ from each other by about 2.75%.** This is much the largest effect here.
+  Putting the two streams on a shared grid, or differencing them, needs both fitted rates; assuming
+  one common rate misplaces a 250 Hz line by ~7 Hz.
+* **The rate does not repeat across captures.** Camera moved 6830 ppm between these two and arm
+  5530 ppm, both lower on the tumble. A rate fitted on one capture is not reusable on another.
+* **It is not constant within a capture.** Splitting each stall-free window in half: camera +1529
+  ppm and arm +1811 ppm across the flight, camera -549 ppm and arm -161 ppm across the tumble. Both
+  streams move the same direction within a capture, and the opposite direction between captures.
+
+**That within-capture movement is not undetected sample loss.** Over those stall-free windows the
+largest single read gap is 5.4-9.2 ms against a 9.8-10.1 ms fill time, and the summed excess over
+fill is 0.0 ms -- the FIFO had no opportunity to discard anything. The one exception is the 260924
+arm's second half, 5.4 ms of excess over 188 s (29 ppm of elapsed time) against a -161 ppm rate
+change.
+
+**The measurement has no absolute reference, so the movement cannot be attributed.** The fit is
+samples divided by elapsed `boot_ns`, and `boot_ns` is the Pi's `CLOCK_BOOTTIME`. What comes out is
+the ADXL's rate divided by the Pi's clock rate, and nothing in the capture separates the two. The
+pod's own `clk` records do not help: `wall_ns - boot_ns` held constant to 0.1 ms over the 315 s of
+260923, 0.3 ppm, so NTP was not slewing and wall time is boot time plus a constant. So "the rate
+drifted" currently means "the rate drifted relative to this Pi", and the Pi is one of the candidates.
+A GPS-disciplined clock on the pod ([#11](https://github.com/symmatree/coordinator/issues/11)) would
+break the degeneracy.
+
+Whether the movement is thermal is testable from the FC side without resolving that: `IMU.T` (per-IMU
+die), `BARO.Temp` and `GndTemp`, `ESC.Temp` and `MotTemp` per motor, `MCU.MTemp`, and `BARO.Press`.
+The pod's own temperature is not in the flight directory -- the offload bundle carries accel, frames
+and manifests, no collectd -- so the Pi die temperature nearest these parts stays on the device.
+
+For spectra the size that matters is this: 2000 ppm of rate error moves a 250 Hz line by 0.5 Hz,
+which is the same size as the per-motor RPM changes the vibration work is trying to resolve. Fit the
+rate over the window being transformed rather than over the whole capture.
+
+**Nothing in the file says which physical part it is.** `devid` reads 229 (0xE5), which every
+ADXL345 reports, and `separation_m` is present in the header and empty on both captures. The only
+identity a file carries is `label` (camera / arm) plus `node`; which part sits in which pod is
+operator knowledge, stated when parts move, and the rate fit is the cross-check if it goes unstated.
+
+---
+
 ## Qualified ignorance
 
 Things it would be reasonable to assume and that are **not** established:
@@ -410,6 +526,13 @@ Things it would be reasonable to assume and that are **not** established:
   post-NTP case has been measured (-11 ppm on 260814).
 * The exact per-frame still encode lag. Only its distribution is known, and the light-curve check
   cannot resolve it.
+* Whether the 260923 camera-stream dry stalls (`n` < 32, `ovr` clear, 37-361 ms) were the ADXL, the
+  SPI path, or the reader's configuration sequence. Only that the FIFO discarded nothing and the
+  device was not producing.
+* Whether the within-capture rate movement is the ADXL oscillator or the Pi crystal. The fit divides
+  by `CLOCK_BOOTTIME` and there is no absolute reference on the pod, so the two are degenerate.
+* Whether the graceful-stop path costs samples. 260924 stopped via `quiesced` with no stall in its
+  last 381 s; that is one observation of one stop.
 * Whether log naming is fully deterministic on GPS-time-at-file-creation, or whether a marginal race
   exists when lock lands mid-creation. The corpus is consistent with the deterministic reading; the
   marginal case has not been tested.
