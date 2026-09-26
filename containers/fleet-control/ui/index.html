@@ -311,23 +311,70 @@
       return render(await j('/nodes'));
     }
 
-    const es = new EventSource(`/runs/${id}/stream`);
-    es.onmessage = async (ev) => {
-      const l = JSON.parse(ev.data);
-      st.log.push(l.line);
+    const status = await watchRun(id, async (line, reset) => {
+      if (reset) st.log = [];
+      st.log.push(line);
       if (st.log.length > 400) st.log.splice(0, st.log.length - 400);
       render(await j('/nodes'));
-    };
-    // The server says when it is done. Closing here is also what stops EventSource
-    // reconnecting to a finished run.
-    es.addEventListener('done', async () => {
-      es.close();
-      st.busy = false;
-      state.set(name, st);
-      render(await j('/nodes'));
     });
-    es.onerror = () => { es.close(); st.busy = false; };
+    st.busy = false;
+    st.log.push(lostNote(status) ?? `[fleet-control] run ${status}`);
+    state.set(name, st);
+    render(await j('/nodes'));
   }
+
+  /** How long to wait before reattaching, so a stream that refuses to stay up cannot spin. */
+  const REATTACH_MS = 1000;
+
+  /**
+   * Watch a run to its end and say how it ended: `succeeded`, `failed`, or `lost`.
+   *
+   * A DROPPED STREAM IS NOT AN ENDING. Both callers used to treat it as one -- the node card
+   * stopped repainting and sat mid-run forever, and the retrieve loop below went further and
+   * unticked the session as though it had been collected. An EventSource dies for reasons that
+   * have nothing to do with the run; a phone locking its screen is enough.
+   *
+   * So on error this asks `/runs/:id`, which separates all three cases because the registry is
+   * in memory and the playbook is a child of the process driving it:
+   *
+   * - still running -> reattach. The stream dying is not the run dying.
+   * - finished      -> report the ending we missed, from the service's own lines.
+   * - 404           -> `lost`: the service restarted and took the run with it. It is not
+   *                    running somewhere else and nothing resumes.
+   *
+   * `onLine(line, reset)` -- `reset` asks the caller to discard what it has first, because
+   * `/stream` replays every line it holds on connect, so anything kept across a reattach is a
+   * duplicate. The service's record is the authoritative one.
+   */
+  function watchRun(id, onLine) {
+    return new Promise((resolve) => {
+      const attach = () => {
+        const es = new EventSource(`/runs/${id}/stream`);
+        es.onmessage = (ev) => onLine(JSON.parse(ev.data).line, false);
+        es.addEventListener('done', (ev) => {
+          es.close();
+          resolve(JSON.parse(ev.data).status);
+        });
+        es.onerror = async () => {
+          es.close();
+          let run;
+          try { run = await j(`/runs/${id}`); } catch { return resolve('lost'); }
+          if (run.status !== 'running') {
+            run.lines.forEach((l, i) => onLine(l.line, i === 0));
+            return resolve(run.status);
+          }
+          onLine('[fleet-control] connection dropped; still running, reattaching (log resynced)', true);
+          setTimeout(attach, REATTACH_MS);
+        };
+      };
+      attach();
+    });
+  }
+
+  /** The one status that needs explaining rather than reporting. */
+  const lostNote = (status) => status !== 'lost' ? undefined
+    : '[fleet-control] the service restarted; this run is lost and the node may be '
+      + 'part-converged. Refresh status, then run it again.';
 
   // ---- post-flight --------------------------------------------------------------------
   // Sessions are loaded on demand, like status: nothing touches the fleet unprompted. The
@@ -473,13 +520,17 @@
       log(`${node}: starting ${session.slice(0, 8)}`);
       try {
         const { id } = await j(`/nodes/${node}/offload?session=${session}&flight=${encodeURIComponent(flight)}`, { method: 'POST' });
-        await new Promise((done) => {
-          const es = new EventSource(`/runs/${id}/stream`);
-          es.onmessage = (ev) => log('  ' + JSON.parse(ev.data).line);
-          es.addEventListener('done', () => { es.close(); done(); });
-          es.onerror = () => { es.close(); done(); };
-        });
-        pf.picked.delete(key);
+        const status = await watchRun(id, (line) => log('  ' + line));
+        // UNTICK ONLY ON SUCCESS. This used to untick whenever the stream ended for any
+        // reason, including a dropped connection -- so a session could be marked collected
+        // while its transfer was still running, or after the service restarted mid-transfer.
+        // A ticked session that was actually retrieved costs one retry; an unticked session
+        // that was not is a session "Delete the rest" then deletes.
+        if (status === 'succeeded') {
+          pf.picked.delete(key);
+        } else {
+          log(`  ${node}: ${lostNote(status) ?? `run ${status}`} -- leaving ${session.slice(0, 8)} ticked`);
+        }
       } catch (e) { log(`${node}: ${e.message}`); }
     }
     renderSessions();
