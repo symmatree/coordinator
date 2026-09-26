@@ -63,7 +63,6 @@
   .srcgroup .src .count.err { color:var(--bad); }
   .sess .num { color:var(--dim); font-family:ui-monospace, monospace; font-size:.78rem; }
   .sess .why { flex-basis:100%; color:var(--dim); font-size:.76rem; margin-left:32px; }
-  .sess.open { opacity:.55; }
 </style>
 <h1>rekon10 fleet</h1>
 <div class="topbar">
@@ -102,6 +101,18 @@
 <script type="module">
   const $ = (h) => Object.assign(document.createElement('div'), h);
   const state = new Map();
+  /**
+   * One `<pre>` per node, kept across renders.
+   *
+   * `render()` rebuilds the whole fleet on every streamed line, and a freshly created element
+   * starts at scrollTop 0 -- which is why the log jumped back to the oldest lines on every
+   * update. Reusing the element is also what makes the scroll position readable at all: a
+   * detached element reports scrollTop 0, so it cannot be recovered after the rebuild.
+   */
+  const logs = new Map();
+
+  /** Within a couple of px of the bottom. Fractional scroll heights make == useless. */
+  const atBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 4;
   const dlg = document.getElementById('confirm');
 
   const WHAT = {
@@ -138,6 +149,11 @@
 
   function render(nodes) {
     const root = document.getElementById('fleet');
+    // Read scroll state BEFORE the rebuild, while the elements still have layout boxes.
+    // Follow the tail unless the operator has deliberately scrolled up to read something --
+    // pinning unconditionally would make a running converge impossible to look back through.
+    const following = new Map();
+    for (const [name, pre] of logs) following.set(name, atBottom(pre));
     root.textContent = '';
     for (const n of nodes) {
       const st = state.get(n.name) ?? {};
@@ -171,11 +187,22 @@
       else if (st.status) card.append(renderUnits(st.status, n.name));
 
       if (st.log?.length) {
-        const pre = document.createElement('pre');
+        let pre = logs.get(n.name);
+        if (!pre) {
+          pre = document.createElement('pre');
+          logs.set(n.name, pre);
+          // A log that has just appeared has nothing to preserve, so it starts at the tail.
+          following.set(n.name, true);
+        }
         pre.textContent = st.log.join('\n');
         card.append(pre);
       }
       root.append(card);
+    }
+
+    // After everything is attached, so scrollHeight is real.
+    for (const [name, pre] of logs) {
+      if (following.get(name) !== false) pre.scrollTop = pre.scrollHeight;
     }
   }
 
@@ -311,23 +338,70 @@
       return render(await j('/nodes'));
     }
 
-    const es = new EventSource(`/runs/${id}/stream`);
-    es.onmessage = async (ev) => {
-      const l = JSON.parse(ev.data);
-      st.log.push(l.line);
+    const status = await watchRun(id, async (line, reset) => {
+      if (reset) st.log = [];
+      st.log.push(line);
       if (st.log.length > 400) st.log.splice(0, st.log.length - 400);
       render(await j('/nodes'));
-    };
-    // The server says when it is done. Closing here is also what stops EventSource
-    // reconnecting to a finished run.
-    es.addEventListener('done', async () => {
-      es.close();
-      st.busy = false;
-      state.set(name, st);
-      render(await j('/nodes'));
     });
-    es.onerror = () => { es.close(); st.busy = false; };
+    st.busy = false;
+    st.log.push(lostNote(status) ?? `[fleet-control] run ${status}`);
+    state.set(name, st);
+    render(await j('/nodes'));
   }
+
+  /** How long to wait before reattaching, so a stream that refuses to stay up cannot spin. */
+  const REATTACH_MS = 1000;
+
+  /**
+   * Watch a run to its end and say how it ended: `succeeded`, `failed`, or `lost`.
+   *
+   * A DROPPED STREAM IS NOT AN ENDING. Both callers used to treat it as one -- the node card
+   * stopped repainting and sat mid-run forever, and the retrieve loop below went further and
+   * unticked the session as though it had been collected. An EventSource dies for reasons that
+   * have nothing to do with the run; a phone locking its screen is enough.
+   *
+   * So on error this asks `/runs/:id`, which separates all three cases because the registry is
+   * in memory and the playbook is a child of the process driving it:
+   *
+   * - still running -> reattach. The stream dying is not the run dying.
+   * - finished      -> report the ending we missed, from the service's own lines.
+   * - 404           -> `lost`: the service restarted and took the run with it. It is not
+   *                    running somewhere else and nothing resumes.
+   *
+   * `onLine(line, reset)` -- `reset` asks the caller to discard what it has first, because
+   * `/stream` replays every line it holds on connect, so anything kept across a reattach is a
+   * duplicate. The service's record is the authoritative one.
+   */
+  function watchRun(id, onLine) {
+    return new Promise((resolve) => {
+      const attach = () => {
+        const es = new EventSource(`/runs/${id}/stream`);
+        es.onmessage = (ev) => onLine(JSON.parse(ev.data).line, false);
+        es.addEventListener('done', (ev) => {
+          es.close();
+          resolve(JSON.parse(ev.data).status);
+        });
+        es.onerror = async () => {
+          es.close();
+          let run;
+          try { run = await j(`/runs/${id}`); } catch { return resolve('lost'); }
+          if (run.status !== 'running') {
+            run.lines.forEach((l, i) => onLine(l.line, i === 0));
+            return resolve(run.status);
+          }
+          onLine('[fleet-control] connection dropped; still running, reattaching (log resynced)', true);
+          setTimeout(attach, REATTACH_MS);
+        };
+      };
+      attach();
+    });
+  }
+
+  /** The one status that needs explaining rather than reporting. */
+  const lostNote = (status) => status !== 'lost' ? undefined
+    : '[fleet-control] the service restarted; this run is lost and the node may be '
+      + 'part-converged. Refresh status, then run it again.';
 
   // ---- post-flight --------------------------------------------------------------------
   // Sessions are loaded on demand, like status: nothing touches the fleet unprompted. The
@@ -378,7 +452,13 @@
 
   /**
    * One block per device, because a semantic session is one session from EACH device and the
-   * choice is made per device. Flat, the campods' sessions interleave and picking one from
+   * choice is made per device.
+   *
+   * THE DEVICE'S `open` FLAG IS IGNORED. It used to disable the current boot's row, because
+   * `coord sessions package` refused that session; #391 removed the refusal, so the flag no
+   * longer changes anything the operator can do. Stopping collection before retrieving is the
+   * operator's step and they know it, and a reboot bringing the stack back is a property of the
+   * boot unit (#97) -- neither is something a row needs to model. Flat, the campods' sessions interleave and picking one from
    * each means reading the node column on every row.
    *
    * There is nothing to align them by yet: a session directory is a boot id with no clock in
@@ -416,10 +496,9 @@
 
   /** One session. The node is on the group heading, so the row does not repeat it. */
   function sessionRow(src, s) {
-    const row = $({ className: 'sess' + (s.open ? ' open' : '') });
+    const row = $({ className: 'sess' });
     const box = document.createElement('input');
     box.type = 'checkbox';
-    box.disabled = !!s.open;
     const k = key(src.name, s);
     box.checked = pf.picked.has(k);
     box.onchange = () => { box.checked ? pf.picked.add(k) : pf.picked.delete(k); };
@@ -431,8 +510,7 @@
       $({ className: 'num', textContent: span(s) }),
       $({ className: 'num', textContent: MB(s.bytes) }),
     );
-    if (s.open) row.append($({ className: 'why', textContent: 'current boot -- only a reboot closes a session, so this one cannot be packaged' }));
-    else row.append($({ className: 'why', textContent: s.session }));
+    row.append($({ className: 'why', textContent: s.session }));
     return row;
   }
 
@@ -473,13 +551,17 @@
       log(`${node}: starting ${session.slice(0, 8)}`);
       try {
         const { id } = await j(`/nodes/${node}/offload?session=${session}&flight=${encodeURIComponent(flight)}`, { method: 'POST' });
-        await new Promise((done) => {
-          const es = new EventSource(`/runs/${id}/stream`);
-          es.onmessage = (ev) => log('  ' + JSON.parse(ev.data).line);
-          es.addEventListener('done', () => { es.close(); done(); });
-          es.onerror = () => { es.close(); done(); };
-        });
-        pf.picked.delete(key);
+        const status = await watchRun(id, (line) => log('  ' + line));
+        // UNTICK ONLY ON SUCCESS. This used to untick whenever the stream ended for any
+        // reason, including a dropped connection -- so a session could be marked collected
+        // while its transfer was still running, or after the service restarted mid-transfer.
+        // A ticked session that was actually retrieved costs one retry; an unticked session
+        // that was not is a session "Delete the rest" then deletes.
+        if (status === 'succeeded') {
+          pf.picked.delete(key);
+        } else {
+          log(`  ${node}: ${lostNote(status) ?? `run ${status}`} -- leaving ${session.slice(0, 8)} ticked`);
+        }
       } catch (e) { log(`${node}: ${e.message}`); }
     }
     renderSessions();
