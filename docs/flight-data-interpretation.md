@@ -448,37 +448,22 @@ separates a process-level stall from a device-level one. That is a measurement, 
   API -- a graceful SIGTERM -- and shows no stall at the stop, 381 s after its last one. One capture
   is one capture, but the teardown path has not been observed to cost samples.
 
-### Two windows, two reasons -- do not AND them into one
+### Two windows, two reasons
 
-There are two separate reasons to restrict an analysis to part of a capture, and they answer
-different questions with different boundaries:
+Two separate reasons to restrict an analysis to part of a capture, answering different questions:
 
-* **Validity** -- is the data trustworthy here? Set by the stalls above and by nothing else. It has
-  nothing to do with the vehicle. A bench tumble for calibration has no armed window at all, and for
-  that work the limit of useful data is the limit of the data: cut what is corrupt and keep the rest,
-  including everything recorded sitting on the bench.
-* **Regime** -- is the vehicle in the physical condition under study? Set by the flight. A vibration
-  spectrum wants rotors turning and the airframe loaded, so time on the ground is the wrong regime.
-  That is not a statement about data quality; those samples are fine and answer a different question.
+* **Validity** -- is the data trustworthy here? Set by the stalls above. Nothing to do with the
+  vehicle: how a sensor is mounted does not depend on whether the vehicle was armed. Calibration
+  runs on the whole capture.
+* **Regime** -- was the vehicle in the condition under study? Set by the flight. Vibration at flight
+  level needs the rotors turning, so ground time is the wrong regime rather than bad data -- and a
+  steady minute on the ground is sometimes the thing you want.
 
-A single "good window" that intersects the two loses in both directions -- it discards valid
-calibration data because the vehicle was not flying, and it admits an unwanted regime as long as the
-bytes are clean. Each analysis should say which of the two it is applying, and a capture can be
-gapless without being in-regime or vice versa.
-
-On 260923 the two nest, and that is operator procedure rather than an accident: the pods are given a
-settle window on the order of 120 s from the start of capture before the vehicle is armed, timed
-against a clock. The measurement is consistent with it -- the last stall is at capture +80.5 s and
-ARM is at capture +161.0 s, so the flight begins 80.5 s after the last hole. (ARM is FC `TimeUS`
-214.6 s, GPS-dated to 12:09:10.42Z; the capture-relative figure trusts the pod's `started_utc` of
-12:06:29.45Z, a wall-clock stamp written 12 s after NTP stepped the coordinator -- fresh rather than
-independently verified.)
-
-The nesting is not what keeps the two windows separate, though, and reading it that way is what
-makes them look like one window with a margin. 260924 is the cleaner case: a bench tumble has no
-armed window at all, so regime is undefined for it and validity is the only boundary there is. The
-two stay separate because they answer different questions, not because a stall might one day land
-inside a hover.
+So say which one an analysis is applying. On 260923 they nest -- last stall at capture +80.5 s, ARM
+at +161.0 s -- because the pods get a settle window on the order of 120 s, timed against a clock,
+before the vehicle is armed. (ARM is FC `TimeUS` 214.6 s, GPS-dated to 12:09:10.42Z; the
+capture-relative figure trusts the pod's `started_utc` of 12:06:29.45Z, a wall-clock stamp written
+12 s after NTP stepped the coordinator -- fresh rather than independently verified.)
 
 ## The ADXL sample rates are not 3200 Hz, are not equal, and are not constant
 
