@@ -19,6 +19,7 @@ import { pipeline } from 'node:stream/promises';
 import { hostOf, type FleetNode } from './inventory.js';
 import type { ActionContext } from './actions.js';
 import { deleteSessions, packageSession, type Bundle } from './sessions.js';
+import { fcLogName, fetchLog } from './fclog.js';
 
 /** What a flight directory records about one collected session. */
 export interface Collected {
@@ -162,6 +163,47 @@ export async function offloadSession(
     sha256: got.sha256,
     collectedAt: new Date().toISOString(),
     sourceDeleted,
+  };
+  await recordCollected(dir, flight, collected);
+  return collected;
+}
+
+/**
+ * Pull one FC dataflash log into the flight directory.
+ *
+ * One transfer, not two: `coord fc-log pull` streams the log to stdout and reports progress and
+ * its own digest on stderr as JSON Lines, so nothing lands on the device and this side invents
+ * no path there. `fetchLog` does the streaming, hashing and verification; what belongs here is
+ * where it goes and what the flight record says about it.
+ *
+ * NOTHING IS DELETED afterwards. The log stays on the FC's own card, rotated at disarm with
+ * `LOG_MAX_FILES=500` -- it is the one artifact in this flow that is not at risk, unlike a
+ * device card, which fills.
+ */
+export async function offloadFcLog(
+  node: FleetNode,
+  ctx: ActionContext,
+  id: number,
+  flight: string,
+  opts: OffloadOptions,
+): Promise<Collected> {
+  const say = opts.note ?? (() => {});
+  const dir = join(opts.flightsDir, flight);
+  await mkdir(dir, { recursive: true });
+
+  const file = fcLogName(id);
+  say(`${node.name}: pulling FC log ${id}. This holds /dev/ttyAMA0 with the stack down, and 148 MB took ~30 min on 2026-09-23.`);
+  const got = await fetchLog(node, ctx, id, join(dir, file), { note: say });
+  say(`${node.name}: verified ${got.sha256.slice(0, 12)}`);
+
+  const collected: Collected = {
+    node: node.name,
+    session: `fc-log-${id}`,
+    file,
+    bytes: got.bytes,
+    sha256: got.sha256,
+    collectedAt: new Date().toISOString(),
+    sourceDeleted: false,
   };
   await recordCollected(dir, flight, collected);
   return collected;

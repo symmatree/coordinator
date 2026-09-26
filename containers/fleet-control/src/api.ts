@@ -10,7 +10,8 @@ import { converge, reboot, reimage, stop } from './actions.js';
 import { ImageCache } from './imagecache.js';
 import { probeAll, probeNode } from './probe.js';
 import { deleteSessions, listSessions, stopCapture } from './sessions.js';
-import { offloadSession, validFlightName } from './offload.js';
+import { listLogs } from './fclog.js';
+import { offloadFcLog, offloadSession, validFlightName } from './offload.js';
 import { enrich, LookupCache } from './status.js';
 import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
@@ -381,6 +382,57 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
     if ('error' in found) return reply.code(found.code).send({ error: found.error });
     return reply.type('text/plain; charset=utf-8').send(Readable.from(logChunks(found)));
   });
+
+  // ---- the FC's dataflash logs ---------------------------------------------------------
+  // The third thing a flight is assembled from, alongside a campod session and the
+  // coordinator's. Device side is #384/#395; only the coordinator has an FC.
+
+  /**
+   * What the FC holds. Quiesced like everything else, because coordinator-mavlink holds
+   * /dev/ttyAMA0 while the stack is up and two readers on one UART get half a stream each.
+   *
+   * `time_utc` is the FC's LAST-MODIFIED, not creation -- see `fclog.ts`. Anything rendering it
+   * says "last written", or the operator picks the wrong log.
+   */
+  app.get<{ Params: { name: string } }>('/nodes/:name/fc-logs', async (req, reply) => {
+    const node = findNode(cfg.inventory, req.params.name);
+    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+    try {
+      return { node: node.name, logs: await listLogs(node, cfg.action) };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * Pull one log into a flight directory. Its own run, because it holds the serial port with
+   * the stack down for as long as it takes -- ~30 min for 148 MB at the measured 84 KiB/s --
+   * which is a different operational state from the minutes everything else takes.
+   */
+  app.post<{ Params: { name: string }; Querystring: { id?: string; flight?: string } }>(
+    '/nodes/:name/fc-log',
+    async (req, reply) => {
+      const node = findNode(cfg.inventory, req.params.name);
+      if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+      const id = Number(req.query.id);
+      if (!Number.isInteger(id) || id < 0) return reply.code(400).send({ error: 'id must be a log id' });
+      const flight = req.query.flight ?? '';
+      if (!validFlightName(flight)) {
+        return reply.code(400).send({ error: `not a usable flight name: ${JSON.stringify(flight)}` });
+      }
+      try {
+        const run = runs.start('fc-log', node.name, (emit) =>
+          offloadFcLog(node, cfg.action, id, flight, {
+            flightsDir: cfg.flightsDir,
+            note: (line) => sinkFor(emit)('stdout', line),
+          }).then(() => undefined),
+        );
+        return reply.code(202).send({ id: run.id, action: run.action, node: run.node, log: id, flight });
+      } catch (err) {
+        return reply.code(409).send({ error: (err as Error).message });
+      }
+    },
+  );
 
   app.get('/runs', async () =>
     Promise.all(

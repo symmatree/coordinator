@@ -81,7 +81,7 @@
   <div class="btns"><button id="pfList">List sessions</button></div>
   <div id="pfSessions"></div>
 
-  <div class="step">3 &mdash; name the flight, then retrieve what you ticked</div>
+  <div class="step">3 &mdash; name the flight, then retrieve what you ticked (sessions and the FC log)</div>
   <input type="text" id="pfFlight" placeholder="flight name, e.g. 2026-09-19-vio"
          autocapitalize="off" autocorrect="off" spellcheck="false" />
   <div class="btns">
@@ -412,7 +412,7 @@
   // block per node we put the question to, including the ones that answered with nothing.
   // Keeping a second flat array beside it meant a prune could filter one and not the other and
   // leave deleted sessions on screen.
-  const pf = { picked: new Set(), asked: [] };
+  const pf = { picked: new Set(), asked: [], fc: null };
 
   /** What a tick is. Keyed on the node we ASKED, not the name the device reports itself as. */
   const key = (srcName, s) => `${srcName}/${s.session}`;
@@ -492,6 +492,48 @@
       for (const session of src.sessions) group.append(sessionRow(src, session));
       root.append(group);
     }
+    if (pf.fc) root.append(fcGroup(pf.fc));
+  }
+
+  /**
+   * The FC's logs, as one more block to tick from.
+   *
+   * `time_utc` is the FC's LAST-MODIFIED field, not creation -- with `LOG_FILE_DSRMROT=1` the
+   * flight's log is the one stamped a few seconds AFTER the disarm, because that rotation is
+   * what closed it. Labelled "last written" for that reason: called anything else it leads
+   * straight to picking the wrong log.
+   *
+   * Zero-byte logs are shown rather than hidden. There were 56 logs on the coordinator on
+   * 2026-09-26, several of them empty, and a list that quietly drops rows is a list you cannot
+   * count against what the FC says it has.
+   */
+  function fcGroup(fc) {
+    const group = $({ className: 'srcgroup' });
+    const head = $({ className: 'src' });
+    head.append($({ className: 'name', textContent: `${fc.node} -- FC dataflash` }));
+    head.append(
+      fc.error
+        ? $({ className: 'count err', textContent: fc.error })
+        : $({ className: 'count', textContent: `${fc.logs.length} logs, times are LAST WRITTEN` }),
+    );
+    group.append(head);
+    for (const l of fc.logs) {
+      const row = $({ className: 'sess' });
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      const k = `fc:${fc.node}/${l.id}`;
+      box.checked = pf.picked.has(k);
+      box.onchange = () => { box.checked ? pf.picked.add(k) : pf.picked.delete(k); };
+      row.append(
+        box,
+        $({ className: 'num', textContent: `log ${l.id}` }),
+        $({ className: 'num', textContent: l.time_utc ? `written ${l.time_utc.slice(11, 19)}Z` : 'no GPS time' }),
+        $({ className: 'num', textContent: MB(l.bytes) }),
+      );
+      row.append($({ className: 'why', textContent: l.time_utc ?? 'the FC had no GPS time when this was last written' }));
+      group.append(row);
+    }
+    return group;
   }
 
   /** One session. The node is on the group heading, so the row does not repeat it. */
@@ -539,6 +581,19 @@
       }
       renderSessions();
     }
+    // The FC lives on the coordinator, so this is one request rather than one per node.
+    const fcNode = (await j('/nodes')).find((n) => n.role === 'coordinator');
+    if (fcNode) {
+      pf.fc = { node: fcNode.name, logs: [] };
+      renderSessions();
+      try {
+        pf.fc.logs = (await j(`/nodes/${fcNode.name}/fc-logs`)).logs;
+      } catch (e) {
+        pf.fc.error = e.message;
+        log(`${fcNode.name}: fc-logs: ${e.message}`);
+      }
+      renderSessions();
+    }
   };
 
   /** One session per call, so a failure costs that session rather than the whole selection. */
@@ -547,10 +602,17 @@
     if (!flight) return log('name the flight first');
     if (pf.picked.size === 0) return log('nothing ticked');
     for (const key of [...pf.picked]) {
-      const [node, session] = [key.slice(0, key.indexOf('/')), key.slice(key.indexOf('/') + 1)];
-      log(`${node}: starting ${session.slice(0, 8)}`);
+      // `fc:<node>/<id>` is an FC log; anything else is `<node>/<session>`. Different route,
+      // same loop, so one selection can span both and a failure still costs only its own item.
+      const isFc = key.startsWith('fc:');
+      const bare = isFc ? key.slice(3) : key;
+      const [node, session] = [bare.slice(0, bare.indexOf('/')), bare.slice(bare.indexOf('/') + 1)];
+      log(isFc ? `${node}: starting FC log ${session}` : `${node}: starting ${session.slice(0, 8)}`);
       try {
-        const { id } = await j(`/nodes/${node}/offload?session=${session}&flight=${encodeURIComponent(flight)}`, { method: 'POST' });
+        const url = isFc
+          ? `/nodes/${node}/fc-log?id=${session}&flight=${encodeURIComponent(flight)}`
+          : `/nodes/${node}/offload?session=${session}&flight=${encodeURIComponent(flight)}`;
+        const { id } = await j(url, { method: 'POST' });
         const status = await watchRun(id, (line) => log('  ' + line));
         // UNTICK ONLY ON SUCCESS. This used to untick whenever the stream ended for any
         // reason, including a dropped connection -- so a session could be marked collected
@@ -569,6 +631,8 @@
 
   /** Everything not ticked, per node. Confirms, because it is the irreversible one. */
   document.getElementById('pfPrune').onclick = async () => {
+    // Sessions only. An FC log has nothing to delete -- it stays on the FC's own card, rotated
+    // at disarm -- and its ticks live in the same set under an `fc:` prefix.
     const doomed = allSessions().filter(({ src, s }) => !pf.picked.has(key(src.name, s)));
     if (doomed.length === 0) return log('nothing to delete');
     document.getElementById('cTitle').textContent = `Delete ${doomed.length} session(s)?`;
