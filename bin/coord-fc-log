@@ -7,7 +7,12 @@ The coordinator is wired to the FC on /dev/ttyAMA0 and is the only thing that is
 an independent ground-side observer.
 
     coord fc-log list
-    coord fc-log pull <id> <outfile>
+    coord fc-log pull <id>              # the log goes to STDOUT, not to a file here
+
+Nothing lands on the device. `pull` streams to stdout so the caller's shell writes the
+file where it belongs:
+
+    ssh pi@coordinator 'sudo coord fc-log pull 3' > fc-log-3.bin
 
 THE PORT MUST BE FREE. coordinator-mavlink holds /dev/ttyAMA0 while the stack is up, and
 two readers on one UART get half a byte stream each. Quiesce first -- which is what
@@ -34,8 +39,11 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
+import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -116,13 +124,10 @@ def reexec_in_container() -> "None":
         "docker", "run", "--rm", "--pull", "never", "--entrypoint", "python3",
         "--device", f"{DEVICE}:{DEVICE}",
         "-v", f"{me}:{me}:ro",
+        # Our own hostname in there is a docker id. Same mount, and the same reason, as
+        # the stack gives vio-tracker and campod-camera.
+        "-v", "/etc/hostname:/etc/host-hostname:ro",
     ]
-    # Bind the output directory so `pull` writes where the caller asked, not into a
-    # container layer that --rm throws away.
-    out = next((a for a in sys.argv[1:] if a.startswith("/")), None)
-    if out:
-        d = os.path.dirname(os.path.abspath(out)) or "/"
-        cmd += ["-v", f"{d}:{d}"]
     cmd += [resolve_image(), me] + sys.argv[1:]
     os.execvp("docker", cmd)
 
@@ -131,6 +136,22 @@ try:
     from pymavlink import mavutil  # noqa: E402
 except ImportError:
     reexec_in_container()
+
+
+def iso_or_none(tutc: int) -> "str | None":
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tutc)) if tutc else None
+
+
+def host_name() -> str:
+    """The HOST's name. Read from the mount when we are the re-exec'd container copy,
+    whose own hostname is a docker id."""
+    try:
+        n = open("/etc/host-hostname").read().strip()
+        if n:
+            return n
+    except OSError:
+        pass
+    return socket.gethostname()
 
 
 def connect():
@@ -185,28 +206,49 @@ def list_logs(m) -> "dict[int, int]":
 
 
 def cmd_list(_args) -> int:
+    """What the FC holds, as JSON. One render path, like coord-sessions and coord-version.
+
+    `time_utc` is the FC's own field and is LAST-MODIFIED, not creation. With
+    LOG_FILE_DSRMROT=1 the flight's log is the one stamped a few seconds after the
+    disarm, because that rotation is what closed it. A caller presenting this as a
+    creation time will pick the wrong log.
+    """
     m = connect()
     logs = list_logs(m)
     if not logs:
         print("coord-fc-log: the FC reported no logs", file=sys.stderr)
         return 1
-    print(f"{'id':>5}  {'bytes':>13}  {'MiB':>8}  time_utc (LAST-MODIFIED, not creation)")
-    for i in sorted(logs):
-        size, tutc = logs[i]
-        when = (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(tutc)) if tutc
-                else "(no GPS time)")
-        print(f"{i:>5}  {size:>13}  {size / 1048576.0:>8.1f}  {when}")
+    print(json.dumps({
+        "node": host_name(),
+        "logs": [
+            {"id": i, "bytes": logs[i][0], "time_utc": iso_or_none(logs[i][1])}
+            for i in sorted(logs)
+        ],
+    }, indent=2))
     return 0
 
 
-def pull(m, log_id: int, out_path: str) -> int:
-    """Fetch one log with bounded windows, repairing gaps inside each window.
+def pull(m, log_id: int) -> int:
+    """Stream one log to stdout. Nothing is written on the device.
 
-    A SINGLE STREAMING REQUEST FOR THE WHOLE FILE DOES NOT SELF-REPAIR. Measured
-    2026-09-23: when a packet is lost the contiguous pointer stops while later bytes keep
-    arriving, so nothing notices and nothing re-requests the hole until the stream ends --
-    the transfer looked alive at 122 KiB/s while stuck at 2.8%. Bounded windows make the
-    gap visible while the window is still the unit being worked on.
+    THE LOG DOES NOT LAND HERE. stdout is the whole interface, so the caller's shell
+    writes the file where the caller wants it:
+
+        ssh pi@coordinator 'sudo coord fc-log pull 3' > fc-log-3.bin
+
+    That removes the second full transfer -- this used to write a file and wait for the
+    whole thing before anyone copied it off -- and it removes the file. /tmp on a
+    coordinator is tmpfs, i.e. RAM, so a 1.8 GB log written there is 1.8 GB of RAM; and
+    the card is not a place to leave a copy of something whose home is the archive.
+
+    MEMORY IS ONE WINDOW. An earlier version allocated the whole log plus a one-byte
+    per-byte flag array to track gaps -- 3.5 GB of allocation for a 1.8 GB log, on a
+    3.7 GB box, before writing anything. Both are per-window now: a window is repaired
+    until complete and only then flushed, which is what makes a strictly ordered stream
+    safe to emit at all.
+
+    Progress and the digest go to STDERR. Anything printed to stdout would land in the
+    middle of the log.
     """
     logs = list_logs(m)
     if log_id not in logs:
@@ -215,23 +257,25 @@ def pull(m, log_id: int, out_path: str) -> int:
         return 1
     size = logs[log_id][0]
     print(f"coord-fc-log: log id={log_id} size={size} bytes ({size / 1048576.0:.1f} MiB)",
-          flush=True)
+          file=sys.stderr, flush=True)
 
-    buf = bytearray(size)
-    have = bytearray(size)
     ts, tc = m.target_system, m.target_component
+    out = sys.stdout.buffer
+    digest = hashlib.sha256()
     t0 = time.time()
     last_report = t0
-    got = 0
+    sent = 0
     base = 0
 
     while base < size:
         wlen = min(WINDOW, size - base)
+        buf = bytearray(wlen)
+        have = bytearray(wlen)
         for _attempt in range(12):
-            miss = next((i for i in range(base, base + wlen) if not have[i]), None)
-            if miss is None:
+            miss = have.find(0)
+            if miss < 0:
                 break
-            m.mav.log_request_data_send(ts, tc, log_id, miss, base + wlen - miss)
+            m.mav.log_request_data_send(ts, tc, log_id, base + miss, wlen - miss)
             quiet = 0
             while quiet < 3:
                 d = m.recv_match(type="LOG_DATA", blocking=True, timeout=2)
@@ -239,51 +283,60 @@ def pull(m, log_id: int, out_path: str) -> int:
                     quiet += 1
                     continue
                 quiet = 0
-                if d.id != log_id or d.count == 0 or d.ofs >= size:
+                if d.id != log_id or d.count == 0:
                     continue
-                n = min(d.count, size - d.ofs)
-                buf[d.ofs:d.ofs + n] = bytes(d.data[:n])
-                for j in range(d.ofs, d.ofs + n):
-                    if not have[j]:
-                        have[j] = 1
-                        got += 1
-                if d.ofs + n >= base + wlen:
+                # Clip to this window; the FC streams on past its end and those bytes
+                # belong to a window we have not asked for yet.
+                lo = max(d.ofs, base)
+                hi = min(d.ofs + d.count, base + wlen)
+                if hi <= lo:
+                    continue
+                buf[lo - base:hi - base] = bytes(d.data[lo - d.ofs:hi - d.ofs])
+                have[lo - base:hi - base] = b"\x01" * (hi - lo)
+                if have.find(0) < 0:
                     break
             now = time.time()
             if now - last_report >= 15:
                 el = now - t0
-                rate = got / el
-                print(f"  {100.0 * got / size:.1f}%  {rate / 1024.0:.0f} KiB/s  "
-                      f"eta={(size - got) / rate:.0f}s", flush=True)
+                rate = sent / el if el else 0
+                eta = (size - sent) / rate if rate else 0
+                print(f"  {100.0 * sent / size:.1f}%  {rate / 1024.0:.0f} KiB/s  "
+                      f"eta={eta:.0f}s", file=sys.stderr, flush=True)
                 last_report = now
-        else:
-            print(f"coord-fc-log: window at {base} still incomplete; continuing",
-                  file=sys.stderr, flush=True)
+
+        if have.find(0) >= 0:
+            # Cannot emit a hole and cannot skip it without corrupting every offset
+            # after it. Stop, non-zero, with the stream short -- a partial dataflash
+            # must not be filed as a flight record on a zero exit.
+            print(f"coord-fc-log: window at {base} incomplete after 12 tries; "
+                  f"stopping with {sent} of {size} bytes sent", file=sys.stderr, flush=True)
+            out.flush()
+            return 2
+
+        out.write(buf)
+        digest.update(buf)
+        sent += wlen
         base += wlen
 
-    missing = have.count(0)
-    with open(out_path, "wb") as f:
-        f.write(buf)
+    out.flush()
     el = time.time() - t0
-    print(f"coord-fc-log: wrote {out_path}: {size} bytes, {missing} missing, "
-          f"{el:.0f}s, {got / el / 1024.0:.0f} KiB/s", flush=True)
-    # A short file is a failure even though the bytes we did get are good. Say so in the
-    # exit status so a caller does not file a truncated log as a flight record.
-    return 0 if missing == 0 else 2
+    print(f"coord-fc-log: sent {sent} bytes in {el:.0f}s "
+          f"({sent / el / 1024.0:.0f} KiB/s)\ncoord-fc-log: sha256 {digest.hexdigest()}",
+          file=sys.stderr, flush=True)
+    return 0
 
 
 def cmd_pull(args) -> int:
-    return pull(connect(), args.id, args.out)
+    return pull(connect(), args.id)
 
 
 def main() -> int:
     p = argparse.ArgumentParser(
         prog="coord fc-log", description="List and pull FC dataflash logs over ttyAMA0.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("list", help="list the logs the FC holds").set_defaults(fn=cmd_list)
-    q = sub.add_parser("pull", help="fetch one log to a file")
+    sub.add_parser("list", help="the logs the FC holds, as JSON").set_defaults(fn=cmd_list)
+    q = sub.add_parser("pull", help="stream one log to stdout")
     q.add_argument("id", type=int)
-    q.add_argument("out")
     q.set_defaults(fn=cmd_pull)
     args = p.parse_args()
     return args.fn(args)

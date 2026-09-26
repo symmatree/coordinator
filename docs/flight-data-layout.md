@@ -59,17 +59,19 @@ that space, even when it has the same shape as a capture. Concretely:
   polisher.json                     # flight-level provenance sidecar (flight-analysis run)
 
   captures/                         # SOURCE (immutable): capture sessions (0..n), keyed by
-                                    # the DEVICE IDENTITY that produced them -- OAK-D MxId for
-                                    # the coordinator's camera, hostname for a campod. Both are
-                                    # the identity the producing device can state about itself
-                                    # without being told, which is the property that matters:
-                                    # a per-unit value configured from outside is a value that
-                                    # can be wrong, and was (#272).
-    <MxId>/                         #   OAK-D serial / MxId (coordinator #32)
+                                    # the MACHINE that produced them -- its own hostname, which
+                                    # is the identity a device can state about itself without
+                                    # being told, and the identity the platform addresses
+                                    # (/nodes/<node>/...). A per-unit value configured from
+                                    # outside is a value that can be wrong, and was (#272).
+    coordinator/                    #   the coordinator's OAK-D captures (#386)
     <campod-NE|SE|SW|NW>/           #   campod hostname (coordinator #211) -- the pod writes
                                     #   /captures/<node>/<session>/ locally, so a collected
                                     #   session drops straight in here
-      <session>/                    #   ISO-basic UTC session stamp, e.g. 20260712T132731Z
+      <boot-id>/                    #   kernel boot id. A SESSION IS A BOOT: nothing
+                                    #   semantically ends one, so it is bounded by the machine
+                                    #   rebooting. Timestamps cannot do this job on a box with
+                                    #   unstable power and no RTC.
         <MxId>_<session>.feat            # estimator input record (IMU + features)
         <MxId>_<session>.feat.json       # capture metadata sidecar
         stills/                          # per-type media subdirs, each file's JSON beside it
@@ -82,6 +84,20 @@ that space, even when it has the same shape as a capture. Concretely:
         timesync.jsonl                   # FC-clock <-> our-monotonic pairs (#167/#208)
         vehicle.tlog                     # every MAVLink frame the FC sent us, tlog format (#220)
       # NO derived files here -- the regenerated pose does NOT live in captures/
+
+  # TWO SHAPES EXIST IN THE ARCHIVE, and the older one is not being migrated.
+  # Flights before 2026-09-26 have the coordinator's captures under the OAK-D MxId with an
+  # ISO-stamped session: captures/<MxId>/<YYYYmmddTHHMMSSZ>/. That level made those sessions
+  # unaddressable -- coord-sessions anchors on the hostname, so the coordinator reported zero
+  # sessions while holding 26 (#386) -- which is why it moved. The old directories cannot be
+  # renamed: which boot each belonged to was never recorded, so there is no migration to run,
+  # and rewriting an immutable archive to match a newer convention is not worth doing anyway.
+  # analysis/coordinator_captures.py indexes captures/<device>/<session>/ generically rather
+  # than matching either name, so it reads both. Affected: 260728-sunny-baseline,
+  # 260730-rubber-isolation, 260812-hover, 260812-maneuver, 260814-woods, 260923-new-props.
+  #
+  # The MxId is unchanged as a FILE prefix in both shapes, so calibration keying (#32) is
+  # unaffected -- it moved out of the path, not out of the data.
 
   ground/                           # SOURCE (immutable): ground-side records for this flight
     mavproxy-console.log                 # GCS console output

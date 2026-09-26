@@ -180,18 +180,24 @@ That is expected and the already-written prefix covers any past flight.
 No second device on the FC and no card pull. The coordinator is already wired to the FC on
 `/dev/ttyAMA0`; with the stack quiesced, that port is free.
 
-`pymavlink` is not installed on the coordinator host and should not be -- the host is
-ansible-managed. Run it out of the image that already has it:
-
 ```sh
-scp fc_logdl.py pi@$HOST:/tmp/
-ssh pi@$HOST 'docker run --rm --entrypoint python3 \
-  --device /dev/ttyAMA0:/dev/ttyAMA0 -v /tmp:/tmp \
-  ghcr.io/symmatree/coordinator-mavlink:main /tmp/fc_logdl.py <id> /tmp/fc_log.bin'
+ssh pi@$HOST 'sudo coord fc-log list'
+ssh pi@$HOST 'sudo coord fc-log pull <id>' > "$FLIGHT_DIR/fc/<name>.bin"
 ```
 
-`--entrypoint python3` is required; the image's entrypoint runs the router and will treat
-your arguments as router flags.
+**The log never lands on the device.** `pull` streams to stdout, so the caller's shell
+writes the file and there is no second full transfer waiting on the first to finish. Do not
+reintroduce an on-device path: `/tmp` there is tmpfs, so a 1.8 GB log written to it is
+1.8 GB of RAM on a 3.7 GB box, and the card is not a place to leave a copy of something
+whose home is the archive.
+
+Progress and the sha256 go to stderr, so they do not land in the middle of the log. A window
+that cannot be completed stops the transfer with a non-zero exit and a short stream -- a
+partial dataflash must not be filed as a flight record.
+
+`coord-fc-log` re-execs itself into the `coordinator-mavlink` image for `pymavlink`, which
+the host does not have and should not: the host is ansible-managed and this is the only
+thing that would want it.
 
 ### Three FC behaviours that will cost you an hour
 
@@ -218,8 +224,10 @@ until the stream ends.
 ### Verify before believing
 
 ```sh
-# byte count matches LOG_ENTRY.size, and the downloader reports 0 missing
+# the byte count must equal LOG_ENTRY.size from `list`, and pull must have exited 0
 ls -l "$FLIGHT_DIR/fc/<log>.bin"
+# and the digest pull reported on stderr must match what landed
+sha256sum "$FLIGHT_DIR/fc/<log>.bin"
 ```
 
 Then parse far enough to find the `ARM`/`DISARM` events and check them against the mavproxy
