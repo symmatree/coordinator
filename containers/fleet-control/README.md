@@ -128,6 +128,16 @@ card it is not the thing that fills.
 rather than parsing `-v` output, which is not a stable interface and prints each task's entire
 result object — one `docker.service` fact block is several kilobytes.
 
+### The screen picks up what the service is already doing
+
+On load, the page asks `/runs` and shows the newest run per node -- in flight or just finished.
+A still-running one is reattached and followed to its end.
+
+Before this, the page's memory of a run lived entirely in one in-memory Map, so switching away on
+a phone or reloading threw away information the service still had. `/runs` keeps the last 50 with
+their logs and their final status, so a converge that finished in the background is recoverable
+rather than lost.
+
 ### The run log outlives the run
 
 Every line a run produces also goes to **the pod's own stdout/stderr**, tagged
