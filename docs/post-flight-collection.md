@@ -240,13 +240,18 @@ explained, recorded as observed.
 **`LOG_ENTRY.time_utc` is last-modified, not creation.** This decides which log is the flight
 and it is easy to get backwards. The check: `LOG_DISARMED` is 1 or 2, so a log MUST have been
 created at boot -- if no entry carries a boot-time stamp, the field is not creation time.
-Then, with `LOG_FILE_DSRMROT=1`, the flight log is the one whose `time_utc` sits a few seconds
-after the disarm, because that rotation closed it.
+**`LOG_FILE_DSRMROT` is inert on this vehicle.** It rotates only
+`if (file_disarm_rot && !log_replay)` (`AP_Logger_Backend::vehicle_was_disarmed`) and this
+vehicle flies `LOG_REPLAY=1`, so nothing rotates at disarm and **a log's boundaries are power
+cycles.** `time_utc` marks the power-off. It often lands seconds after a disarm because the
+vehicle gets powered down after landing, which is a coincidence of the workflow and not a
+mechanism to identify logs by.
 
-Request data in bounded windows and re-request gaps inside each window before advancing. A
-single streaming request for the whole file does not self-repair: when a packet is lost the
-contiguous pointer stops while later bytes keep arriving, and nothing re-requests the hole
-until the stream ends.
+Ask for the whole log in one request and repair afterwards, tracking receipt by 90-byte block
+-- `MAVProxy/modules/mavproxy_log.py` is the reference and pymavlink is already our dependency,
+so it is portable rather than merely instructive. Do not reintroduce bounded windows: that was
+mine, it failed on the vehicle twice, and 256 KB is not a multiple of 90, so every window after
+the first began mid-block where ArduPilot's offsets never do.
 
 ### Verify before believing
 
