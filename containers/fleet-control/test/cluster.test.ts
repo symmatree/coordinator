@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { armedWindow, settingsValue } from '../src/cluster.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { armedWindow, settingsValue, tlogForWindow } from '../src/cluster.js';
 
 // Shaped like `kubectl logs --timestamps` on mavproxy, with the lines observed on 2026-09-23.
 const CONSOLE = [
@@ -67,4 +70,25 @@ test('settings.conf values survive quoting', () => {
 
 test('a settings.conf with no position says so rather than returning empty', () => {
   assert.equal(settingsValue('datadir=/x', 'position'), undefined);
+});
+
+test('the split tlog is selected by the armed stamp, and a .part is never picked', async () => {
+  // tlog-split names each file `<start>-armed-<armed>-disarmed-<disarmed>.tlog`, and the console
+  // log gives that armed time in the same cluster clock -- so the name selects the file, with no
+  // scanning and no device clock involved. A `.part` is still being written.
+  const dir = mkdtempSync(join(tmpdir(), 'tlogs-'));
+  const wanted = '20260923T120500Z-armed-20260923T120911Z-disarmed-20260923T121150Z.tlog';
+  for (const n of [
+    wanted,
+    '20260923T100000Z-armed-20260923T100500Z-disarmed-20260923T101000Z.tlog',
+    '20260923T130000Z-armed-20260923T120911Z-disarmed-20260923T131000Z.tlog.part',
+    '20260923T140000Z-noflight-age.tlog',
+  ]) writeFileSync(join(dir, n), '');
+
+  assert.equal(await tlogForWindow(dir, '2026-09-23T12:09:11.700Z'), wanted);
+  assert.equal(await tlogForWindow(dir, '2026-09-23T10:05:00Z'),
+    '20260923T100000Z-armed-20260923T100500Z-disarmed-20260923T101000Z.tlog');
+  // An armed time with no file is absent, not an error, and not a near miss.
+  assert.equal(await tlogForWindow(dir, '2026-09-23T23:59:59Z'), undefined);
+  await assert.rejects(() => tlogForWindow(join(dir, 'nope'), '2026-09-23T12:09:11Z'), /cannot read/);
 });
