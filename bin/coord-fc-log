@@ -260,37 +260,63 @@ def cmd_list(_args) -> int:
     return 0
 
 
+# One LOG_DATA carries exactly this many bytes, and every offset ArduPilot sends or
+# accepts is a multiple of it (MAVLINK_MSG_LOG_DATA_FIELD_DATA_LEN). Tracking receipt by
+# BLOCK rather than by byte is MAVProxy's approach and is why its bookkeeping stays small
+# on a multi-gigabyte log: one set entry per 90 bytes, not a flag per byte.
+BLOCK = 90
+
+# MAVProxy's cap on how many gap-refill ranges it issues at once
+# (mavproxy_log.py: `while num_requests < 20`).
+MAX_REFILLS = 20
+
+
+def state_root() -> str:
+    """/var/lib/<stack> for the sole installed stack. Where the partial file goes.
+
+    NOT /tmp: that is tmpfs on a coordinator (1.9 G of 3.7 G RAM), so a 2.4 GB log
+    written there is 2.4 GB of RAM.
+    """
+    try:
+        stacks = sorted(os.listdir("/opt/stacks"))
+    except OSError:
+        stacks = []
+    return f"/var/lib/{stacks[0]}" if len(stacks) == 1 else "/var/lib"
+
+
+def gaps(have: "set[int]", nblocks: int) -> "list[tuple[int, int]]":
+    """Missing blocks as (first, count) runs. MAVProxy coalesces the same way."""
+    runs = []
+    blk = 0
+    while blk < nblocks:
+        if blk in have:
+            blk += 1
+            continue
+        first = blk
+        while blk < nblocks and blk not in have:
+            blk += 1
+        runs.append((first, blk - first))
+    return runs
+
+
 def pull(m, log_id: int) -> int:
-    """Stream one log to stdout. Nothing is written on the device.
+    """Fetch one log, then stream it to stdout.
 
-    THE LOG DOES NOT LAND HERE. stdout is the whole interface, so the caller's shell
-    writes the file where the caller wants it:
+    THE SHAPE IS MAVPROXY'S, deliberately, after mine failed twice on the vehicle.
+    `mavproxy_log.py` asks for the WHOLE log in one request -- ofs 0, count 0xFFFFFFFF --
+    lets the FC stream it, and repairs what did not arrive afterwards. It does not window.
 
-        ssh pi@coordinator 'sudo coord fc-log pull 3' > fc-log-3.bin
+    My windowed version asked for 256 KB at a time and waited for each window to fill
+    before advancing, and window 0 never filled: 0 bytes, twice, through the API. Two
+    things were wrong with it beyond that. 262144 is not a multiple of 90, so every
+    window after the first began mid-block, which ArduPilot's offsets never do. And
+    waiting per-window serialises what the FC is willing to stream continuously.
 
-    That removes the second full transfer -- this used to write a file and wait for the
-    whole thing before anyone copied it off -- and it removes the file. /tmp on a
-    coordinator is tmpfs, i.e. RAM, so a 1.8 GB log written there is 1.8 GB of RAM; and
-    the card is not a place to leave a copy of something whose home is the archive.
-
-    MEMORY IS ONE WINDOW. An earlier version allocated the whole log plus a one-byte
-    per-byte flag array to track gaps -- 3.5 GB of allocation for a 1.8 GB log, on a
-    3.7 GB box, before writing anything. Both are per-window now: a window is repaired
-    until complete and only then flushed, which is what makes a strictly ordered stream
-    safe to emit at all.
-
-    STDOUT IS THE LOG. STDERR IS JSONL -- one JSON object per line, so a caller reads
-    progress and the final digest without scraping prose:
-
-        {"event":"start","id":3,"bytes":154894336}
-        {"event":"progress","sent":...,"bytes":...,"rate_kib_s":84,"eta_s":...}
-        {"event":"done","node":"coordinator","id":3,"bytes":...,"sha256":"...","seconds":...}
-        {"event":"error","id":3,"sent":...,"bytes":...,"message":"..."}
-
-    The digest is of what this wrote, so the caller can check the file it received
-    against the writer rather than against itself -- the same check a session bundle
-    gets. Exactly one `done` or one `error` is emitted, and `error` means the stream is
-    short and must not be filed.
+    A partial file on the card, not memory. Blocks can arrive out of order and gaps are
+    refilled after the first pass, so this needs random access; a seek on a file costs
+    nothing and a 2.4 GB buffer costs more RAM than the box has. The file is an internal
+    detail -- it is streamed to stdout at the end and removed -- so a caller still sees
+    only stdout plus the JSONL on stderr, and nothing is left on the device.
     """
     logs = list_logs(m)
     if log_id not in logs:
@@ -298,71 +324,115 @@ def pull(m, log_id: int) -> int:
               file=sys.stderr)
         return 1
     size = logs[log_id][0]
-    ev({"event": "start", "id": log_id, "bytes": size})
+    if size == 0:
+        print(f"coord-fc-log: log {log_id} is empty", file=sys.stderr)
+        return 1
+    nblocks = (size + BLOCK - 1) // BLOCK
+    ev({"event": "start", "id": log_id, "bytes": size, "blocks": nblocks})
+
+    # What the FC actually sent. A transfer that does not finish is only diagnosable if
+    # we can say whether the FC was silent, busy, or talking -- see the recv loop.
+    seen: dict = {}
+    said: list = []
 
     ts, tc = m.target_system, m.target_component
-    out = sys.stdout.buffer
-    digest = hashlib.sha256()
+    part = os.path.join(state_root(), f"fc-log-{log_id}.partial")
     t0 = time.time()
     last_report = t0
-    sent = 0
-    base = 0
+    have: set = set()
 
-    while base < size:
-        wlen = min(WINDOW, size - base)
-        buf = bytearray(wlen)
-        have = bytearray(wlen)
-        for _attempt in range(12):
-            miss = have.find(0)
-            if miss < 0:
-                break
-            m.mav.log_request_data_send(ts, tc, log_id, base + miss, wlen - miss)
-            quiet = 0
-            while quiet < 3:
-                d = m.recv_match(type="LOG_DATA", blocking=True, timeout=2)
-                if d is None:
-                    quiet += 1
-                    continue
-                quiet = 0
-                if d.id != log_id or d.count == 0:
-                    continue
-                # Clip to this window; the FC streams on past its end and those bytes
-                # belong to a window we have not asked for yet.
-                lo = max(d.ofs, base)
-                hi = min(d.ofs + d.count, base + wlen)
-                if hi <= lo:
-                    continue
-                buf[lo - base:hi - base] = bytes(d.data[lo - d.ofs:hi - d.ofs])
-                have[lo - base:hi - base] = b"\x01" * (hi - lo)
-                if have.find(0) < 0:
+    try:
+        with open(part, "w+b") as f:
+            f.truncate(size)
+            m.mav.log_request_data_send(ts, tc, log_id, 0, 0xFFFFFFFF)
+            last_data = time.time()
+            stalls = 0
+
+            while len(have) < nblocks:
+                # DO NOT FILTER TO LOG_DATA. An earlier version asked recv_match for
+                # LOG_DATA alone, so pymavlink discarded everything else -- including
+                # the FC's own account of why it was refusing. ArduPilot answers a data
+                # request made while another CHANNEL holds the transfer with
+                # STATUSTEXT("Log download in progress") and nothing else
+                # (AP_Logger_MAVLinkLogTransfer.cpp, handle_log_request_data), so that
+                # explanation was deleted unread on every attempt of both failed runs,
+                # and the failure got reported as "nothing answered on ttyAMA0".
+                d = m.recv_match(blocking=True, timeout=1)
+                now = time.time()
+                if d is not None:
+                    kind = d.get_type()
+                    seen[kind] = seen.get(kind, 0) + 1
+                    if kind == "STATUSTEXT":
+                        txt = getattr(d, "text", "")
+                        if isinstance(txt, bytes):
+                            txt = txt.decode(errors="replace")
+                        txt = str(txt).replace("\x00", "").strip()
+                        if txt and txt not in said:
+                            said.append(txt)
+                    elif kind == "LOG_DATA" and d.id == log_id and d.count:
+                        blk = d.ofs // BLOCK
+                        if d.ofs % BLOCK == 0 and blk < nblocks and blk not in have:
+                            n = min(d.count, size - d.ofs)
+                            f.seek(d.ofs)
+                            f.write(bytes(d.data[:n]))
+                            have.add(blk)
+                            last_data = now
+
+                if now - last_report >= 15:
+                    el = now - t0
+                    got = len(have) * BLOCK
+                    rate = got / el if el else 0
+                    ev({"event": "progress", "sent": min(got, size), "bytes": size,
+                        "rate_kib_s": round(rate / 1024.0, 1),
+                        "eta_s": round((size - got) / rate) if rate else None})
+                    last_report = now
+
+                if now - last_data > 3:
+                    missing = gaps(have, nblocks)
+                    if not missing:
+                        break
+                    stalls += 1
+                    if stalls > 12:
+                        f.flush()
+                        ev({"event": "error", "id": log_id, "bytes": size,
+                            "blocks_received": len(have), "blocks_expected": nblocks,
+                            "message": (f"stalled with {len(have)} of {nblocks} blocks; "
+                                        f"{len(missing)} gap(s) unfilled"),
+                            "received": seen, "fc_said": said})
+                        return 2
+                    # Coalesced refills, block-aligned, MAVProxy's cap.
+                    for first, count in missing[:MAX_REFILLS]:
+                        m.mav.log_request_data_send(ts, tc, log_id,
+                                                    first * BLOCK, count * BLOCK)
+                    last_data = time.time()
+
+            # Hand it over, hashing as it goes so the digest is of what the caller gets.
+            f.flush()
+            os.fsync(f.fileno())
+            f.seek(0)
+            digest = hashlib.sha256()
+            out = sys.stdout.buffer
+            sent = 0
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
                     break
-            now = time.time()
-            if now - last_report >= 15:
-                el = now - t0
-                rate = sent / el if el else 0
-                eta = (size - sent) / rate if rate else 0
-                ev({"event": "progress", "sent": sent, "bytes": size,
-                    "rate_kib_s": round(rate / 1024.0, 1), "eta_s": round(eta)})
-                last_report = now
-
-        if have.find(0) >= 0:
-            # Cannot emit a hole and cannot skip it without corrupting every offset
-            # after it. Stop, non-zero, with the stream short -- a partial dataflash
-            # must not be filed as a flight record on a zero exit.
+                out.write(chunk)
+                digest.update(chunk)
+                sent += len(chunk)
             out.flush()
-            ev({"event": "error", "id": log_id, "sent": sent, "bytes": size,
-                "message": f"window at {base} incomplete after 12 tries"})
-            return 2
+    finally:
+        # Never leave it behind: the card is not a place to keep a copy of something
+        # whose home is the archive.
+        try:
+            os.unlink(part)
+        except OSError:
+            pass
 
-        out.write(buf)
-        digest.update(buf)
-        sent += wlen
-        base += wlen
-
-    out.flush()
     el = time.time() - t0
     ev({"event": "done", "node": host_name(), "id": log_id, "bytes": sent,
-        "sha256": digest.hexdigest(), "seconds": round(el, 1)})
+        "sha256": digest.hexdigest(), "seconds": round(el, 1),
+        "received": seen, "fc_said": said})
     return 0
 
 

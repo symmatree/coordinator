@@ -83,5 +83,18 @@ check("a stalled listing cancels", "end" in m.sent, str(m.sent))
 check("and re-requests the listing", m.sent.count("list") == 2, str(m.sent))
 check("and reports nothing rather than a partial list", logs == {}, str(logs))
 
+# 5. gaps() coalesces missing blocks into runs, block-aligned, the way MAVProxy does.
+check("no gaps when everything arrived", fc.gaps(set(range(5)), 5) == [])
+check("a single hole is one run", fc.gaps({0, 1, 3, 4}, 5) == [(2, 1)])
+check("adjacent holes coalesce", fc.gaps({0, 4}, 5) == [(1, 3)])
+check("separate holes stay separate", fc.gaps({2}, 5) == [(0, 2), (3, 2)])
+check("nothing arrived is one whole run", fc.gaps(set(), 4) == [(0, 4)])
+
+# 6. Block size must be what one LOG_DATA carries, or offsets stop being aligned. 262144
+#    was the old window size and is NOT a multiple of it -- that is why every window
+#    after the first began mid-block.
+check("BLOCK is the LOG_DATA payload size", fc.BLOCK == 90)
+check("the old 256 KiB window was not block-aligned", 262144 % fc.BLOCK != 0)
+
 print("RESULT:", "PASS" if ok else "FAIL")
 sys.exit(0 if ok else 1)
