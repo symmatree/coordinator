@@ -1,185 +1,232 @@
 # Experiments: image quality
 
-*The deliverable is stills sharp enough to feed ODM. This ledger tracks why they are not, at
-explicit confidence, in the form of `fables/Datasets/experiments-house-model.md`: findings graded,
-**dead theories kept visible with what killed them**, and the discriminating probe named for each
-live one. A topic closes when the confirmed set explains the observed behaviour.*
+*Why the stills are not usable. Open topics, each with what has actually been observed and what
+would decide it. Form follows `fables/Datasets/experiments-house-model.md`.*
 
-**This is not about VIO.** Sharpness, banding, focus and blur are the subject. Where a finding also
-bears on pose estimation that is incidental, and the VIO ledger
-([vio-quality-experiments.md](vio-quality-experiments.md)) keeps its own theories.
+**Nothing here is marked confirmed.** There is one powered flight with instrumented arms (260923) and
+one bench run (260926) whose analysis is barely started. A thing that happened once in one flight is
+an observation; a claim about how the airframe behaves is something else, and it earns that status by
+surviving attempts to falsify it across a range of conditions -- not by being written down.
 
----
+**Sharpness is the feature-tracking problem, not a separate one.** ODM has to reconstruct poses from
+matched features across the collection run before densification matters at all. So "are the stills
+sharp" and "can they be tracked" are the same question asked twice, and the second is the one that
+gates a map.
 
-## Two cameras, and results do not transfer between them
+## The two cameras
 
-This is the first thing to fix about how these questions have been asked. There are two still
-cameras and they differ in every respect that matters to a banding or blur argument:
+Both are wanted. **Good stills off either would be welcome, and off the Pi Zero camera much more so**
+-- there is one OAK-D and four Pi Zero + camera sets.
 
-| | OAK-D RGB | campod |
+| | OAK-D RGB | campod (Pi camera module) |
 |---|---|---|
-| sensor | IMX378, 12 MP | IMX708, 4608x2592 |
-| readout | 33 ms, 3040 rows | **68.1 ms**, 2592 rows |
-| mount | **hub, bobbin-isolated** | **bolted to the rear-left arm** |
-| focus | VCM autofocus, or a pinned lens position | fixed, hyperfocal at 1.25 m |
-| vibration field it sits in | **rev-dominated** (E40) | **blade-pass-dominated** (E40) |
+| sensor | IMX378 | IMX708 |
+| readout | 33 ms over 3040 rows | 68.1 ms over 2592 rows |
+| focus | VCM, pinned to a fixed value in software | VCM, pinned to a fixed value in software |
+| mount, 260923 | hub, on bobbins | **VHB to the left-rear arm** |
 
-A result from one is **evidence about that camera**, not about the airframe's imagery in general.
-Whether a finding transfers is itself an interesting question and usually an unasked one: the two
-disagree about which rotor order is loudest where they sit, so a banding mechanism that explains one
-predicts something *different* for the other rather than the same thing.
+They are not the same instrument, but the differences that matter are narrower than I previously
+wrote: **the focus mechanism is the same** -- a voice coil pinned by software in both cases -- and the
+readout differs by a factor of two, which changes band arithmetic and nothing else on its own.
 
----
+**The 260923 campod mount was VHB, deliberately.** Not a hard mount: the prior was that hard-mounting
+would not work, and VHB was the simplest first step of a soft one. Cameras will be on more arms than
+one, so a result from this flight is a result about this mount on this arm.
 
-## Evidence
-
-| ID | Evidence | Source / provenance |
-|----|----------|---------------------|
-| IQ1 | **The vibration field is location-dependent, and blade-pass transmits only locally.** blade-pass/rev PSD ratio is **1.68** for the sensors' own motor, **0.25-0.83** for the other three motors at that same sensor, and **0.02-0.71** at the FC (hub, bobbin-mounted). Higher frequency attenuates faster through the structure, and the bobbins roll off what is left | `analysis/vibration-spectrogram.ipynb` on 260923 |
-| IQ2 | **On the arm, the largest line measured anywhere on the airframe is that arm's own motor's blade-pass** -- motor2 at 261.80 Hz, PSD 7.187, against 4.286 for its own rev line | same |
-| IQ3 | **The props are three-blade**, so blade-pass is order 3: 261.80 / 281.90 / 348.14 / 358.76 Hz, confirmed to ~1 Hz on four independent instruments. The analysis had been computing order 2 and calling it blade-pass | same; `docs/rekon10/props.md` |
-| IQ4 | **A structural mode at 152.9 Hz on the rear-left arm**, two sensors 127 mm apart agreeing to 160 ppm. Nothing drives it at current hover RPM -- nearest line 21.4 Hz above. Base was hand-held, so it is the restrained assembly's mode | `analysis/bump-test-ringdown.ipynb` on 260926; graded in `docs/rekon10/vibration-testing.md` sec. 7 |
-| IQ7 | **[carried: E18, 260712]** **In-flight colour stills unusable; vibration the top correlate.** var(Laplacian) median collapses **~43x** (4827 at rest -> 113 in flight); **0 of 29** in-flight frames reach at-rest sharpness; exposure 1.2 -> 6.1 ms. Correlates: **VIBE -0.81**, exposure -0.66, EKF-velocity -0.53, gyro -0.42. Streak/arc morphology is *directional*, not uniform focus-softness | `vio-quality-experiments.md` E18. **OAK-D only. Not re-examined this session** |
-| IQ8 | **[carried: E24, 260730]** **Eye-visible still banding at ~motor 1st-order rev, n=1.** Operator annotated **4 horizontal blur bands** on a hover still (~2.5 m, motors ~6400 rpm) -> ~760-row pitch -> **~120 Hz** via the IMX378 33 ms readout, matching the fast-pair rev line and **not** the three-blade blade-pass at ~290-360 Hz | `vio-quality-experiments.md` E24. **OAK-D only; operator visual count; n=1** |
-| IQ9 | **[carried: E33, 260814]** **The still exposure cap is live and binding.** All 45 stills came in at exactly **4996 us** with ISO carrying the range, 162 to a pinned 1600 -- the first hardware data on the exposure lever. Banding **survives** the cap (IQ10): at ~100 Hz a half-cycle is ~5 ms, so a 5 ms exposure still integrates close to a full peak-to-peak excursion | `vio-quality-experiments.md` E33. **OAK-D only** |
-| IQ10 | **[carried: E34]** **Scene-cancelled band-pitch measurement.** Two stills of the same scene registered by phase correlation; the **ratio** of per-row gradient energy divides the scene out; a sinusoid fit to that ratio gives the pitch. Within 260814 it is tight (**895 rows**, IQR 880-901 -> ~103 Hz); on 260730 it is internally unstable. Implemented as `still_banding.py` | `vio-quality-experiments.md` E34. **Method, not yet reliable flight-to-flight** |
-| IQ5 | **campod focus is fixed at 1.25 m** (Wide module hyperfocal), costing ~1.16 px of defocus blur at 3 m subject distance | campod module spec + sidecars |
-| IQ6 | **`blur = rate x exposure` is false above `f*t_exp ~= 0.45`** -- about 90 Hz at 5 ms. It overstates by 1.48x at 120 Hz, 2.22x at 200 Hz, 8.89x at 800 Hz. Every rotor-band blur figure computed that way is inflated, worse the higher the band | simulated sinusoid against the closed form |
+**The vibration field at either camera is not known.** The arm ADXL345 pair sits on the arm, not on
+top of the VHB layer the camera sits on. The OAK-D has its own low-rate IMU whose data has not been
+examined. The FC's IMU is low-rate and on bobbins. Nothing available measures what either sensor
+actually experiences, so any statement of the form "this camera sits in an X-dominated field" is a
+theory and is treated as one below.
 
 ---
 
-## Banding
+## Rolling shutter arithmetic -- not a theory
 
-**Confirmed:**
+A periodic disturbance during readout writes itself into the frame as horizontal bands, and a band
+pitch of *R* rows corresponds to `f = rows/readout_time / R`. That is division, and it follows from
+how a rolling shutter works rather than from any measurement here.
 
-- IQ1: the two cameras sit in *different* vibration fields, so "which order writes the bands" has
-  a different answer per camera and must be asked per camera.
-- IQ10: the banding is not a focus state -- it alternates within one frame and its phase moves
-  between frames 10 s apart.
-- IQ9: it **survives** the 5 ms exposure cap, which at ~100 Hz still integrates close to a full
-  peak-to-peak excursion.
-- The rolling-shutter mapping itself: a band pitch of *R* rows is `f = rows/readout / R`. At the
-  campod's 68.1 ms readout, motor2's rev writes **5.9 bands** and its blade-pass **17.8**; at the
-  OAK-D's 33 ms the same two are **2.9** and **8.6**.
+For the two readouts, a line at *f* Hz gives:
 
-**Current theories:**
+| f (Hz) | campod bands/frame | OAK-D bands/frame |
+|---|---|---|
+| 87 | 5.9 | 2.9 |
+| 120 | 8.1 | 4.0 |
+| 153 | 10.4 | 5.1 |
+| 175 | 11.9 | 5.8 |
+| 262 | 17.8 | 8.6 |
 
-- **[carried: T11, *suggestive, not established*]** **The eye-visible bands on the OAK-D are the
-  motor rev line.** For: IQ8, one hover still, an operator visual count of 4 bands. Against: an
-  automated var-Laplacian detector **over-counts** (6-10 bands, and fires on a ground frame), so the
-  count is not independently confirmed; metadata-to-pixel timing is ~5 s off, so the per-frame RPM
-  tie is coarse; n=1 frame, 1 flight. IQ10's scene-cancelled pitch of 895 rows gives ~103 Hz, also a
-  rev-order figure, but is not yet reliable flight-to-flight.
-- **A hub-mounted camera should band at rev, an arm-mounted one at blade-pass**, following IQ1 --
-  which is the first thing that makes T11's rev reading *expected* rather than merely observed, and
-  removes the objection that the loudest line (blade-pass, IQ2) should have written the bands.
-  This is the prediction the arm mount was built to test and it has not been run. The discriminating
-  probe is `still_banding.py` on the 300 campod stills from 260923 at the 68.1 ms readout: rev at
-  5.9 bands against blade-pass at 17.8 is a factor of three, where the OAK-D's 2.9-vs-8.6 was
-  crowded enough that an eyeball count and an automated detector disagreed.
-  **A null -- campod stills banding at rev anyway -- would be the stronger result**, because it
-  would say banding is not set by the local vibration amplitude.
-
-**Weakened:**
-
-- ~~The visible banding is set by whichever rotor line is loudest.~~ The loudest line on the arm is
-  blade-pass (IQ2), and the loudest at the hub is rev (IQ1) -- so "loudest" is not one thing, and any
-  claim of the form "the bands are at X because X is the biggest peak" has to say *where* the peak
-  was measured. Not disproven, because per-camera it may still hold; retired as a global statement.
-
-**Disproven:**
-
-- ~~Bands at 174-239 Hz would be blade-pass.~~ Those are order 2 on a three-blade aircraft (IQ3).
-  Any band-count prediction made against them was against the wrong frequency.
-- ~~`blur = rate x exposure` in the rotor band.~~ IQ6. It is only valid below ~90 Hz at 5 ms, which
-  excludes every rotor line on this airframe.
-
-**Next steps:**
-
-- [ ] **`still_banding.py` on the 300 campod stills from 260923** at 68.1 ms. It will **not**
-  separate the 152.9 Hz mode (10.4 bands) from motor2's order 2 (11.9) -- 14% in pitch against the
-  method's 2.4% within-flight spread, so possible but not assured. It will separate either from rev.
-- [ ] **Score campod still sharpness** against the per-still sidecar exposure and the interpolated
-  airframe motion, as was done for the OAK-D -- but scored as its own camera, not by carrying the
-  OAK-D's conclusion across.
-
-## Motion blur
-
-*Carried from `vio-quality-experiments.md` T9 at its stated confidence -- **leading, confounded with
-vibration** -- with the VIO framing dropped. There, sharpness was also treated as a proxy for
-feature-trackability; here it is the deliverable itself, which is a narrower and easier claim.*
-
-**Confirmed:**
-
-- IQ7: in-flight sharpness collapses ~43x and **no** in-flight frame reaches at-rest sharpness. The
-  morphology is directional streaks and arcs, not uniform softness, so something moves during the
-  exposure.
-- IQ9: the 5 ms exposure cap is live and binding, with ISO carrying the range.
-
-**Current theories:**
-
-- **Blur-pixels = airframe motion x exposure / GSD is the governing driver.** Carried as *leading*.
-  **Not isolated:** VIBE is the strongest correlate (-0.81, against exposure -0.66) and everything
-  covaries at takeoff, because there are no motors-on-ground frames in that set. A short exposure
-  freezes motion blur *and* vibration jello, so the exposure lever cannot discriminate them.
-- **A loaded hover is the discriminator** -- it holds airframe translation near zero while the rotors
-  still run, separating the two. Not flown.
-
-**Disproven:**
-
-- ~~`blur = rate x exposure` in the rotor band.~~ IQ6. Valid only below `f*t_exp ~= 0.45`, about
-  90 Hz at 5 ms, which excludes every rotor line on this airframe. It overstates by 1.48x at 120 Hz
-  and 8.89x at 800 Hz, so every rotor-band blur figure computed that way was inflated.
-
-**Next steps:**
-
-- [ ] **A loaded hover.** The one probe that separates motion blur from vibration jello.
-- [ ] **Blur budget from physics** rather than the 5 ms guess: the exposure that holds blur under N px
-  at flight speed and GSD -- and computed with the correct closed form, not the linear one.
-- [ ] **Re-run the driver comparison for the campod**, which has a different sensor, a fixed lens and
-  a far longer readout. Carrying the OAK-D's answer across is the thing this ledger exists to stop.
-
-## Sharpness and focus
-
-**Confirmed:**
-
-- IQ5: campod focus is fixed at 1.25 m, so anything at flight distance is beyond hyperfocal and
-  carries a defocus term that no exposure change touches.
-
-**Current theories:**
-
-- **[carried: T10, *proposed*]** **Autofocus is the wrong mode for the OAK-D; a calibrated fixed
-  focus is better.** The VCM can hunt or refocus silently, and autofocus locks the
-  highest-frequency signal in frame -- canopy twigs -- leaving the useful subject soft. A fixed
-  position is repeatable across flights. **Caveat carried intact: a *wrong* fixed value is worse
-  than autofocus,** so the knob ships defaulting to `auto` and the value is uncalibrated. Nothing
-  here re-derives this for the campod, which has a different module and an already-fixed lens.
-- **Banding is not a focus state.** It alternates within a single frame and its phase moves between
-  two frames 10 s apart (IQ10), so whatever it is, it is not the lens being wrong.
-
-**Next steps:**
-
-- [ ] **Check the 260926 bench stills for focus.** 507 of them, vehicle static and deliberately left
-  tilted so a range of distances is in frame -- which makes them a focus-calibration set with no
-  flight confound.
+Two consequences worth keeping separate from any theory. The campod's longer readout spreads the
+same frequency over more bands, so counting is easier there. And **frequencies close in Hz are close
+in band count** -- 153 and 175 Hz differ by 14% in pitch -- so band counting cannot distinguish
+candidates that near each other.
 
 ---
 
-## What stays in the VIO ledger, and why
+## Topic 1 -- Do the ADXL345s have a stable, discoverable rest position?
 
-The imagery theories and evidence are carried above, marked `[carried: ...]` with their original ID
-and their original status, so the provenance stays traceable and a carried claim is not mistaken for
-one this session re-examined. **None of IQ7-IQ10 was re-derived here.**
+Relative to the FC frame, and relative to each other. Everything downstream that compares the two
+sensors, or places either in the airframe, needs this and it has not been shown.
 
-What is deliberately left behind is everything VIO-specific -- estimator behaviour, IMU authority,
-solver budgets, stereo baseline, feature supply for tracking (T1-T8, T12 and their evidence). Those
-are a different question with different failure modes, and dragging them along is how an image-quality
-question turns into a pose-estimation argument.
+**Why it is open:** it has not been demonstrated that the parts are stable enough for the question to
+have an answer -- electronically (bias and scale drift) or physically (the mounting holding position
+across battery swaps and flights).
 
-Two framing changes were made in carrying T9 and T11 across, and both narrow the claim rather than
-widen it:
+**Observed:**
 
-- T9's metric was sharpness *as a proxy for mono feature-trackability*. Here sharpness is the
-  deliverable itself, so the proxy step is dropped -- a narrower claim needing less to support it.
-- T11 is now stated **per camera**. Its evidence is OAK-D evidence, and IQ1 says the campod sits in a
-  different field, so the theory predicts something *different* there rather than the same thing.
+- On 260926, sitting still on a bench where |a| must read 1.000 g, the two channels read **1.0879 g**
+  and **0.9874 g**. That is a real disagreement with gravity and with each other, measured once, in
+  one orientation.
+- The 260926 capture includes six held orientations, recorded for exactly this question. **They have
+  not been fitted.** Until they are, scale and directional bias cannot be separated from one
+  orientation -- one orientation is one equation.
+
+**What would discriminate it:** fit the six orientations and see whether a single scale-and-bias model
+explains all six. Repeat on a later capture and see whether the fitted values move. If they move
+between captures with nothing touched, the premise fails and no cross-sensor amplitude comparison is
+available.
+
+---
+
+## Topic 2 -- Is the blur largely a focus problem?
+
+**Current stance (operator):** probably substantially, on the campod. No sharp still has been seen off
+that camera under any circumstances, including stationary capture -- which is what makes focus the
+first suspect rather than motion or vibration.
+
+**Observed:**
+
+- Bench stills exist at approximately the right subject distance, taken deliberately for this. **They
+  have not been analysed, and no path to them has been provided for direct inspection.** That is the
+  cheapest outstanding item here and it needs no flying.
+- The 260926 bench run added 507 stills with the vehicle static and deliberately tilted, so a range
+  of distances is in frame.
+- The campod's lens is pinned in software to a value chosen for a subject distance; whether the
+  commanded position is *achieved*, and held, has not been verified against a target.
+
+**Against, or at least complicating:** the OAK-D produced at least some sharp frames, and shares the
+focus mechanism. So focus cannot be the whole story for both cameras -- though it may well be the
+story for the campod specifically.
+
+**What would discriminate it:** photograph a target at a known distance, stationary, sweeping the
+commanded lens position, and score sharpness against position. If no commanded value produces a sharp
+frame, focus is not the explanation and something else is wrong with that camera path. If one does,
+the flight value can be set from the measurement.
+
+---
+
+## Topic 3 -- Is the blur structured as bands of blur and sharpness?
+
+Carried forward from the OAK-D, where it was seen by eye. **Whether it is even present in the campod
+stills is unknown**, and may not be testable with the stills so far if they are uniformly soft --
+banding is a *contrast* between bands, and there is no contrast to find in a frame that is soft
+throughout.
+
+**Observed, OAK-D only:**
+
+- An operator annotated 4 horizontal bands on one hover still (260730), which via the 33 ms readout
+  is ~120 Hz, near the faster motors' rev rate. One frame, one flight, a visual count.
+- The banding is not a whole-frame focus state: it alternates within a single frame and its phase
+  moves between two frames 10 s apart.
+- It survives a 5 ms exposure cap. At ~100 Hz a half cycle is ~5 ms, so a 5 ms exposure still
+  integrates most of a peak-to-peak excursion.
+
+**A caution that belongs with this topic, not buried elsewhere:** automated band detection on these
+stills has a poor record. A var-Laplacian detector over-counted (6-10 bands, and fired on a ground
+frame); another attempt reported band counts in the hundreds; a scene-cancelled ratio method was
+internally consistent within one flight and unstable across flights. The visually obvious pattern has
+repeatedly not been what the numeric methods found. Any new numeric result here should be checked
+against frames marked up by eye before it is believed.
+
+**What would discriminate it:** whether any campod still shows a sharpness *contrast* between rows at
+all. If none does, the topic is not yet testable on that camera and waits on topic 2.
+
+---
+
+## Topic 4 -- Is the commanded focus actually held?
+
+Distinct from topic 2: not whether the chosen value is right, but whether the VCM holds the position
+it was told to hold, under vibration, for the duration of an exposure and across a flight.
+
+**Why it is open:** there is no evidence either way. A voice coil holds position against a spring by
+applied current; it is not a mechanical stop. Nothing has verified the achieved position in flight,
+by VCM readback or driver state.
+
+**What would discriminate it:** image a fixed target on the bench with motors running and compare
+sharpness to motors-off at the same commanded position. If it degrades with the motors on while the
+subject and command are unchanged, the lens is moving.
+
+---
+
+## Topic 5 -- What sets the frequency of any banding
+
+Stated as a topic rather than a theory, because the candidate mechanisms are not yet distinct enough
+to predict different outcomes.
+
+The interesting form of the question is **whether the banding frequency follows whichever vibration
+component is largest where the camera sits.** That is testable in principle and would explain a
+rev-rate result on one camera and something else on another. It needs the vibration field at the
+camera, which as noted above nothing currently measures.
+
+**Observed:**
+
+- 260923, the arm sensor on the left-rear arm: the largest line at that sensor is its own motor's
+  blade-pass, larger than that motor's rev line. That sensor sits in prop wash on the arm carrying the
+  motor, so this may be a fact about that location rather than about the airframe, and it is not
+  anchored to anything seen in an image.
+- The same flight's line frequencies were computed from mean RPM over the analysis window. Whether
+  RPM held steady enough across that window for a mean to be meaningful **has not been checked**, and
+  the lines move if it did not.
+- 260923 flew three-blade props, so blade-pass is the third harmonic on that flight. Blade count is a
+  fact about a flight, recorded in that flight's notes -- two- and three-blade props are on hand
+  specifically because fundamentals and harmonics in the 100-250 Hz region collide easily and blade
+  count is one of the few ways to move one family of lines without moving the others.
+
+- The 260926 informal strike test produced a repeated peak near **152.9 Hz** on both arm channels
+  (arm 152.94 +/- 0.02 Hz over 5 impulses, camera-colocated 152.92 +/- 0.04 Hz over 3, of 16
+  impulses each). Caveats that travel with it: the vehicle was on a table held down by hand and
+  moved under every strike, so the root condition is not a clamped one; the strikes clipped the
+  sensors; the two channels disagree about damping by about a factor of three at that frequency,
+  which they should not if it is one mode; and it is **not among the six most prominent peaks** on
+  either channel, so it only appears if the band search is told to go deeper than the default.
+  Whether it has anything to do with an image is untested -- no image measurement has been
+  compared against it.
+
+**What would discriminate it:** a banding frequency measured from an image, on a camera whose local
+vibration is also measured, on two configurations that move the candidate lines apart. Nothing
+currently satisfies all three.
+
+---
+
+## Topic 6 -- Motion blur during the exposure
+
+**Observed, OAK-D only, 260712:** in-flight sharpness collapsed ~43x against at-rest (var-Laplacian
+median 4827 to 113) and no in-flight frame reached at-rest sharpness; exposure ran 1.2 to 6.1 ms;
+streak and arc morphology rather than uniform softness. Correlates were VIBE -0.81, exposure -0.66,
+EKF velocity -0.53, gyro -0.42.
+
+**Why that does not settle anything:** VIBE correlating harder than exposure means vibration and
+translation are not separated, and at takeoff everything covaries. "No in-flight frame reaches at-rest
+sharpness" is as much a statement about vibration as about translation. The set also spans a focus
+configuration change, so the morphology may not be one population.
+
+**A handheld collection run exists** which removes the vibration confound entirely -- motion without
+rotors -- and has never been used for this. That is the available discriminator and it needs no new
+flying.
+
+**Not available, despite my having asked for it twice:** "motors running on the ground." The rotors
+cannot turn at hover RPM with the vehicle on the ground because it will not stay there. Movement
+without vibration is available by carrying it; vibration without movement is not, short of removing
+the props and running the bells up, which probably does not reproduce the disturbance since moving
+blades are likely most of it.
+
+**Operator's current framing, which changes what matters here:** if hover can be held to within a few
+centimetres of drift, motion blur can be set aside and the question becomes why a hover still is not
+sharp. That makes topics 2 and 4 the ones that matter now.
+
+**What has been disproven:** `blur = rate x exposure`. It holds only while the rate is roughly
+constant across the exposure, `f*t_exp` below about 0.45, which is ~90 Hz at 5 ms. Above that the
+motion reverses within the exposure and the smear saturates while the formula keeps growing: it
+overstates by 1.48x at 120 Hz and 8.89x at 800 Hz. Every rotor-band blur figure computed that way was
+inflated.

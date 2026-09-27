@@ -59,32 +59,48 @@ MIN_PROMINENCE_DB = 6.0
 MIN_PEAK_OVER_MEDIAN = 50.0
 
 
-def find_taps(t, a, n_expected=None, thresh_sd=6.0, min_sep_s=0.2, pre_s=0.01):
-    """Locate impulse onsets in a capture. Returns a list of (i_start, i_peak).
+def find_taps(t, a, n_expected=None, min_peak_frac=0.25, min_sep_s=0.2, pre_s=0.01):
+    """Locate impulses in a record. Returns a list of (i_start, i_peak), earliest first.
 
-    A tap is a sharp rise above the quiet floor. The floor is taken as the median absolute
-    deviation of the whole record, which is robust to the taps themselves occupying a few
-    percent of it.
+    Peak-picking with suppression: take the largest excursion, blank +/-`min_sep_s` around it,
+    repeat while anything remains above `min_peak_frac` of the largest. `min_peak_frac` is a
+    FRACTION OF THIS RECORD'S OWN LARGEST PEAK -- not a count of standard deviations -- so it
+    carries no units and does not change meaning when the sensor's scale does.
+
+    This replaced a threshold-above-the-noise-floor detector, which was wrong for the case it
+    exists to handle. That version marked every sample above a multiple of the median absolute
+    deviation and split the marked samples on quiet gaps, so a record whose DECAY never falls
+    back below the threshold has consecutive impulses merge into one group and only the loudest
+    of each merged run gets fitted. Measured on 260926: for the same fifteen physical strikes it
+    returned 2 impulses on one channel and 22 on the other, purely because one channel's decay
+    stayed hot between blows. Peak-picking is insensitive to that, because it looks for maxima
+    rather than for regions.
+
+    `pre_s` backs the returned start up before the peak so a caller sees the rise, and
+    `n_expected`, if given, keeps only that many of the largest.
     """
     t = np.asarray(t, float)
     a = np.asarray(a, float)
     x = np.abs(a - np.median(a))
-    mad = np.median(np.abs(x - np.median(x))) or x.std() or 1.0
-    floor = 1.4826 * mad
-    hot = x > thresh_sd * floor
-    if not hot.any():
+    if not len(x) or x.max() <= 0:
         return []
-    idx = np.flatnonzero(hot)
-    groups = np.split(idx, np.flatnonzero(np.diff(t[idx]) > min_sep_s) + 1)
+    floor = min_peak_frac * x.max()
+    work = x.copy()
+    peaks = []
+    while True:
+        i = int(np.argmax(work))
+        if work[i] < floor:
+            break
+        peaks.append(i)
+        blank = (t >= t[i] - min_sep_s) & (t <= t[i] + min_sep_s)
+        work[blank] = -np.inf
+        if n_expected is not None and len(peaks) >= n_expected:
+            break
     taps = []
-    for g in groups:
-        i_peak = g[int(np.argmax(x[g]))]
+    for i_peak in sorted(peaks):
         i_start = int(np.searchsorted(t, t[i_peak] - pre_s))
         taps.append((max(0, i_start), int(i_peak)))
-    taps.sort(key=lambda p: -x[p[1]])
-    if n_expected is not None:
-        taps = taps[:n_expected]
-    return sorted(taps)
+    return taps
 
 
 def looks_like_a_bump_test(a, min_ratio=MIN_PEAK_OVER_MEDIAN):
@@ -323,21 +339,134 @@ def compare_arms(summary_a, summary_b, tol_rel=0.03):
 
 # ---------------------------------------------------------------- capture loading + CLI
 
+# Record types in a campod-accel jsonl, named rather than sniffed at the call site. The writer
+# emits the discriminator as "t" (`containers/campod-camera/accel/main.go`); older captures used
+# "type", so both are read.
+RECORD_TYPE_KEYS = ("t", "type")
+RECORD_HEADER = "header"
+RECORD_BATCH = "b"
+RECORD_CLOCK = "clk"
+
+# Full scale in FULL_RES mode is 13-bit signed, so a sample at +/-4095 LSB is clipped and its true
+# value is unknown. Detected in LSB, at parse time, before any scaling: converting to g and
+# comparing against 4095 is a test that can never fire, and comparing against a scaled rail
+# accumulates avoidable float error.
+RAIL_LSB = 4095
+
+FIFO_DEPTH = 32
+
+
+class AccelCapture:
+    """One `campod-accel` jsonl, decoded.
+
+    Attributes, all numpy arrays over samples unless noted:
+
+        time_s      sample time on the pod's CLOCK_BOOTTIME
+        x, y, z     acceleration in g
+        saturated   per sample: any axis was at the +/-4095 LSB rail, so that sample is clipped
+        header      the file's header record, plus rate_fitted_hz / n_samples / truncated_lines
+        batch_*     per FIFO drain rather than per sample -- see read_gaps()
+
+    Sample times come from each batch's own `boot_ns`, placed backwards at the fitted rate. That
+    re-anchors the time axis to a kernel stamp every 2-3 samples, so a rate error cannot
+    accumulate along the record; it only spreads samples slightly within one batch.
+
+    The rate is FITTED per capture. `odr_hz_nominal` is what was asked for over SPI, not what
+    happened, and the two parts differ from each other by ~2.8%. The fit is emitted samples per
+    second of the pod's own clock: any sample the reader failed to emit lowers it, and there is
+    no absolute time reference on the pod, so it is that Pi's clock and carries that oscillator's
+    accuracy as its error bar.
+    """
+
+    def __init__(self, time_s, x, y, z, saturated, header,
+                 batch_time_s, batch_first_index, batch_count, batch_read_gap_s, batch_overrun):
+        self.time_s = time_s
+        self.x, self.y, self.z = x, y, z
+        self.saturated = saturated
+        self.header = header
+        self.batch_time_s = batch_time_s
+        self.batch_first_index = batch_first_index
+        self.batch_count = batch_count
+        self.batch_read_gap_s = batch_read_gap_s
+        self.batch_overrun = batch_overrun
+
+    @property
+    def rate_hz(self):
+        return self.header["rate_fitted_hz"]
+
+    @property
+    def magnitude(self):
+        return np.sqrt(self.x ** 2 + self.y ** 2 + self.z ** 2)
+
+    def window(self, t_start=None, t_end=None, relative=True):
+        """A new AccelCapture over a time range, samples and batches both.
+
+        `relative` measures from the first sample rather than from pod boot, because a caller
+        knows where in a capture an event was, not what CLOCK_BOOTTIME read at the time.
+        """
+        origin = self.time_s[0] if relative else 0.0
+        lo = origin + t_start if t_start is not None else -np.inf
+        hi = origin + t_end if t_end is not None else np.inf
+        m = (self.time_s >= lo) & (self.time_s <= hi)
+        bm = (self.batch_time_s >= lo) & (self.batch_time_s <= hi)
+        if not m.any():
+            raise ValueError(f"no samples in {t_start}..{t_end} s "
+                             f"(capture spans 0..{self.time_s[-1] - origin:.1f} s)")
+        return AccelCapture(self.time_s[m], self.x[m], self.y[m], self.z[m], self.saturated[m],
+                            dict(self.header, windowed_from_s=t_start, windowed_to_s=t_end),
+                            self.batch_time_s[bm], self.batch_first_index[bm],
+                            self.batch_count[bm], self.batch_read_gap_s[bm],
+                            self.batch_overrun[bm])
+
+    def read_gaps(self):
+        """Stretches of elapsed time the reader emitted no samples for.
+
+        The reader takes whatever the FIFO holds and moves on, so a short read is the ordinary
+        case and says nothing; `ovr` is only sampled when the FIFO came back full, so it is
+        false by construction on a short read and cannot classify one either. What bounds a hole
+        is the gap since this device's previous drain, against the time the FIFO takes to fill
+        (FIFO_DEPTH / the fitted rate). Anything beyond that is time the FIFO could not hold.
+
+        Returns dict(fill_s, n_stalls, stall_time_s, stall_at_s, worst_gap_s).
+        """
+        fill = FIFO_DEPTH / self.rate_hz
+        stalled = self.batch_read_gap_s > 2 * fill
+        origin = self.time_s[0]
+        return dict(
+            fill_s=float(fill),
+            n_stalls=int(stalled.sum()),
+            stall_time_s=float(np.clip(self.batch_read_gap_s[stalled] - fill, 0, None).sum()),
+            stall_at_s=[float(v) for v in (self.batch_time_s[stalled] - origin)],
+            worst_gap_s=float(self.batch_read_gap_s.max()) if len(self.batch_read_gap_s) else 0.0,
+        )
+
+    def fit_rate_over(self, segment_s):
+        """Emitted-samples-per-second, fitted independently over each segment of the window.
+
+        Spread across segments bounds how much a single whole-window rate can misplace a
+        spectral line. It does not separate the part's oscillator from the Pi's: nothing here is
+        referred to an absolute clock.
+        """
+        t, i = self.batch_time_s, self.batch_first_index
+        out = []
+        for edge in np.arange(t[0], t[-1] - segment_s, segment_s):
+            m = (t >= edge) & (t < edge + segment_s)
+            if m.sum() >= 8:
+                out.append(float(np.polyfit(t[m], i[m], 1)[0]))
+        return np.array(out)
+
+
 def load_accel_jsonl(path):
-    """Decode a `campod-accel` jsonl into (t_boot_s, x, y, z, header), in g.
+    """Decode a `campod-accel` jsonl into an AccelCapture.
 
-    Tolerates a truncated final record: the writer `fsync`s at 1 Hz behind a 128 KiB writeback
-    kick, so a power cut leaves the last record unparseable. Bad lines are counted into the
+    Tolerates a truncated final record: the writer buffers behind a writeback kick rather than
+    fsyncing, so a power cut leaves the last record unparseable. Bad lines are counted into the
     header as `truncated_lines`, never silently skipped.
-
-    Sample times come from each batch's own `boot_ns`, placed backwards at the fitted rate. The
-    cumulative index counts what was READ, so it cannot see FIFO loss; the batch stamps can.
-    The rate is FITTED per capture -- the two parts' clocks differ by ~2.8% and the datasheet
-    specifies no tolerance, so `odr_hz_nominal` is what was asked for, not what happened.
     """
     import json
     hdr, bad = None, 0
-    bt, bi, bn, xs, ys, zs = [], [], [], [], [], []
+    bt, bi, bn, bgap, bovr = [], [], [], [], []
+    xs, ys, zs = [], [], []
     with open(path) as fh:
         for line in fh:
             try:
@@ -345,23 +474,34 @@ def load_accel_jsonl(path):
             except json.JSONDecodeError:
                 bad += 1
                 continue
-            kind = r.get("t") or r.get("type")
-            if kind == "header":
+            kind = next((r[k] for k in RECORD_TYPE_KEYS if k in r), None)
+            if kind == RECORD_HEADER:
                 hdr = dict(r)
-            elif kind == "b":
+            elif kind == RECORD_BATCH:
                 bt.append(r["boot_ns"]); bi.append(r["i"]); bn.append(r["n"])
+                bgap.append(r.get("gap_ns", 0)); bovr.append(bool(r.get("ovr", False)))
                 xs.append(r["x"]); ys.append(r["y"]); zs.append(r["z"])
     if hdr is None or not bn:
         raise ValueError(f"{path}: no header or no sample batches")
+
     cat = lambda L: np.concatenate([np.asarray(v, float) for v in L])
-    x, y, z = cat(xs), cat(ys), cat(zs)
-    bt = np.asarray(bt, float); bi = np.asarray(bi, float); bn = np.asarray(bn, int)
-    rate = float(np.polyfit(bt / 1e9, bi, 1)[0])
-    t = np.concatenate([bt[j] / 1e9 - (bn[j] - 1 - np.arange(bn[j])) / rate for j in range(len(bn))])
-    g = hdr["scale_mg_per_lsb"] / 1000.0
-    hdr = dict(hdr, rate_fitted_hz=rate, truncated_lines=bad, n_samples=int(len(x)),
-               rail_hit_frac=float(((np.abs(x) >= 4095) | (np.abs(y) >= 4095) | (np.abs(z) >= 4095)).mean()))
-    return t, x * g, y * g, z * g, hdr
+    x_lsb, y_lsb, z_lsb = cat(xs), cat(ys), cat(zs)
+    saturated = ((np.abs(x_lsb) >= RAIL_LSB) | (np.abs(y_lsb) >= RAIL_LSB)
+                 | (np.abs(z_lsb) >= RAIL_LSB))
+
+    batch_time = np.asarray(bt, float) / 1e9
+    batch_index = np.asarray(bi, float)
+    batch_count = np.asarray(bn, int)
+    rate = float(np.polyfit(batch_time, batch_index, 1)[0])
+    time_s = np.concatenate([batch_time[j] - (batch_count[j] - 1 - np.arange(batch_count[j])) / rate
+                             for j in range(len(batch_count))])
+
+    g_per_lsb = hdr["scale_mg_per_lsb"] / 1000.0
+    hdr = dict(hdr, rate_fitted_hz=rate, truncated_lines=bad, n_samples=int(len(x_lsb)),
+               saturated_frac=float(saturated.mean()))
+    return AccelCapture(time_s, x_lsb * g_per_lsb, y_lsb * g_per_lsb, z_lsb * g_per_lsb,
+                        saturated, hdr, batch_time, batch_index, batch_count,
+                        np.asarray(bgap, float) / 1e9, np.asarray(bovr, bool))
 
 
 def _main(argv):
@@ -382,13 +522,20 @@ def _main(argv):
                     help="fractional frequency window for calling two arms' modes the same "
                          "(default 0.05). Too tight and a real cross-arm difference is reported "
                          "as two unmatched modes instead of one matched pair with a delta.")
+    ap.add_argument("--window", nargs=2, type=float, metavar=("START_S", "END_S"),
+                    help="seconds from the first sample; restricts everything to this range. A "
+                         "capture usually contains more than the strikes -- startup, handling, "
+                         "poses -- and all of it is impulses this would otherwise try to fit.")
     ap.add_argument("--json", metavar="PATH", help="write the full result here")
     args = ap.parse_args(argv)
 
     summaries, out = {}, {}
     for path in args.files:
-        t, x, y, z, hdr = load_accel_jsonl(path)
-        sig = dict(x=x, y=y, z=z, mag=np.sqrt(x * x + y * y + z * z))[args.axis]
+        cap = load_accel_jsonl(path)
+        if args.window:
+            cap = cap.window(*args.window)
+        t, hdr = cap.time_s, cap.header
+        sig = dict(x=cap.x, y=cap.y, z=cap.z, mag=cap.magnitude)[args.axis]
         label = f"{hdr.get('node', '?')}/{hdr.get('label', '?')}"
         if label in summaries or label in out:
             label = f"{label} [{os.path.basename(path)}]"   # two captures can share node+label
@@ -397,9 +544,16 @@ def _main(argv):
               f"(nominal {hdr.get('odr_hz_nominal')}), Nyquist {hdr['rate_fitted_hz']/2:.0f} Hz")
         if hdr["truncated_lines"]:
             print(f"  {hdr['truncated_lines']} truncated trailing record(s) -- capture ended unclean")
-        if hdr["rail_hit_frac"] > 1e-4:
-            print(f"  WARNING {hdr['rail_hit_frac']*100:.3f}% of samples at the +/-{hdr.get('range_g')} g rail. "
-                  "Clipping flattens a peak, so zeta reads HIGH and the mode reads weak. Tap softer.")
+        if hdr["saturated_frac"] > 1e-4:
+            print(f"  WARNING {hdr['saturated_frac']*100:.3f}% of samples clipped at the "
+                  f"+/-{hdr.get('range_g')} g rail, which is this part's maximum full scale. "
+                  "Clipping flattens a peak, so zeta reads HIGH and the mode reads weak. Strike "
+                  "more gently -- there is no range setting that fixes it.")
+        gaps = cap.read_gaps()
+        if gaps["n_stalls"]:
+            print(f"  {gaps['n_stalls']} read stall(s) in this window, "
+                  f"{gaps['stall_time_s']*1e3:.0f} ms with no samples, at "
+                  f"{', '.join(f'{v:.1f}s' for v in gaps['stall_at_s'][:8])}")
         st = hdr.get("self_test", {})
         if st and not st.get("all_pass", True):
             print("  WARNING self-test did not pass on every axis -- suspect the joint before the structure")

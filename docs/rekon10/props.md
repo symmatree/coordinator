@@ -1,62 +1,44 @@
 # Propellers, by label
 
-Props are labelled near the hub in sharpie so an individual prop can be tracked across flights
-and remounts. This file is the ledger: which set flew when, and what is known or suspected about
-each. It exists because a prop change alters the whole vibration signature, and an analysis that
-does not know which set was fitted cannot read a spectrum.
+Props are labelled near the hub in sharpie so an individual prop can be followed across flights and
+remounts. This file records **which sets exist and what they are**.
 
-**Blade count is the single most consequential fact here for analysis.** It sets where blade-pass
-falls: blade-pass = blades x rev. On three blades a rev line at 87 Hz puts blade-pass at 261 Hz;
-on two blades it puts it at 174 Hz. Mislabelling the 2nd harmonic as blade-pass on a three-blade
-aircraft moves a named line by a third of its frequency, which is enough to point at the wrong
-mechanism.
+**Which set flew a given flight belongs in that flight's own notes**, not here -- "this flight was on
+set B" is one line in the flight README and it is written when the flight happens. Trying to maintain
+a flights-to-props mapping in this file is a losing battle and would go stale immediately.
 
-## Current: set B, three-blade
+## Set B
 
-| | |
-|---|---|
-| labels | B1, B2, B3, B4 |
-| part | **HQ MacroQuad 10x4.8x3** -- 10 in diameter, 4.8 in pitch, **3 blades** |
-| material | glass-fibre reinforced nylon |
-| shaft | 5 mm, fits the shaft directly with **no collar** |
-| supplier | [hqprop.com p0490](https://www.hqprop.com/hq-macroquad-prop-10x48x32cw2ccw-black-glass-fiber-reinforced-nylon-p0490.html) (2CW + 2CCW) |
-| first flight | **260923** (`260923-new-props`) |
+Manufacturer designation **HQ MacroQuad 10x4.8x3**. By the usual convention that is diameter 10 in,
+pitch 4.8, 3 blades -- the pitch unit is not verified against HQProp's own specification and may not
+be inches.
 
-## Retired: set A
+- Glass-fibre reinforced nylon
+- 5 mm shaft, fits the shaft directly with no collar
+- 2 CW + 2 CCW
+- [HQProp's page](https://www.hqprop.com/hq-macroquad-prop-10x48x32cw2ccw-black-glass-fiber-reinforced-nylon-p0490.html)
+  -- the **manufacturer** link, not where they were bought. Its value here is HQProp's own test data
+  for lift against RPM, which should be comparable with their other props' figures.
+- Labelled B1-4. **Which label is on which arm is not recorded here** and would be the useful thing to
+  have; it can be read off the vehicle.
 
-| | |
-|---|---|
-| labels | A1, A2, A3, A4 |
-| status | removed from the airframe and labelled, retained |
-| what they carry | **the only vibration data predating the ADXL345 pods.** Every flight before 260923 is set A |
-| history | flew through the 260712 crash |
+## Set A
 
-**The set change is a natural experiment that already ran, and its result is about the 1x line.**
-A strong line at 1x rotation is the textbook prop-imbalance signature. That line is present on
-set B, which is four new props mounted fresh -- so it is not coming from a particular set's
-balance state, because four independent new props do not share one imbalance. Replacing every
-prop did not remove it.
+Labelled A1-4, kept. On the airframe for every flight before set B went on, including the 260712
+crash.
 
-What that leaves, if the 1x line is to be an eccentricity at all, is the motor side rather than
-the prop side -- a bell running off centre. Nothing here measures that, and it is not being
-claimed; it is named only because eliminating the props narrows what is left.
+They were swapped out because I argued that the strong line at motor rev rate was evidence of
+imbalance or a chipped blade, and they had in fact been in a crash. **That argument is now much
+weaker:** set B is a new set and a somewhat different prop, and shows very similar data. Set A may go
+back on.
 
-## Blade count by era
+## Blade count
 
-**Every flight from early July 2026 onward is three-bladed.** The two-blade set was broken in early
-July and nothing two-bladed has flown since. Analyses that assume two blades are wrong for every
-flight in that range -- and that assumption has been made: see the note in
-[vibration-testing.md](vibration-testing.md) on the 2x-rev-vs-blade-pass labelling.
+Set A and set B are both three-blade. **This is a fact about particular flights, not a standing
+property of the airframe** -- there are two- and three-blade props on hand specifically to test which
+peaks move with blade count, because with everything having a fundamental somewhere between roughly
+100 and 250 Hz and harmonics above that, numerical coincidences are easy to come by.
 
-A **two-blade set is on hand and has not been flown.** Flying it is the test that separates
-blade-rate effects from rotational-harmonic effects, because it moves blade-pass without moving
-rev. That distinction is currently unresolved and is why the set was kept.
-
-## What to record when a set changes
-
-So that the next analysis does not have to infer it:
-
-- Labels of the props fitted, and which position each went to.
-- Diameter, pitch, **blade count**, material, hub/shaft fit.
-- Whether this is the set's first flight.
-- Anything known about their history: crashed, reused, rebalanced, or new.
+Blade-pass is blade count x rev, so it matters which set flew: at three blades a 87 Hz rev line puts
+blade-pass at 261 Hz, at two blades 174 Hz. Analysis that assumes a blade count without checking the
+flight notes can name the wrong mechanism.
