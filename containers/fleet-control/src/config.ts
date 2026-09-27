@@ -10,6 +10,8 @@ export interface Config {
   images: GithubOptions & { cacheDir: string; publicUrl: string };
   /** Where recovered flights land -- the datasets share. */
   flightsDir: string;
+  /** Where notifications go. An empty url disables them. See notify.ts. */
+  notify: { url: string; tag: string };
   /** Where the ground station's own record of a flight lives. See cluster.ts. */
   cluster: {
     mavproxyNamespace: string;
@@ -64,6 +66,12 @@ export function loadConfig(): Config {
     },
     // The datasets share, mounted from a static PV (tiles#764). Recovered flights go here.
     flightsDir: env('FLEET_FLIGHTS_DIR', '/mnt/flights'),
+    notify: {
+      url: env('FLEET_NOTIFY_URL', ''),
+      // Apprise routes by tag and an untagged notify reaches nobody, so this defaults to the
+      // cluster name the way Alloy's notifier does rather than to empty.
+      tag: env('FLEET_NOTIFY_TAG', 'tiles'),
+    },
     cluster: {
       mavproxyNamespace: env('FLEET_MAVPROXY_NAMESPACE', 'mavproxy'),
       ntripNamespace: env('FLEET_NTRIP_NAMESPACE', 'ntrip'),

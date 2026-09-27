@@ -203,6 +203,30 @@ It is `/tmp` inside the container, so a kept directory still goes when the pod d
 stdout echo is the half that survives that. Nothing evicts these, and a successful run leaves
 none.
 
+## Notifications
+
+A campod converge is twenty minutes or more. The screen can say what happened when you come back
+to it; a notification means you do not have to come back.
+
+| event | why |
+|---|---|
+| a run finished | the thing you started is over, and how it ended |
+| the service started | **a restart ends any run in flight.** The registry is in memory and the playbook is a child of that process, so this is not a hiccup. Worth knowing before starting something long, and after one vanishes |
+
+The start notification carries the build, because the reason to care is "did the roller replace me,
+and with what".
+
+Announced **server-side**, from the run registry rather than the page -- the point is that it
+reaches you when no browser is attached.
+
+| env | default | |
+|---|---|---|
+| `FLEET_NOTIFY_URL` | *(empty)* | Apprise's notify endpoint. Empty disables notification |
+| `FLEET_NOTIFY_TAG` | `tiles` | Apprise routes by tag, and **an untagged notify reaches nobody** |
+
+**A failed notification never fails the thing it reported on.** A converge that worked and could not
+be announced is still a converge that worked, so failures go to the pod's stdout and nowhere else.
+
 ## Which build is answering
 
 The pod is replaced whenever its image digest moves (argo-tag-watcher in `tiles`), and a
