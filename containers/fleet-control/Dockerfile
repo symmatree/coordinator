@@ -23,11 +23,28 @@ WORKDIR /app
 # ansible-core and ansible-runner, plus the ssh client ansible shells out to. pipx-less venv
 # because Debian marks the system python externally-managed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3-venv openssh-client \
+      python3 python3-venv openssh-client curl ca-certificates \
  && python3 -m venv /opt/ansible \
  && /opt/ansible/bin/pip install --no-cache-dir ansible-core==2.18.6 ansible-runner==2.4.3 \
  && rm -rf /var/lib/apt/lists/*
 ENV PATH="/opt/ansible/bin:${PATH}"
+
+# kubectl, for the ground-side artifacts that live in the cluster rather than on a vehicle
+# (src/cluster.ts). Shelling out for the same reason ansible and ssh are shelled out to: one
+# credential path, and the automated steps are the documented manual ones. In-cluster it picks up
+# the pod's ServiceAccount, which can read pods and exec in `mavproxy` and `ntrip` and nothing
+# else (tiles#793). Pinned and checksummed -- it is fetched from the network at build time.
+ARG KUBECTL_VERSION=v1.32.9
+RUN set -eux; \
+      arch="$(dpkg --print-architecture)"; \
+      curl -fsSLo /usr/local/bin/kubectl \
+        "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl"; \
+      curl -fsSLo /tmp/kubectl.sha256 \
+        "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl.sha256"; \
+      echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum -c -; \
+      rm /tmp/kubectl.sha256; \
+      chmod 0755 /usr/local/bin/kubectl; \
+      kubectl version --client=true
 
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

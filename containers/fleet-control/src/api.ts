@@ -14,6 +14,7 @@ import { listLogs } from './fclog.js';
 import { offloadFcLog, offloadSession, validFlightName } from './offload.js';
 import { enrich, LookupCache } from './status.js';
 import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
+import { collectGround } from './cluster.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
 
 export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInstance {
@@ -381,6 +382,36 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
     const found = await eventsFor(req.params.id);
     if ('error' in found) return reply.code(found.code).send({ error: found.error });
     return reply.type('text/plain; charset=utf-8').send(Readable.from(logChunks(found)));
+  });
+
+  /**
+   * Collect the ground station's own record of a flight: mavproxy's console timeline, the base
+   * station's position and raw observations, and the backpack link metrics.
+   *
+   * Not per node -- none of it is on a vehicle. It is keyed on the flight, and it establishes the
+   * armed window from the console log, which is the only clock here that does not lie.
+   */
+  app.post<{ Params: { flight: string } }>('/flights/:flight/ground', async (req, reply) => {
+    const flight = req.params.flight;
+    if (!validFlightName(flight)) {
+      return reply.code(400).send({ error: `not a usable flight name: ${JSON.stringify(flight)}` });
+    }
+    try {
+      const run = runs.start('ground', flight, (emit) =>
+        collectGround(cfg, flight, {
+          flightsDir: cfg.flightsDir,
+          note: (line) => sinkFor(emit)('stdout', line),
+        }).then(({ collected, failed, window }) => {
+          const say = sinkFor(emit);
+          say('stdout', `collected ${collected.length}: ${collected.map((c) => c.file).join(', ')}`);
+          for (const f of failed) say('stderr', `not collected -- ${f}`);
+          say('stdout', `armed window: ${window.armed ?? '(none found)'} -> ${window.disarmed ?? '(none)'}`);
+        }),
+      );
+      return reply.code(202).send({ id: run.id, action: run.action, flight });
+    } catch (err) {
+      return reply.code(409).send({ error: (err as Error).message });
+    }
   });
 
   // ---- the FC's dataflash logs ---------------------------------------------------------
