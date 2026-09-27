@@ -50,6 +50,8 @@
         padding:14px; margin-bottom:12px; }
   .pf h2 { font-size:.95rem; margin:0 0 4px; }
   .pf .step { color:var(--dim); font-size:.82rem; margin:10px 0 6px; }
+  .pf textarea { width:100%; padding:8px 10px; font-size:1rem; background:#0d0f14; color:var(--fg);
+                 border:1px solid var(--line); border-radius:8px; font-family:inherit; }
   .pf input[type=text] { width:100%; min-height:44px; padding:0 10px; font-size:1rem;
         border-radius:8px; border:1px solid var(--line); background:#0d0f14; color:var(--fg); }
   .sess { display:flex; gap:10px; align-items:flex-start; padding:8px 0;
@@ -85,6 +87,9 @@
   <div class="step">3 &mdash; name the flight, then retrieve what you ticked (sessions and the FC log)</div>
   <input type="text" id="pfFlight" placeholder="flight name, e.g. 2026-09-19-vio"
          autocapitalize="off" autocorrect="off" spellcheck="false" />
+  <div class="step">what this flight was for &mdash; written now, while you remember</div>
+  <textarea id="pfNotes" rows="3" placeholder="e.g. six-pose calibration plus a bump test on each arm"></textarea>
+  <div class="btns"><button id="pfSaveNotes">Save description</button></div>
   <div class="btns">
     <button id="pfGet" class="primary">Retrieve ticked</button>
     <button id="pfPrune">Delete the rest</button>
@@ -602,6 +607,27 @@
       try { await j(`/nodes/${n.name}/stop-capture`, { method: 'POST' }); log(`${n.name}: capture stopped`); }
       catch (e) { log(`${n.name}: ${e.message}`); }
     }
+  };
+
+  /**
+   * The description, through the same route an agent uses.
+   *
+   * No separate mechanism for the box: `PUT /flights/<name>/notes` is the interface and this is
+   * one caller of it, the same rule the rest of this page follows.
+   */
+  document.getElementById('pfSaveNotes').onclick = async () => {
+    const flight = document.getElementById('pfFlight').value.trim();
+    const text = document.getElementById('pfNotes').value;
+    if (!flight) return log('name the flight first');
+    if (!text.trim()) return log('nothing to save');
+    try {
+      const r = await j(`/flights/${flight}/notes`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      log(`${flight}: NOTES.md, ${r.bytes} bytes`);
+    } catch (e) { log(`${flight}: ${e.message}`); }
   };
 
   document.getElementById('pfList').onclick = async () => {
