@@ -102,9 +102,21 @@ that space, even when it has the same shape as a capture. Concretely:
   # unaffected -- it moved out of the path, not out of the data.
 
   ground/                           # SOURCE (immutable): ground-side records for this flight
-    mavproxy-console.log                 # GCS console output
-    backpack-link.jsonl                  # RTCM/backpack link state
-    <session>-mavproxy.tlog              # per-session telemetry log (#192; rotation not landed yet)
+    mavproxy-console.log                 # GCS console output: the arm/disarm/mode timeline, in
+                                         #   CLUSTER time -- the one clock in a flight that needs
+                                         #   no qualification, since neither device has an RTC
+    <start>-armed-<a>-disarmed-<d>.tlog  # the flight's telemetry log, cut at disarm by tlog-split
+                                         #   (tiles#794). Stamps are cluster time; a session that
+                                         #   never armed is named `<start>-noflight-<why>.tlog`
+    rtkbase-settings.conf                # the base station's config. `position=` is why it is
+                                         #   collected -- PPK is not possible without the base
+                                         #   coordinates -- and `local_ntripc_msg` is the mount
+                                         #   the vehicle actually consumed
+    <YYYY-MM-DD>_*.ubx                   # the base station's raw observations for the flight's
+                                         #   day, from the `datadir=` in those settings
+    backpack-metrics-<YYYY-MM-DD>.json   # every `backpack_*` series over the flight window, from
+                                         #   Mimir (#190) -- the only view of the backpack's own
+                                         #   WiFi hop, which no other observer can see
 
   derived/                          # DERIVED (regenerable, provenance-stamped) -- everything we recompute
     pose/
@@ -141,7 +153,8 @@ Two rules make this navigable:
 | **vio-tracker** tee (#78) | in-flight, on the vehicle | live OAK-D | `captures/<MxId>/<session>/<MxId>_<session>.feat` (+ `.feat.json`, `features/*.json`) |
 | `bin/vio-ipc-record` (bench) | manual bench | estimator sockets | a capture session (same `captures/...` shape) |
 | **coordinator-mavlink** (#208, #220) | in-flight, on the vehicle | FC MAVLink (MAV2) | `captures/<node>/<boot-id>/timesync.jsonl`, `.../vehicle.tlog` -- inside the session, which is where the tree above has always placed them. They were written to the captures root until #386, which put them outside everything `coord sessions package` collects |
-| ground station (mavproxy, backpack watch) | in-flight, on the ground | the radio link | `ground/*` -- see [#192](https://github.com/symmatree/coordinator/issues/192) for per-session tlog rotation |
+| **tlog-split** (tiles `mavproxy` env) | continuously, in the cluster | a mavproxy `--out` fan-out | one tlog per flight to `datasets/ground-tlogs`, cut at disarm ([#192](https://github.com/symmatree/coordinator/issues/192) rotation + durability; retention still open) |
+| **fleet-control** `POST /flights/:flight/ground` | post-flight, on request | mavproxy and rtkbase pods, Mimir, `ground-tlogs` | `ground/*` -- the console log, the flight's split tlog, `rtkbase-settings.conf`, the day's `.ubx`, the backpack series |
 | **flight-analysis** CronJob (tiles) | nightly 04:00 UTC | `<fc-log>.bin` | `flight-analysis-<logstem>.{ipynb,pdf}`, `manifest.json`, `polisher.json` |
 | **vio-offline** CronJob (tiles) | on-demand (manual `create job --from`; #139) | each `*.feat` | `derived/pose/<stem>.vinspose.csv` + sidecar (#139) |
 | `analysis/vio-quality.ipynb` | manual / after cron | pose CSV + `.bin` + `manifest.json` | `derived/vio-quality.json` (+ figures) |

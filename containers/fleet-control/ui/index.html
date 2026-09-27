@@ -543,10 +543,11 @@
   /**
    * The FC's logs, as one more block to tick from.
    *
-   * `time_utc` is the FC's LAST-MODIFIED field, not creation -- with `LOG_FILE_DSRMROT=1` the
-   * flight's log is the one stamped a few seconds AFTER the disarm, because that rotation is
-   * what closed it. Labelled "last written" for that reason: called anything else it leads
-   * straight to picking the wrong log.
+   * `time_utc` is the FC's LAST-MODIFIED field, not creation, so it marks the power-off -- a
+   * log's boundaries are power cycles, not disarms (`LOG_FILE_DSRMROT` rotates only
+   * `if (file_disarm_rot && !log_replay)` and this vehicle flies `LOG_REPLAY=1`). Labelled
+   * "last written" for that reason: called anything else it leads straight to picking the
+   * wrong log.
    *
    * Zero-byte logs are shown rather than hidden. There were 56 logs on the coordinator on
    * 2026-09-26, several of them empty, and a list that quietly drops rows is a list you cannot
