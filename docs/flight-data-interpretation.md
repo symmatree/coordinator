@@ -333,9 +333,18 @@ hand) and `1980-01-11 08-00-07.bin` (the flight, created at the field after a re
 **`LOG_ENTRY.time_utc` over MAVLink is last-modified, not creation.** This is the field a log
 download shows you, and it decides which log is the flight. The check: `LOG_DISARMED` is 1 or
 2, so a log MUST have been created at boot -- if no entry carries a boot-time stamp, the field
-is not creation time. With `LOG_FILE_DSRMROT=1` the flight log is then the one whose
-`time_utc` sits a few seconds after the disarm, because that rotation closed it. On 260923 the
-disarm was 12:11:50.8Z and the flight log's `time_utc` was 12:12:00Z.
+is not creation time.
+
+**And `LOG_FILE_DSRMROT` is inert on this vehicle, so do not reason from it.**
+`AP_Logger_Backend::vehicle_was_disarmed()` rotates only
+`if (file_disarm_rot && !log_replay)`, and this vehicle flies `LOG_REPLAY=1`. So nothing
+rotates at disarm: **a log's boundaries are power cycles.** Its `time_utc` marks the power-off,
+not a disarm.
+
+On 260923 the disarm was 12:11:50.8Z and the flight log's `time_utc` was 12:12:00Z, which looks
+like disarm rotation and is not -- the vehicle was powered down shortly after landing, so the
+two coincide. An earlier version of this section drew the rotation conclusion from exactly that
+coincidence.
 
 **A 1980 name means "no GPS time when this file was created" and nothing else.** It does not mean the
 log lacks GPS time -- 260814's flight log reaches a 3D fix at t=7.4 s. And **the filename is not the
@@ -522,7 +531,10 @@ operator knowledge, stated when parts move, and the rate fit is the cross-check 
 
 Things it would be reasonable to assume and that are **not** established:
 
-* Whether `SYSTEM_TIME` actually arrives on MAV2 in practice. The rates say it should
+* ~~Whether `SYSTEM_TIME` actually arrives on MAV2 in practice.~~ **Settled 260923**: it does.
+  The flight's `vehicle.tlog` holds 2124 of them, 1087 carrying real UTC, the first at
+  `boot_ms=52576` -- so GPS-derived absolute time reaches the coordinator at 2 Hz about 53 s
+  after FC boot, and nothing consumes it yet. Original note follows. The rates say it should
   (`MAV2_EXT_STAT=2`); nobody has watched the wire. #220 will show it or its absence.
 * Whether the FC pushes time of day by any other route. (`TSYN` shows it *does* exchange TIMESYNC
   with SysID 1 and logs the RTT, so the FC-side half of the bridge exists independently of ours.)
