@@ -203,6 +203,21 @@ It is `/tmp` inside the container, so a kept directory still goes when the pod d
 stdout echo is the half that survives that. Nothing evicts these, and a successful run leaves
 none.
 
+## Which build is answering
+
+The pod is replaced whenever its image digest moves (argo-tag-watcher in `tiles`), and a
+replacement kills whatever run was in flight. So "which build am I talking to, and has it just
+restarted" has to be answerable -- on the page and over the API.
+
+`GET /build` reports the revision, the ref, the PR title, whether that revision is still head, and
+how long this process has been up. The page shows it in the topbar, on demand rather than polled.
+
+**A process cannot read its own image labels**, so the Dockerfile writes `/etc/container-image` in
+the [#326](https://github.com/symmatree/coordinator/issues/326) manifest format -- the same flat
+quoted table the devices carry, read with the same parser. `GIT_SHA` and `GIT_REF` come from
+`.github/actions/build-container`; both are empty for a local build, which is reported as
+`no build manifest` rather than invented.
+
 ## curl, not just the browser
 
 The UI is one client of the routes; it has no private endpoints.
@@ -217,6 +232,7 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 |---|---|
 | `GET /` | the web UI |
 | `GET /healthz` | liveness |
+| `GET /build` | which build is answering, how long it has been up, and the PR it came from |
 | `GET /nodes` | the roster |
 | `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
 | `POST /nodes/:name/stop` | signal the container set and wait for it to exit |

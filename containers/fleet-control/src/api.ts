@@ -12,9 +12,10 @@ import { probeAll, probeNode } from './probe.js';
 import { deleteSessions, listSessions, stopCapture } from './sessions.js';
 import { listLogs } from './fclog.js';
 import { offloadFcLog, offloadSession, validFlightName } from './offload.js';
-import { enrich, LookupCache } from './status.js';
+import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
 import { collectGround } from './cluster.js';
+import { build } from './build.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
 
 export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInstance {
@@ -26,6 +27,25 @@ export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInsta
   app.get('/', async (_req, reply) => reply.type('text/html; charset=utf-8').send(indexHtml));
 
   app.get('/nodes', async () => cfg.inventory.nodes);
+
+  /**
+   * What build this is and how long it has been up.
+   *
+   * Asked on demand rather than pushed, because the answer only matters at two moments: when a
+   * long job is about to be started (has the roller just replaced me?) and when one has
+   * vanished (did it?). The PR title comes from the same cached lookup the status screen uses,
+   * so a refresh costs nothing after the first.
+   */
+  app.get('/build', async () => {
+    const b = build();
+    const repo = repoFromUrl(b.source);
+    if (repo === undefined || b.revision === undefined) return b;
+    const [title, head] = await Promise.all([
+      lookups.title(repo, b.revision).catch(() => undefined),
+      b.refName === undefined ? Promise.resolve(undefined) : lookups.head(repo, b.refName).catch(() => undefined),
+    ]);
+    return { ...b, repo, title, head, current: head === undefined ? undefined : head === b.revision };
+  });
 
   /**
    * Converge a node. `?reflashed=true` clears the recorded host key first, which is the one
