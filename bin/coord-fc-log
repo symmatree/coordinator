@@ -135,7 +135,12 @@ def reexec_in_container() -> "None":
 try:
     from pymavlink import mavutil  # noqa: E402
 except ImportError:
-    reexec_in_container()
+    mavutil = None
+    # Only when we are the script. Importing this module -- which the test does, to
+    # exercise the listing without a vehicle -- must not execvp docker out from under
+    # the importer.
+    if __name__ == "__main__":
+        reexec_in_container()
 
 
 def ev(obj: dict) -> None:
@@ -171,12 +176,11 @@ def connect():
 
 
 def end_any_transfer(m) -> None:
-    """Leave whatever state a previous, aborted transfer left the FC in.
+    """Cancel a transfer the FC is holding. RECOVERY ONLY -- not part of the happy path.
 
-    MEASURED 2026-09-23: kill a download mid-stream and the FC keeps streaming the old log
-    and IGNORES EVERY LOG_REQUEST_LIST. That presents as an empty log list -- i.e.
-    indistinguishable from 'that log does not exist' -- until something ends the transfer.
-    Every entry point calls this first, so a single aborted run cannot poison the session.
+    Cancelling mid-operation leans on ArduPilot's abort handling, which sees far less use
+    than its completion path, so this is called only when a listing has demonstrably
+    stalled and the FC is holding a transfer that will never finish.
     """
     m.mav.log_request_end_send(m.target_system, m.target_component)
     deadline = time.time() + 3
@@ -185,28 +189,50 @@ def end_any_transfer(m) -> None:
             return
 
 
-def list_logs(m) -> "dict[int, int]":
-    """Return {id: size}.
+def list_logs(m) -> "dict[int, tuple[int, int]]":
+    """Return {id: (size, time_utc)}, having DRAINED THE LISTING TO COMPLETION.
 
-    ASK FOR THE WHOLE LIST, NOT ONE ENTRY. A single-id request --
-    log_request_list_send(sys, comp, n, n) -- returned nothing on 2026-09-23, while
-    (0, 0xffff) and filtering worked. Recorded as observed; not explained.
+    Draining is not tidiness, it is the whole thing. AP_Logger registers the requesting
+    link for the duration of a transfer, and
+
+        handle_log_request_data():
+            if (_log_sending_link != nullptr) { ...; return; }
+
+    RETURNS UNCONDITIONALLY -- the channel check inside only decides whether you get a
+    "Log download in progress" STATUSTEXT, which is suppressed for a same-channel
+    requester. So while a listing is still in progress, every LOG_REQUEST_DATA is
+    dropped in silence.
+
+    The listing releases the link only on its last entry
+    (`handle_log_send_listing`: `if (_log_next_list_entry == _log_last_list_entry) {
+    transfer_activity = IDLE; _log_sending_link = nullptr; }`), and LOG_ENTRY carries
+    `last_log_num`, so completion is observable rather than guessed. An earlier version
+    stopped reading as soon as it had the entries IT wanted, left the FC listing, and
+    then had all twelve of its data requests discarded -- 0 bytes, no error, which read
+    as "nothing answered on ttyAMA0" when in fact the FC was still talking.
+
+    This also explains the note this once carried about a single-id request "returning
+    nothing": a previous aborted transfer had left the link registered, so the LIST
+    request hit the same guard in handle_log_request_list. Nothing to do with single-id.
     """
-    end_any_transfer(m)
-    for _ in range(3):
-        m.mav.log_request_list_send(m.target_system, m.target_component, 0, 0xffff)
+    ts, tc = m.target_system, m.target_component
+    for attempt in (1, 2):
+        m.mav.log_request_list_send(ts, tc, 0, 0xffff)
         logs: dict[int, tuple[int, int]] = {}
-        expected = None
         while True:
-            e = m.recv_match(type="LOG_ENTRY", blocking=True, timeout=3)
+            e = m.recv_match(type="LOG_ENTRY", blocking=True, timeout=5)
             if e is None:
                 break
-            expected = e.num_logs or expected
+            if e.num_logs == 0:
+                return {}          # id and last_log_num are both 0; nothing to list
             logs[e.id] = (e.size, e.time_utc)
-            if expected and len(logs) >= expected:
-                break
-        if logs:
-            return logs
+            if e.id == e.last_log_num:
+                return logs        # the FC is now IDLE; a data request will be accepted
+        # Stalled mid-listing: the FC is holding a transfer that will not finish, which
+        # is the one situation cancelling repairs. Then try the listing once more.
+        print(f"coord-fc-log: log listing stalled after {len(logs)} entries"
+              f"{'; cancelling and retrying' if attempt == 1 else ''}",
+              file=sys.stderr, flush=True)
         end_any_transfer(m)
     return {}
 
