@@ -203,6 +203,28 @@ It is `/tmp` inside the container, so a kept directory still goes when the pod d
 stdout echo is the half that survives that. Nothing evicts these, and a successful run leaves
 none.
 
+## The flight's description
+
+```sh
+curl -XPUT https://fleet.tiles.symmatree.com/flights/260927-sixpose/notes \
+  -H 'content-type: application/json' -d '{"text": "Six-pose calibration plus a bump test."}'
+
+curl -XPUT ... -H 'content-type: text/markdown' --data-binary @notes.md   # or a file
+curl     ... /flights/260927-sixpose/notes                               # read it back
+```
+
+**API-first, because the usual author is an agent** that was told the intent of the flight and is
+writing that down. The text box on the post-flight screen is one caller of the same route, not a
+second mechanism.
+
+It writes `NOTES.md`, which
+[docs/flight-data-layout.md](../../docs/flight-data-layout.md) already names as "optional human
+narrative for this flight" -- so this is not a new artifact, it is the one already specified,
+finally written by something.
+
+**PUT replaces.** A description is the current answer to "what was this flight", and an
+append-only file turns that into an archaeology problem. A caller that wants to add reads it first.
+
 ## Notifications
 
 A campod converge is twenty minutes or more. The screen can say what happened when you come back

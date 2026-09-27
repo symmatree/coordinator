@@ -11,7 +11,7 @@ import { ImageCache } from './imagecache.js';
 import { probeAll, probeNode } from './probe.js';
 import { deleteSessions, listSessions, stopCapture } from './sessions.js';
 import { listLogs } from './fclog.js';
-import { offloadFcLog, offloadSession, validFlightName } from './offload.js';
+import { offloadFcLog, offloadSession, readNotes, validFlightName, writeNotes } from './offload.js';
 import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
 import { collectGround } from './cluster.js';
@@ -31,6 +31,13 @@ export function buildServer(
   const app = Fastify({ logger: true });
 
   app.get('/healthz', async () => ({ ok: true }));
+
+  // So `curl -X PUT --data-binary @notes.md -H 'content-type: text/markdown'` works. Fastify
+  // parses application/json and text/plain out of the box and 415s anything else; a description
+  // is markdown and writing it from a file should not require wrapping it in JSON.
+  app.addContentTypeParser('text/markdown', { parseAs: 'string' }, (_req, body, done) => {
+    done(null, body);
+  });
 
   const indexHtml = readFileSync(new URL('../ui/index.html', import.meta.url), 'utf8');
   app.get('/', async (_req, reply) => reply.type('text/html; charset=utf-8').send(indexHtml));
@@ -441,6 +448,47 @@ export function buildServer(
     } catch (err) {
       return reply.code(409).send({ error: (err as Error).message });
     }
+  });
+
+  /**
+   * The flight's description.
+   *
+   * A first-class route rather than a UI feature: the usual author is an agent that was told what
+   * the flight was for and is writing that down, and the text box is the same call. `NOTES.md` is
+   * what docs/flight-data-layout.md already names for it.
+   *
+   * PUT semantics -- it replaces. A description is the current answer, not a log.
+   */
+  app.put<{ Params: { flight: string }; Body: { text?: string } | string }>(
+    '/flights/:flight/notes',
+    async (req, reply) => {
+      const flight = req.params.flight;
+      if (!validFlightName(flight)) {
+        return reply.code(400).send({ error: `not a usable flight name: ${JSON.stringify(flight)}` });
+      }
+      // Either `{"text": "..."}` or a bare text/markdown body, so `curl --data-binary @notes.md`
+      // works without wrapping it in JSON.
+      const text = typeof req.body === 'string' ? req.body : req.body?.text;
+      if (typeof text !== 'string' || text.trim() === '') {
+        return reply.code(400).send({ error: 'text is required' });
+      }
+      try {
+        const bytes = await writeNotes(cfg.flightsDir, flight, text);
+        return { flight, file: 'NOTES.md', bytes };
+      } catch (err) {
+        return reply.code(500).send({ error: (err as Error).message });
+      }
+    },
+  );
+
+  app.get<{ Params: { flight: string } }>('/flights/:flight/notes', async (req, reply) => {
+    if (!validFlightName(req.params.flight)) {
+      return reply.code(400).send({ error: `not a usable flight name: ${JSON.stringify(req.params.flight)}` });
+    }
+    const text = await readNotes(cfg.flightsDir, req.params.flight);
+    return text === undefined
+      ? reply.code(404).send({ error: `no NOTES.md for ${req.params.flight}` })
+      : reply.type('text/markdown; charset=utf-8').send(text);
   });
 
   // ---- the FC's dataflash logs ---------------------------------------------------------

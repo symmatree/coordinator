@@ -210,6 +210,37 @@ export async function offloadFcLog(
 }
 
 /**
+ * Write the flight's description.
+ *
+ * API-FIRST, because the usual author is an agent that was told the intent of the flight and is
+ * describing it from that, not a person typing into a box. The box is the same call.
+ *
+ * `NOTES.md` is where docs/flight-data-layout.md puts "optional human narrative for this flight",
+ * so this is not a new artifact -- it is the one already named, finally written by something.
+ *
+ * REPLACES rather than appends. A description is the current answer to "what was this flight",
+ * and an append-only file turns that into an archaeology problem. A caller that wants to add
+ * reads it first; `GET` is right there.
+ */
+export async function writeNotes(flightsDir: string, flight: string, text: string): Promise<number> {
+  const dir = join(flightsDir, flight);
+  await mkdir(dir, { recursive: true });
+  // Exactly one trailing newline, so re-writing the same text is not a diff.
+  const body = `${text.replace(/\s+$/, '')}\n`;
+  await writeFile(join(dir, 'NOTES.md'), body);
+  return body.length;
+}
+
+/** The flight's description, or undefined when it has none. */
+export async function readNotes(flightsDir: string, flight: string): Promise<string | undefined> {
+  try {
+    return await readFile(join(flightsDir, flight, 'NOTES.md'), 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Append to the flight's record.
  *
  * Rewritten after each session rather than once at the end: a run that dies half way leaves a
