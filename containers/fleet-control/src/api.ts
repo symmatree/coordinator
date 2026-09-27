@@ -5,7 +5,7 @@ import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import { findNode } from './inventory.js';
-import { RunRegistry, sinkFor } from './runs.js';
+import { RunRegistry, echoToProcess, sinkFor } from './runs.js';
 import { converge, reboot, reimage, stop } from './actions.js';
 import { ImageCache } from './imagecache.js';
 import { probeAll, probeNode } from './probe.js';
@@ -16,9 +16,18 @@ import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
 import { collectGround } from './cluster.js';
 import { build } from './build.js';
+import { notify, runEnded } from './notify.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
 
-export function buildServer(cfg: Config, runs = new RunRegistry()): FastifyInstance {
+export function buildServer(
+  cfg: Config,
+  // A run's ending is announced from HERE, not from the page: the point of a notification is that
+  // it reaches you when no browser is attached.
+  runs = new RunRegistry(echoToProcess, (run) => {
+    const [title, body] = runEnded(run.action, run.node, run.status, run.lines.at(-1)?.line);
+    void notify(cfg.notify, title, body);
+  }),
+): FastifyInstance {
   const app = Fastify({ logger: true });
 
   app.get('/healthz', async () => ({ ok: true }));

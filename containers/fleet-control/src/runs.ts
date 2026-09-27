@@ -68,7 +68,15 @@ export class RunRegistry {
    * can be asserted without capturing the process's own streams, which a test runner is also
    * writing to.
    */
-  constructor(private readonly echo: Echo = echoToProcess) {}
+  /**
+   * `onFinished` fires once per run, server-side, when it ends. Server-side because that is the
+   * point: a notification must not depend on a browser being attached, which is the whole reason
+   * it exists.
+   */
+  constructor(
+    private readonly echo: Echo = echoToProcess,
+    private readonly onFinished: (run: Run) => void = () => {},
+  ) {}
 
   /** Is an action already running against this node? */
   activeFor(node: string): Run | undefined {
@@ -165,6 +173,13 @@ export class RunRegistry {
         this.listeners.delete(run.id);
         for (const fn of this.enders.get(run.id) ?? []) fn();
         this.enders.delete(run.id);
+        // Last, and guarded: a notifier that throws must not take the run's bookkeeping with it.
+        try {
+          this.onFinished(run);
+        } catch (err) {
+          echoToProcess(run, { t: new Date().toISOString(), stream: 'stderr',
+            line: `[fleet-control] onFinished threw: ${(err as Error).message}` });
+        }
       });
 
     return run;
