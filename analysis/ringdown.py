@@ -199,11 +199,29 @@ def fit_ringdown(t, a, f_lo, f_hi, decay_db=DEFAULT_DECAY_DB, min_cycles=MIN_CYC
                 fit_span_s=float(tt[-1]), cycles=float(tt[-1] * f_hz), peak=float(peak))
 
 
-def candidate_bands(t, a, fmin=20.0, fmax=None, n=6, rel_width=0.06, prominence_db=6.0):
-    """Pick bands to fit, from the peaks of the whole record's spectrum.
+def candidate_bands(t, a, fmin=20.0, fmax=None, n=None, rel_width=0.06, prominence_db=6.0):
+    """Pick bands to fit, from the peaks of the record's spectrum.
 
-    Returns a list of (f_lo, f_hi) bracketing each candidate. `rel_width` is a fraction of the
-    peak frequency, so the band scales with the mode rather than being a fixed number of Hz.
+    Returns a list of (f_lo, f_hi) bracketing each candidate, in frequency order. `rel_width` is
+    a fraction of the peak frequency, so a band scales with the mode rather than being a fixed
+    number of Hz.
+
+    **`n` defaults to no limit.** It was a hard default of 6, and that count was deciding which
+    modes existed: a peak was dropped because five others were more prominent, which says nothing
+    about the peak. Measured on 260926, a peak near 153 Hz fitted on multiple impulses on both
+    channels sat outside the top six and so was never fitted at all. Prominence and the
+    non-overlap rule decide; a caller passing `n` gets a safety valve, and should check whether it
+    bound.
+
+    **Prominence is measured against the median of the searched range**, which assumes the noise
+    floor is roughly flat across it. On 260926 it is (-44 to -14 dB with a median of -37). A
+    rolling LOCAL baseline was tried instead, to remove the dependence on `fmax`, and it fails on
+    this data: the modes here are broad humps rather than sharp lines, so a window narrow enough
+    to be local still sits on the peak's own shoulder. The 153 Hz peak reads +12.6 dB against the
+    global median, +5.8 dB against a 99 Hz-wide local one and +4.7 dB against a 25 Hz one -- so a
+    local baseline found no peaks at all at any width under ~400 Hz. Kept global, with the
+    limitation stated: widening `fmax` into a noisier region raises the median and can drop a
+    peak that has not changed.
     """
     t = np.asarray(t, float)
     a = np.asarray(a, float)
@@ -216,10 +234,10 @@ def candidate_bands(t, a, fmin=20.0, fmax=None, n=6, rel_width=0.06, prominence_
     if len(p) < 8:
         return []
     db = 10 * np.log10(np.maximum(p, 1e-30))
-    med = np.median(db)
+    prominence = db - np.median(db)
     idx = [i for i in range(2, len(db) - 2)
-           if db[i] == max(db[i - 2:i + 3]) and db[i] - med > prominence_db]
-    idx.sort(key=lambda i: -db[i])
+           if db[i] == max(db[i - 2:i + 3]) and prominence[i] > prominence_db]
+    idx.sort(key=lambda i: -prominence[i])
     out = []
     for i in idx:
         fc = float(f[i])
@@ -229,8 +247,8 @@ def candidate_bands(t, a, fmin=20.0, fmax=None, n=6, rel_width=0.06, prominence_
         # r2 each time. Require a full band-width of separation, not half of one.
         if any(abs(fc - c) < 2.2 * rel_width * max(fc, c) for c, _ in out):
             continue
-        out.append((fc, float(db[i] - med)))
-        if len(out) >= n:
+        out.append((fc, float(prominence[i])))
+        if n is not None and len(out) >= n:
             break
     return [(c * (1 - rel_width), c * (1 + rel_width)) for c, _ in sorted(out)]
 

@@ -189,7 +189,8 @@ camera, which as noted above nothing currently measures.
   moved under every strike, so the root condition is not a clamped one; the strikes clipped the
   sensors; the two channels disagree about damping by about a factor of three at that frequency,
   which they should not if it is one mode; and it is **not among the six most prominent peaks** on
-  either channel, so it only appears if the band search is told to go deeper than the default.
+  either channel, which matters only because the band search used to stop at six and so never
+  fitted it at all -- it now has no cap.
   Whether it has anything to do with an image is untested -- no image measurement has been
   compared against it.
 
