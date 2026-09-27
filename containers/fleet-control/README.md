@@ -136,6 +136,7 @@ log cannot say where the base station was.
 | `rtkbase-settings.conf` | carries `position=`, without which PPK is not possible, and `local_ntripc_msg` -- the mount the vehicle actually consumed |
 | `<date>_*.ubx` | the base station's raw observations for the flight's day, from the `datadir=` in those settings |
 | `backpack-metrics-<date>.json` | every `backpack_*` series over the window, from Mimir |
+| `<start>-armed-<armed>-disarmed-<end>.tlog` | the per-flight tlog `tlog-split` already wrote (tiles#794), selected by the armed stamp |
 
 **It establishes the armed window itself**, from the console log, and cuts the rest to it. That is
 the only clock in a flight that is trustworthy without qualification -- neither device has an RTC,

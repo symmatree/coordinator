@@ -13,7 +13,7 @@
 // nothing else (tiles#793).
 
 import { execFile } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from './config.js';
@@ -187,7 +187,46 @@ export async function collectGround(
     }
   }
 
+  // 5. The per-flight tlog tlog-split already wrote. A file copy, not a retrieval: it has been
+  //    on the share since the flight, which is the point of tiles#794.
+  if (window.armed !== undefined) {
+    try {
+      const name = await tlogForWindow(cfg.cluster.groundTlogs, window.armed);
+      if (name === undefined) {
+        say(`no split tlog covering ${window.armed} in ${cfg.cluster.groundTlogs}`);
+      } else {
+        await copyFile(join(cfg.cluster.groundTlogs, name), join(dir, name));
+        const { size } = await stat(join(dir, name));
+        collected.push({ file: name, bytes: size });
+        say(`  ${name}: ${size} bytes`);
+      }
+    } catch (err) {
+      failed.push(`split tlog: ${(err as Error).message}`);
+      say(`split tlog FAILED: ${(err as Error).message}`);
+    }
+  }
+
   return { collected, failed, window };
+}
+
+/**
+ * The split tlog whose armed stamp matches this flight.
+ *
+ * tlog-split names each file `<start>-armed-<armed>-disarmed-<disarmed>.tlog`, so the armed time
+ * the console log gave us selects the file directly -- no scanning, and no trusting a device
+ * clock. Matched to the second, because both stamps come from cluster time.
+ *
+ * `.part` files are skipped: one is still being written.
+ */
+export async function tlogForWindow(dir: string, armed: string): Promise<string | undefined> {
+  const stamp = armed.replace(/[-:]/g, '').replace(/\.\d+/, '').replace(/Z$/, 'Z');
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (err) {
+    throw new Error(`cannot read ${dir}: ${(err as Error).message}`);
+  }
+  return names.filter((n) => n.endsWith('.tlog')).find((n) => n.includes(`-armed-${stamp}`));
 }
 
 /**

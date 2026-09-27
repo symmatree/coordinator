@@ -16,6 +16,8 @@ export interface Config {
     ntripNamespace: string;
     mimirUrl: string;
     mimirTenant: string;
+    /** Where tlog-split writes its per-flight tlogs (tiles#794), mounted read-only. */
+    groundTlogs: string;
   };
   port: number;
   host: string;
@@ -69,6 +71,7 @@ export function loadConfig(): Config {
       // The Mimir tenant is the cluster name (charts/.../alloy-application.yaml), so it is
       // configured rather than assumed -- there is more than one cluster.
       mimirTenant: env('FLEET_MIMIR_TENANT', 'tiles'),
+      groundTlogs: env('FLEET_GROUND_TLOGS', '/mnt/ground-tlogs'),
     },
     port: Number(env('PORT', '8080')),
     host: env('HOST', '0.0.0.0'),
