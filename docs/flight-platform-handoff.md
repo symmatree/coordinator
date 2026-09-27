@@ -63,42 +63,64 @@ In code: **`bin/coord`** is the device CLI and is short; **`containers/campod-ca
 and **`accel/main.go`** are the two things that actually collect; **`bin/coord-version`** is
 the probe the ground platform reads.
 
-## Where things stand (2026-09-20)
+## Where things stand (2026-09-27)
 
-**The fleet was un-updatable for two days and now is not.** `coord stop` was
-`docker compose stop`, which on a capturing campod did not return -- four measured attempts,
-one returned (51s), three did not, two took the machine down with it. Converge died at that
-task, so nothing could be deployed.
+**The flight data path works end to end, and one thing collects it.** 260923 was the first
+flight collected completely -- coordinator captures, campod session, FC dataflash, journald,
+collectd, backpack metrics, mavproxy tlog, base-station raw GNSS -- 1.1 GB in
+`datasets/flights/rekon10/260923-new-props/`, with a README saying how each piece was
+retrieved. That run is also the argument for everything since: it was a hand-built one-off,
+and none of it happened for the calibration runs that followed.
 
-What that turned out to be, measured:
+So collection moved onto one rule: **a session is a boot, and anything keyed to a boot is
+SELECTED by boot id, never filtered on a wall clock.** That clock is wrong from boot until
+NTP lands and in the field is never corrected. Concretely, since #395/#401:
 
-- **dockerd is the layer that degrades**, not containerd and not the kernel. Same box, same
-  moment: `cat /proc/loadavg` 48-59ms, `ctr containers list` 126-213ms, `docker ps -q`
-  2.1-22.0s, `docker compose ps -q` 40.3s.
-- **The storm is reads, not writes.** ~20 MiB/s of reads with writes collapsing to near zero,
-  in every stop with samples. A "flush everything on stop" theory predicts the opposite.
-- **It was compose paging itself in.** ~56 MiB allocated at the instant of the stop, ~70 MiB
-  of page cache evicted; the docker CLI is 43.5 MiB and the compose plugin 47.2 MiB. When we
-  stopped signalling through compose, the read counter stayed *flat*.
+- captures are `captures/<hostname>/<boot-id>/` on both device kinds; the coordinator's used
+  to be `captures/<oak-d-mxid>/<ISO>/`, which `coord-sessions` could not see at all
+- `timesync.jsonl` and `vehicle.tlog` are written INSIDE the session, where
+  `flight-data-layout.md` always said they belonged
+- collectd writes `/var/log/collectd/<boot-id>/`, so a session's samples are a directory
+- `coord sessions package` carries the boot's `journal.log` and collectd tree in the bundle
+- `docker logs` and `coord version` are deliberately NOT in it -- a container outlives a boot,
+  and a probe of *now* would be a lie about an old session
 
-So: everything that kills a container set now sends `sudo pkill -x -TERM dumb-init` and waits
-for the processes to actually be gone. dumb-init is PID 1 in every device image and proxies
-to the child's whole process group (`dumb-init.c:66`), so one signal per container is enough.
+**Not migrated, and cannot be:** 26 MxId-named session directories on the coordinator and six
+NAS flight directories. Which boot each belonged to was never recorded, so there is no `mv`,
+only leave or delete. `analysis/coordinator_captures.py` indexes `captures/<device>/<session>/`
+generically and reads both shapes.
+
+**FC dataflash comes off through the coordinator now** (#77, `bin/coord-fc-log`): no second
+device on the FC, no card pull. `list` emits JSON; `pull` streams the log to stdout with JSONL
+events on stderr, and fleet-control drives both (#400). It took four attempts to get right and
+every failure was us mishandling ArduPilot's log state machine -- see the next section.
 
 Open work:
 
 | | |
 |---|---|
-| #355 | the unresponsiveness bug, now a record rather than a theory dump |
-| #359 | the experiments doc (PR open) |
-| #368, #371 | merged this session -- probe round-trips, sessions root+layout |
-| #341 | replace the on-device git checkout with a payload artifact |
-| #302 | device-side session packaging -- `coord sessions` exists and works on hardware |
-| #313 | remove VIO for now; blocks nothing but keeps costing |
-| #315 | one shared capture program for campod and OAK-D |
+| retry log 50 into `260926-sixpose-and-bump` | #408 is merged but NOT yet converged onto the coordinator. Converge, then let flight-analysis run it |
+| #11, #370 | time and state distribution. The next task, and mostly doable with no hardware -- see below |
+| #355 | campod unresponsiveness, still a record rather than a theory |
+| #341, #302, #313, #315 | unchanged |
 
-Untested and worth knowing: the 40s quiesce bound is a guess from one 19s observation, and
-`stop_grace_period: 90s` rests on a single 35s measurement.
+**The next task, and why it is cheap.** Analysis currently recovers campod timing by fitting
+observed accelerations against a tap, which is noisy and needs someone to tap. It does not have
+to: `timesync.jsonl` already bridges FC clock to coordinator monotonic, and campod sidecars
+already carry a stable monotonic. **The only missing link is campod monotonic to coordinator
+monotonic** -- two counters from unrelated origins with nothing between them. One round trip
+over the gadget net bounds that offset by RTT/2, measured at 0.35 ms. Two crystals drift up to
+~100 ppm relative, so a single exchange leaves ~18 ms across a 3-minute armed window;
+exchanging every 10 s lets you fit the slope and puts the whole flight under a millisecond.
+Forwarding ARM/DISARM is the other half and nearly free -- the coordinator already derives it
+for the tracker's arm gate -- and it gives analysis the shared marker it is manufacturing with
+a tap. Both records belong in the campod's capture session, which now collects automatically.
+No RTC, no PPS, no new hardware.
+
+The DS3234 breakouts are in hand (SparkFun BOB-10160, SPI, SQW broken out, ±2 ppm). #11 has
+the conceptual layer written as five edges of who feeds time to whom, with the electrical
+detail deliberately left open. Keep those levels apart; mixing them is how that issue
+previously filled with over-specified detail that had to be thrown away.
 
 ## What must not be dropped
 
@@ -122,6 +144,32 @@ and is proven on hardware. A full card is how this started.
 **The Zero has no RTC.** Timestamps from two different boots cannot be ordered against each
 other -- a dying boot's last line can appear *later* than the next boot's first. Use an
 off-box clock for anything crossing a reboot.
+
+**Never touch the hardware without asking for that exact action.** Coordinator, campods, FC.
+Including reads -- an ssh login, an `ls`, a probe, an scp of a scratch script. Permission for
+one task expires with it; it is not standing access. It is the only test article, and it is the
+data-collection vehicle whose repeatability Seth protects by never running anything on it
+himself, because ad-hoc runs pollute the history. Concurrent access also destroys work in both
+directions: probing the FC while he downloads a log corrupts his download, and him pulling
+power during an unannounced test of yours destroys the test. He cannot coordinate around what
+he does not know is happening. When granted, say in the same message what you are putting where,
+remove it afterwards, and name which binary produced any output you show -- the installed one or
+a scratch copy. I ran dev copies out of `/tmp` for days without once saying so.
+
+**Read ArduPilot's state machine before theorising about the FC.** Every FC failure this session
+was us violating its protocol, and it stayed responsive through all of them. It is not the
+fragile part. `AP_Logger_MAVLinkLogTransfer.cpp` is 250 lines and answers the questions:
+`_log_sending_link` is registered for a transfer's duration, `handle_log_request_data` returns
+UNCONDITIONALLY while it is set, and the "Log download in progress" STATUSTEXT that would tell
+you is suppressed for a same-channel requester. A listing releases the link only on its final
+entry, which `LOG_ENTRY.last_log_num` makes observable.
+
+**Prefer the shape of a tool that already works.** `MAVProxy/modules/mavproxy_log.py` requests a
+whole log in one go, tracks receipt by 90-byte block, and coalesces gaps -- and pymavlink is
+already our dependency, so it is portable rather than merely instructive. I invented a windowed
+protocol instead, shipped it twice, and it failed on the vehicle both times; 256 KB is not even
+a multiple of 90, so it could only ever have worked on short logs. Cloning the reference
+implementation would have been cheaper than any of my reasoning about it.
 
 ## How to work here
 
@@ -170,3 +218,48 @@ variant -- cgroup enumeration instead of "signal the binary", an escalation loop
 letting docker own escalation -- and then debugging problems that only existed because of the
 substitution. When the improvement hits a problem the original did not have, that is the
 signal to go back to the original.
+
+**Do not pre-verify what the action will tell you.** Asked to do something through a system,
+do it -- do not first audit whether the system can. A 404 or a non-zero exit answers "is this
+possible" in one step you were taking anyway. Checking in advance costs more, and what it makes
+you inspect is almost always somebody else's work: their merge, their deploy, their pipeline.
+That reads as assuming they failed, and then assuming the systems under them failed too. I did
+this to a pod that had restarted ten minutes after a merge -- which was the pipeline working.
+The tell is converting the second half of a request into a precondition for the first.
+
+**Never assert a PR or issue's state from memory**, least of all one you asked him to act on --
+that is precisely what makes your memory of it stale. `gh pr view` first. And report it flat: no
+"still open", no "already merged", no surprise either way. Surprise is not information, it shows
+you were treating your expectation as the baseline instead of his decision. Say the TYPE and the
+repo too: `coordinator#405, a PR, merged`. A bare number with "open" makes him ask what kind of
+thing it even is before he can decide anything.
+
+**`--author @me` is every agent's work, not yours.** All sessions push as the same GitHub user.
+I handed him five PRs as my backlog and none were mine. If you cannot summarise it, you did not
+write it -- so do not raise it. Attribution is the `Claude-Session:` trailer on the commits.
+
+**One PR per conversational topic.** Not per subdirectory, per language, or per "concern" as you
+have decided to narrow it. He can read two languages in one diff, and fine-grained PRs make him
+reconcile agreement across several reviews for one decision. The tell that you split wrong: a PR
+that keeps absorbing later work, or two PRs from the same afternoon citing the same evidence.
+
+**Say what you measured; he decides what it is worth.** Not just in filed artifacts -- in
+conversation too. I told him re-running a calibration was cheaper than reconstructing its data.
+That was his call about his own morning, and not mine to price.
+
+**"I am not going to theorise, but..." is worse than either option.** Gesturing at a cause while
+disclaiming it is still naming a cause, and it reads as passive aggression. Ask, or drop it.
+Words like "fragile" and "risky" in place of a mechanism are the same move: if you cannot say
+what breaks and how, you have a feeling, not a finding.
+
+**Unshipped code being unverified is not a caveat.** "One thing I have not done is run this live,
+because I just wrote it" is a statement about causality. Flag what you COULD have tested and did
+not.
+
+**When a direct quote and your own model disagree, the quote is the evidence.** A peer talked
+itself out of a quote I had relayed and did nothing for a day as a result.
+
+**Get the conceptual layer right before the electrical detail**, and do not lock both at once.
+Asked how time should flow, I produced pin numbers, pull-up questions and a parameter table in
+the same breath -- and the over-specific half had to be thrown away. One level, with focus, and
+say plainly what is left open.
