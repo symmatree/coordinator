@@ -315,7 +315,7 @@
 
     btn.disabled = false;
   }
-  document.getElementById('refresh').onclick = refreshStatus;
+  document.getElementById('refresh').onclick = async () => { await adoptRuns(); await refreshStatus(); };
 
   /** Every action confirms first, so a bump on a phone screen cannot start anything. */
   async function confirmThen(name, action) {
@@ -337,7 +337,11 @@
       st.busy = false; st.log.push(`error: ${e.message}`); state.set(name, st);
       return render(await j('/nodes'));
     }
+    return follow(name, st, id);
+  }
 
+  /** Watch a run to its end and leave the card saying how it ended. */
+  async function follow(name, st, id) {
     const status = await watchRun(id, async (line, reset) => {
       if (reset) st.log = [];
       st.log.push(line);
@@ -347,6 +351,41 @@
     st.busy = false;
     st.log.push(lostNote(status) ?? `[fleet-control] run ${status}`);
     state.set(name, st);
+    render(await j('/nodes'));
+  }
+
+  /**
+   * Show the runs the SERVICE knows about, not just the ones this page started.
+   *
+   * The page's memory of a run lived entirely in `state`, so switching away on a phone -- or
+   * reloading -- threw away information the service still had. `/runs` keeps the last 50 with
+   * their logs, so a converge that finished while the browser was in the background is
+   * recoverable rather than lost.
+   *
+   * One run per node, the newest. A still-running one is REATTACHED, which needs nothing new:
+   * `watchRun` already replays the log from the start on connect.
+   */
+  async function adoptRuns() {
+    let recent;
+    try { recent = await j('/runs'); } catch { return; }      // no runs, or no service; the cards stand
+    const newest = new Map();
+    for (const r of recent) if (!newest.has(r.node)) newest.set(r.node, r);
+
+    for (const [node, r] of newest) {
+      const st = state.get(node) ?? {};
+      if (st.runId === r.id) continue;                        // already showing this one
+      st.runId = r.id;
+      try {
+        const full = await j(`/runs/${r.id}`);
+        st.log = full.lines.map((l) => l.line).slice(-400);
+        st.busy = full.status === 'running';
+        if (full.status !== 'running') st.log.push(`[fleet-control] run ${full.status}`);
+        state.set(node, st);
+        if (full.status === 'running') void follow(node, st, r.id);
+      } catch {
+        // Pruned between listing and fetching. Nothing to show; leave the card alone.
+      }
+    }
     render(await j('/nodes'));
   }
 
@@ -664,4 +703,6 @@
 
   renderSessions();
   render(await j('/nodes'));
+  // Before anything else: say what the service is already doing, or just finished doing.
+  await adoptRuns();
 </script>
