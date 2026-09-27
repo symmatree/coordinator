@@ -193,11 +193,19 @@ ssh pi@$HOST 'sudo coord fc-log list'
 ssh pi@$HOST 'sudo coord fc-log pull <id>' > "$FLIGHT_DIR/fc/<name>.bin"
 ```
 
-**The log never lands on the device.** `pull` streams to stdout, so the caller's shell
-writes the file and there is no second full transfer waiting on the first to finish. Do not
-reintroduce an on-device path: `/tmp` there is tmpfs, so a 1.8 GB log written to it is
-1.8 GB of RAM on a 3.7 GB box, and the card is not a place to leave a copy of something
-whose home is the archive.
+**The caller sees only stdout.** `pull` streams the log there; the shell writes the file.
+
+Internally it assembles the log in a `.partial` on the card first, then streams that out and
+removes it. That is not a path a caller names or cleans up, and it must not become one -- but
+it is on the card rather than in memory deliberately: blocks can arrive out of order and gaps
+are refilled after the first pass, so assembly needs random access. `/tmp` is tmpfs on a
+coordinator, 1.9 G of the Pi's 3.7 G, so a 2.4 GB log written there would be 2.4 GB of RAM.
+
+**The shape is MAVProxy's.** One request for the whole log (`ofs 0, count 0xFFFFFFFF`), then
+repair what did not arrive, tracking receipt by 90-byte block -- the size of one `LOG_DATA`
+payload, and the unit every ArduPilot offset is a multiple of. An earlier windowed version
+asked for 256 KB at a time and waited for each window to fill; window 0 never filled, twice.
+256 KB is also not a multiple of 90, so every window after the first began mid-block.
 
 **stdout is the log; stderr is JSONL**, one object per line, so a caller reads progress and
 the digest without scraping prose:
