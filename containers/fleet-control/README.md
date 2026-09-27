@@ -111,16 +111,17 @@ no path there, and the transfer is one pass rather than a serial download follow
 received bytes are checked against the digest the device computed while sending; a `pull` that
 reports `error` leaves a `.part` and files nothing.
 
-**`time_utc` is LAST-MODIFIED, not creation.** With `LOG_FILE_DSRMROT=1` the flight's log is the
-one stamped a few seconds *after* the disarm, because that rotation is what closed it. The screen
-labels the column "last written" for that reason: called anything else it leads straight to
-picking the wrong log.
+**`time_utc` is LAST-MODIFIED, not creation.** So it marks the power-off, not the disarm: a log's
+boundaries are power cycles, because `LOG_FILE_DSRMROT` rotates only
+`if (file_disarm_rot && !log_replay)` and this vehicle flies `LOG_REPLAY=1`. The screen labels the
+column "last written" for that reason: called anything else it leads straight to picking the wrong
+log.
 
 It is its own run. The pull holds the serial port with the stack quiesced for as long as it takes
 -- 147.7 MB at 84-85 KiB/s measured 2026-09-23, so about half an hour -- which is a different
 operational state from the minutes everything else here takes. Nothing is deleted afterwards: the
-log stays on the FC's own card, rotated at disarm with `LOG_MAX_FILES=500`, so unlike a device
-card it is not the thing that fills.
+log stays on the FC's own card, in a ring of `LOG_MAX_FILES=500`, so unlike a device card it is
+not the thing that fills.
 
 ## The ground station's own record of a flight
 

@@ -29,9 +29,10 @@ export interface FcLog {
   id: number;
   bytes: number;
   /**
-   * The FC's own field, and it is LAST-MODIFIED, NOT CREATION. With `LOG_FILE_DSRMROT=1` the
-   * flight's log is the one stamped a few seconds after the disarm, because that rotation is
-   * what closed it. Null when the FC had no GPS time when the log was last written.
+   * The FC's own field, and it is LAST-MODIFIED, NOT CREATION, so it marks the power-off: a
+   * log's boundaries are power cycles. `LOG_FILE_DSRMROT` rotates only
+   * `if (file_disarm_rot && !log_replay)` and this vehicle flies `LOG_REPLAY=1`, so nothing
+   * rotates at disarm. Null when the FC had no GPS time when the log was last written.
    *
    * Anything rendering this must not call it a creation time; the operator picks the wrong log.
    */

@@ -176,7 +176,7 @@ export async function offloadSession(
  * no path there. `fetchLog` does the streaming, hashing and verification; what belongs here is
  * where it goes and what the flight record says about it.
  *
- * NOTHING IS DELETED afterwards. The log stays on the FC's own card, rotated at disarm with
+ * NOTHING IS DELETED afterwards. The log stays on the FC's own card, in a ring of
  * `LOG_MAX_FILES=500` -- it is the one artifact in this flow that is not at risk, unlike a
  * device card, which fills.
  */
