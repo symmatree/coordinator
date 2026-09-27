@@ -68,6 +68,7 @@
 <div class="topbar">
   <button id="refresh">Refresh status</button>
   <span class="meta" id="stamp">status not loaded</span>
+  <span class="meta" id="build">&nbsp;</span>
 </div>
 <div id="fleet">loading...</div>
 <div class="pf">
@@ -315,7 +316,7 @@
 
     btn.disabled = false;
   }
-  document.getElementById('refresh').onclick = async () => { await adoptRuns(); await refreshStatus(); };
+  document.getElementById('refresh').onclick = async () => { await showBuild(); await adoptRuns(); await refreshStatus(); };
 
   /** Every action confirms first, so a bump on a phone screen cannot start anything. */
   async function confirmThen(name, action) {
@@ -703,6 +704,29 @@
 
   renderSessions();
   render(await j('/nodes'));
+  /**
+   * Which build is answering, and how long it has been up.
+   *
+   * On the page because the pod is replaced whenever its image digest moves, and a replacement
+   * kills whatever run was in flight -- so "has it just restarted" is worth being able to check
+   * before starting something long.
+   */
+  async function showBuild() {
+    const el = document.getElementById('build');
+    try {
+      const b = await j('/build');
+      const mins = Math.floor(b.uptimeSec / 60);
+      const up = mins < 60 ? `up ${mins}m` : `up ${Math.floor(mins / 60)}h${mins % 60}m`;
+      const rev = b.revision ? b.revision.slice(0, 10) : 'no build manifest';
+      const stale = b.current === false ? ' (not head)' : '';
+      el.textContent = `${up} - ${rev}${stale}${b.title ? ' - ' + b.title : ''}`;
+      el.className = b.current === false ? 'meta warn' : 'meta';
+    } catch (e) {
+      el.textContent = `build unknown: ${e.message}`;
+    }
+  }
+
   // Before anything else: say what the service is already doing, or just finished doing.
   await adoptRuns();
+  await showBuild();
 </script>

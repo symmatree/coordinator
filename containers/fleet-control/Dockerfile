@@ -46,6 +46,19 @@ RUN set -eux; \
       chmod 0755 /usr/local/bin/kubectl; \
       kubectl version --client=true
 
+# Its own provenance, in the #326 manifest format the devices use, because a process cannot
+# read its own image labels. GIT_SHA and GIT_REF come from .github/actions/build-container;
+# both are empty for a local build, which the service reports as such rather than pretending.
+ARG GIT_SHA=""
+ARG GIT_REF=""
+RUN printf '%s\n' \
+      "# fleet-control build manifest, written by its Dockerfile." \
+      "ORG_OPENCONTAINERS_IMAGE_SOURCE=\"https://github.com/symmatree/coordinator\"" \
+      "ORG_OPENCONTAINERS_IMAGE_REVISION=\"${GIT_SHA}\"" \
+      "FLEET_SOURCE_REF=\"${GIT_REF}\"" \
+      "FLEET_UNIT=\"fleet-control\"" \
+      > /etc/container-image
+
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY containers/fleet-control/ui ./ui
