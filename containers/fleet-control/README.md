@@ -122,6 +122,42 @@ operational state from the minutes everything else here takes. Nothing is delete
 log stays on the FC's own card, rotated at disarm with `LOG_MAX_FILES=500`, so unlike a device
 card it is not the thing that fills.
 
+## The ground station's own record of a flight
+
+`captures/` is the vehicle's view; `ground/` is the ground station's. Different observers, neither
+substituting for the other -- a ground-side link dropout is invisible to the vehicle, and the FC
+log cannot say where the base station was.
+
+`POST /flights/<name>/ground` collects into `<flight>/ground/`:
+
+| | |
+|---|---|
+| `mavproxy-console.log` | the arm/disarm timeline, **in cluster time** |
+| `rtkbase-settings.conf` | carries `position=`, without which PPK is not possible, and `local_ntripc_msg` -- the mount the vehicle actually consumed |
+| `<date>_*.ubx` | the base station's raw observations for the flight's day, from the `datadir=` in those settings |
+| `backpack-metrics-<date>.json` | every `backpack_*` series over the window, from Mimir |
+
+**It establishes the armed window itself**, from the console log, and cuts the rest to it. That is
+the only clock in a flight that is trustworthy without qualification -- neither device has an RTC,
+so nothing on the vehicle can supply it. The Mimir range is widened by 20 minutes each side on
+purpose: on 2026-09-23 the backpack rebooted and re-associated *before* the armed window, which is
+the event that explained the flight.
+
+Driven with `kubectl`, for the same reason the device side is driven with `ssh`: one credential,
+one trust path, and the automated steps are the documented manual ones
+([docs/post-flight-collection.md](../../docs/post-flight-collection.md)) rather than a second
+implementation of them. In-cluster it uses the pod's ServiceAccount, which can read pods and exec
+in `mavproxy` and `ntrip` and nothing else (tiles#793).
+
+**Each artifact is attempted independently.** A failure is recorded and reported, not thrown: a
+flight missing its base position is still worth the console log, and "not collected, and why" is as
+load-bearing as the list of what was.
+
+Files land in `ground/` because
+[docs/flight-data-layout.md](../../docs/flight-data-layout.md) puts ground-side records there and
+calls itself canonical; `docs/post-flight-collection.md` used `cluster/` on the day and the two
+disagree.
+
 ## Progress comes from events, not scraped text
 
 `ansible-runner` emits a structured JSON event per task and per host. The service renders those
@@ -176,6 +212,7 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first |
 | `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |
 | `POST /nodes/:name/fc-log?id=&flight=` | stream one dataflash log into a flight dir -> `202 {id}` |
+| `POST /flights/:flight/ground` | collect the ground station's own record of a flight -> `202 {id}` |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
 | `GET /runs/:id/log` | a failed play as ansible printed it |

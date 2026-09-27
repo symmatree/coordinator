@@ -10,6 +10,13 @@ export interface Config {
   images: GithubOptions & { cacheDir: string; publicUrl: string };
   /** Where recovered flights land -- the datasets share. */
   flightsDir: string;
+  /** Where the ground station's own record of a flight lives. See cluster.ts. */
+  cluster: {
+    mavproxyNamespace: string;
+    ntripNamespace: string;
+    mimirUrl: string;
+    mimirTenant: string;
+  };
   port: number;
   host: string;
 }
@@ -55,6 +62,14 @@ export function loadConfig(): Config {
     },
     // The datasets share, mounted from a static PV (tiles#764). Recovered flights go here.
     flightsDir: env('FLEET_FLIGHTS_DIR', '/mnt/flights'),
+    cluster: {
+      mavproxyNamespace: env('FLEET_MAVPROXY_NAMESPACE', 'mavproxy'),
+      ntripNamespace: env('FLEET_NTRIP_NAMESPACE', 'ntrip'),
+      mimirUrl: env('FLEET_MIMIR_URL', 'http://mimir-gateway.mimir.svc'),
+      // The Mimir tenant is the cluster name (charts/.../alloy-application.yaml), so it is
+      // configured rather than assumed -- there is more than one cluster.
+      mimirTenant: env('FLEET_MIMIR_TENANT', 'tiles'),
+    },
     port: Number(env('PORT', '8080')),
     host: env('HOST', '0.0.0.0'),
   };
