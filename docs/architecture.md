@@ -29,24 +29,31 @@ operator's request from the raw switch. (Open: for the specific *source-switch* 
 be marginal given the VISO/reboot constraints; the durable value is the general **intent ->
 precondition-check -> report** pattern.)
 
-**UC2 -- On-vehicle control surface (Top pHAT screen + buttons); laptop-free ops.** Run a coordinator
-flight without a laptop, using the already-stocked **SparkFun Top pHAT (DEV-16301)**: a **2.4" color
-TFT**, **six RGB LEDs**, a **joystick + two buttons**, mics/speaker, and a **hardware Pi power-off
-switch** (LEDs + buttons on I2C `0x71`, TFT on SPI -- [host-setup.md](host-setup.md)). The display shows
-coordinator **state** (VIO mode, stereo/estimator health, FC link); the **RGB LEDs** are the green/red
-**readiness** signal; the joystick + buttons drive the common actions -- **pull + restart** (LED green
-when back up), **start input logging**, **start full VIO**, **graceful shutdown** (the hardware switch is
-the hard cutoff), and possibly **"switch mode + reboot"** (since `VISO_TYPE` needs a reboot). This is
-`coord`'s actions and states bound to physical I/O instead of an SSH session.
+**UC2 -- On-vehicle control surface; laptop-free ops.** Run a coordinator flight without a laptop.
+The panel shows coordinator **state** (VIO mode, stereo/estimator health, FC link) and a green/red
+**readiness** signal; physical controls drive the common actions -- **pull + restart**, **start input
+logging**, **start full VIO**, **graceful shutdown**, and possibly **"switch mode + reboot"** (since
+`VISO_TYPE` needs a reboot). This is `coord`'s actions and states bound to physical I/O instead of an
+SSH session.
+
+**Hardware status (2026-09-27): the SparkFun Top pHAT (DEV-16301) this was written around was
+destroyed in a crash and is not fitted.** It had supplied the 2.4" SPI TFT, six RGB LEDs, a joystick
+and two buttons, mics/speaker, and a hardware Pi power-off switch. The coordinator's only current
+attachments are the **FC serial link** and **pins to the SH1106**. So the display half of UC2 survives
+as [#110](https://github.com/symmatree/coordinator/issues/110) (SH1106 on `/dev/i2c-1`), while the
+buttons, RGB LEDs and hardware power switch have no hardware behind them. The GPIO the pHAT used to
+claim -- I2C `0x71`, SPI TFT on GPIO7-11, WM8960 I2S on GPIO18-21 -- is free, which matters for
+anything budgeting the header (for example the PPS work in
+[#11](https://github.com/symmatree/coordinator/issues/11)).
 
 **Control paths (who commands what, when).** In-flight **flight-mode / EKF-source** changes are on the
-**RC transmitter via the FC** -- the pHAT is unreachable once airborne, and the safety-critical fallback
-ladder (GPS position-hold -> switch to **VIO** -> **alt-hold** if VIO also fails, Z held via `EK3_SRC2`
+**RC transmitter via the FC** -- an on-vehicle panel is unreachable once airborne, and the
+safety-critical fallback ladder (GPS position-hold -> switch to **VIO** -> **alt-hold** if VIO also fails, Z held via `EK3_SRC2`
 -> **stabilize** as last resort, with real operator-crash risk) is inherently a radio task. So the
 coordinator's *in-flight* job is to **report VIO/estimator health to the GCS / goggles** so the operator
 can make those switches with information (the FC's innovation gates reject a bad ExtNav pose as the
-safety net). The pHAT + network API (UC2) are for **ground / lifecycle** control, not flight control.
-Near-term the first flights are just **"watch GPS degrade and characterize the failure modes"** -- we do
+safety net). The on-vehicle panel + network API (UC2) are for **ground / lifecycle** control, not
+flight control. Near-term the first flights are just **"watch GPS degrade and characterize the failure modes"** -- we do
 not know them yet; manual ice-hole missions and, much later, automated "peel the onion" boundary mapping
 come after.
 
@@ -86,11 +93,12 @@ the same device.
 **Cross-cutting principle.** The coordinator is an **autonomous payload commanded by intent that
 reports its own readiness** -- not a passive pipe that fails silently or reveals problems only in
 flight. **On host vs container:** the supervisor is intended to be a **container**, not a host process --
-the Top pHAT is device-passthrough (I2C `0x71` + SPI TFT, the same pattern the OAK-D USB and FC serial
-already use) and lifecycle control (pull/restart siblings) is the standard Docker-socket pattern;
+the front panel is device-passthrough (the SH1106 on `/dev/i2c-1`, the same pattern the OAK-D USB and
+FC serial already use) and lifecycle control (pull/restart siblings) is the standard Docker-socket
+pattern;
 host dependencies stay limited to what genuinely needs low-level hardware (PPS), per the
-minimize-host-deps goal. Only host reboot is truly host-coupled (a minimal privileged call or tiny helper
--- and the Top pHAT even has a hardware power-off switch). The remaining design details (transport for
+minimize-host-deps goal. Only host reboot is truly host-coupled (a minimal privileged call or tiny
+helper; no hardware power switch is fitted). The remaining design details (transport for
 operator intent, the health/readiness model, display/button mapping, and how "mode + reboot" fires
 safely) are the next conversation.
 

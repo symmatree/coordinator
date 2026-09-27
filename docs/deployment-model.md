@@ -149,7 +149,7 @@ compose-stack web UI) on the coordinator. **Dropped.** It maps to neither real "
 change" channel: it is not a runtime command/status path, and as a web **authoring** surface
 it re-introduces the [#48](https://github.com/symmatree/coordinator/issues/48) drift (a third
 writer alongside git and the box). Visibility is already covered by `coord status`, the
-SH1106 status OLED, the Top pHAT readiness indicator
+SH1106 status OLED, the front-panel readiness indicator
 ([#87](https://github.com/symmatree/coordinator/issues/87)), and persisted journald.
 
 **Why it was ever there:** [OpenMower](https://github.com/symmatree/fables/blob/main/OpenMower/openmower-os-stack.md)

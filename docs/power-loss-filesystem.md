@@ -180,7 +180,8 @@ Not the filesystem — the discipline. If every disarm flushes + `sync`s (later:
 `@data`) **and signals done physically** (you're at the vehicle, no SSH), the only lossy events left
 are pulling power while armed or a brownout — where a perfect mapping mission isn't expected anyway.
 `coord shutdown` is ~an alias (a clean `poweroff` already unmounts + syncs); its value is being the
-pHAT button target + the safe-to-cut indicator hook.
+front-panel button target + the safe-to-cut indicator hook. No button hardware is fitted today --
+see [architecture.md](architecture.md) UC2.
 
 ## Worked example — 260712 tree-crash (first real drop during capture)
 
@@ -214,7 +215,7 @@ gave us ground truth — [full writeup on #41](https://github.com/symmatree/coor
 |--------|-------|
 | FS/power-loss architecture (umbrella + decision) | [#41](https://github.com/symmatree/coordinator/issues/41) |
 | Repeatable btrfs image build, fleet-wide (**mmdebstrap-in-CI** in `dotfiles-symm`; `rpi-image-gen` can't do subvolumes) | [#96](https://github.com/symmatree/coordinator/issues/96) |
-| Laptop-free shutdown: pHAT button + poweroff + safe-to-cut indicator | [#87](https://github.com/symmatree/coordinator/issues/87) |
+| Laptop-free shutdown: front-panel button + poweroff + safe-to-cut indicator (no button hardware fitted) | [#87](https://github.com/symmatree/coordinator/issues/87) |
 | DISARM → stop still capture + fsync + `sync`/snapshot + physical done-signal | [#88](https://github.com/symmatree/coordinator/issues/88) |
 | Power-loss-safe capture format (`.feat` #83 + stills #72) | [#89](https://github.com/symmatree/coordinator/issues/89) |
 | Images present offline (pre-baked at build time / rw `@var`) | [#90](https://github.com/symmatree/coordinator/issues/90) |
@@ -229,6 +230,6 @@ layout above.
 ## Related
 
 - [coordinator-network.md](coordinator-network.md) — the 2026-07-04 recovery this spun out of, and #41.
-- [architecture.md](architecture.md) — runtime paths (`/var/lib/coordinator/*`) and the Top pHAT UC2
-  control surface used by #87.
+- [architecture.md](architecture.md) — runtime paths (`/var/lib/coordinator/*`) and the UC2 control
+  surface used by #87, including its current hardware status.
 - #42 — disarmed bench capture (the concrete "the in-progress file is the irreplaceable artifact" case).
