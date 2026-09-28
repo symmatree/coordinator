@@ -87,6 +87,54 @@ explains all six. Repeat on a later capture and see whether the fitted values mo
 between captures with nothing touched, the premise fails and no cross-sensor amplitude comparison is
 available.
 
+### How the calibration is to be done
+
+Operator's direction, recorded here so it is not re-derived or quietly re-litigated. This is method,
+not a plan: it says how to do the solve whenever it is done, and what the data selection has to
+respect for the answer to mean anything.
+
+**Collection.** The vehicle is held by hand in each of six orientations. Between poses there is
+positioning, hand shake, and the operator settling into a stable hold -- so a session is a small
+number of usable spans separated by transients, not a continuous record of held poses.
+
+**Data selection: one contiguous span per pose.** Fitting the whole session lets the transients
+dominate, which is exactly backwards -- the point is to calibrate *from* the quiet parts, not to
+average the noisy ones in and then try to work around them.
+
+**Take the span from the CENTRE of a quiet period, not the first window that satisfies the
+criterion.** A first-satisfying-window search lands on the leading edge of the criterion, which is
+where the transient is still decaying and where the signal only just qualified. Centring the
+requested duration inside the quiet region avoids collecting exactly the samples the criterion was
+meant to exclude. This is a property of any threshold-crossing selector and applies beyond this
+calibration.
+
+**The whole-session alternative, kept rather than dismissed.** Processing the entire record and
+exploiting temporal continuity between poses is a real option and might use information that
+per-pose spans throw away. Its cost is that it also admits every positioning transient, so it needs
+a model that can represent those or a way to downweight them. Not chosen for the first pass; not
+ruled out.
+
+**Sampling-rate drift over the session should be looked at**, and it is probably clock drift rather
+than the part's output rate changing. It matters less here than it would elsewhere: the measurement
+is the **direction and magnitude of the gravity vector while stationary in each pose**, not a
+frequency response, so a slowly wrong time axis does not move a static mean. Look at it anyway --
+if it is large or steppy it says something about the sensor path that other analyses will care
+about, and "we thought we were measuring across samples what we were not" is the kind of thing that
+is cheap to check and expensive to assume.
+
+**What there is to solve for.** Six orientations give enough to determine scale and bias per axis
+per sensor, and from those the **relative orientation of the two accelerometers to each other**.
+With the FC dataflash covering the same poses there is a third instrument seeing the same gravity
+vector, which ties both sensors to the **flight controller's frame** -- either as part of the
+solution or as the residual that checks it. All three should agree about where gravity points in
+each pose, and any disagreement is the measurement.
+
+**Where the code and the answers live.** Beyond very initial exploration, this is code in the repo,
+and the calibrations actually used are produced by CI or by a cluster job -- **not** numbers taken
+from an interactive analysis and pasted into the repo as the one true calibration. A calibration
+that cannot be regenerated from its inputs is not traceable to the data it came from, and the
+regeneration is what makes it checkable when a sensor is moved or a session is re-run.
+
 ---
 
 ## Topic 2 -- Is the blur largely a focus problem?
