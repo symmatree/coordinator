@@ -12,15 +12,8 @@
 // than one -- and armed is the wrong interval anyway, since it begins after the pre-arm window
 // where RTK convergence happens.
 //
-// NOTHING HERE TOUCHES ANOTHER POD, which is why the `pods/log` and `pods/exec` grants this
-// service held in `mavproxy` and `ntrip` are gone. Two of those reads were dropped outright:
-// mavproxy's console log is cluster debugging output rather than flight data, and rtkbase's
-// settings.conf is git-authoritative in tiles so it already has a history. The third, the base
-// station's raw observations, moved rather than went: it was `kubectl exec ... cat` into a 64 MB
-// buffer against a few hundred MB of file, and now rtkbase writes them straight to the datasets
-// share and this reads the days a flight spans off it (#416).
-//
-// So every source here is a directory on the share, plus one HTTP query to Mimir.
+// Every source is a directory on a share, plus one HTTP query to Mimir. Nothing here reaches into
+// another pod.
 
 import { copyFile, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -137,16 +130,11 @@ export function daysIn(range: Range): string[] {
 }
 
 /**
- * The base station's raw observations for one UTC day.
+ * The base station's raw observations for one UTC day, from `dir` -- a mount shared read-only with
+ * whatever is writing them.
  *
- * `file_name='%Y-%m-%d_%h-%M-%S_GNSS-1'` in rtkbase's settings, so a day's files are the ones whose
- * name begins with that date. The `.ubx.tag` sidecar comes too -- it is matched by the same
- * `.ubx` test and is part of the record.
- *
- * A DIRECTORY READ. rtkbase writes these to `datasets/gps-logs/attic-rtk-base/raw/` -- the
- * directory the base's logs already live in, whose curated top level feeds a PPP re-solve of the
- * base position -- and this service mounts it read-only, so there is no pod to reach into and
- * nothing to stream (#416).
+ * rtkbase names them `%Y-%m-%d_%h-%M-%S_GNSS-1`, so a day's files are the ones whose name begins
+ * with that date. The `.ubx.tag` sidecar matches the same `.ubx` test and is part of the record.
  */
 export async function observationsFor(dir: string, day: string): Promise<string[]> {
   const names = await readdir(dir);
