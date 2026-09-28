@@ -1,94 +1,127 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { armedWindow, settingsValue, tlogForWindow } from '../src/cluster.js';
+import { backpackMetrics, listTlogs, resolveRange, type TlogFile } from '../src/cluster.js';
 
-// Shaped like `kubectl logs --timestamps` on mavproxy, with the lines observed on 2026-09-23.
-const CONSOLE = [
-  '2026-09-23T11:58:47.101Z Detected vehicle 1:1 on link 0',
-  '2026-09-23T11:59:00.220Z NTRIP started',
-  '2026-09-23T12:03:17.880Z link 1 down',
-  '2026-09-23T12:08:48.010Z link 1 OK',
-  '2026-09-23T12:09:11.700Z ARMED',
-  '2026-09-23T12:10:02.400Z Mode ALT_HOLD',
-  '2026-09-23T12:11:50.800Z DISARMED',
-  '2026-09-23T12:12:09.300Z link 1 down',
-].join('\n');
-
-test('the armed window comes from the console, which is the one clock that does not lie', () => {
-  // Neither device has an RTC, so nothing on the vehicle can establish this -- which is why
-  // selecting sessions and FC logs is a ground-side act (#385).
-  const w = armedWindow(CONSOLE);
-  assert.equal(w.armed, '2026-09-23T12:09:11.700Z');
-  assert.equal(w.disarmed, '2026-09-23T12:11:50.800Z');
-});
-
-test('DISARMED is not read as ARMED', () => {
-  // `\bARMED\b` matches inside DISARMED, so the disarm line would otherwise set both.
-  const w = armedWindow('2026-09-23T12:11:50.800Z DISARMED');
-  assert.equal(w.armed, undefined);
-  assert.equal(w.disarmed, '2026-09-23T12:11:50.800Z');
-});
-
-test('the FIRST arm wins and the LAST disarm wins', () => {
-  // A pod's console can span several flights. The window has to bracket the whole thing rather
-  // than describe whichever event was seen last.
-  const w = armedWindow([
-    '2026-09-23T10:00:00Z ARMED',
-    '2026-09-23T10:05:00Z DISARMED',
-    '2026-09-23T12:09:11Z ARMED',
-    '2026-09-23T12:11:50Z DISARMED',
-  ].join('\n'));
-  assert.equal(w.armed, '2026-09-23T10:00:00Z');
-  assert.equal(w.disarmed, '2026-09-23T12:11:50Z');
-});
-
-test('a console with no arm reports none rather than guessing', () => {
-  const w = armedWindow(CONSOLE.split('\n').filter((l) => !/ARMED/.test(l)).join('\n'));
-  assert.equal(w.armed, undefined);
-  assert.equal(w.disarmed, undefined);
-});
-
-test('settings.conf values survive quoting', () => {
-  // rtkbase writes these quoted; `position` is why any of this matters -- PPK is not possible
-  // without the base coordinates -- and `datadir` is on a separate mount, so it is read rather
-  // than guessed at.
-  const conf = [
-    '# rtkbase',
-    "position='45.1234567 -122.7654321 123.456'",
-    'datadir="/home/rtkbase/data"',
-    'local_ntripc_msg=1005,1077,1087',
-    'rtcm_msg_a = 1004,1005',
-  ].join('\n');
-  assert.equal(settingsValue(conf, 'position'), '45.1234567 -122.7654321 123.456');
-  assert.equal(settingsValue(conf, 'datadir'), '/home/rtkbase/data');
-  assert.equal(settingsValue(conf, 'rtcm_msg_a'), '1004,1005');
-  assert.equal(settingsValue(conf, 'nope'), undefined);
-});
-
-test('a settings.conf with no position says so rather than returning empty', () => {
-  assert.equal(settingsValue('datadir=/x', 'position'), undefined);
-});
-
-test('the split tlog is selected by the armed stamp, and a .part is never picked', async () => {
-  // tlog-split names each file `<start>-armed-<armed>-disarmed-<disarmed>.tlog`, and the console
-  // log gives that armed time in the same cluster clock -- so the name selects the file, with no
-  // scanning and no device clock involved. A `.part` is still being written.
+/** A directory shaped like tlog-split's output, including the shapes that do not parse. */
+function tlogDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'tlogs-'));
-  const wanted = '20260923T120500Z-armed-20260923T120911Z-disarmed-20260923T121150Z.tlog';
-  for (const n of [
-    wanted,
-    '20260923T100000Z-armed-20260923T100500Z-disarmed-20260923T101000Z.tlog',
-    '20260923T130000Z-armed-20260923T120911Z-disarmed-20260923T131000Z.tlog.part',
-    '20260923T140000Z-noflight-age.tlog',
-  ]) writeFileSync(join(dir, n), '');
+  const files: [string, string][] = [
+    // Two flights from one evening, and the noflight stretch before them.
+    ['20260926T180000Z-noflight-age.tlog', '2026-09-26T21:00:00Z'],
+    ['20260926T210000Z-armed-20260926T221502Z-disarmed-20260926T223000Z.tlog', '2026-09-26T22:30:00Z'],
+    ['20260926T223000Z-armed-20260926T224000Z-disarmed-20260926T225500Z.tlog', '2026-09-26T22:55:00Z'],
+    // Being written right now.
+    ['20260927T090000Z.tlog.part', '2026-09-27T09:30:00Z'],
+    // Something nobody's naming scheme produced. It still has to be listable.
+    ['hand-copied.tlog', '2026-09-20T12:00:00Z'],
+  ];
+  for (const [name, when] of files) {
+    writeFileSync(join(dir, name), name);
+    const t = Date.parse(when) / 1000;
+    utimesSync(join(dir, name), t, t);
+  }
+  return dir;
+}
 
-  assert.equal(await tlogForWindow(dir, '2026-09-23T12:09:11.700Z'), wanted);
-  assert.equal(await tlogForWindow(dir, '2026-09-23T10:05:00Z'),
-    '20260923T100000Z-armed-20260923T100500Z-disarmed-20260923T101000Z.tlog');
-  // An armed time with no file is absent, not an error, and not a near miss.
-  assert.equal(await tlogForWindow(dir, '2026-09-23T23:59:59Z'), undefined);
-  await assert.rejects(() => tlogForWindow(join(dir, 'nope'), '2026-09-23T12:09:11Z'), /cannot read/);
+test('the listing reports every file, including the ones whose names do not parse', async () => {
+  // A listing that hides what it cannot classify makes those files unretrievable, which is worse
+  // than a row with empty columns (#414).
+  const list = await listTlogs(tlogDir());
+  assert.equal(list.length, 5);
+  assert.ok(list.find((t) => t.name === 'hand-copied.tlog'));
+  const odd = list.find((t) => t.name === 'hand-copied.tlog') as TlogFile;
+  assert.equal(odd.start, undefined);
+  assert.equal(odd.armed, undefined);
+  // Every row has these two, which is why they are what it sorts on and falls back to.
+  assert.ok(odd.bytes > 0);
+  assert.equal(odd.modified, '2026-09-20T12:00:00.000Z');
+});
+
+test('an open file is listed and marked, not hidden', async () => {
+  const list = await listTlogs(tlogDir());
+  const part = list.find((t) => t.name.endsWith('.part')) as TlogFile;
+  assert.equal(part.partial, true);
+  assert.equal(list.filter((t) => !t.partial).length, 4);
+});
+
+test('the stamps in a name are read out as ISO, and a never-armed file has no armed time', async () => {
+  const list = await listTlogs(tlogDir());
+  const flight = list.find((t) => t.name.startsWith('20260926T210000Z')) as TlogFile;
+  assert.equal(flight.start, '2026-09-26T21:00:00Z');
+  assert.equal(flight.armed, '2026-09-26T22:15:02Z');
+  assert.equal(flight.disarmed, '2026-09-26T22:30:00Z');
+  const bench = list.find((t) => t.name.includes('noflight')) as TlogFile;
+  assert.equal(bench.start, '2026-09-26T18:00:00Z');
+  assert.equal(bench.armed, undefined);
+});
+
+test('newest first, by the field every row has', async () => {
+  const list = await listTlogs(tlogDir());
+  assert.deepEqual(list.map((t) => t.modified.slice(0, 16)), [
+    '2026-09-27T09:30', '2026-09-26T22:55', '2026-09-26T22:30', '2026-09-26T21:00', '2026-09-20T12:00',
+  ]);
+});
+
+test('a missing directory says so rather than reporting nothing', async () => {
+  // An empty result is not a finding: "no tlogs" and "the share is not mounted" are different.
+  await assert.rejects(() => listTlogs(join(tmpdir(), 'no-such-dir-here')), /cannot read/);
+});
+
+test('a given range is used exactly as given', () => {
+  // No margin. A caller that states an interval means that interval -- widening it silently is
+  // the kind of cleverness this route is being cured of.
+  const r = resolveRange([], { start: '2026-09-26T21:00:00Z', end: '2026-09-26T23:00:00Z' });
+  assert.deepEqual(r, { start: '2026-09-26T21:00:00Z', end: '2026-09-26T23:00:00Z', from: 'given' });
+});
+
+test('with no range given, the tlogs named bound it', async () => {
+  // Each tlog runs from the previous cut to its disarm, so it already covers the pre-arm window
+  // where RTK convergence happens -- which an armed-to-disarmed range excluded.
+  const list = await listTlogs(tlogDir());
+  const two = list.filter((t) => t.armed !== undefined);
+  const r = resolveRange(two, {});
+  assert.equal(r?.start, '2026-09-26T21:00:00Z');
+  assert.equal(r?.end, '2026-09-26T22:55:00Z');
+  assert.match(r?.from ?? '', /2 tlog/);
+});
+
+test('a tlog whose name did not parse still bounds a range, by its mtime', async () => {
+  const list = await listTlogs(tlogDir());
+  const odd = list.filter((t) => t.name === 'hand-copied.tlog');
+  const r = resolveRange(odd, {});
+  assert.equal(r?.start, '2026-09-20T12:00:00.000Z');
+  assert.equal(r?.end, '2026-09-20T12:00:00.000Z');
+});
+
+test('nothing named and nothing given is no range, not a guessed one', () => {
+  assert.equal(resolveRange([], {}), undefined);
+});
+
+test('the metrics step widens with the range, so a long one is not hundreds of thousands of points', async () => {
+  // A query_range asking for a point every 5 s over a week is ~120k per series. The step is
+  // reported in the run log so a coarse answer is visible as one rather than passing for fine.
+  const asked: URL[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (u: URL) => {
+    asked.push(u);
+    return { ok: true, text: async () => '{"status":"success"}' } as unknown as Response;
+  }) as typeof fetch;
+  try {
+    const cfg = { cluster: { mimirUrl: 'http://mimir.invalid', mimirTenant: 'tiles' } } as never;
+    const short = await backpackMetrics(cfg, { start: '2026-09-26T21:00:00Z', end: '2026-09-26T22:00:00Z', from: 'x' });
+    assert.equal(short.step, 5);
+    const week = await backpackMetrics(cfg, { start: '2026-09-20T00:00:00Z', end: '2026-09-27T00:00:00Z', from: 'x' });
+    assert.equal(week.step, 55);   // 7 days over an 11k-point ceiling
+    assert.equal(asked[1]?.searchParams.get('step'), '55');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a range that is not a pair of timestamps is refused rather than queried', async () => {
+  const cfg = { cluster: { mimirUrl: 'http://mimir.invalid', mimirTenant: 'tiles' } } as never;
+  await assert.rejects(() => backpackMetrics(cfg, { start: 'nope', end: 'nor this', from: 'x' }), /not a pair/);
 });

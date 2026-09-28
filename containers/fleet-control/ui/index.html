@@ -87,6 +87,13 @@
   <div class="step">3 &mdash; name the flight, then retrieve what you ticked (sessions and the FC log)</div>
   <input type="text" id="pfFlight" placeholder="flight name, e.g. 2026-09-19-vio"
          autocapitalize="off" autocorrect="off" spellcheck="false" />
+  <div class="step">ground range &mdash; optional, UTC. Leave both empty and the ticked tlogs bound it</div>
+  <div class="btns">
+    <input type="text" id="pfStart" placeholder="start, e.g. 2026-09-27T15:50:00Z"
+           autocapitalize="off" autocorrect="off" spellcheck="false" />
+    <input type="text" id="pfEnd" placeholder="end, e.g. 2026-09-27T16:20:00Z"
+           autocapitalize="off" autocorrect="off" spellcheck="false" />
+  </div>
   <div class="step">what this flight was for &mdash; written now, while you remember</div>
   <textarea id="pfNotes" rows="3" placeholder="e.g. six-pose calibration plus a bump test on each arm"></textarea>
   <div class="btns"><button id="pfSaveNotes">Save description</button></div>
@@ -538,6 +545,47 @@
       root.append(group);
     }
     if (pf.fc) root.append(fcGroup(pf.fc));
+    if (pf.tlogs) root.append(tlogGroup(pf.tlogs));
+  }
+
+  /**
+   * The ground tlogs, as one more block to tick from.
+   *
+   * THE GROUND RECORD: what actually crossed the radio link and the backpack, which the vehicle
+   * cannot see. Ticking is how you say which ones -- nothing here works out which flight you
+   * meant, because the version that did filed the wrong flight's tlog (#414).
+   *
+   * Every file the share holds is shown, including one whose name did not parse and one still
+   * being written. A row that cannot be classified still has a size and a last-written time, and
+   * hiding it would make it unretrievable.
+   */
+  function tlogGroup(g) {
+    const group = $({ className: 'srcgroup' });
+    const head = $({ className: 'src' });
+    head.append($({ className: 'name', textContent: 'ground -- mavproxy tlogs' }));
+    head.append(
+      g.error
+        ? $({ className: 'count err', textContent: g.error })
+        : $({ className: 'count', textContent: `${g.tlogs.length} files, cluster time` }),
+    );
+    group.append(head);
+    for (const tl of g.tlogs) {
+      const row = $({ className: 'sess' });
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      const k = `tlog:${tl.name}`;
+      box.checked = pf.picked.has(k);
+      box.onchange = () => { box.checked ? pf.picked.add(k) : pf.picked.delete(k); };
+      row.append(
+        box,
+        $({ className: 'num', textContent: tl.armed ? `armed ${tl.armed.slice(11, 19)}Z` : 'never armed' }),
+        $({ className: 'num', textContent: tl.partial ? 'still open' : (tl.disarmed ?? tl.modified).slice(11, 19) + 'Z' }),
+        $({ className: 'num', textContent: MB(tl.bytes) }),
+      );
+      row.append($({ className: 'why', textContent: tl.name }));
+      group.append(row);
+    }
+    return group;
   }
 
   /**
@@ -661,14 +709,45 @@
       }
       renderSessions();
     }
+    // One directory in the cluster, not per node -- nothing here is on a vehicle.
+    pf.tlogs = { tlogs: [] };
+    renderSessions();
+    try {
+      pf.tlogs.tlogs = (await j('/ground/tlogs')).tlogs;
+    } catch (e) {
+      pf.tlogs.error = e.message;
+      log(`ground tlogs: ${e.message}`);
+    }
+    renderSessions();
   };
 
   /** One session per call, so a failure costs that session rather than the whole selection. */
   document.getElementById('pfGet').onclick = async () => {
     const flight = document.getElementById('pfFlight').value.trim();
     if (!flight) return log('name the flight first');
-    if (pf.picked.size === 0) return log('nothing ticked');
-    for (const key of [...pf.picked]) {
+    const start = document.getElementById('pfStart').value.trim();
+    const end = document.getElementById('pfEnd').value.trim();
+    if (!!start !== !!end) return log('give both start and end, or neither');
+    const tlogs = [...pf.picked].filter((k) => k.startsWith('tlog:')).map((k) => k.slice(5));
+    if (pf.picked.size === 0 && !start) return log('nothing ticked');
+    // The ground side is ONE call rather than one per file: the tlogs are a copy on the share, and
+    // the observations and the metrics are fetched over a single range covering all of them.
+    if (tlogs.length > 0 || start) {
+      const q = new URLSearchParams();
+      for (const name of tlogs) q.append('tlog', name);
+      if (start) { q.set('start', start); q.set('end', end); }
+      log(`ground: ${tlogs.length} tlog(s)${start ? `, ${start} -> ${end}` : ''}`);
+      try {
+        const { id } = await j(`/flights/${encodeURIComponent(flight)}/ground?${q}`, { method: 'POST' });
+        const status = await watchRun(id, (line) => log('  ' + line));
+        // Same rule as a session: untick only on success, so a file left ticked costs a retry
+        // while an unticked one that never landed would be a silent hole in the flight.
+        if (status === 'succeeded') for (const name of tlogs) pf.picked.delete(`tlog:${name}`);
+        else log(`  ground: ${lostNote(status) ?? `run ${status}`} -- leaving the tlogs ticked`);
+      } catch (e) { log(`ground: ${e.message}`); }
+      renderSessions();
+    }
+    for (const key of [...pf.picked].filter((k) => !k.startsWith('tlog:'))) {
       // `fc:<node>/<id>` is an FC log; anything else is `<node>/<session>`. Different route,
       // same loop, so one selection can span both and a failure still costs only its own item.
       const isFc = key.startsWith('fc:');
@@ -698,8 +777,9 @@
 
   /** Everything not ticked, per node. Confirms, because it is the irreversible one. */
   document.getElementById('pfPrune').onclick = async () => {
-    // Sessions only. An FC log has nothing to delete -- it stays on the FC's own card, rotated
-    // at disarm -- and its ticks live in the same set under an `fc:` prefix.
+    // Sessions only. An FC log has nothing to delete -- it stays on the FC's own card, in a ring
+    // of LOG_MAX_FILES -- and a ground tlog is the share's own copy. Both keep their ticks in this
+    // same set, under `fc:` and `tlog:` prefixes.
     const doomed = allSessions().filter(({ src, s }) => !pf.picked.has(key(src.name, s)));
     if (doomed.length === 0) return log('nothing to delete');
     document.getElementById('cTitle').textContent = `Delete ${doomed.length} session(s)?`;

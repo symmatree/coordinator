@@ -108,10 +108,6 @@ that space, even when it has the same shape as a capture. Concretely:
                                          #   time, so this is also the timing reconciliation for
                                          #   everything device-side. A session that never armed is
                                          #   named `<start>-noflight-<why>.tlog`
-    rtkbase-settings.conf                # the base station's config. `position=` is why it is
-                                         #   collected -- PPK is not possible without the base
-                                         #   coordinates -- and `local_ntripc_msg` is the mount
-                                         #   the vehicle actually consumed
     <YYYY-MM-DD>_*.ubx                   # the base station's raw observations for the flight's
                                          #   day, from the `datadir=` in those settings
     backpack-metrics-<YYYY-MM-DD>.json   # every `backpack_*` series over the flight window, from
@@ -154,7 +150,7 @@ Two rules make this navigable:
 | `bin/vio-ipc-record` (bench) | manual bench | estimator sockets | a capture session (same `captures/...` shape) |
 | **coordinator-mavlink** (#208, #220) | in-flight, on the vehicle | FC MAVLink (MAV2) | `captures/<node>/<boot-id>/timesync.jsonl`, `.../vehicle.tlog` -- inside the session, which is where the tree above has always placed them. They were written to the captures root until #386, which put them outside everything `coord sessions package` collects |
 | **tlog-split** (tiles `mavproxy` env) | continuously, in the cluster | a mavproxy `--out` fan-out | one tlog per flight to `datasets/ground-tlogs`, cut at disarm ([#192](https://github.com/symmatree/coordinator/issues/192) rotation + durability; retention still open) |
-| **fleet-control** `POST /flights/:flight/ground` | post-flight, on request | the rtkbase pod, Mimir, `ground-tlogs` | `ground/*` -- the flight's split tlog, `rtkbase-settings.conf`, the day's `.ubx`, the backpack series |
+| **fleet-control** `POST /flights/:flight/ground` | post-flight, on request | `ground-tlogs`, Mimir | `ground/*` -- the tlogs named and the backpack series. The `.ubx` is not collected yet ([#416](https://github.com/symmatree/coordinator/issues/416)) |
 | **flight-analysis** CronJob (tiles) | nightly 04:00 UTC | `<fc-log>.bin` | `flight-analysis-<logstem>.{ipynb,pdf}`, `manifest.json`, `polisher.json` |
 | **vio-offline** CronJob (tiles) | on-demand (manual `create job --from`; #139) | each `*.feat` | `derived/pose/<stem>.vinspose.csv` + sidecar (#139) |
 | `analysis/vio-quality.ipynb` | manual / after cron | pose CSV + `.bin` + `manifest.json` | `derived/vio-quality.json` (+ figures) |

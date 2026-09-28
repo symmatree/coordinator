@@ -1,83 +1,112 @@
 // The ground station's own record of a flight, which lives in the cluster rather than on the
-// vehicle: mavproxy's console timeline, the base station's position and raw observations, and the
-// backpack link metrics.
+// vehicle: the per-flight tlogs tlog-split wrote, and the backpack link metrics.
 //
 // `captures/` is the vehicle's view and `ground/` is the ground station's -- different observers,
-// neither substituting for the other (docs/flight-data-layout.md). A ground-side link dropout is
-// invisible to the vehicle, and the FC log cannot tell you where the base station was.
+// neither substituting for the other (docs/flight-data-layout.md). The tlog is the ground record:
+// what actually crossed the radio link and the backpack, which the vehicle cannot see, and the
+// timing reconciliation for everything device-side, since neither device has an RTC.
 //
-// Driven with `kubectl`, for the same reason the device side is driven with `ssh`: one credential
-// and one trust path, and the automated steps are the documented manual ones (#385,
-// docs/post-flight-collection.md) rather than a second implementation of them. In-cluster kubectl
-// picks up the pod's ServiceAccount, which has pod read plus exec in `mavproxy` and `ntrip` and
-// nothing else (tiles#793).
+// THIS DOES NOT WORK OUT WHICH FLIGHT YOU MEANT. It takes the tlogs you name and the range you
+// give (#414). It used to derive an armed window from mavproxy's console log and then rebuild a
+// tlog filename from it, which filed the wrong flight's tlog as soon as that pod had seen more
+// than one -- and armed is the wrong interval anyway, since it begins after the pre-arm window
+// where RTK convergence happens.
+//
+// NOTHING HERE TOUCHES ANOTHER POD. Three things used to: mavproxy's console log (cluster
+// debugging output, not a flight artifact), rtkbase's settings.conf (git-authoritative in tiles,
+// so it already has a history) and the raw `.ubx` (read by `kubectl exec ... cat`, which could
+// never work -- a day's file is ~227 MB against a 64 MB buffer). So this is a directory read and
+// one HTTP query, and the `pods/log` and `pods/exec` grants this service held are unused.
 
-import { execFile } from 'node:child_process';
 import { copyFile, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import type { Config } from './config.js';
 
-const run = promisify(execFile);
-
-/** Everything here is one `kubectl`. Errors carry what it said, not just that it failed. */
-async function kubectl(args: string[], timeoutSec = 300): Promise<string> {
-  try {
-    const { stdout } = await run('kubectl', args, {
-      maxBuffer: 64 * 1024 * 1024,
-      timeout: timeoutSec * 1000,
-    });
-    return stdout;
-  } catch (err) {
-    const e = err as { stderr?: string; message?: string; killed?: boolean };
-    if (e.killed === true) throw new Error(`kubectl ${args[0]} gave up after ${timeoutSec}s`);
-    const said = (e.stderr ?? '').trim() || e.message || 'kubectl failed';
-    throw new Error(`kubectl ${args.slice(0, 3).join(' ')}: ${said.split('\n').slice(-2).join(' ').slice(0, 300)}`);
-  }
+/** One file in the tlog directory, as the listing reports it. */
+export interface TlogFile {
+  name: string;
+  bytes: number;
+  /** Last written, from the filesystem. Present for every file, unlike the parsed stamps. */
+  modified: string;
+  /** Still being written, so a copy of it is a prefix rather than a whole file. */
+  partial: boolean;
+  /** Parsed out of the name when it is there. `armed` is absent on a session that never armed. */
+  start?: string;
+  armed?: string;
+  disarmed?: string;
 }
 
-/** The newest running pod whose name contains `match`, in `ns`. */
-export async function findPod(ns: string, match: string): Promise<string> {
-  const out = await kubectl(['get', 'pods', '-n', ns, '--field-selector=status.phase=Running',
-    '-o', 'jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}']);
-  const pod = out.split('\n').map((l) => l.trim()).filter((l) => l.includes(match))[0];
-  if (pod === undefined) throw new Error(`no running pod matching ${match} in ${ns}`);
-  return pod;
+/** `20260926T221502Z` -> `2026-09-26T22:15:02Z`. Undefined if it is not that shape. */
+function isoFromStamp(stamp: string | undefined): string | undefined {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp ?? '');
+  return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z` : undefined;
 }
 
 /**
- * The armed window, as the ground saw it.
+ * What the tlog directory holds.
  *
- * This is the one clock in the whole flight that is trustworthy without qualification: a cluster
- * workload on the cluster's own time. Neither device has an RTC, so nothing on the vehicle can
- * establish this -- which is why selecting sessions and FC logs is a ground-side act (#385).
+ * A LISTING, NOT A PARSE. It stats each file and reads the stamps tlog-split put in the name; it
+ * never opens a tlog. And it reports every file it finds rather than only the ones matching the
+ * naming it expects -- a listing that hides what it cannot classify makes those files
+ * unretrievable, which is worse than a row with empty columns.
+ *
+ * tlog-split names a finished file `<start>-armed-<armed>-disarmed-<disarmed>.tlog`, or
+ * `<start>-noflight-<why>.tlog` when nothing armed, and holds an open one at `.tlog.part`.
  */
-export function armedWindow(console: string): { armed?: string; disarmed?: string } {
-  // mavproxy console lines are `<RFC3339 stamp> <text>` with --timestamps, and ArduPilot's
-  // arm/disarm shows up as the literal words. Matched case-insensitively and anchored on the
-  // stamp so a mode name containing "armed" cannot be mistaken for the event.
-  const stamped = /^(\S+)\s+(.*)$/;
-  let armed: string | undefined;
-  let disarmed: string | undefined;
-  for (const line of console.split('\n')) {
-    const m = stamped.exec(line);
-    if (!m) continue;
-    const when = m[1];
-    const text = m[2];
-    if (when === undefined || text === undefined) continue;
-    if (/\bARMED\b/i.test(text) && !/DISARMED/i.test(text)) armed ??= when;
-    else if (/\bDISARMED\b/i.test(text)) disarmed = when;
+export async function listTlogs(dir: string): Promise<TlogFile[]> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (err) {
+    throw new Error(`cannot read ${dir}: ${(err as Error).message}`);
   }
-  return { armed, disarmed };
+  const files = names.filter((n) => n.endsWith('.tlog') || n.endsWith('.tlog.part'));
+  const out = await Promise.all(files.map(async (name): Promise<TlogFile> => {
+    const st = await stat(join(dir, name));
+    const m = /^(\d{8}T\d{6}Z)(?:-armed-(\d{8}T\d{6}Z)-disarmed-(\d{8}T\d{6}Z|open))?/.exec(name);
+    return {
+      name,
+      bytes: st.size,
+      modified: st.mtime.toISOString(),
+      partial: name.endsWith('.part'),
+      start: isoFromStamp(m?.[1]),
+      armed: isoFromStamp(m?.[2]),
+      disarmed: isoFromStamp(m?.[3]),
+    };
+  }));
+  // Newest first, by the one field every row has.
+  return out.sort((a, b) => b.modified.localeCompare(a.modified));
 }
 
-/** `key=value` out of an rtkbase settings.conf, quotes stripped. */
-export function settingsValue(conf: string, key: string): string | undefined {
-  for (const line of conf.split('\n')) {
-    const m = new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`).exec(line);
-    if (m?.[1] !== undefined) return m[1].trim().replace(/^['"]|['"]$/g, '');
+/** The interval the range-dependent artifacts are fetched over. */
+export interface Range {
+  start: string;
+  end: string;
+  /** How it was arrived at, for the run log -- given, or taken from the tlogs named. */
+  from: string;
+}
+
+/**
+ * The range, from what the caller said.
+ *
+ * An explicit `start`/`end` is used as given: no margin is added, because a caller that states an
+ * interval means that interval. Otherwise the named tlogs bound it -- each one runs from the
+ * previous cut to its disarm, so it already covers the pre-arm window, and a tlog spanning more
+ * than the flight is a harmless superset.
+ *
+ * `modified` is the fallback for a file whose name did not parse, since every file has one.
+ */
+export function resolveRange(
+  picked: TlogFile[],
+  given: { start?: string; end?: string },
+): Range | undefined {
+  if (given.start !== undefined && given.end !== undefined) {
+    return { start: given.start, end: given.end, from: 'given' };
   }
-  return undefined;
+  if (picked.length === 0) return undefined;
+  const start = picked.map((t) => t.start ?? t.modified).reduce((a, b) => (a < b ? a : b));
+  const end = picked.map((t) => t.disarmed ?? t.modified).reduce((a, b) => (a > b ? a : b));
+  return { start, end, from: `the ${picked.length} tlog(s) named` };
 }
 
 export interface Collected {
@@ -87,6 +116,11 @@ export interface Collected {
 
 export interface GroundOptions {
   flightsDir: string;
+  /** The tlogs to collect, by the name the listing gave. */
+  tlogs?: string[];
+  /** The interval for the backpack series. Overrides what the tlogs imply. */
+  start?: string;
+  end?: string;
   note?: (line: string) => void;
 }
 
@@ -94,158 +128,91 @@ export interface GroundOptions {
  * Collect the ground side of one flight into `<flight>/ground/`.
  *
  * `ground/` rather than `cluster/`: docs/flight-data-layout.md puts ground-side records there and
- * calls itself canonical. docs/post-flight-collection.md used `cluster/` on the day; the two
- * disagree.
+ * calls itself canonical. docs/post-flight-collection.md used `cluster/` on the day.
  *
- * Each artifact is attempted independently and a failure is recorded rather than thrown, because
- * a flight missing its base position is still worth the console log -- and "not collected, and
- * why" is as load-bearing as the list of what was.
+ * WHAT THE CALLER NAMED IS NOT BEST-EFFORT. A tlog that was asked for and did not arrive fails the
+ * run, because the screen unticks on success and an unticked file reads as collected -- which is
+ * then what "Delete the rest" spares. The metrics are the other way round: a flight missing its
+ * backpack series is still worth its tlog, so that is recorded as "not collected, and why" and
+ * fails nothing.
  */
 export async function collectGround(
   cfg: Config,
   flight: string,
   opts: GroundOptions,
-): Promise<{ collected: Collected[]; failed: string[]; window: { armed?: string; disarmed?: string } }> {
+): Promise<{ collected: Collected[]; failed: string[]; range?: Range }> {
   const say = opts.note ?? (() => {});
   const dir = join(opts.flightsDir, flight, 'ground');
   await mkdir(dir, { recursive: true });
 
   const collected: Collected[] = [];
   const failed: string[] = [];
-  let window: { armed?: string; disarmed?: string } = {};
 
-  const keep = async (name: string, body: string | Buffer): Promise<void> => {
-    await writeFile(join(dir, name), body);
-    collected.push({ file: name, bytes: body.length });
-    say(`  ${name}: ${body.length} bytes`);
-  };
-
-  // 1. mavproxy's console. First, because it establishes the window everything else is cut to.
-  try {
-    const pod = await findPod(cfg.cluster.mavproxyNamespace, 'mavproxy');
-    say(`mavproxy console from ${pod}`);
-    const log = await kubectl(['logs', '-n', cfg.cluster.mavproxyNamespace, pod, '--timestamps']);
-    await keep('mavproxy-console.log', log);
-    window = armedWindow(log);
-    say(window.armed
-      ? `armed ${window.armed} -> disarmed ${window.disarmed ?? '(not seen)'}`
-      : 'no ARM in the console log; nothing to cut the other artifacts to');
-  } catch (err) {
-    failed.push(`mavproxy-console.log: ${(err as Error).message}`);
-    say(`mavproxy console FAILED: ${(err as Error).message}`);
-  }
-
-  // 2. The base station's settings -- `position=` is why this matters. PPK is not possible
-  //    without the base coordinates, and `local_ntripc_msg` is the mount the vehicle consumed.
-  let datadir: string | undefined;
-  try {
-    const pod = await findPod(cfg.cluster.ntripNamespace, 'rtkbase');
-    say(`rtkbase settings from ${pod}`);
-    const conf = await kubectl(['exec', '-n', cfg.cluster.ntripNamespace, pod, '-c', 'rtkbase',
-      '--', 'cat', '/root/rtkbase/settings.conf']);
-    await keep('rtkbase-settings.conf', conf);
-    const position = settingsValue(conf, 'position');
-    say(position ? `base position ${position}` : 'settings.conf carries no position=');
-    datadir = settingsValue(conf, 'datadir');
-  } catch (err) {
-    failed.push(`rtkbase-settings.conf: ${(err as Error).message}`);
-    say(`rtkbase settings FAILED: ${(err as Error).message}`);
-  }
-
-  // 3. The raw observations for the flight's day. `datadir` is on a separate mount inside that
-  //    pod, so it is read from settings.conf rather than guessed at.
-  if (datadir !== undefined) {
-    const day = (window.armed ?? new Date().toISOString()).slice(0, 10);
-    try {
-      const pod = await findPod(cfg.cluster.ntripNamespace, 'rtkbase');
-      const listing = await kubectl(['exec', '-n', cfg.cluster.ntripNamespace, pod, '-c', 'rtkbase',
-        '--', 'sh', '-c', `ls -1 '${datadir}' 2>/dev/null || true`]);
-      const wanted = listing.split('\n').map((l) => l.trim()).filter((l) => l.startsWith(day) && l.includes('.ubx'));
-      if (wanted.length === 0) say(`no .ubx for ${day} under ${datadir}`);
-      for (const name of wanted) {
-        // The current day's file is open and being appended; the already-written prefix covers
-        // any past flight, which is why this reads rather than requiring a quiescent file.
-        const body = await kubectl(['exec', '-n', cfg.cluster.ntripNamespace, pod, '-c', 'rtkbase',
-          '--', 'cat', `${datadir}/${name}`], 1800);
-        await keep(name, body);
+  // 1. The tlogs named. A file copy, not a retrieval: they have been on the share since the
+  //    flight, which is the point of tiles#794.
+  const wanted = opts.tlogs ?? [];
+  const picked: TlogFile[] = [];
+  if (wanted.length > 0) {
+    // Not caught: a named tlog that cannot be collected throws, for the reason above. Matching
+    // against the listing is also what makes a path impossible to smuggle in -- only a name the
+    // directory actually holds gets as far as being opened.
+    const have = await listTlogs(cfg.cluster.groundTlogs);
+    for (const name of wanted) {
+      const file = have.find((t) => t.name === name);
+      if (file === undefined) {
+        throw new Error(`${name} is not in ${cfg.cluster.groundTlogs}. Nothing was collected.`);
       }
-    } catch (err) {
-      failed.push(`rtkbase observations: ${(err as Error).message}`);
-      say(`rtkbase observations FAILED: ${(err as Error).message}`);
+      await copyFile(join(cfg.cluster.groundTlogs, name), join(dir, name));
+      const { size } = await stat(join(dir, name));
+      collected.push({ file: name, bytes: size });
+      picked.push(file);
+      say(`  ${name}: ${size} bytes${file.partial ? ' (still being written -- a prefix)' : ''}`);
     }
   }
 
-  // 4. The backpack link metrics. Mimir over HTTP, needing no Kubernetes identity at all -- the
+  const range = resolveRange(picked, { start: opts.start, end: opts.end });
+  if (range === undefined) {
+    say('no range given and no tlog named, so there is no backpack series to fetch');
+    return { collected, failed };
+  }
+  say(`range ${range.start} -> ${range.end} (${range.from})`);
+
+  // 2. The backpack link metrics. Mimir over HTTP, needing no Kubernetes identity at all -- the
   //    only view we have of the backpack's own WiFi hop (#190), and the direct evidence for #99.
-  if (window.armed !== undefined) {
-    try {
-      const body = await backpackMetrics(cfg, window.armed, window.disarmed);
-      await keep(`backpack-metrics-${window.armed.slice(0, 10)}.json`, body);
-    } catch (err) {
-      failed.push(`backpack metrics: ${(err as Error).message}`);
-      say(`backpack metrics FAILED: ${(err as Error).message}`);
-    }
-  }
-
-  // 5. The per-flight tlog tlog-split already wrote. A file copy, not a retrieval: it has been
-  //    on the share since the flight, which is the point of tiles#794.
-  if (window.armed !== undefined) {
-    try {
-      const name = await tlogForWindow(cfg.cluster.groundTlogs, window.armed);
-      if (name === undefined) {
-        say(`no split tlog covering ${window.armed} in ${cfg.cluster.groundTlogs}`);
-      } else {
-        await copyFile(join(cfg.cluster.groundTlogs, name), join(dir, name));
-        const { size } = await stat(join(dir, name));
-        collected.push({ file: name, bytes: size });
-        say(`  ${name}: ${size} bytes`);
-      }
-    } catch (err) {
-      failed.push(`split tlog: ${(err as Error).message}`);
-      say(`split tlog FAILED: ${(err as Error).message}`);
-    }
-  }
-
-  return { collected, failed, window };
-}
-
-/**
- * The split tlog whose armed stamp matches this flight.
- *
- * tlog-split names each file `<start>-armed-<armed>-disarmed-<disarmed>.tlog`, so the armed time
- * the console log gave us selects the file directly -- no scanning, and no trusting a device
- * clock. Matched to the second, because both stamps come from cluster time.
- *
- * `.part` files are skipped: one is still being written.
- */
-export async function tlogForWindow(dir: string, armed: string): Promise<string | undefined> {
-  const stamp = armed.replace(/[-:]/g, '').replace(/\.\d+/, '').replace(/Z$/, 'Z');
-  let names: string[];
   try {
-    names = await readdir(dir);
+    const { body, step } = await backpackMetrics(cfg, range);
+    say(`backpack series at ${step}s resolution`);
+    await writeFile(join(dir, `backpack-metrics-${range.start.slice(0, 10)}.json`), body);
+    collected.push({ file: `backpack-metrics-${range.start.slice(0, 10)}.json`, bytes: body.length });
   } catch (err) {
-    throw new Error(`cannot read ${dir}: ${(err as Error).message}`);
+    failed.push(`backpack metrics: ${(err as Error).message}`);
+    say(`backpack metrics FAILED: ${(err as Error).message}`);
   }
-  return names.filter((n) => n.endsWith('.tlog')).find((n) => n.includes(`-armed-${stamp}`));
+
+  return { collected, failed, range };
 }
 
 /**
- * Every `backpack_*` series across the flight window, plus a margin.
+ * Every `backpack_*` series across the range.
  *
- * The margin is not decoration: on 2026-09-23 the backpack rebooted and re-associated in the
- * minutes BEFORE the armed window, which is the event that explained the flight. A range clipped
- * to arm-disarm would have shown a healthy link throughout.
+ * The step widens for a long range rather than sitting at 5 s: a `query_range` asking for a point
+ * every five seconds over a week is hundreds of thousands per series. `POINTS` is the ceiling, and
+ * the resolution actually used is reported so a coarse answer is visible as one.
  */
-export async function backpackMetrics(cfg: Config, armed: string, disarmed?: string): Promise<string> {
-  const marginSec = 20 * 60;
-  const start = Math.floor(Date.parse(armed) / 1000) - marginSec;
-  const end = Math.floor(Date.parse(disarmed ?? armed) / 1000) + marginSec;
+export async function backpackMetrics(cfg: Config, range: Range): Promise<{ body: string; step: number }> {
+  const POINTS = 11_000;
+  const start = Math.floor(Date.parse(range.start) / 1000);
+  const end = Math.floor(Date.parse(range.end) / 1000);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    throw new Error(`range is not a pair of timestamps: ${range.start} -> ${range.end}`);
+  }
+  const step = Math.max(5, Math.ceil((end - start) / POINTS));
   const url = new URL('/prometheus/api/v1/query_range', cfg.cluster.mimirUrl);
   url.searchParams.set('query', '{__name__=~"backpack.*"}');
   url.searchParams.set('start', String(start));
   url.searchParams.set('end', String(end));
-  url.searchParams.set('step', '5');
+  url.searchParams.set('step', String(step));
   const res = await fetch(url, { headers: { 'X-Scope-OrgID': cfg.cluster.mimirTenant } });
   if (!res.ok) throw new Error(`mimir ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return JSON.stringify(JSON.parse(await res.text()), null, 2);
+  return { body: JSON.stringify(JSON.parse(await res.text()), null, 2), step };
 }
