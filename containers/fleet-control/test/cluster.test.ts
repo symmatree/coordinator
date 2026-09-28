@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { backpackMetrics, listTlogs, resolveRange, type TlogFile } from '../src/cluster.js';
+import { backpackMetrics, daysIn, listTlogs, observationsFor, resolveRange, type TlogFile } from '../src/cluster.js';
 
 /** A directory shaped like tlog-split's output, including the shapes that do not parse. */
 function tlogDir(): string {
@@ -124,4 +124,45 @@ test('the metrics step widens with the range, so a long one is not hundreds of t
 test('a range that is not a pair of timestamps is refused rather than queried', async () => {
   const cfg = { cluster: { mimirUrl: 'http://mimir.invalid', mimirTenant: 'tiles' } } as never;
   await assert.rejects(() => backpackMetrics(cfg, { start: 'nope', end: 'nor this', from: 'x' }), /not a pair/);
+});
+
+test('the days a range touches, including the one it ends on', () => {
+  // The base station's raw observations rotate daily, so a range that crosses midnight needs both.
+  assert.deepEqual(daysIn({ start: '2026-09-26T21:00:00Z', end: '2026-09-26T23:00:00Z', from: 'x' }),
+    ['2026-09-26']);
+  assert.deepEqual(daysIn({ start: '2026-09-26T23:30:00Z', end: '2026-09-27T00:30:00Z', from: 'x' }),
+    ['2026-09-26', '2026-09-27']);
+  assert.deepEqual(daysIn({ start: '2026-09-26T00:00:00Z', end: '2026-09-28T12:00:00Z', from: 'x' }),
+    ['2026-09-26', '2026-09-27', '2026-09-28']);
+});
+
+test('a backwards or unparseable range does not spin', () => {
+  assert.deepEqual(daysIn({ start: '2026-09-28T00:00:00Z', end: '2026-09-26T00:00:00Z', from: 'x' }),
+    ['2026-09-28']);
+  assert.throws(() => daysIn({ start: 'not a time', end: 'nor this', from: 'x' }), /not a pair/);
+});
+
+test('a day selects its own observations and its tag sidecar, and nothing else', async () => {
+  // rtkbase writes `%Y-%m-%d_%h-%M-%S_GNSS-1`, so the date prefix is the day. The `.tag` sidecar
+  // is part of the record and is matched by the same test.
+  const dir = mkdtempSync(join(tmpdir(), 'baseobs-'));
+  for (const n of [
+    '2026-09-26_22-00-00_GNSS-1.ubx',
+    '2026-09-26_22-00-00_GNSS-1.ubx.tag',
+    '2026-09-27_00-00-00_GNSS-1.ubx',
+    '2026-09-26_04-00-00.zip',            // rtkbase's own daily archive -- not an observation
+    'README',
+  ]) writeFileSync(join(dir, n), n);
+
+  assert.deepEqual(await observationsFor(dir, '2026-09-26'),
+    ['2026-09-26_22-00-00_GNSS-1.ubx', '2026-09-26_22-00-00_GNSS-1.ubx.tag']);
+  assert.deepEqual(await observationsFor(dir, '2026-09-27'), ['2026-09-27_00-00-00_GNSS-1.ubx']);
+  // A day with nothing is empty, not an error -- the base may not have been running.
+  assert.deepEqual(await observationsFor(dir, '2026-09-25'), []);
+});
+
+test('an unmounted observations share says so rather than reporting no observations', async () => {
+  // An empty result is not a finding: "the base logged nothing" and "the share is not mounted" are
+  // different, and only one of them is a problem.
+  await assert.rejects(() => observationsFor(join(tmpdir(), 'no-such-obs-dir'), '2026-09-26'), /ENOENT/);
 });
