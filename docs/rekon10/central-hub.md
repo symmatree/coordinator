@@ -212,6 +212,56 @@ Lay the +3V3 and GND rows on bare bus wire rather than solder bridges -- same in
 the per-package decoupling. Bring SQW and one buffer output out to test points; every edge-rate
 figure here is computed from worst-case datasheet capacitance, not measured.
 
+#### Net list
+
+The same wiring by net rather than by component -- the axis you want when checking a
+half-built board, since you can put a meter on one net and tick off every pin that should
+be on it. Machine-generated from the same source as
+[`pps-board.kicad_sch`](pps-board.kicad_sch), so the two agree by construction.
+
+| net | pins | note |
+|-----|------|------|
+| **+3V3** | `J1.1 (hdr17)`, `J2.6 (VCC)`, `R1.2`, `C1.1`, `C5.1`, `U1.14 (VCC)`, `C2.1`, `U2.14 (VCC)`, `C3.1`, `U3.14 (VCC)`, `C4.1` | from Coordinator header pin 17; RTC and all buffers share this rail |
+| **GND** | `J1.4 (hdr20)`, `J2.7 (GND)`, `C1.2`, `C5.2`, `U1.7 (GND)`, `U1.1 (1OE)`, `U1.4 (2OE)`, `U1.10 (3OE)`, `U1.13 (4OE)`, `C2.2`, `U2.7 (GND)`, `U2.1 (1OE)`, `U2.4 (2OE)`, `U2.10 (3OE)`, `U2.13 (4OE)`, `C3.2`, `U3.7 (GND)`, `U3.1 (1OE)`, `U3.4 (2OE)`, `U3.10 (3OE)`, `U3.13 (4OE)`, `C4.2`, `D1.1`, `J3.2`, `J4.2`, `J5.2`, `J6.2`, `J7.2` | all OE pins tied low so every channel is enabled |
+| **SQW** | `J2.5 (SQW)`, `R1.1`, `U1.2 (1A)`, `U1.5 (2A)`, `U1.9 (3A)`, `U1.12 (4A)` | open-drain; R1 parallels the breakout's own 10k. Rising edge is RC, falling is driven |
+| **SPI_CS** | `J1.8 (hdr24)`, `J2.1 (SS)` |  |
+| **SPI_MOSI** | `J1.3 (hdr19)`, `J2.2 (MOSI)` |  |
+| **SPI_MISO** | `J1.5 (hdr21)`, `J2.3 (MISO)` |  |
+| **SPI_SCLK** | `J1.7 (hdr23)`, `J2.4 (SCLK)` |  |
+| **T2_FRONT** | `U1.3 (1Y)`, `U2.2 (1A)`, `U2.5 (2A)`, `U2.9 (3A)`, `U2.12 (4A)` |  |
+| **T2_REAR** | `U1.6 (2Y)`, `U3.2 (1A)`, `U3.5 (2A)`, `U3.9 (3A)`, `U3.12 (4A)` |  |
+| **PPS_COORD** | `U2.6 (2Y)`, `J1.2 (hdr18)` | returns on header pin 18 = BCM GPIO24 |
+| **PPS_FC** | `U2.3 (1Y)`, `J3.1` |  |
+| **PPS_NE** | `U2.8 (3Y)`, `J4.1` |  |
+| **PPS_NW** | `U2.11 (4Y)`, `J5.1` |  |
+| **PPS_SE** | `U3.3 (1Y)`, `J6.1` |  |
+| **PPS_SW** | `U3.6 (2Y)`, `J7.1` |  |
+| **LED_DRV** | `U3.8 (3Y)`, `R2.1` |  |
+| **LED_A** | `R2.2`, `D1.2` |  |
+| **T1_SPARE1** | `U1.8 (3Y)` | first-tier spare output, live, for a future second-tier package |
+| **T1_SPARE2** | `U1.11 (4Y)` | first-tier spare output, live, for a future second-tier package |
+| **U3_SPARE** | `U3.11 (4Y)` | rear distributor spare output |
+
+`J1.6` (header pin 22, BCM GPIO25) is the deliberate spare and carries a no-connect.
+
+#### Schematic
+
+[`pps-board.kicad_sch`](pps-board.kicad_sch) is the same circuit as a KiCad sheet
+(format 20251024, KiCad 10). Connectivity is by **net label** rather than routed wires, so
+every net name is legible as text and nothing depends on a wire endpoint landing within a
+hair of a pin.
+
+The `SN74AHC125N` symbol is **package-shaped** -- one 14-pin rectangle with pins in DIP
+order -- rather than KiCad's stock four-gates-plus-a-power-unit, so it reads directly onto
+a perfboard layout: pin 7 is where pin 7 is. It is embedded in the sheet, so the file needs
+no library beyond KiCad's stock `Device`, `Connector_Generic` and `Package_DIP`.
+
+It has been checked structurally -- parses and round-trips, every `lib_id` resolves, no
+duplicate designators, every wire begins exactly on a pin, every label sits on a wire end
+and names that pin's net, and the one unconnected pin (`J1.6`) carries a no-connect. **It
+has not been opened in KiCad**, so expect to nudge placement; the connectivity is what was
+verified, not the aesthetics.
+
 #### Coordinator SPI block -> RTC breakout
 
 A single **2x4** on header pins **17-24** carries power, SPI and the returning PPS. It is
