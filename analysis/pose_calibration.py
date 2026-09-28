@@ -1,0 +1,277 @@
+"""pose_calibration.py -- scale, bias and relative orientation from held poses.
+
+A sensor held still measures gravity, whose magnitude is known. Hold it in several orientations
+and the constraint |a| = 1 g in every one of them is enough to separate the per-axis scale from
+the per-axis bias, which a single orientation cannot do: one orientation is one equation and
+there are two unknowns per axis.
+
+With two sensors on one body there is a second question -- their orientation relative to each
+other -- and the same poses answer it, because both see the same gravity vector expressed in
+their own frames.
+
+WHAT THE SELECTION HAS TO RESPECT, which is most of the difficulty:
+
+* **One contiguous span per pose, not the whole session.** A hand-held session is a few usable
+  spans separated by positioning, hand shake and the operator settling into a hold. Fitting
+  everything lets the transients dominate, which is backwards when the point is to calibrate
+  from the quiet parts.
+* **Take the span from the CENTRE of a held period, not the first window that qualifies.** A
+  first-satisfying-window search lands on the leading edge of the criterion, where the transient
+  is still decaying and the signal only just qualified -- collecting exactly the samples the
+  criterion was meant to exclude. This is a property of any threshold-crossing selector.
+* **A pose is a held ORIENTATION, not a quiet one.** Selecting on the windowed standard deviation
+  of |a| was tried and is wrong here in a way worth recording: on 260926 the vehicle sitting on a
+  table read a HIGHER standard deviation at the camera-colocated sensor (0.037-0.044 g) than the
+  same sensor did while hand-held (0.022-0.028 g), so a quietness threshold rejected the longest
+  held pose in the session. It is also the wrong quantity in principle: zero-mean vibration
+  averages out of a mean, and at 3.2 kHz over 8 s the standard error on a direction is ~0.02
+  degrees whether the standard deviation is 0.02 g or 0.04 g. What corrupts a pose is the
+  direction DRIFTING during the window, so that is what is tested.
+
+Sampling-rate drift across a session does not matter much here, which is worth stating because it
+matters elsewhere: the measurement is the direction and magnitude of gravity while stationary,
+not a frequency response, so a slowly wrong time axis does not move a static mean.
+"""
+
+import numpy as np
+from scipy.optimize import least_squares
+
+
+def unit_directions_per_second(capture):
+    """Mean gravity direction over each whole second of a capture, as unit vectors (3, n)."""
+    n = int(round(capture.rate_hz))
+    k = len(capture.time_s) // n
+    v = np.stack([c[:k * n].reshape(k, n).mean(axis=1) for c in (capture.x, capture.y, capture.z)])
+    return v / np.linalg.norm(v, axis=0)
+
+
+def held_spans(capture, tol_deg=2.0, min_s=10):
+    """Spans (in whole seconds) over which the gravity direction stays within tol of its own mean.
+
+    Greedy: extend a span while every second in it remains within `tol_deg` of the span's running
+    mean direction. A pose ends where the operator moved the vehicle, which is a large change, so
+    the tolerance only has to be smaller than the smallest deliberate pose change.
+    """
+    u = unit_directions_per_second(capture)
+    k = u.shape[1]
+    out, start = [], 0
+    while start < k:
+        end = start + 1
+        while end < k:
+            mean = u[:, start:end + 1].mean(axis=1)
+            mean /= np.linalg.norm(mean)
+            ang = np.degrees(np.arccos(np.clip(u[:, start:end + 1].T @ mean, -1, 1)))
+            if ang.max() > tol_deg:
+                break
+            end += 1
+        if end - start >= min_s:
+            out.append((start, end - 1))
+        start = end if end > start else start + 1
+    return out
+
+
+def common_held_spans(captures, tol_deg=2.0, min_s=10):
+    """Spans where EVERY capture holds one orientation -- a pose is a property of the vehicle."""
+    per = [held_spans(c, tol_deg, min_s) for c in captures]
+    k = min(len(unit_directions_per_second(c)[0]) for c in captures)
+    held = np.ones(k, bool)
+    for spans in per:
+        m = np.zeros(k, bool)
+        for a, b in spans:
+            m[a:b + 1] = True
+        held &= m
+    out, start = [], None
+    for i, q in enumerate(list(held) + [False]):
+        if q and start is None:
+            start = i
+        elif not q and start is not None:
+            if i - start >= min_s:
+                out.append((start, i - 1))
+            start = None
+    return out
+
+
+def centre_windows(spans, window_s):
+    """The requested duration taken from the CENTRE of each span. See the module docstring."""
+    out = []
+    for a, b in spans:
+        mid = (a + b) / 2.0
+        if b - a + 1 < window_s:
+            continue
+        out.append((mid - window_s / 2.0, mid + window_s / 2.0))
+    return out
+
+
+def pose_vectors(capture, windows):
+    """Mean (x, y, z) over each window, plus the standard error of each mean."""
+    t = capture.time_s - capture.time_s[0]
+    means, errs = [], []
+    for w0, w1 in windows:
+        m = (t >= w0) & (t <= w1)
+        v = np.array([capture.x[m], capture.y[m], capture.z[m]])
+        means.append(v.mean(axis=1))
+        errs.append(v.std(axis=1) / np.sqrt(m.sum()))
+    return np.array(means), np.array(errs)
+
+
+def fit_scale_bias(vectors, g=1.0):
+    """Per-axis scale and bias such that |scale * (raw - bias)| == g in every pose.
+
+    Six unknowns. Six orientations determine them exactly, which means the fit's own residual is
+    NOT evidence that the model is right -- with no spare degrees of freedom it can only report
+    how inconsistent any near-duplicate poses were. Redundancy needs a seventh INDEPENDENT
+    orientation, and two poses a fraction of a degree apart do not count as two.
+    """
+    v = np.asarray(vectors, float)
+
+    def residual(p):
+        return np.linalg.norm((v - p[3:]) * p[:3], axis=1) - g
+
+    r = least_squares(residual, [1, 1, 1, 0, 0, 0], method="lm")
+    scale, bias = r.x[:3], r.x[3:]
+    ind = pose_independence(v)
+    return dict(scale=scale, bias=bias, residual_g=residual(r.x),
+                rms_g=float(np.sqrt((residual(r.x) ** 2).mean())),
+                n_poses=len(v), n_parameters=6,
+                n_independent_poses=ind["n_independent"],
+                min_separation_deg=ind["min_separation_deg"],
+                # Counting poses is not counting constraints. Two poses a fraction of a degree
+                # apart are one observation made twice, and a fit with no spare degrees of
+                # freedom cannot use its own residual as evidence that the model is right.
+                exactly_determined=bool(ind["n_independent"] <= 6))
+
+
+def pose_independence(vectors, min_deg=5.0):
+    """How many of these orientations are actually distinct, and by how little.
+
+    On 260926 the vehicle sat upright before and after the hook strikes, giving seven spans of
+    which two are the same orientation 0.5 degrees apart -- so the seventh span adds almost no
+    constraint even though it adds a row.
+    """
+    v = np.asarray(vectors, float)
+    u = v / np.linalg.norm(v, axis=1, keepdims=True)
+    cos = np.clip(u @ u.T, -1, 1)
+    ang = np.degrees(np.arccos(cos))
+    off = ang[~np.eye(len(u), dtype=bool)]
+    kept = []
+    for i in range(len(u)):
+        if all(np.degrees(np.arccos(np.clip(u[i] @ u[j], -1, 1))) >= min_deg for j in kept):
+            kept.append(i)
+    return dict(n_independent=len(kept), independent_indices=kept,
+                min_separation_deg=float(off.min()), pairwise_deg=ang)
+
+
+def apply_calibration(vectors, scale, bias):
+    return (np.asarray(vectors, float) - bias) * scale
+
+
+def relative_rotation(a_vectors, b_vectors):
+    """Single rotation R with R @ a ~= b, fitted over all poses (Kabsch), plus its residual.
+
+    The residual is the test of whether one rigid rotation explains the pair. Note what is NOT a
+    test: the angle between a sensor's gravity vector and the other's is not rotation-invariant --
+    it depends on where gravity lies relative to the rotation axis -- so that angle varying across
+    poses says nothing. On 260926 it ranged over 80 degrees for a pair whose rigid-rotation
+    residual is ~1 degree.
+    """
+    a = np.asarray(a_vectors, float); a = a / np.linalg.norm(a, axis=1, keepdims=True)
+    b = np.asarray(b_vectors, float); b = b / np.linalg.norm(b, axis=1, keepdims=True)
+    h = a.T @ b
+    u, _, vt = np.linalg.svd(h)
+    d = np.sign(np.linalg.det(vt.T @ u.T))
+    r = vt.T @ np.diag([1, 1, d]) @ u.T
+    per_pose = np.degrees(np.arccos(np.clip(np.sum((a @ r.T) * b, axis=1), -1, 1)))
+    angle = float(np.degrees(np.arccos(np.clip((np.trace(r) - 1) / 2, -1, 1))))
+    axis = np.array([r[2, 1] - r[1, 2], r[0, 2] - r[2, 0], r[1, 0] - r[0, 1]])
+    norm = np.linalg.norm(axis)
+    return dict(R=r, angle_deg=angle, axis=(axis / norm) if norm > 1e-12 else np.array([0., 0., 1.]),
+                residual_deg=per_pose, rms_deg=float(np.sqrt((per_pose ** 2).mean())),
+                max_deg=float(per_pose.max()))
+
+
+def _main(argv=None):
+    """CLI so a job can produce a calibration, rather than numbers being copied from a session."""
+    import argparse
+    import json
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from ringdown import load_accel_jsonl
+
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("capture_dir", help="directory holding accel-*.jsonl for one pod session")
+    ap.add_argument("--window-s", type=float, default=8.0,
+                    help="duration taken from the CENTRE of each held span (default 8)")
+    ap.add_argument("--tol-deg", type=float, default=2.0,
+                    help="how far the direction may wander inside one held span (default 2)")
+    ap.add_argument("--min-hold-s", type=int, default=10, help="shortest usable span (default 10)")
+    ap.add_argument("--json", metavar="PATH", help="write the result here")
+    args = ap.parse_args(argv)
+
+    import glob
+    paths = sorted(glob.glob(os.path.join(args.capture_dir, "accel-*.jsonl")))
+    if not paths:
+        raise SystemExit(f"no accel-*.jsonl under {args.capture_dir}")
+    caps = {os.path.basename(p)[len("accel-"):-len(".jsonl")]: load_accel_jsonl(p) for p in paths}
+
+    spans = common_held_spans(list(caps.values()), args.tol_deg, args.min_hold_s)
+    windows = centre_windows(spans, args.window_s)
+    print(f"{len(spans)} span(s) where every channel holds one orientation for "
+          f"{args.min_hold_s}+ s -> {len(windows)} usable")
+    for (a, b), (w0, w1) in zip(spans, windows):
+        print(f"   held {a:7.1f}-{b:7.1f} s  ->  centred {w0:7.1f}-{w1:7.1f} s")
+
+    out = dict(capture=args.capture_dir, window_s=args.window_s,
+               held_spans_s=[[float(a), float(b)] for a, b in spans],
+               windows_s=[[float(a), float(b)] for a, b in windows], channels={})
+    vectors = {}
+    for label, cap in caps.items():
+        v, se = pose_vectors(cap, windows)
+        vectors[label] = v
+        fit = fit_scale_bias(v)
+        print(f"\n{label}: scale {np.round(fit['scale'], 4)}  bias {np.round(fit['bias'], 4)} g")
+        print(f"   {fit['n_poses']} poses, {fit['n_independent_poses']} independent "
+              f"(closest pair {fit['min_separation_deg']:.2f} deg apart)")
+        if fit["exactly_determined"]:
+            print("   EXACTLY DETERMINED: 6 parameters, 6 independent orientations. The residual "
+                  "below is not evidence the model is right -- there are no spare degrees of "
+                  "freedom for it to be wrong in. A seventh well-separated pose would give one.")
+        print(f"   rms |a|-1 after correction {fit['rms_g']:.5f} g")
+        out["channels"][label] = dict(
+            scale=[float(x) for x in fit["scale"]], bias=[float(x) for x in fit["bias"]],
+            rms_g=fit["rms_g"], n_poses=fit["n_poses"],
+            n_independent_poses=fit["n_independent_poses"],
+            min_separation_deg=fit["min_separation_deg"],
+            exactly_determined=fit["exactly_determined"],
+            pose_vectors_g=[[float(x) for x in row] for row in v],
+            pose_direction_se_deg=float(np.degrees(se.max())),
+        )
+
+    labels = sorted(caps)
+    if len(labels) == 2:
+        a, b = labels
+        fa, fb = fit_scale_bias(vectors[a]), fit_scale_bias(vectors[b])
+        rot = relative_rotation(apply_calibration(vectors[a], fa["scale"], fa["bias"]),
+                                apply_calibration(vectors[b], fb["scale"], fb["bias"]))
+        print(f"\n{a} -> {b}: {rot['angle_deg']:.2f} deg about "
+              f"({rot['axis'][0]:+.3f},{rot['axis'][1]:+.3f},{rot['axis'][2]:+.3f})")
+        print(f"   residual rms {rot['rms_deg']:.3f} deg, max {rot['max_deg']:.3f} deg, "
+              f"against a per-pose direction standard error near 0.02 deg")
+        print("   A residual far above that standard error means one rigid rotation plus per-axis "
+              "scale and bias does not describe this pair -- candidates are cross-axis "
+              "sensitivity, which this model has no term for, and the mounts moving between poses.")
+        out["relative_rotation"] = dict(
+            from_=a, to=b, angle_deg=rot["angle_deg"],
+            axis=[float(x) for x in rot["axis"]], R=[[float(x) for x in r] for r in rot["R"]],
+            residual_deg=[float(x) for x in rot["residual_deg"]],
+            rms_deg=rot["rms_deg"], max_deg=rot["max_deg"])
+
+    if args.json:
+        with open(args.json, "w") as fh:
+            json.dump(out, fh, indent=1)
+        print(f"\nwrote {args.json}")
+    return out
+
+
+if __name__ == "__main__":
+    _main()
