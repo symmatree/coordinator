@@ -3,8 +3,14 @@
 
 The coordinator is wired to the FC on /dev/ttyAMA0 and is the only thing that is. So the
 .bin comes off the FC through here -- no second device on the FC, no pulling its card
-(#77). Proven on 2026-09-23: 154,894,336 bytes with zero missing ranges, verified against
-an independent ground-side observer.
+(#77). The windowed, in-memory implementation this supersedes pulled 154,894,336 bytes
+with zero missing ranges on 2026-09-23, verified against an independent ground-side
+observer. The MAVProxy-shaped transfer that replaced it (#408) has not run against the
+vehicle. Against ArduPilot SITL it is byte-exact on a clean link; through a proxy
+dropping 0.44% of FC->host bytes it now COMPLETES, but one 90-byte block of 508,769 came
+back wrong and was reported as success -- so on a lossy link the exit code and the
+sha256 are not evidence the bytes are right. Nothing here verifies the transfer against
+the FC's own view of the file.
 
     coord fc-log list
     coord fc-log pull <id>              # the log goes to STDOUT, not to a file here
@@ -59,9 +65,6 @@ BAUD = int(os.environ.get("COORD_FC_BAUD", "1500000"))
 IMAGE_ENV = os.environ.get("COORD_FC_IMAGE")
 MAVLINK_CONTAINER = "coordinator_mavlink"
 MAVLINK_SERVICE = "coordinator-mavlink"
-
-# Bytes per LOG_REQUEST_DATA window. Bounded on purpose -- see pull().
-WINDOW = int(os.environ.get("COORD_FC_WINDOW", str(256 * 1024)))
 
 # Our MAVLink identity. Not 1 (the FC) and not 255 (a GCS): a distinct component so a
 # concurrent GCS session is distinguishable in the FC's MAV log records.
@@ -270,13 +273,30 @@ BLOCK = 90
 # (mavproxy_log.py: `while num_requests < 20`).
 MAX_REFILLS = 20
 
+# Silence that means the FC has stopped sending and it is time to ask for what is
+# missing. A named constant so the refill loop can be driven in a test without the
+# test paying a real three seconds per round.
+STALL_S = 3.0
+
+# Consecutive UNPRODUCTIVE refill rounds before giving up.
+MAX_DEAD_ROUNDS = 12
+
 
 def state_root() -> str:
     """/var/lib/<stack> for the sole installed stack. Where the partial file goes.
 
     NOT /tmp: that is tmpfs on a coordinator (1.9 G of 3.7 G RAM), so a 2.4 GB log
     written there is 2.4 GB of RAM.
+
+    COORD_FC_STATE_ROOT overrides it, which is what makes `pull` runnable off a
+    vehicle. Without it the path is reachable only where /opt/stacks exists and
+    /var/lib/<stack> is writable -- i.e. a converged device -- so the whole
+    transfer could not be exercised against ArduPilot SITL, and it shipped twice
+    without a single pull having been executed anywhere.
     """
+    override = os.environ.get("COORD_FC_STATE_ROOT")
+    if override:
+        return override
     try:
         stacks = sorted(os.listdir("/opt/stacks"))
     except OSError:
@@ -347,6 +367,7 @@ def pull(m, log_id: int) -> int:
             m.mav.log_request_data_send(ts, tc, log_id, 0, 0xFFFFFFFF)
             last_data = time.time()
             stalls = 0
+            have_at_stall = 0
 
             while len(have) < nblocks:
                 # DO NOT FILTER TO LOG_DATA. An earlier version asked recv_match for
@@ -387,12 +408,26 @@ def pull(m, log_id: int) -> int:
                         "eta_s": round((size - got) / rate) if rate else None})
                     last_report = now
 
-                if now - last_data > 3:
+                if now - last_data > STALL_S:
                     missing = gaps(have, nblocks)
                     if not missing:
                         break
+                    # The budget bounds UNPRODUCTIVE rounds, not rounds. Counting a
+                    # round that recovered blocks against the give-up ceiling caps the
+                    # whole transfer at 12 x MAX_REFILLS = 240 gaps, however healthy the
+                    # link is the rest of the time -- and a refill round is the repair
+                    # working, not a symptom.
+                    #
+                    # Measured against SITL through a proxy dropping 0.44% of FC->host
+                    # bytes: 755 gaps, so it exhausted the 240 and returned 2 with
+                    # 506,368 of 508,769 blocks and NOTHING on stdout. At a tenth that
+                    # loss the same code completes to the byte-identical sha256, so the
+                    # repair itself was never the broken part.
+                    if len(have) > have_at_stall:
+                        stalls = 0
+                    have_at_stall = len(have)
                     stalls += 1
-                    if stalls > 12:
+                    if stalls > MAX_DEAD_ROUNDS:
                         f.flush()
                         ev({"event": "error", "id": log_id, "bytes": size,
                             "blocks_received": len(have), "blocks_expected": nblocks,

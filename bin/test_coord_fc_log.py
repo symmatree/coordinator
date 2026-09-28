@@ -12,7 +12,10 @@ reports 0 bytes with no error, which is what happened on 2026-09-27.
 """
 import importlib.machinery
 import importlib.util
+import io
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 # An explicit loader: the script has no .py extension, so importlib cannot infer one.
@@ -95,6 +98,93 @@ check("nothing arrived is one whole run", fc.gaps(set(), 4) == [(0, 4)])
 #    after the first began mid-block.
 check("BLOCK is the LOG_DATA payload size", fc.BLOCK == 90)
 check("the old 256 KiB window was not block-aligned", 262144 % fc.BLOCK != 0)
+
+# 7. The refill budget must bound UNPRODUCTIVE rounds, not rounds.
+#
+#    The transfer that shipped counted every refill round against a 12-round ceiling, so
+#    with MAX_REFILLS=20 ranges per round it could repair at most 240 gaps in a whole
+#    transfer however well the link was behaving in between. Measured against ArduPilot
+#    SITL through a proxy dropping 0.44% of FC->host bytes: 755 gaps, so it returned 2
+#    with 506,368 of 508,769 blocks and nothing on stdout.
+#
+#    This drives the real pull() with a link that withholds every other block on the
+#    first pass -- 350 gaps, past the old ceiling and repairable only if productive
+#    rounds stop being charged to it.
+class FakeLogMav:
+    """A scripted FC: serves a listing, then LOG_DATA for whatever range is asked.
+
+    The first whole-file request withholds `withhold`; refill requests always answer, so
+    the only thing under test is whether the loop keeps asking long enough.
+    """
+
+    def __init__(self, nblocks, withhold):
+        self.size = nblocks * fc.BLOCK
+        self.nblocks = nblocks
+        self.withhold = set(withhold)
+        self.queue = []
+        self.refills = 0
+        self.target_system = self.target_component = 1
+        self.mav = self
+        self.entries = [Entry(1, 1, 1, self.size, 0)]
+
+    @staticmethod
+    def payload(blk):
+        return bytes(((blk + i) % 251 for i in range(fc.BLOCK)))
+
+    def log_request_list_send(self, *a):
+        pass
+
+    def log_request_end_send(self, *a):
+        pass
+
+    def log_request_data_send(self, ts, tc, log_id, ofs, count):
+        if count == 0xFFFFFFFF:
+            blocks, skip = range(self.nblocks), self.withhold
+        else:
+            self.refills += 1
+            blocks, skip = range(ofs // fc.BLOCK, (ofs + count) // fc.BLOCK), ()
+        for b in blocks:
+            if b in skip:
+                continue
+            d = type("LOG_DATA", (), {})()
+            d.get_type = lambda: "LOG_DATA"
+            d.id, d.ofs, d.count = log_id, b * fc.BLOCK, fc.BLOCK
+            d.data = self.payload(b)
+            self.queue.append(d)
+
+    def recv_match(self, type=None, blocking=False, timeout=None):
+        if type == "LOG_ENTRY":
+            return self.entries.pop(0) if self.entries else None
+        return self.queue.pop(0) if self.queue else None
+
+
+_stall = fc.STALL_S
+fc.STALL_S = 0.0                     # the loop, without paying real seconds for it
+_out = Path(tempfile.mkdtemp())
+os.environ["COORD_FC_STATE_ROOT"] = str(_out)
+NB = 700
+m = FakeLogMav(NB, range(1, NB, 2))          # every other block -> 350 gaps
+check("the scenario is past the old 12 x 20 ceiling",
+      len(fc.gaps(set(range(0, NB, 2)), NB)) > 12 * fc.MAX_REFILLS,
+      f"{len(fc.gaps(set(range(0, NB, 2)), NB))} gaps")
+
+_buf = io.BytesIO()
+_real = sys.stdout
+sys.stdout = type("W", (), {"buffer": _buf, "flush": lambda self: None})()
+try:
+    rc = fc.pull(m, 1)
+finally:
+    sys.stdout = _real
+    fc.STALL_S = _stall
+
+check("a lossy first pass still completes", rc == 0, f"rc={rc}")
+check("every byte is delivered", len(_buf.getvalue()) == NB * fc.BLOCK,
+      f"{len(_buf.getvalue())} of {NB * fc.BLOCK}")
+check("and the bytes are the log's, in order",
+      _buf.getvalue() == b"".join(FakeLogMav.payload(b) for b in range(NB)))
+check("it kept asking past the old ceiling", m.refills > 12 * fc.MAX_REFILLS,
+      f"{m.refills} ranges re-requested")
+check("nothing is left on the device", not list(_out.iterdir()), str(list(_out.iterdir())))
 
 print("RESULT:", "PASS" if ok else "FAIL")
 sys.exit(0 if ok else 1)
