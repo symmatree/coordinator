@@ -12,11 +12,15 @@
 // than one -- and armed is the wrong interval anyway, since it begins after the pre-arm window
 // where RTK convergence happens.
 //
-// NOTHING HERE TOUCHES ANOTHER POD. Three things used to: mavproxy's console log (cluster
-// debugging output, not a flight artifact), rtkbase's settings.conf (git-authoritative in tiles,
-// so it already has a history) and the raw `.ubx` (read by `kubectl exec ... cat`, which could
-// never work -- a day's file is ~227 MB against a 64 MB buffer). So this is a directory read and
-// one HTTP query, and the `pods/log` and `pods/exec` grants this service held are unused.
+// NOTHING HERE TOUCHES ANOTHER POD, which is why the `pods/log` and `pods/exec` grants this
+// service held in `mavproxy` and `ntrip` are gone. Two of those reads were dropped outright:
+// mavproxy's console log is cluster debugging output rather than flight data, and rtkbase's
+// settings.conf is git-authoritative in tiles so it already has a history. The third, the base
+// station's raw observations, moved rather than went: it was `kubectl exec ... cat` into a 64 MB
+// buffer against a few hundred MB of file, and now rtkbase writes them straight to the datasets
+// share and this reads the days a flight spans off it (#416).
+//
+// So every source here is a directory on the share, plus one HTTP query to Mimir.
 
 import { copyFile, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -109,6 +113,44 @@ export function resolveRange(
   return { start, end, from: `the ${picked.length} tlog(s) named` };
 }
 
+/**
+ * Every UTC day the range touches, because the base station's raw observations rotate daily.
+ *
+ * UTC rather than local: the filenames rtkbase writes are UTC and so are the range's stamps, and a
+ * range that crosses midnight in one zone and not the other is a distinction with nothing behind
+ * it here.
+ */
+export function daysIn(range: Range): string[] {
+  const first = Date.parse(`${range.start.slice(0, 10)}T00:00:00Z`);
+  const last = range.end.slice(0, 10);
+  if (!Number.isFinite(first) || !/^\d{4}-\d{2}-\d{2}$/.test(last)) {
+    throw new Error(`range is not a pair of timestamps: ${range.start} -> ${range.end}`);
+  }
+  const days: string[] = [];
+  // Ends on `last`, and ends immediately if the range runs backwards, so a bad pair cannot spin.
+  for (let t = first; days.length < 400; t += 86_400_000) {
+    const day = new Date(t).toISOString().slice(0, 10);
+    days.push(day);
+    if (day >= last) break;
+  }
+  return days;
+}
+
+/**
+ * The base station's raw observations for one UTC day.
+ *
+ * `file_name='%Y-%m-%d_%h-%M-%S_GNSS-1'` in rtkbase's settings, so a day's files are the ones whose
+ * name begins with that date. The `.ubx.tag` sidecar comes too -- it is matched by the same
+ * `.ubx` test and is part of the record.
+ *
+ * A DIRECTORY READ. rtkbase writes these to `datasets/base-observations` and this service mounts
+ * that share read-only, so there is no pod to reach into and nothing to stream (#416).
+ */
+export async function observationsFor(dir: string, day: string): Promise<string[]> {
+  const names = await readdir(dir);
+  return names.filter((n) => n.startsWith(day) && n.includes('.ubx')).sort();
+}
+
 export interface Collected {
   file: string;
   bytes: number;
@@ -118,7 +160,7 @@ export interface GroundOptions {
   flightsDir: string;
   /** The tlogs to collect, by the name the listing gave. */
   tlogs?: string[];
-  /** The interval for the backpack series. Overrides what the tlogs imply. */
+  /** The interval for the observations and the backpack series. Overrides what the tlogs imply. */
   start?: string;
   end?: string;
   note?: (line: string) => void;
@@ -132,9 +174,9 @@ export interface GroundOptions {
  *
  * WHAT THE CALLER NAMED IS NOT BEST-EFFORT. A tlog that was asked for and did not arrive fails the
  * run, because the screen unticks on success and an unticked file reads as collected -- which is
- * then what "Delete the rest" spares. The metrics are the other way round: a flight missing its
- * backpack series is still worth its tlog, so that is recorded as "not collected, and why" and
- * fails nothing.
+ * then what "Delete the rest" spares. The range-derived artifacts are the other way round: a flight
+ * missing its observations or its backpack series is still worth its tlog, so those are recorded as
+ * "not collected, and why" and fail nothing.
  */
 export async function collectGround(
   cfg: Config,
@@ -172,12 +214,35 @@ export async function collectGround(
 
   const range = resolveRange(picked, { start: opts.start, end: opts.end });
   if (range === undefined) {
-    say('no range given and no tlog named, so there is no backpack series to fetch');
+    say('no range given and no tlog named, so no observations and no backpack series');
     return { collected, failed };
   }
   say(`range ${range.start} -> ${range.end} (${range.from})`);
 
-  // 2. The backpack link metrics. Mimir over HTTP, needing no Kubernetes identity at all -- the
+  // 2. The base station's raw observations, for PPK. The current day's file is open and being
+  //    appended; the already-written prefix covers any past flight, which is why this copies it
+  //    rather than requiring a quiescent file. Best-effort like the metrics: a flight missing its
+  //    observations is still worth its tlog.
+  try {
+    for (const day of daysIn(range)) {
+      const names = await observationsFor(cfg.cluster.baseObs, day);
+      if (names.length === 0) {
+        say(`no observations for ${day} in ${cfg.cluster.baseObs}`);
+        continue;
+      }
+      for (const name of names) {
+        await copyFile(join(cfg.cluster.baseObs, name), join(dir, name));
+        const { size } = await stat(join(dir, name));
+        collected.push({ file: name, bytes: size });
+        say(`  ${name}: ${size} bytes`);
+      }
+    }
+  } catch (err) {
+    failed.push(`base observations: ${(err as Error).message}`);
+    say(`base observations FAILED: ${(err as Error).message}`);
+  }
+
+  // 3. The backpack link metrics. Mimir over HTTP, needing no Kubernetes identity at all -- the
   //    only view we have of the backpack's own WiFi hop (#190), and the direct evidence for #99.
   try {
     const { body, step } = await backpackMetrics(cfg, range);
