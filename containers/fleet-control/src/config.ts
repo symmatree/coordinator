@@ -18,7 +18,7 @@ export interface Config {
     mimirTenant: string;
     /** Where tlog-split writes its per-flight tlogs (tiles#794), mounted read-only. */
     groundTlogs: string;
-    /** Where rtkbase writes the base station's raw observations, mounted read-only (#416). */
+    /** The base station's raw observations, on a mount shared with whatever writes them. */
     baseObs: string;
   };
   port: number;
@@ -78,8 +78,6 @@ export function loadConfig(): Config {
       // configured rather than assumed -- there is more than one cluster.
       mimirTenant: env('FLEET_MIMIR_TENANT', 'tiles'),
       groundTlogs: env('FLEET_GROUND_TLOGS', '/mnt/ground-tlogs'),
-      // rtkbase's `[local_storage] datadir` is this share, mounted at its path in the ntrip
-      // environment -- so these arrive without anything reaching into that pod.
       baseObs: env('FLEET_BASE_OBS', '/mnt/base-observations'),
     },
     port: Number(env('PORT', '8080')),
