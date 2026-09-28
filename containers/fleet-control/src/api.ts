@@ -14,7 +14,7 @@ import { listLogs } from './fclog.js';
 import { offloadFcLog, offloadSession, readNotes, validFlightName, writeNotes } from './offload.js';
 import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
-import { collectGround } from './cluster.js';
+import { collectGround, listTlogs } from './cluster.js';
 import { build } from './build.js';
 import { notify, runEnded } from './notify.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
@@ -421,30 +421,72 @@ export function buildServer(
   });
 
   /**
-   * Collect the ground station's own record of a flight: mavproxy's console timeline, the base
-   * station's position and raw observations, and the backpack link metrics.
+   * What the ground-tlog share holds, so a caller can name what it wants.
    *
-   * Not per node -- none of it is on a vehicle. It is keyed on the flight, and it establishes the
-   * armed window from the console log, which is the only clock here that does not lie.
+   * Not per node and not per flight: it is one directory tlog-split writes into. A listing, never
+   * a parse -- it stats the files and reads the stamps out of their names, and reports every file
+   * it finds rather than only the ones shaped as expected (#414).
    */
-  app.post<{ Params: { flight: string } }>('/flights/:flight/ground', async (req, reply) => {
+  app.get('/ground/tlogs', async (_req, reply) => {
+    try {
+      return { dir: cfg.cluster.groundTlogs, tlogs: await listTlogs(cfg.cluster.groundTlogs) };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * Collect the ground station's own record of a flight: the tlogs named, the base station's raw
+   * observations for the days they touch, and the backpack link metrics.
+   *
+   * IT DOES NOT WORK OUT WHICH FLIGHT YOU MEANT. `tlog` names what to collect, repeatable; `start`
+   * and `end` state the interval for the observations and the metrics, and override what the tlogs
+   * imply. It used to infer an armed window from mavproxy's console log and rebuild a tlog
+   * filename from it, which filed the wrong flight's tlog once a pod had seen more than one -- and
+   * armed begins after the pre-arm window where the RTK problems are (#414).
+   *
+   * Not per node: none of it is on a vehicle.
+   */
+  app.post<{
+    Params: { flight: string };
+    Querystring: { tlog?: string | string[]; start?: string; end?: string };
+  }>('/flights/:flight/ground', async (req, reply) => {
     const flight = req.params.flight;
     if (!validFlightName(flight)) {
       return reply.code(400).send({ error: `not a usable flight name: ${JSON.stringify(flight)}` });
     }
+    const { start, end } = req.query;
+    // Both or neither. One alone is a half-stated interval, and guessing the other end is the
+    // habit this route is being cured of.
+    if ((start === undefined) !== (end === undefined)) {
+      return reply.code(400).send({ error: 'give both start and end, or neither' });
+    }
+    for (const [k, v] of Object.entries({ start, end })) {
+      if (v !== undefined && !Number.isFinite(Date.parse(v))) {
+        return reply.code(400).send({ error: `${k} is not a timestamp: ${JSON.stringify(v)}` });
+      }
+    }
+    const tlogs = req.query.tlog === undefined
+      ? []
+      : Array.isArray(req.query.tlog) ? req.query.tlog : [req.query.tlog];
     try {
       const run = runs.start('ground', flight, (emit) =>
         collectGround(cfg, flight, {
           flightsDir: cfg.flightsDir,
+          tlogs,
+          start,
+          end,
           note: (line) => sinkFor(emit)('stdout', line),
-        }).then(({ collected, failed, window }) => {
+        }).then(({ collected, failed, range }) => {
           const say = sinkFor(emit);
           say('stdout', `collected ${collected.length}: ${collected.map((c) => c.file).join(', ')}`);
           for (const f of failed) say('stderr', `not collected -- ${f}`);
-          say('stdout', `armed window: ${window.armed ?? '(none found)'} -> ${window.disarmed ?? '(none)'}`);
+          say('stdout', range === undefined
+            ? 'no range, so no backpack series'
+            : `range ${range.start} -> ${range.end} (${range.from})`);
         }),
       );
-      return reply.code(202).send({ id: run.id, action: run.action, flight });
+      return reply.code(202).send({ id: run.id, action: run.action, flight, tlogs });
     } catch (err) {
       return reply.code(409).send({ error: (err as Error).message });
     }

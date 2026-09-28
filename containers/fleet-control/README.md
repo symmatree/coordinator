@@ -126,39 +126,63 @@ not the thing that fills.
 ## The ground station's own record of a flight
 
 `captures/` is the vehicle's view; `ground/` is the ground station's. Different observers, neither
-substituting for the other -- a ground-side link dropout is invisible to the vehicle, and the FC
-log cannot say where the base station was.
+substituting for the other. **The tlog is the ground record:** what actually crossed the radio link
+and the backpack, which the vehicle cannot see, and -- on the cluster's clock, the only one in a
+flight that needs no qualification -- the timing reconciliation for everything device-side.
 
-`POST /flights/<name>/ground` collects into `<flight>/ground/`:
+```sh
+curl -s  https://fleet.tiles.symmatree.com/ground/tlogs           # what the share holds
+curl -sXPOST "https://fleet.tiles.symmatree.com/flights/260927-sixpose/ground\
+?tlog=20260927T154500Z-armed-20260927T160200Z-disarmed-20260927T160730Z.tlog"
+```
+
+**It does not work out which flight you meant.** `tlog` names what to collect and repeats; `start`
+and `end` state the interval for the backpack series and override what the tlogs imply. Before
+[#414](https://github.com/symmatree/coordinator/issues/414) it derived an armed window from
+mavproxy's console log and rebuilt a tlog filename from it, which filed **the wrong flight's tlog**
+as soon as that pod had seen more than one -- and armed is the wrong interval regardless, because it
+starts after the pre-arm window where the RTK problems are.
 
 | | |
 |---|---|
-| `mavproxy-console.log` | the arm/disarm timeline, **in cluster time** |
-| `rtkbase-settings.conf` | carries `position=`, without which PPK is not possible, and `local_ntripc_msg` -- the mount the vehicle actually consumed |
-| `<date>_*.ubx` | the base station's raw observations for the flight's day, from the `datadir=` in those settings |
-| `backpack-metrics-<date>.json` | every `backpack_*` series over the window, from Mimir |
-| `<start>-armed-<armed>-disarmed-<end>.tlog` | the per-flight tlog `tlog-split` already wrote (tiles#794), selected by the armed stamp |
+| `<start>-armed-<a>-disarmed-<d>.tlog` | each tlog named, copied off the share tlog-split writes to (tiles#794) |
+| `backpack-metrics-<date>.json` | every `backpack_*` series over the range, from Mimir |
 
-**It establishes the armed window itself**, from the console log, and cuts the rest to it. That is
-the only clock in a flight that is trustworthy without qualification -- neither device has an RTC,
-so nothing on the vehicle can supply it. The Mimir range is widened by 20 minutes each side on
-purpose: on 2026-09-23 the backpack rebooted and re-associated *before* the armed window, which is
-the event that explained the flight.
+**The listing is a listing.** It stats the files and reads the stamps out of their names; it never
+opens a tlog. And it reports every file it finds, including one still being written and one whose
+name nothing here produced -- a list that hides what it cannot classify makes those files
+unretrievable, which is worse than a row with empty columns.
 
-Driven with `kubectl`, for the same reason the device side is driven with `ssh`: one credential,
-one trust path, and the automated steps are the documented manual ones
-([docs/post-flight-collection.md](../../docs/post-flight-collection.md)) rather than a second
-implementation of them. In-cluster it uses the pod's ServiceAccount, which can read pods and exec
-in `mavproxy` and `ntrip` and nothing else (tiles#793).
+**What you named is not best-effort.** A tlog that was asked for and did not arrive **fails the
+run**, because the screen unticks on success and an unticked file reads as collected -- which is
+then what "Delete the rest" spares. The metrics are the other way round: a flight missing its
+backpack series is still worth its tlog, so that is recorded as "not collected, and why".
 
-**Each artifact is attempted independently.** A failure is recorded and reported, not thrown: a
-flight missing its base position is still worth the console log, and "not collected, and why" is as
-load-bearing as the list of what was.
+**No range and no tlog means no backpack series**, which is right -- if the radio was never
+connected there is nothing on the ground worth having.
 
-Files land in `ground/` because
-[docs/flight-data-layout.md](../../docs/flight-data-layout.md) puts ground-side records there and
-calls itself canonical; `docs/post-flight-collection.md` used `cluster/` on the day and the two
-disagree.
+An open `.tlog.part` can be collected and **keeps its name**, because that name is the true thing to
+say about it: the copy is a prefix of a file still being written, and a fourth naming scheme
+invented here would be worse than the one the share already uses.
+
+The Mimir step widens for a long range rather than sitting at 5 s, and the resolution used is
+reported, so a coarse answer is visible as one.
+
+### Three things this used to collect and does not
+
+Each was removed for its own reason, and between them they are why **this service no longer runs
+`kubectl` at all** -- the `pods/log` and `pods/exec` grants it holds in `mavproxy` and `ntrip`
+(tiles#793) are now unused.
+
+- **`mavproxy-console.log`** -- cluster debugging output, not flight data. Everything it said about
+  the vehicle is derived from heartbeats that are in the tlog; what is only there is mavproxy's own
+  link and NTRIP state, and Alloy already ships pod logs to Loki.
+- **`rtkbase-settings.conf`** -- `tiles/tanka/environments/ntrip/settings.conf` is in git and seeded
+  into the pod, so the base position already has a history mechanism.
+- **`<date>_*.ubx`** -- still wanted, for PPK, but not by this route. It was read with
+  `kubectl exec ... cat` into a 64 MB buffer, and a day's file is about 227 MB, so it could never
+  have worked. Replacing it with a share the base station writes to directly is
+  [#416](https://github.com/symmatree/coordinator/issues/416).
 
 ## Progress comes from events, not scraped text
 
@@ -286,7 +310,8 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first |
 | `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |
 | `POST /nodes/:name/fc-log?id=&flight=` | stream one dataflash log into a flight dir -> `202 {id}` |
-| `POST /flights/:flight/ground` | collect the ground station's own record of a flight -> `202 {id}` |
+| `GET /ground/tlogs` | what the ground-tlog share holds |
+| `POST /flights/:flight/ground[?tlog=&tlog=&start=&end=]` | collect the tlogs named, over the range given -> `202 {id}` |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
 | `GET /runs/:id/log` | a failed play as ansible printed it |

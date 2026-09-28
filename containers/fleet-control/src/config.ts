@@ -14,8 +14,6 @@ export interface Config {
   notify: { url: string; tag: string };
   /** Where the ground station's own record of a flight lives. See cluster.ts. */
   cluster: {
-    mavproxyNamespace: string;
-    ntripNamespace: string;
     mimirUrl: string;
     mimirTenant: string;
     /** Where tlog-split writes its per-flight tlogs (tiles#794), mounted read-only. */
@@ -73,8 +71,6 @@ export function loadConfig(): Config {
       tag: env('FLEET_NOTIFY_TAG', 'tiles'),
     },
     cluster: {
-      mavproxyNamespace: env('FLEET_MAVPROXY_NAMESPACE', 'mavproxy'),
-      ntripNamespace: env('FLEET_NTRIP_NAMESPACE', 'ntrip'),
       mimirUrl: env('FLEET_MIMIR_URL', 'http://mimir-gateway.mimir.svc'),
       // The Mimir tenant is the cluster name (charts/.../alloy-application.yaml), so it is
       // configured rather than assumed -- there is more than one cluster.
