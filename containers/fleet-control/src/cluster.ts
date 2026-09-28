@@ -143,8 +143,10 @@ export function daysIn(range: Range): string[] {
  * name begins with that date. The `.ubx.tag` sidecar comes too -- it is matched by the same
  * `.ubx` test and is part of the record.
  *
- * A DIRECTORY READ. rtkbase writes these to `datasets/base-observations` and this service mounts
- * that share read-only, so there is no pod to reach into and nothing to stream (#416).
+ * A DIRECTORY READ. rtkbase writes these to `datasets/gps-logs/attic-rtk-base/raw/` -- the
+ * directory the base's logs already live in, whose curated top level feeds a PPP re-solve of the
+ * base position -- and this service mounts it read-only, so there is no pod to reach into and
+ * nothing to stream (#416).
  */
 export async function observationsFor(dir: string, day: string): Promise<string[]> {
   const names = await readdir(dir);

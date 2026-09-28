@@ -175,11 +175,14 @@ reported, so a coarse answer is visible as one.
 have pods get/list, `pods/log` and `pods/exec` in `mavproxy` and `ntrip` for four reads. One moved
 and two were dropped:
 
-- **`<date>_*.ubx`** -- moved, not dropped. rtkbase's `[local_storage] datadir` is now the
-  `base-observations` share, mounted at its own path in the `ntrip` environment, so these are a
-  directory read here. Before that they were `kubectl exec ... cat` into a 64 MB buffer against a
-  few hundred MB of file, which could never have worked and never had
+- **`<date>_*.ubx`** -- moved, not dropped. rtkbase's `[local_storage] datadir` is now
+  `datasets/gps-logs/attic-rtk-base/raw/`, mounted at that path in the `ntrip` environment, so
+  these are a directory read here. Before that they were `kubectl exec ... cat` into a 64 MB
+  buffer against a few hundred MB of file, which could never have worked and never had
   ([#416](https://github.com/symmatree/coordinator/issues/416)).
+
+  That directory is where the base's logs already lived -- its top level holds the session curated
+  for a PPP re-solve of the base position, and `raw/` is continuous capture.
 
 Dropped:
 
@@ -345,7 +348,7 @@ One action per node at a time; a second `POST` against a busy node is a `409`.
 | `FLEET_IMAGE_CACHE` | `/images` | where fetched images are kept |
 | `FLEET_FLIGHTS_DIR` | `/mnt/flights` | where flight directories are assembled |
 | `FLEET_GROUND_TLOGS` | `/mnt/ground-tlogs` | tlog-split's output, read-only (tiles#794) |
-| `FLEET_BASE_OBS` | `/mnt/base-observations` | rtkbase's raw observations, read-only |
+| `FLEET_BASE_OBS` | `/mnt/base-observations` | rtkbase's raw observations, read-only. `gps-logs/attic-rtk-base/raw/` on the share |
 | `FLEET_MIMIR_URL` / `FLEET_MIMIR_TENANT` | `http://mimir-gateway.mimir.svc` / `tiles` | for the backpack series. The tenant is the cluster name, and there is more than one cluster |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | |
 
