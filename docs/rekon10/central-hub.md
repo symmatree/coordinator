@@ -64,7 +64,7 @@ TODO: I'd like to get voltage off its output and current from the input. The mat
 Uses a buffer IC in DIP package to remove load on the [**DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW** line (1 Hz), not the GNSS module.
 
 - **Camera pod connectors:** 2-wire JST SM (20 AWG): signal ground, 3.3 V PPS (from buffer). JST SM housings must be **zip-tied/anchored to the frame** to prevent pendulum vibration from fatiguing wires.
-- **Upward pair (NNW + NNE):** Two additional PPS outputs needed for the early vertical-ring cameras ([campod.md](../campod.md), *Upward-looking cameras*). The SN74AHC125N is a **quad** buffer; the horizontal-ring 8 Zeros already need **two** buffer chips (or the Coordinator shares the raw line and 8 buffered outputs go to 8 Zeros). The upward pair adds 2 more buffered outputs -- plan for a total of **10 Zero PPS lines + 1 raw Coordinator line**, requiring **three** quad buffer ICs (12 outputs, 2 spare) or **two** hex buffers.
+- **Upward pair (NNW + NNE):** Two additional PPS outputs needed for the early vertical-ring cameras ([campod.md](../campod.md), *Upward-looking cameras*). Counting the Coordinator and the FC, the full build is **12 buffered lines**; the two-tier scheme in [PPS signal buffering](#pps-signal-buffering) reaches 16 with four quad packages, and 32 if a second-tier package is swapped for an octal.
 - **Hub ports:** The upward pair gets the **first vertical-ring USB hub** -- a small 4-port unit with two ports used now and two spare for future vertical-ring cameras. This hub's upstream port connects to a free USB 2.0 port on the Coordinator.
 
 ### 5V distribution board
@@ -97,21 +97,150 @@ Board reference: ElectroCookie snappable stripboard from Amazon.
 
 One per macro-pod of 4 Zeros/cameras. Could be a single board if it's not inconveniently large, but my instinct is that we'll put this next to the usb hub for the same macro-pod.
 
-* **PPS-in** from **DS3234 SQW** (one RTC breakout at the hub; SPI/I2C to Coordinator for discipline from GNSS when available)
-* TODO: Firm up buffer chip wiring and power, make sure we're at right levels for RPi
+* **PPS-in** from **DS3234 SQW** (one RTC breakout, mounted on this board -- see [PPS signal buffering](#pps-signal-buffering) for why it cannot sit at the end of a cable; SPI to Coordinator for discipline from GNSS when available)
 * 2-wire PPS (after buffer) and signal ground to each pi zero
 * Connector reference: VISDOLL JST SM connector kits (Amazon)
 
 
 ### PPS signal buffering
 
-Driving many GPIO pins from a single weak **SQW** output would degrade edge sharpness due to capacitive loading.
+**Buffer:** 3.3 V quad 3-state buffer, **SN74AHC125N** (PDIP-14), powered from the Coordinator's
+3.3 V rail. Note **AHC, not AHCT** -- the AHCT part shares the package and pinout but is specified
+for VCC 4.5-5.5 V and is out of spec on this rail.
 
-**Buffer:** 3.3 V quad buffer, **SN74AHC125N** (or 74LVC125A). Powered from the Coordinator's 3.3 V rail (~20 uA quiescent, negligible load).
+**Topology: two tiers.** One '125 is the first tier, with all four of its inputs tied to SQW; each
+first-tier output drives all four tied inputs of a second-tier '125. Four packages gives 16 outputs
+against the 12 planned (10 Zeros + Coordinator + FC).
 
-**Topology:** All buffer inputs tied in parallel to the raw **DS3234 SQW** line (zero phase skew, ~12-16 pF total input capacitance per quad chip -- trivial for the RTC). The Coordinator may share the raw SQW line for chrony; buffered outputs go to the Pi Zeros. With 8 horizontal-ring Zeros + 2 upward-pair Zeros = **10 buffered outputs** needed, requiring **three** SN74AHC125N quad chips (or two hex-buffer equivalents). Two spare outputs remain.
+The **Coordinator takes a buffered output like every other consumer**, not the raw SQW line, so it
+sees the same electrical and timing path as the pods.
 
-Do not daisy-chain a "preamp" gate -- it adds cascaded propagation delay and unnecessary skew. Parallel is strictly better.
+> **Superseded:** an earlier version of this section said to tie every buffer input directly to SQW
+> and warned against a "preamp" gate on skew grounds. The skew reasoning was sound as far as it went
+> -- a tier does add a propagation stage -- but it is the wrong order of magnitude to decide on. AHC
+> propagation delay at 3.3 V is 4-5 ns against a PPS budget measured in microseconds, and every
+> output passes through the same number of stages, so the tier costs nothing measurable. What
+> settles it instead is the **input transition rate**, below.
+
+**Why a tier rather than a flat fan-out.** SQW is the DS3234's open-drain `INT/SQW` pin, so its
+rising edge is not driven -- it is the RC of the pull-up against whatever input capacitance hangs on
+the node. AHC125 specifies a **maximum input transition rate of 100 ns/V at VCC = 3.3 V**. With
+worst-case `Ci` of 10 pF per input, a flat fan-out of twelve inputs is ~130 pF and needs a ~1.2k
+pull-up to stay in spec, which draws 2.7 mA of the DS3234's 3 mA sink budget. Four inputs is ~50 pF
+and a 2.2k pull-up holds ~90 ns/V at 1.6 mA. The tier buys margin on the one node that has none.
+
+DC load was never the constraint: AHC inputs draw ~1 uA each, so twelve of them are 0.4% of what the
+pin can sink. Note also that the on-board 10k is outside the transition-rate spec **even driving a
+single input**, so this is a resistor value on the breakout rather than anything caused by fan-out.
+
+Keep the RTC breakout on the same board as the buffers. Hookup wire runs about 1 pF/cm, so six
+inches of cable between SQW and the first tier adds ~15 pF to a ~50 pF budget and puts the edge back
+out of spec.
+
+#### Package pinout (SN74AHC125N, PDIP-14)
+
+Channels 1 and 2 run OE-A-Y down the left side; channels 3 and 4 run Y-A-OE up the right. The halves
+are mirrored, which is the easiest thing to get wrong when laying out by eye.
+
+| pin | signal | | pin | signal |
+|-----|--------|---|-----|--------|
+| 1 | 1OE | | 14 | VCC |
+| 2 | 1A | | 13 | 4OE |
+| 3 | 1Y | | 12 | 4A |
+| 4 | 2OE | | 11 | 4Y |
+| 5 | 2A | | 10 | 3OE |
+| 6 | 2Y | | 9 | 3A |
+| 7 | GND | | 8 | 3Y |
+
+#### Board wiring
+
+Three packages for the current build: **U1** first tier, **U2** front distributor, **U3** rear
+distributor. U1's two unused outputs are live spares for future second-tier packages -- the first
+tier never needs revisiting, because four inputs is the maximum a quad can present and the SQW load
+therefore cannot grow.
+
+**Common to U1, U2 and U3:**
+
+| pin(s) | to |
+|--------|-----|
+| 14 | +3V3 bus |
+| 7 | GND bus |
+| 1, 4, 10, 13 (all OE) | GND bus -- every channel enabled, so a spare output is a wire and not a rework |
+| 14 to 7 | 0.1 uF, at the package |
+
+**Per package:**
+
+| | inputs (2, 5, 9, 12 tied) | 1Y (3) | 2Y (6) | 3Y (8) | 4Y (11) |
+|---|---|---|---|---|---|
+| **U1** first tier | RTC `JP1.5` (SQW) | U2 inputs | U3 inputs | spare | spare |
+| **U2** front | U1 pin 3 | FC feedback pin | Coordinator header 18 | NE campod | NW campod |
+| **U3** rear | U1 pin 6 | SE campod | SW campod | LED (optional) | spare |
+
+**RTC breakout header `JP1` (7-pin, 0.1"):**
+
+| JP1 | signal | to |
+|-----|--------|-----|
+| 1 | SS | Coordinator header 24 (CE0) |
+| 2 | MOSI | Coordinator header 19 |
+| 3 | MISO | Coordinator header 21 |
+| 4 | SCLK | Coordinator header 23 |
+| 5 | SQW | U1 pins 2, 5, 9, 12 |
+| 6 | VCC | +3V3 bus |
+| 7 | GND | GND bus |
+
+MOSI and MISO are **not** crossed: the breakout's silk is bus-perspective, and the v1.1 schematic
+confirms `JP1.2 = MOSI = U1.DIN` and `JP1.3 = MISO = U1.DOUT`.
+
+**Passives on the board:**
+
+| ref | value | between | why |
+|-----|-------|---------|-----|
+| R_pu | **2.2k** | `JP1.5` - `JP1.6` | in parallel with the breakout's own 10k; sets the SQW rise to ~90 ns/V at 1.6 mA of a 3 mA sink budget |
+| C_rtc | **0.1 uF** | `JP1.6` - `JP1.7` | the DS3234 bypass the datasheet asks for; the board ships with only 22 pF |
+| C_U1..U3 | **0.1 uF** each | pin 14 - pin 7 of each package | four channels slewing together pull 160-260 mA for a few ns; bulk cannot substitute, because the inductance between bulk and package is what is being bypassed |
+| C_bulk | **10 uF** | +3V3 - GND at the board entry | |
+| R_led | **1k** | U3 pin 8 - LED anode | ~1.4 mA, inside the 4 mA output rating. Optional, but `INTCN` defaults to interrupt mode, so "powered but nobody configured the RTC" otherwise presents as every line sitting steady at 3.3 V |
+
+**Not on this board, fitted at the destination end:**
+
+| part | where | why |
+|------|-------|-----|
+| 1k series in the signal line | campods and FC | limits clamp current to ~3 mA against a +/-20 mA input clamp rating if that destination is unpowered while the buffers are live. **Not** on the Coordinator line -- the buffers are powered from that Pi, so it cannot be the unpowered one |
+| 100 ohm series in the signal ground | campods | keeps the thin signal-ground wire from becoming a fault-current path (see [campod.md](../campod.md)) |
+
+Lay the +3V3 and GND rows on bare bus wire rather than solder bridges -- same inductance reasoning as
+the per-package decoupling. Bring SQW and one buffer output out to test points; every edge-rate
+figure here is computed from worst-case datasheet capacitance, not measured.
+
+#### Coordinator SPI block -> RTC breakout
+
+A single **2x4** on header pins **17-24** carries power, SPI and the returning PPS. It is
+deliberately a different shape from the campod's 2x5 on the same ten positions, so the two harnesses
+cannot cross-mate.
+
+| header pin | BCM | signal | to |
+|------------|-----|--------|-----|
+| 17 | -- | 3V3 | board +3V3 bus (RTC + all buffers) |
+| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW. Overlay line is `dtoverlay=pps-gpio,gpiopin=24` |
+| 19 | GPIO10 | MOSI | `JP1.2` |
+| 20 | -- | GND | board GND bus |
+| 21 | GPIO9 | MISO | `JP1.3` |
+| 22 | GPIO25 | spare | -- |
+| 23 | GPIO11 | SCLK | `JP1.4` |
+| 24 | GPIO8 | CE0 | `JP1.1` (SS) |
+
+Pins 25-26 (the campod block's second ground and CE1) are not in this harness: one return and one
+chip select is all this board needs.
+
+**Header position 18 and BCM 18 are different pins** -- BCM 18 is header position 12. The
+`gpiopin=18` placeholder that used to appear in this doc referred to the latter.
+
+`dtparam=spi=on` is not currently set by the coordinator Ansible role; only the campod role sets it.
+
+On the campod end, PPS lands on **header 13/14 (GPIO27 + GND)** as its own 2x1, deliberately not
+sharing the accelerometer shell -- an unrelated pair of wires in that housing could not be
+disconnected independently. BCM 9-27 come up pulled down, so an absent or unpowered distribution
+board reads as "no pulses" rather than a floating line inventing edges.
 
 ### USB hub
 
