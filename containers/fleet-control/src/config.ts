@@ -2,6 +2,7 @@
 import { loadInventory, type Inventory } from './inventory.js';
 import type { ActionContext } from './actions.js';
 import type { GithubOptions } from './github.js';
+import type { PowerConfig } from './power.js';
 
 export interface Config {
   inventory: Inventory;
@@ -12,6 +13,8 @@ export interface Config {
   flightsDir: string;
   /** Where notifications go. An empty url disables them. See notify.ts. */
   notify: { url: string; tag: string };
+  /** The bench's switch, through Home Assistant. An empty url or entity disables it. */
+  power: PowerConfig;
   /** Where the ground station's own record of a flight lives. See cluster.ts. */
   cluster: {
     mimirUrl: string;
@@ -71,6 +74,13 @@ export function loadConfig(): Config {
       // Apprise routes by tag and an untagged notify reaches nobody, so this defaults to the
       // cluster name the way Alloy's notifier does rather than to empty.
       tag: env('FLEET_NOTIFY_TAG', 'tiles'),
+    },
+    power: {
+      url: env('FLEET_HA_URL', 'https://homeassistant.local.symmatree.com:8123'),
+      token: env('FLEET_HA_TOKEN', ''),
+      // No default: which plug feeds the bench is a fact about the house, and a guess here
+      // would switch something else. Absent means the feature is off, which the screen shows.
+      entity: env('FLEET_HA_SWITCH', ''),
     },
     cluster: {
       mimirUrl: env('FLEET_MIMIR_URL', 'http://mimir-gateway.mimir.svc'),
