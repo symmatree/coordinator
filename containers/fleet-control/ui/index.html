@@ -46,6 +46,13 @@
   .badge.ok { color:var(--ok); border-color:#215f47; }
   .badge.stale { color:var(--warn); border-color:#6b4d1c; }
   .badge.unknown { color:var(--dim); }
+  #power { background:var(--card); border:1px solid var(--line); border-radius:12px;
+           padding:12px 14px; margin:12px; display:flex; gap:10px; align-items:center;
+           flex-wrap:wrap; }
+  #power .lamp { width:12px; height:12px; border-radius:50%; background:var(--line); }
+  #power .lamp.on { background:var(--ok); }
+  #power .lamp.off { background:var(--line); }
+  #power .lamp.err { background:var(--bad); }
   .pf { background:var(--card); border:1px solid var(--line); border-radius:12px;
         padding:14px; margin-bottom:12px; }
   .pf h2 { font-size:.95rem; margin:0 0 4px; }
@@ -72,6 +79,7 @@
   <span class="meta" id="stamp">status not loaded</span>
   <span class="meta" id="build">&nbsp;</span>
 </div>
+<div id="power" hidden></div>
 <div id="fleet">loading...</div>
 <div class="pf">
   <h2>Post-flight</h2>
@@ -388,7 +396,9 @@
 
     btn.disabled = false;
   }
-  document.getElementById('refresh').onclick = async () => { await showBuild(); await refreshPods(); await adoptRuns(); await refreshStatus(); };
+  document.getElementById('refresh').onclick = async () => {
+    await showBuild(); await renderPower(); await refreshPods(); await adoptRuns(); await refreshStatus();
+  };
 
   /** Every action confirms first, so a bump on a phone screen cannot start anything. */
   async function confirmThen(name, action, busyWith) {
@@ -444,6 +454,70 @@
    * One run per node, the newest. A still-running one is REATTACHED, which needs nothing new:
    * `watchRun` already replays the log from the start on connect.
    */
+  /**
+   * The bench's power.
+   *
+   * One plug feeds the coordinator, a campod and the FC, so this is not per node. The state is
+   * READ from Home Assistant every time rather than remembered -- the HA app, a wall button or an
+   * automation can all move it, and a remembered answer would be a guess shown as a fact.
+   *
+   * Hidden entirely when no switch is configured, rather than shown as a dead control.
+   */
+  async function renderPower() {
+    const root = document.getElementById('power');
+    let p;
+    try { p = await j('/power'); }
+    catch (e) { p = { configured: true, state: 'unreachable', error: e.message }; }
+    if (p.configured === false) { root.hidden = true; return; }
+    root.hidden = false;
+    root.textContent = '';
+
+    const lamp = $({ className: 'lamp ' + (p.state === 'on' ? 'on' : p.state === 'off' ? 'off' : 'err') });
+    root.append(lamp, $({ className: 'name', textContent: p.name ?? p.entity ?? 'bench power' }));
+    root.append($({ className: 'meta', textContent: p.error ?? p.state }));
+
+    const btn = (label, how) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (how === 'on') b.className = 'primary';
+      b.onclick = () => how === 'on' ? setPower(how) : confirmPowerOff();
+      return b;
+    };
+    root.append(btn('Power on', 'on'), btn('Power off', 'off'));
+  }
+
+  async function setPower(how) {
+    const root = document.getElementById('power');
+    root.append($({ className: 'meta', textContent: ` ${how}...` }));
+    try { await j(`/power/${how}`, { method: 'POST' }); }
+    catch (e) { log(`power ${how}: ${e.message}`); }
+    return renderPower();
+  }
+
+  /**
+   * Off asks first, and says what it would interrupt.
+   *
+   * NOT BLOCKED BY IT. Cutting power is a way out of a stuck box, so refusing while something is
+   * running would take the control away for the case it is wanted in -- the same mistake as #424.
+   * The devices are on btrfs for exactly this; what a cut costs is a transfer in progress, and
+   * that is what naming it is for.
+   */
+  async function confirmPowerOff() {
+    let busy = [];
+    try { busy = (await j('/runs')).filter((r) => r.status === 'running'); } catch { /* say less */ }
+    document.getElementById('cTitle').textContent = 'Cut power to the bench?';
+    document.getElementById('cWhat').textContent =
+      (busy.length === 0
+        ? 'Nothing is running against the fleet right now. '
+        : `${busy.map((r) => `${r.node} is mid-${r.action}`).join(', ')} -- cutting power ENDS `
+          + 'that, and anything it was transferring is lost. ')
+      + 'A hard cut, not a shutdown: the devices are on btrfs so the card survives it, and the '
+      + 'stack comes back on the next power-on.';
+    dlg.showModal();
+    document.getElementById('cYes').onclick = () => { dlg.close(); setPower('off'); };
+    document.getElementById('cNo').onclick = () => dlg.close();
+  }
+
   async function adoptRuns() {
     let recent;
     try { recent = await j('/runs'); } catch { return; }      // no runs, or no service; the cards stand
@@ -924,6 +998,7 @@
   // Before the roster renders, so the cards come up carrying live state. This is the cheap read;
   // the probe stays behind its button.
   await refreshPods();
+  await renderPower();
   await adoptRuns();
   await showBuild();
 </script>

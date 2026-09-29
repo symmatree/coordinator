@@ -16,6 +16,7 @@ import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
 import { collectGround, listTlogs } from './cluster.js';
 import { configured as busConfigured, readPods, setDesired } from './bus.js';
+import { configured, powerState, setPower } from './power.js';
 import { build } from './build.js';
 import { notify, runEnded } from './notify.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
@@ -186,6 +187,47 @@ export function buildServer(
       }
     },
   );
+  // ---- the bench's power ----------------------------------------------------------------
+  //
+  // Not a run: one HTTP call to Home Assistant, done by the time the request returns. And not
+  // per node -- one plug feeds the whole bench (#422).
+
+  /**
+   * What the switch is, read from HA rather than remembered. Anything can operate that plug --
+   * the HA app, a wall button, an automation -- so a cached answer would be a guess.
+   */
+  app.get('/power', async (_req, reply) => {
+    if (!configured(cfg.power)) return { configured: false };
+    try {
+      return { configured: true, ...await powerState(cfg.power) };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * Turn the bench on or off.
+   *
+   * OFF IS NEVER REFUSED. It is confirmed on the screen, and the confirmation names any run in
+   * flight, but it is not gated on one: cutting power is a way out of a stuck box, and the same
+   * mistake as #424 would be to take the control away for the case it is wanted in. The devices
+   * are on btrfs for this (#41); what a cut costs is a transfer in progress, which is what the
+   * confirmation is for.
+   */
+  app.post<{ Params: { how: string } }>('/power/:how', async (req, reply) => {
+    const how = req.params.how;
+    if (how !== 'on' && how !== 'off') {
+      return reply.code(400).send({ error: `power is on or off, not ${JSON.stringify(how)}` });
+    }
+    if (!configured(cfg.power)) {
+      return reply.code(501).send({ error: 'no switch configured -- set FLEET_HA_SWITCH and FLEET_HA_TOKEN' });
+    }
+    try {
+      return await setPower(cfg.power, how === 'on');
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
 
   // ---- status -------------------------------------------------------------------------
   // On demand, never polled: nothing should touch the fleet while it is flying, and a probe

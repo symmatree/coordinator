@@ -334,6 +334,51 @@ finally written by something.
 **PUT replaces.** A description is the current answer to "what was this flight", and an
 append-only file turns that into an archaeology problem. A caller that wants to add reads it first.
 
+## The bench's power
+
+```sh
+curl -s  https://fleet.tiles.symmatree.com/power
+curl -sXPOST https://fleet.tiles.symmatree.com/power/on
+curl -sXPOST https://fleet.tiles.symmatree.com/power/off
+```
+
+One switched plug feeds the bench -- the coordinator, a campod and the FC off one charger -- and
+[#223](https://github.com/symmatree/coordinator/issues/223) asks for "ask for an update, it powers
+things up, waits for connections, runs the update, and powers back down". This is the switch; the
+rest already exists, because the status probe says when the devices answer and quiesces them on its
+way past.
+
+Through **Home Assistant**, which is an appliance on the house LAN rather than a workload here, so
+this is plain HTTP with a bearer token and no Kubernetes identity. A cluster pod reaches it:
+`homeassistant.local.symmatree.com` resolves to 10.0.99.9 and the API answers, checked from a pod.
+HA presents every plug as a `switch.` entity whatever it speaks, so nothing here knows the plug is
+Z-Wave.
+
+**The state is read, never remembered.** The HA app, a wall button and an automation can all move
+that plug, so a cached answer would be a guess shown as a fact. `on` and `off` re-read after acting
+rather than assuming the call worked, which is what makes "I pressed on and it is still off"
+visible. A state that is neither -- `unavailable` -- is reported as itself.
+
+**Off is confirmed and never refused.** The dialog names any run in flight and says what a cut
+costs, because cutting power ends a transfer. It does not block on one: pulling the plug is a way
+out of a stuck box, and gating it would take the control away for the case it is wanted in -- the
+same mistake as [#424](https://github.com/symmatree/coordinator/issues/424). The devices are on
+btrfs for this ([#41](https://github.com/symmatree/coordinator/issues/41)).
+
+**No switch configured means the control is not there**, rather than present and dead. There is no
+default entity: which plug feeds the bench is a fact about the house, and a guess would switch
+something else.
+
+| env | default | |
+|---|---|---|
+| `FLEET_HA_URL` | `https://homeassistant.local.symmatree.com:8123` | |
+| `FLEET_HA_TOKEN` | *(unset)* | a long-lived access token, from HA's profile page |
+| `FLEET_HA_SWITCH` | *(unset)* | the `switch.` entity. **Unset disables the feature** |
+
+Worth knowing operationally rather than for the design: today the plug only reaches the vehicle
+after someone has swapped the pigtails for the charger's cables at the bench. Once the connector
+between the BEC and the pigtails is in, fed from a 5 V wall source, the plug is the whole thing.
+
 ## Notifications
 
 A campod converge is twenty minutes or more. The screen can say what happened when you come back
@@ -388,6 +433,8 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /` | the web UI |
 | `GET /healthz` | liveness |
 | `GET /build` | which build is answering, how long it has been up, and the PR it came from |
+| `GET /power` | what the bench's switch is, read from Home Assistant |
+| `POST /power/on` / `POST /power/off` | switch it, and report what it is afterwards |
 | `GET /nodes` | the roster |
 | `GET /pods` | what the devices say they are doing, off the bus. Costs them nothing |
 | `POST /nodes/:name/stack?desired=` | `running` or `stopped`, published retained to the bus |
@@ -426,6 +473,7 @@ which is the way out of a stuck box and so cannot be the thing a stuck box refus
 | `FLEET_GITHUB_TOKEN` | *(unset)* | needed **only** to download an artifact; see below |
 | `FLEET_IMAGE_CACHE` | `/images` | where fetched images are kept |
 | `FLEET_MQTT_URL` / `FLEET_MQTT_SETTLE_MS` | *(empty)* / `1500` | the pod bus; see above. Empty disables it |
+| `FLEET_HA_URL` / `FLEET_HA_TOKEN` / `FLEET_HA_SWITCH` | see above | the bench's power. An unset switch disables it |
 | `FLEET_FLIGHTS_DIR` | `/mnt/flights` | where flight directories are assembled |
 | `FLEET_GROUND_TLOGS` | `/mnt/ground-tlogs` | tlog-split's output, read-only (tiles#794) |
 | `FLEET_MIMIR_URL` / `FLEET_MIMIR_TENANT` | `http://mimir-gateway.mimir.svc` / `tiles` | for the backpack series. The tenant is the cluster name, and there is more than one cluster |
