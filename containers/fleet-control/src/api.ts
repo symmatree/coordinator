@@ -112,11 +112,26 @@ export function buildServer(
   app.post<{ Params: { name: string } }>('/nodes/:name/reboot', async (req, reply) => {
     const node = findNode(cfg.inventory, req.params.name);
     if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+    // A REBOOT IS NEVER REFUSED FOR BEING BUSY, because busy is the case it exists for. A
+    // converge that wedged held this node's slot, and the one action that would have got the box
+    // back to a known state was the one the lock blocked -- both here and on the screen, which
+    // disabled the button (#424).
+    //
+    // Abandoning first is what frees the slot, so there is no second path around the lock to
+    // keep working: the runs are ended because the reboot is about to end them, which is true.
+    const ended = runs.abandonFor(node.name, `[fleet-control] abandoned: rebooting ${node.name}`);
     try {
-      const run = runs.start('reboot', node.name, (emit) =>
-        reboot(node, cfg.action, sinkFor(emit)),
-      );
-      return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
+      const run = runs.start('reboot', node.name, (emit) => {
+        const say = sinkFor(emit);
+        // Said in the reboot's own log, because that is the run someone reads afterwards when
+        // wondering where the converge went.
+        for (const r of ended) say('stderr', `abandoned ${r.action} (run ${r.id.slice(0, 8)}), which this reboot ends`);
+        return reboot(node, cfg.action, say);
+      });
+      return reply.code(202).send({
+        id: run.id, action: run.action, node: run.node,
+        abandoned: ended.map((r) => ({ id: r.id, action: r.action })),
+      });
     } catch (err) {
       return reply.code(409).send({ error: (err as Error).message });
     }

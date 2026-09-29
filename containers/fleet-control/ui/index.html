@@ -142,10 +142,10 @@
       'stopped. NOT a sticky off: the boot unit starts the stack again on the next power ' +
       'cycle, so nothing has to remember to undo this.',
     reboot:
-      'One command, gated on nothing: the way out of a stuck box, so it does not depend on ' +
-      'anything else working first. Nothing waits for it to come back -- refresh status when ' +
-      'you want to know. Press Stop first if you want the containers to go down on our ' +
-      'timeout rather than the shutdown\u2019s.',
+      'One command, gated on nothing -- including not gated on this node being busy, since a ' +
+      'wedged run is the commonest reason to want it. Nothing waits for it to come back -- ' +
+      'refresh status when you want to know. Press Stop first if you want the containers to go ' +
+      'down on our timeout rather than the shutdown\u2019s.',
     reimage:
       'Fetches the newest disk image for this role, stages it in the FAT partition, and ' +
       'arms the tryboot flasher. The device drops off the network and comes back on the new ' +
@@ -184,8 +184,12 @@
         const b = document.createElement('button');
         b.textContent = label;
         if (primary) b.className = 'primary';
-        b.disabled = !!st.busy;
-        b.onclick = () => confirmThen(n.name, action);
+        // REBOOT STAYS PRESSABLE WHILE BUSY. It is the way out of a stuck box, and a wedged
+        // converge is the commonest way a box gets stuck -- so disabling it exactly then took
+        // away the button for the case it exists for (#424). Everything else stays disabled:
+        // two converges against one device fight over the docker daemon.
+        b.disabled = !!st.busy && action !== 'reboot';
+        b.onclick = () => confirmThen(n.name, action, st.busy ? st.runAction : undefined);
         return b;
       };
       btns.append(
@@ -331,9 +335,15 @@
   document.getElementById('refresh').onclick = async () => { await showBuild(); await adoptRuns(); await refreshStatus(); };
 
   /** Every action confirms first, so a bump on a phone screen cannot start anything. */
-  async function confirmThen(name, action) {
+  async function confirmThen(name, action, busyWith) {
     document.getElementById('cTitle').textContent = `${action} ${name}?`;
-    document.getElementById('cWhat').textContent = WHAT[action];
+    // What it will END is the part worth saying, and it is cheap to say: the page already knows
+    // what is running on this node. Named, not blocked -- the operator decides (#424).
+    document.getElementById('cWhat').textContent = busyWith === undefined
+      ? WHAT[action]
+      : `${name} has '${busyWith}' running, and this reboot ENDS it -- rebooting the box ends it `
+        + `either way, so it will be marked abandoned rather than left looking alive. `
+        + `${WHAT[action]}`;
     dlg.showModal();
     document.getElementById('cYes').onclick = () => { dlg.close(); run(name, action); };
     document.getElementById('cNo').onclick = () => dlg.close();
@@ -341,7 +351,7 @@
 
   async function run(name, action) {
     const st = state.get(name) ?? {};
-    st.busy = true; st.log = [`starting ${action}...`];
+    st.busy = true; st.runAction = action; st.log = [`starting ${action}...`];
     state.set(name, st);
     render(await j('/nodes'));
     let id;
@@ -392,6 +402,8 @@
         const full = await j(`/runs/${r.id}`);
         st.log = full.lines.map((l) => l.line).slice(-400);
         st.busy = full.status === 'running';
+        // What is running, so the reboot dialog can name what it would end.
+        st.runAction = r.action;
         if (full.status !== 'running') st.log.push(`[fleet-control] run ${full.status}`);
         state.set(node, st);
         if (full.status === 'running') void follow(node, st, r.id);

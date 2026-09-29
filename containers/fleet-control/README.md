@@ -88,6 +88,25 @@ otherwise done by hand over ssh or by pulling power -- so it must not depend on 
 working. The containers get systemd's shutdown signal on the way down; press **Stop** first if
 you want them to go on our timeout instead.
 
+**Including not gated on the node being busy, and it abandons what was running.** One action per
+node is the rule everywhere else, and for a while it applied here too -- so a converge that wedged
+held the slot and Reboot, the way out, was the one thing refused. Both here and on the screen,
+which disabled the button ([#424](https://github.com/symmatree/coordinator/issues/424)). Now the
+node's in-flight runs are marked abandoned first, which is what frees the slot, and that is a fact
+rather than a licence: **rebooting the box ends those runs**, so a run still reading `running`
+afterwards is wrong and holds the slot against a converge or stop that would now work. The
+confirmation names what it is about to end.
+
+Converge and Stop keep the lock. Two converges against one device fight over the docker daemon.
+
+**An abandoned run stays abandoned.** Ansible does not stop because this stopped believing in it,
+so the play settles later -- and without a guard that would flip the status back and send a second
+notification for a run the operator already watched end. First writer wins.
+
+**Only reboots this service performs.** A device that went down to a power cut, a hand-run
+`reboot`, or the playbook's own reboot still leaves a run that only a pod restart clears. Nothing
+tells this service a box went away, so that gap is not closable from here.
+
 **Nothing waits for it to come back.** Same as everything else here: the device answers again
 or it does not, and the status screen is the check
 ([#326](https://github.com/symmatree/coordinator/issues/326)).
@@ -315,7 +334,7 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /nodes` | the roster |
 | `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
 | `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
-| `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first |
+| `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first, and abandons this node's in-flight runs |
 | `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |
 | `POST /nodes/:name/fc-log?id=&flight=` | stream one dataflash log into a flight dir -> `202 {id}` |
 | `GET /ground/tlogs` | what the ground-tlog share holds |
@@ -330,7 +349,8 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /images/:role/:sha/zip` | serve a cached image, for a device to `get_url` |
 | `GET /images/:sha/current` | is that sha head of the tracked ref, and what PR was it |
 
-One action per node at a time; a second `POST` against a busy node is a `409`.
+One action per node at a time; a second `POST` against a busy node is a `409`. **Except reboot**,
+which is the way out of a stuck box and so cannot be the thing a stuck box refuses.
 
 ## Configuration
 

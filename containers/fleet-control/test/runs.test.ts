@@ -169,3 +169,58 @@ describe('RunRegistry -- telling a watcher the run is over', () => {
     assert.ok(seen.length >= 1);
   });
 });
+
+describe('a reboot ends the runs it ends', () => {
+  it('abandoning frees the node, so the action that was blocked can start', async () => {
+    // The case this exists for: a converge wedged, and reboot -- the way out of a stuck box -- was
+    // the one thing the per-node lock refused (#424).
+  const runs = new RunRegistry(() => {});
+  let release: () => void = () => {};
+  const wedged = runs.start('converge', 'campod-sw', () => new Promise<void>((r) => { release = r; }));
+  assert.throws(() => runs.start('reboot', 'campod-sw', async () => {}), /already has 'converge'/);
+
+  const ended = runs.abandonFor('campod-sw', 'rebooting campod-sw');
+  assert.deepEqual(ended.map((r) => r.id), [wedged.id]);
+  assert.equal(wedged.status, 'failed');
+  assert.match(wedged.error ?? '', /rebooting campod-sw/);
+
+    // And now the reboot starts, which is the whole point.
+  const reboot = runs.start('reboot', 'campod-sw', async () => {});
+  assert.equal(reboot.status, 'running');
+  release();
+  });
+
+  it('a run that settles after being abandoned does not come back to life', async () => {
+    // Ansible does not stop because we stopped believing in it. Without the endedAt guard the late
+    // resolve flips the status back and fires a SECOND notification for a run already reported.
+  const finished: string[] = [];
+  const runs = new RunRegistry(() => {}, (r) => finished.push(`${r.action}:${r.status}`));
+  let release: () => void = () => {};
+  const wedged = runs.start('converge', 'campod-sw', () => new Promise<void>((r) => { release = r; }));
+
+  runs.abandonFor('campod-sw', 'rebooting');
+  assert.equal(wedged.status, 'failed');
+  const endedAt = wedged.endedAt;
+
+  release();                                   // the work finally succeeds, hours late
+  await new Promise((r) => setImmediate(r));
+  assert.equal(wedged.status, 'failed');       // still failed
+  assert.equal(wedged.endedAt, endedAt);       // and still ended when it was abandoned
+  assert.deepEqual(finished, ['converge:failed']);   // notified once, not twice
+  });
+
+  it('abandoning touches only that node, and only what is running', async () => {
+  const runs = new RunRegistry(() => {});
+  let release: () => void = () => {};
+  const other = runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }));
+  const done = runs.start('stop', 'campod-sw', async () => {});
+  await new Promise((r) => setImmediate(r));
+  assert.equal(done.status, 'succeeded');
+
+  assert.deepEqual(runs.abandonFor('campod-sw', 'rebooting'), []);
+  assert.equal(other.status, 'running');
+  assert.equal(done.status, 'succeeded');
+  release();
+  });
+
+});
