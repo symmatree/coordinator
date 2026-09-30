@@ -317,3 +317,59 @@ Two matched runs designed as a **control experiment for camera vibration**. The 
 **Data state:** `.bin` + `/captures` **not yet pulled** (`coord flight pull` still unbuilt, coordinator [#31]). Decode/analysis pending; the scientific writeups (VINS-vs-GPS, gate behavior across the GPS handoff, whether the woods leg tracks, still-image quality) go to coordinator `analysis/vio-quality-experiments.md` and friends once extracted. **FC clock unset** (logs 1980-dated) -- time-align on GPS-second + motion cross-correlation as before.
 
 **Systems exercised in one hop:** full coordinator flight stack onboard (first light), coordinator-mavlink -> FC serial link, in-tracker disparity+still capture, VISO/ExtNav pre-arm + arming, a real woods traverse + vertical, and a probable GPS/RTK-degradation event.
+
+### FC parameters reset to defaults (2026-09-27)
+
+The flight controller's parameter store reset itself to firmware defaults -- frame class, serial
+config, `STAT_BOOTCNT`. `SERIAL4_PROTOCOL` went with it, so the FC stopped putting MAVLink on
+the coordinator's UART. It was reloaded from `ardupilot/rekon10-methodi.param` and round-tripped,
+and that was the end of it.
+
+It happened during a week of **actively rewriting the client that talks to the FC over that
+link** -- `coord-fc-log` was being changed and re-run against the vehicle repeatedly. Correlation
+only; see below.
+
+Recording it because identifying it took a day. The symptom was `wait_heartbeat` failing with
+*"no heartbeat from the FC on /dev/ttyAMA0"*, which reads as a fault in the thing being changed,
+and there was no prior instance of this failure mode to recognise. The FC was powered and
+behaving normally, the coordinator end was correctly configured, and nothing had changed in
+either repo's link configuration.
+
+**What dated it.** `coordinator-mavlink` writes `vehicle.tlog` per boot (#220), so the link's
+health was already on disk:
+
+| boot | router up (UTC) | bytes | good MAVLink |
+|---|---|---|---|
+| `f9de2554` | 09-26 23:31 | 712,543 | 100.0% (18,547 good / 8 BAD_DATA) |
+| `97c239ed` | 09-27 12:24 | 53,349 | 99.6% (1,390 / 5) |
+| `176422e9` | 09-28 00:37 | 18,957 | 0.1% (1 / 1,075) |
+| `c1962575` | 09-29 01:36 | 1,942 | 0.0% (0 / 121) |
+| `3edf4e3e` | 09-29 02:42 | 21,810 | 0.1% (1 / 836) |
+
+Healthy sessions carried `AHRS`, `VFR_HUD`, `SYS_STATUS`, `ATTITUDE` and `GLOBAL_POSITION_INT`
+at their usual rates; the later ones carried runs of `0x00` and `0xE0`, and a raw read of the
+port returned nothing. So the change sat between 09-27 12:24 and 00:37 UTC the next day. The
+coordinator end was checked and was not involved -- `serial0 -> ttyAMA0` with `disable-bt` in
+force, getty masked, port at 1500000 -- and 1,568 `coord-throttle` samples across four boots
+were all `[clean]`.
+
+**Cause was never established.** It correlates with the log-download attempts above, with no
+known causal direction. The operator's theory, held without evidence, is an FC crash landing
+badly among start/cancel/retry calls arriving in quick succession. A detached UART ground was
+found later but probably during disassembly rather than before it. The boots between the reset
+and the diagnosis were USB-powered with logging correctly disabled on USB, so no dataflash log
+covers the window.
+
+Useful for next time: a total wipe is the expected shape of a storage fault on this board rather
+than partial damage. All four `AP_FlashStorage::init()` inconsistency paths discard the whole
+store, the H7 header check rejects any partially-programmed 32-byte block, and the `AP_Param`
+backup area is compiled out on `TBS_LUCID_H7` because its hwdef defines `STORAGE_FLASH_PAGE`.
+
+**Two failures that looked alike.** `fc-log-50.bin.part` is stamped 09-26 23:54, inside the
+`f9de2554` session, so that pull failed against a fully healthy link -- it was the windowed
+transfer's own defect, superseded by #408 and #420. The failures from 09-28 on were this.
+
+The compass calibration was the only thing the export could not restore on its own, since no
+fragment held it and the device id is written by detection. It returns when the GPS/compass is
+reconnected -- the GPS runs on 4V5 so it is powered and therefore discovered over USB as well as
+in flight. Pinned in a fragment afterwards (#433).
