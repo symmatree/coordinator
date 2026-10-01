@@ -13,7 +13,7 @@
 # model lives in feature_tracker, so camera_models (the only roscpp-dependent
 # package) is intentionally not built.
 
-FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS builder
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG VINS_FUSION_BRANCH=apm_wiki
@@ -50,7 +50,7 @@ RUN cd VINS-Fusion \
   # deterministic offline harness, built only when the overlay provides it (main_offline.cpp)
   && if [ -f build/vins_fusion_offline ]; then install -D build/vins_fusion_offline /opt/coordinator/bin/vins_fusion_offline; fi
 
-FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:9c6114f4724cf348e9536dd4c2d48f1ff560bf7a1f3fd817f1f9a556687704fa
+FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:0b58aa97a6b8d10d20633f34da6eec962415778a045a6178017ea58ead38635e
 
 ARG DEBIAN_FRONTEND=noninteractive
 

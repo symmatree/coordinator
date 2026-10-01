@@ -10,7 +10,7 @@
 # Cross-build (slow; uses QEMU):
 #   docker buildx build --platform linux/arm64 -t coordinator-vio-tracker:local containers/vio-tracker
 
-FROM ghcr.io/symmatree/coordinator-vio-tracker-base:main@sha256:763da8d87a04f66711931da044370eb09a8f954fe94ed6a816665d0ccd001929 AS builder
+FROM ghcr.io/symmatree/coordinator-vio-tracker-base:main@sha256:f1b747f03f799ba32e9f542a7630445e9f13f389ef60eb2917d016262be09c53 AS builder
 
 ARG OAK_D_VINS_CPP_BRANCH=apm_wiki
 ARG OAK_D_VINS_CPP_SHA
@@ -33,7 +33,7 @@ RUN cd /src/oak_d_vins_cpp \
   && cmake --build build --parallel "$(nproc)" \
   && install -D build/feature_tracker /opt/coordinator/bin/feature_tracker
 
-FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:9c6114f4724cf348e9536dd4c2d48f1ff560bf7a1f3fd817f1f9a556687704fa
+FROM ghcr.io/symmatree/coordinator-vio-runtime-base:main@sha256:0b58aa97a6b8d10d20633f34da6eec962415778a045a6178017ea58ead38635e
 
 ARG DEBIAN_FRONTEND=noninteractive
 
