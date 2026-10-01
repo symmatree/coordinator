@@ -207,6 +207,52 @@ def pose_independence(vectors, min_deg=5.0):
                 min_separation_deg=float(off.min()), pairwise_deg=ang)
 
 
+MODEL_LADDER = {
+    "bias_only": dict(n=3, x0=[0, 0, 0],
+                      resid=lambda v, p: np.linalg.norm(v - p[:3], axis=1) - 1.0,
+                      report=lambda p: dict(scale=[1.0, 1.0, 1.0], bias=list(p[:3]))),
+    "global_scale_only": dict(n=1, x0=[1.0],
+                              resid=lambda v, p: np.linalg.norm(v * p[0], axis=1) - 1.0,
+                              report=lambda p: dict(scale=[float(p[0])] * 3, bias=[0.0] * 3)),
+    "global_scale_and_bias": dict(n=4, x0=[1, 0, 0, 0],
+                                  resid=lambda v, p: np.linalg.norm((v - p[1:4]) * p[0], axis=1) - 1.0,
+                                  report=lambda p: dict(scale=[float(p[0])] * 3, bias=list(p[1:4]))),
+    "axis_scale_and_bias": dict(n=6, x0=[1, 1, 1, 0, 0, 0],
+                                resid=lambda v, p: np.linalg.norm((v - p[3:]) * p[:3], axis=1) - 1.0,
+                                report=lambda p: dict(scale=list(p[:3]), bias=list(p[3:]))),
+}
+
+
+def model_ladder(vectors, se_g=None):
+    """Fit every model from 1 to 6 parameters and report each residual against its spare dof.
+
+    This exists because "six poses, six unknowns, so the residual tells you nothing" is true and
+    is not the end of the question. Smaller models are over-observed by the same six poses and CAN
+    be tested, so the ladder says which terms the data actually requires rather than leaving the
+    6-parameter fit unfalsifiable.
+
+    On 260926 it decides something: a global scale with per-axis bias -- 4 parameters, 2 spare
+    degrees of freedom -- leaves 0.0100 g rms on one channel and 0.0114 g on the other, against
+    per-pose standard errors of 0.00034 g and 0.00021 g. Thirty to fifty times the noise, so the
+    per-axis scale terms are necessary and the 6-parameter fit is not merely absorbing noise. The
+    same ladder shows the two parts differ in kind: the arm's global scale fits at 0.9994 and
+    buys nothing over bias alone, while the camera's is 0.9824 and halves the residual.
+
+    Pass `se_g` (the per-pose standard error of |a|) to get the ratio that makes a residual
+    interpretable; a residual is only large or small relative to the measurement.
+    """
+    v = np.asarray(vectors, float)
+    out = {}
+    for name, spec in MODEL_LADDER.items():
+        r = least_squares(lambda p: spec["resid"](v, p), spec["x0"], method="lm")
+        resid = spec["resid"](v, r.x)
+        rms = float(np.sqrt((resid ** 2).mean()))
+        out[name] = dict(n_parameters=spec["n"], dof=len(v) - spec["n"], rms_g=rms,
+                         max_g=float(np.abs(resid).max()),
+                         rms_over_noise=(rms / se_g) if se_g else None, **spec["report"](r.x))
+    return out
+
+
 def apply_calibration(vectors, scale, bias):
     return (np.asarray(vectors, float) - bias) * scale
 
@@ -296,6 +342,18 @@ def _main(argv=None):
                 pose_vectors_g=[[float(x) for x in row] for row in v],
                 pose_direction_se_deg=float(np.degrees(se.max())))
             continue
+        se_mag = float(np.max([np.linalg.norm(e) for e in se]))
+        ladder = model_ladder(v, se_g=se_mag)
+        print(f"\n{label}: model ladder over {len(v)} poses "
+              f"(|a| standard error {se_mag:.5f} g per pose)")
+        print(f"   {'model':24s} {'par':>3s} {'dof':>4s} {'rms (g)':>9s} {'x noise':>8s}")
+        for name, d in ladder.items():
+            print(f"   {name:24s} {d['n_parameters']:3d} {d['dof']:4d} {d['rms_g']:9.5f}"
+                  f" {d['rms_over_noise']:8.0f}")
+        print("   A model with spare degrees of freedom CAN be wrong, so these are the ones that")
+        print("   carry information. The 6-parameter fit's own residual is arithmetic.")
+        out["channels"][label] = dict(out["channels"].get(label, {}), model_ladder={
+            k: {kk: vv for kk, vv in d.items()} for k, d in ladder.items()})
         print(f"\n{label}: scale {np.round(fit['scale'], 4)}  bias {np.round(fit['bias'], 4)} g")
         print(f"   {fit['n_poses']} poses, {fit['n_independent_poses']} independent "
               f"(closest pair {fit['min_separation_deg']:.2f} deg apart)")
