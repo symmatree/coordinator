@@ -143,46 +143,76 @@ export class RunRegistry {
     this.runs.set(run.id, run);
     this.prune();
 
-    const emit: Listener = (l) => {
-      this.echo(run, l);
-      // The cap is on what this process HOLDS. stdout above is already written, so a run that
-      // overruns is truncated on the screen and complete in the pod log.
-      if (run.lines.length < MAX_LINES) run.lines.push(l);
-      else if (run.lines.length === MAX_LINES) {
-        run.lines.push({ t: l.t, stream: 'stderr', line: `[fleet-control] output truncated at ${MAX_LINES} lines` });
-      }
-      for (const fn of this.listeners.get(run.id) ?? []) fn(l);
-    };
+    const emit: Listener = (l) => this.line(run, l);
 
     void work(emit, run.id)
-      .then(() => {
-        run.status = 'succeeded';
-      })
-      .catch((err: unknown) => {
-        run.status = 'failed';
-        run.error = err instanceof Error ? err.message : String(err);
-        emit({ t: new Date().toISOString(), stream: 'stderr', line: run.error });
-      })
-      .finally(() => {
-        run.endedAt = new Date().toISOString();
-        // How the run ENDED is the single line most worth having later, so it is echoed too
-        // -- not only handed to whoever happens to be watching.
-        const last: RunLine = { t: run.endedAt, stream: 'stdout', line: `[fleet-control] run ${run.status}` };
-        this.echo(run, last);
-        for (const fn of this.listeners.get(run.id) ?? []) fn(last);
-        this.listeners.delete(run.id);
-        for (const fn of this.enders.get(run.id) ?? []) fn();
-        this.enders.delete(run.id);
-        // Last, and guarded: a notifier that throws must not take the run's bookkeeping with it.
-        try {
-          this.onFinished(run);
-        } catch (err) {
-          echoToProcess(run, { t: new Date().toISOString(), stream: 'stderr',
-            line: `[fleet-control] onFinished threw: ${(err as Error).message}` });
-        }
-      });
+      .then(() => this.end(run, 'succeeded'))
+      .catch((err: unknown) => this.end(run, 'failed', err instanceof Error ? err.message : String(err)));
 
     return run;
+  }
+
+  /**
+   * Abandon whatever is still going against `node`, because something just made it untrue.
+   *
+   * A REBOOT IS THAT SOMETHING. Rebooting the box kills whatever was running on it, so a run
+   * left `running` afterwards is not optimism, it is wrong -- and it goes on holding the node's
+   * slot against a converge or a stop that would now work. This records the fact rather than
+   * offering the operator a way to overrule the service (#424).
+   *
+   * Only what this process can observe: a device rebooted some other way still leaves a run
+   * that only a pod restart clears. That gap is real and is not closable from here -- nothing
+   * tells us a box went down.
+   */
+  abandonFor(node: string, why: string): Run[] {
+    const doomed = this.list().filter((r) => r.node === node && r.status === 'running');
+    for (const run of doomed) this.end(run, 'failed', why);
+    return doomed;
+  }
+
+  /** One line into a run: echoed, capped, kept, and handed to whoever is watching. */
+  private line(run: Run, l: RunLine): void {
+    this.echo(run, l);
+    // The cap is on what this process HOLDS. stdout above is already written, so a run that
+    // overruns is truncated on the screen and complete in the pod log.
+    if (run.lines.length < MAX_LINES) run.lines.push(l);
+    else if (run.lines.length === MAX_LINES) {
+      run.lines.push({ t: l.t, stream: 'stderr', line: `[fleet-control] output truncated at ${MAX_LINES} lines` });
+    }
+    for (const fn of this.listeners.get(run.id) ?? []) fn(l);
+  }
+
+  /**
+   * End a run, once.
+   *
+   * THE GUARD IS THE POINT. An abandoned run's work is still out there -- ansible does not stop
+   * because we stopped believing in it -- and it settles later, which without this would flip
+   * the status back and send a second notification for a run the operator already saw end.
+   * First writer wins, and `endedAt` is the record of that.
+   */
+  private end(run: Run, status: RunStatus, error?: string): void {
+    if (run.endedAt !== undefined) return;
+    run.status = status;
+    if (error !== undefined) {
+      run.error = error;
+      this.line(run, { t: new Date().toISOString(), stream: 'stderr', line: error });
+    }
+    run.endedAt = new Date().toISOString();
+    // How the run ENDED is the single line most worth having later, so it is echoed too
+    // -- not only handed to whoever happens to be watching.
+    const last: RunLine = { t: run.endedAt, stream: 'stdout', line: `[fleet-control] run ${run.status}` };
+    this.echo(run, last);
+    for (const fn of this.listeners.get(run.id) ?? []) fn(last);
+    this.listeners.delete(run.id);
+    for (const fn of this.enders.get(run.id) ?? []) fn();
+    this.enders.delete(run.id);
+    // Last, and guarded: a notifier that throws must not take the run's bookkeeping with it.
+    try {
+      this.onFinished(run);
+    } catch (err) {
+      echoToProcess(run, { t: new Date().toISOString(), stream: 'stderr',
+        line: `[fleet-control] onFinished threw: ${(err as Error).message}` });
+    }
   }
 
   private prune(): void {

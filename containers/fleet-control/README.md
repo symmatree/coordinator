@@ -88,6 +88,25 @@ otherwise done by hand over ssh or by pulling power -- so it must not depend on 
 working. The containers get systemd's shutdown signal on the way down; press **Stop** first if
 you want them to go on our timeout instead.
 
+**Including not gated on the node being busy, and it abandons what was running.** One action per
+node is the rule everywhere else, and for a while it applied here too -- so a converge that wedged
+held the slot and Reboot, the way out, was the one thing refused. Both here and on the screen,
+which disabled the button ([#424](https://github.com/symmatree/coordinator/issues/424)). Now the
+node's in-flight runs are marked abandoned first, which is what frees the slot, and that is a fact
+rather than a licence: **rebooting the box ends those runs**, so a run still reading `running`
+afterwards is wrong and holds the slot against a converge or stop that would now work. The
+confirmation names what it is about to end.
+
+Converge and Stop keep the lock. Two converges against one device fight over the docker daemon.
+
+**An abandoned run stays abandoned.** Ansible does not stop because this stopped believing in it,
+so the play settles later -- and without a guard that would flip the status back and send a second
+notification for a run the operator already watched end. First writer wins.
+
+**Only reboots this service performs.** A device that went down to a power cut, a hand-run
+`reboot`, or the playbook's own reboot still leaves a run that only a pod restart clears. Nothing
+tells this service a box went away, so that gap is not closable from here.
+
 **Nothing waits for it to come back.** Same as everything else here: the device answers again
 or it does not, and the status screen is the check
 ([#326](https://github.com/symmatree/coordinator/issues/326)).
@@ -146,6 +165,7 @@ starts after the pre-arm window where the RTK problems are.
 | | |
 |---|---|
 | `<start>-armed-<a>-disarmed-<d>.tlog` | each tlog named, copied off the share tlog-split writes to (tiles#794) |
+| `<date>_*.ubx` + `.ubx.tag` | the base station's raw observations for every UTC day the range touches -- the PPK inputs |
 | `backpack-metrics-<date>.json` | every `backpack_*` series over the range, from Mimir |
 
 **The listing is a listing.** It stats the files and reads the stamps out of their names; it never
@@ -158,7 +178,7 @@ run**, because the screen unticks on success and an unticked file reads as colle
 then what "Delete the rest" spares. The metrics are the other way round: a flight missing its
 backpack series is still worth its tlog, so that is recorded as "not collected, and why".
 
-**No range and no tlog means no backpack series**, which is right -- if the radio was never
+**No range and no tlog means no observations and no backpack series**, which is right -- if the radio was never
 connected there is nothing on the ground worth having.
 
 An open `.tlog.part` can be collected and **keeps its name**, because that name is the true thing to
@@ -168,21 +188,28 @@ invented here would be worse than the one the share already uses.
 The Mimir step widens for a long range rather than sitting at 5 s, and the resolution used is
 reported, so a coarse answer is visible as one.
 
-### Three things this used to collect and does not
+### Every source is a directory on the share
 
-Each was removed for its own reason, and between them they are why **this service no longer runs
-`kubectl` at all** -- the `pods/log` and `pods/exec` grants it holds in `mavproxy` and `ntrip`
-(tiles#793) are now unused.
+**This service runs no `kubectl` at all**, and holds no Role anywhere in the cluster. It used to
+have pods get/list, `pods/log` and `pods/exec` in `mavproxy` and `ntrip` for four reads. One moved
+and two were dropped:
+
+- **`<date>_*.ubx`** -- moved, not dropped. rtkbase's `[local_storage] datadir` is now
+  `datasets/gps-logs/attic-rtk-base/raw/`, mounted at that path in the `ntrip` environment, so
+  these are a directory read here. Before that they were `kubectl exec ... cat` into a 64 MB
+  buffer against a few hundred MB of file, which could never have worked and never had
+  ([#416](https://github.com/symmatree/coordinator/issues/416)).
+
+  That directory is where the base's logs already lived -- its top level holds the session curated
+  for a PPP re-solve of the base position, and `raw/` is continuous capture.
+
+Dropped:
 
 - **`mavproxy-console.log`** -- cluster debugging output, not flight data. Everything it said about
   the vehicle is derived from heartbeats that are in the tlog; what is only there is mavproxy's own
   link and NTRIP state, and Alloy already ships pod logs to Loki.
 - **`rtkbase-settings.conf`** -- `tiles/tanka/environments/ntrip/settings.conf` is in git and seeded
   into the pod, so the base position already has a history mechanism.
-- **`<date>_*.ubx`** -- still wanted, for PPK, but not by this route. It was read with
-  `kubectl exec ... cat` into a 64 MB buffer, and a day's file is about 227 MB, so it could never
-  have worked. Replacing it with a share the base station writes to directly is
-  [#416](https://github.com/symmatree/coordinator/issues/416).
 
 ## Progress comes from events, not scraped text
 
@@ -307,7 +334,7 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /nodes` | the roster |
 | `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
 | `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
-| `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first |
+| `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first, and abandons this node's in-flight runs |
 | `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |
 | `POST /nodes/:name/fc-log?id=&flight=` | stream one dataflash log into a flight dir -> `202 {id}` |
 | `GET /ground/tlogs` | what the ground-tlog share holds |
@@ -322,7 +349,8 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /images/:role/:sha/zip` | serve a cached image, for a device to `get_url` |
 | `GET /images/:sha/current` | is that sha head of the tracked ref, and what PR was it |
 
-One action per node at a time; a second `POST` against a busy node is a `409`.
+One action per node at a time; a second `POST` against a busy node is a `409`. **Except reboot**,
+which is the way out of a stuck box and so cannot be the thing a stuck box refuses.
 
 ## Configuration
 
@@ -338,6 +366,10 @@ One action per node at a time; a second `POST` against a busy node is a `409`.
 | `FLEET_IMAGE_REF` | `main` | the ref the fleet tracks |
 | `FLEET_GITHUB_TOKEN` | *(unset)* | needed **only** to download an artifact; see below |
 | `FLEET_IMAGE_CACHE` | `/images` | where fetched images are kept |
+| `FLEET_FLIGHTS_DIR` | `/mnt/flights` | where flight directories are assembled |
+| `FLEET_GROUND_TLOGS` | `/mnt/ground-tlogs` | tlog-split's output, read-only (tiles#794) |
+| `FLEET_BASE_OBS` | `/mnt/base-observations` | rtkbase's raw observations, read-only. `gps-logs/attic-rtk-base/raw/` on the share |
+| `FLEET_MIMIR_URL` / `FLEET_MIMIR_TENANT` | `http://mimir-gateway.mimir.svc` / `tiles` | for the backpack series. The tenant is the cluster name, and there is more than one cluster |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | |
 
 Roster: `host` is optional and defaults to `name`.
