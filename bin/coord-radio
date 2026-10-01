@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Report and set this device's WiFi radio state (#434).
+
+A capture device's operating state is a **closed network**: reachable over the USB
+gadget link and nothing else. That is not a performance measure -- it removes a
+whole class of alternative explanations from every measurement taken afterwards.
+A link that reaches only the coordinator cannot carry unexpected traffic in either
+direction; a link with the house network and the internet behind it always can, so
+every anomaly keeps "was something else happening?" attached to it. An agent
+logging in to look at something, a timer deciding to reach a mirror, a name
+lookup -- all gone, rather than argued about.
+
+WiFi is therefore a bench mode, not the normal state. It is still required to get
+there: the gadget link only exists after a converge, and the first converge
+arrives over WiFi.
+
+    coord radio                 report, as TOML
+    coord radio closed          disable WiFi -- refuses unless the gadget link works
+    coord radio open            enable WiFi
+
+`closed` is gated on the replacement path being **demonstrated**, not assumed: it
+pings the coordinator over the gadget link first and refuses if that fails. The
+gate is a positive check of the way in, not a proof that nothing can go wrong --
+WiFi was a dependency too, and #271 is WiFi failing.
+
+NM PERSISTS THIS. `WirelessEnabled` is written to and read back from
+/var/lib/NetworkManager/NetworkManager.state (NetworkManager `src/core/nm-config.c`),
+so `closed` survives reboots. That is wanted here, because closed is the intended
+steady state -- but it means a device put into `closed` stays there, and the way
+back in is the gadget link or `coord radio open` over it.
+
+EXIT CODES. `status` exits 0 whenever the probe ran; an absent radio is an answer,
+not a failure, same convention as coord-version. `closed` and `open` exit non-zero
+when they did not do the thing.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import shutil
+import subprocess
+import sys
+
+PING_COUNT = "2"
+PING_TIMEOUT = "2"
+
+
+def run(*argv, timeout=20):
+    """stdout, or None if the command is missing or failed."""
+    if not shutil.which(argv[0]):
+        return None
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def gadget_link():
+    """The gadget interface and its address, found by DEVTYPE rather than by name.
+
+    The name is a contract value (`campod_gadget_iface`), but the kernel property
+    is what the udev rule keys on and it cannot drift. On the coordinator there is
+    no gadget interface at all -- it is the USB host -- so this returns None there,
+    which is why `closed` correctly refuses on the coordinator today: its
+    replacement path is a wired uplink that is not fitted.
+    """
+    out = run("ip", "-details", "-json", "addr", "show")
+    if not out:
+        return None
+    try:
+        links = json.loads(out)
+    except ValueError:
+        return None
+    for link in links:
+        if (link.get("linkinfo") or {}).get("info_kind") != "gadget" and \
+           link.get("link_type") != "gadget":
+            # iproute2 reports the gadget parent bus rather than info_kind for
+            # g_ether, so fall back to the sysfs DEVTYPE the udev rule uses.
+            name = link.get("ifname", "")
+            devtype = ""
+            try:
+                with open(f"/sys/class/net/{name}/uevent") as fh:
+                    for line in fh:
+                        if line.startswith("DEVTYPE="):
+                            devtype = line.strip().split("=", 1)[1]
+            except OSError:
+                pass
+            if devtype != "gadget":
+                continue
+        for addr in link.get("addr_info", []):
+            if addr.get("family") == "inet":
+                return {
+                    "iface": link.get("ifname"),
+                    "cidr": f"{addr['local']}/{addr['prefixlen']}",
+                    "operstate": link.get("operstate"),
+                }
+    return None
+
+
+def peer_of(cidr):
+    """The coordinator's address on the gadget segment.
+
+    Derived rather than configured: `host/ansible/vars/gadget-net.yml` puts the
+    coordinator at the first host address of the segment, so there is nothing here
+    to keep in step with that file.
+    """
+    net = ipaddress.ip_interface(cidr).network
+    return str(next(net.hosts()))
+
+
+def radio_state():
+    out = run("nmcli", "-t", "radio", "wifi")
+    return out.strip() if out else "unknown"
+
+
+def wifi_device_state():
+    out = run("nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device", "status")
+    if not out:
+        return "unknown"
+    for line in out.splitlines():
+        parts = line.split(":")
+        if len(parts) >= 3 and parts[1] == "wifi":
+            return parts[2]
+    return "absent"
+
+
+def reachable(iface, peer):
+    return run("ping", "-c", PING_COUNT, "-W", PING_TIMEOUT, "-I", iface, peer,
+               timeout=30) is not None
+
+
+def report():
+    link = gadget_link()
+    peer = peer_of(link["cidr"]) if link else None
+    ok = bool(link) and reachable(link["iface"], peer)
+    rows = [
+        ("WIFI_RADIO", radio_state()),
+        ("WIFI_DEVICE_STATE", wifi_device_state()),
+        ("GADGET_IFACE", link["iface"] if link else "absent"),
+        ("GADGET_ADDRESS", link["cidr"] if link else "absent"),
+        ("GADGET_PEER", peer or "unknown"),
+        ("GADGET_PEER_REACHABLE", "true" if ok else "false"),
+        ("CLOSED_NETWORK_SAFE", "true" if ok else "false"),
+    ]
+    print("[radio]")
+    for key, value in rows:
+        print(f'{key}="{value}"')
+    return link, peer, ok
+
+
+def main(argv):
+    verb = argv[1] if len(argv) > 1 else "status"
+
+    if verb in ("status", "-h", "--help"):
+        if verb != "status":
+            print(__doc__.strip())
+            return 0
+        report()
+        return 0
+
+    if verb == "open":
+        if run("nmcli", "radio", "wifi", "on") is None:
+            print("coord radio: could not enable the radio", file=sys.stderr)
+            return 1
+        report()
+        return 0
+
+    if verb == "closed":
+        link, peer, ok = report()
+        if not ok:
+            why = (f"cannot reach {peer} over {link['iface']}" if link
+                   else "there is no gadget interface on this device")
+            sys.stdout.flush()
+            print(f"\ncoord radio: refusing to disable WiFi -- {why}.",
+                  file=sys.stderr)
+            print("The gadget link is the way back in once the radio is off.",
+                  file=sys.stderr)
+            return 2
+        if run("nmcli", "radio", "wifi", "off") is None:
+            print("coord radio: could not disable the radio", file=sys.stderr)
+            return 1
+        print()
+        report()
+        return 0
+
+    print(f"coord radio: unknown verb {verb!r} (status, closed, open)",
+          file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

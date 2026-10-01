@@ -146,6 +146,35 @@ These were coupled, which is what made it confusing: because the gadget end neve
 the host end never saw carrier, so the coordinator's bridge port never activated either --
 one campod-side rule disabled both halves.
 
+### Closed network as the operating state
+
+A capture device's operating state is reachable over the gadget link and nothing else;
+WiFi is a bench mode. The reason is not throughput or power -- it is that a link reaching
+only the coordinator cannot carry unexpected traffic in either direction, which removes a
+class of alternative explanations from every measurement taken afterwards. An agent
+logging in to look at something, a timer reaching a mirror, a name lookup: gone, rather
+than argued about. With WiFi up, every anomaly keeps "was something else happening?"
+attached to it.
+
+WiFi is still how a device gets there. The gadget link exists only after a converge, and
+the first converge arrives over WiFi, so the sequence is flash, converge, verify the
+gadget link, then go closed.
+
+```bash
+coord radio            # report, as TOML
+coord radio closed     # disable WiFi; refuses unless it can reach the coordinator first
+coord radio open       # enable WiFi
+```
+
+`closed` is gated on the replacement path being demonstrated rather than assumed -- it
+pings the coordinator over the gadget segment and refuses if that fails. On the
+coordinator the same command refuses for a different reason: there is no gadget interface
+there, and its own closed-network path is a wired uplink that is not fitted.
+
+**NetworkManager persists this.** `WirelessEnabled` is written to and read back from
+`/var/lib/NetworkManager/NetworkManager.state`, so `closed` survives reboots -- which is
+wanted, since closed is the intended steady state. The way back in is the gadget link.
+
 ### Checking it
 
 ```bash
