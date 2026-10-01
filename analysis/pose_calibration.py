@@ -70,9 +70,41 @@ def held_spans(capture, tol_deg=2.0, min_s=10):
     return out
 
 
-def common_held_spans(captures, tol_deg=2.0, min_s=10):
-    """Spans where EVERY capture holds one orientation -- a pose is a property of the vehicle."""
+def common_held_spans(captures, tol_deg=2.0, min_s=10, after_s=None, before_s=None):
+    """Spans where EVERY capture holds one orientation -- a pose is a property of the vehicle.
+
+    These are HELD SPANS, not poses. The distinction is not pedantry and it produced a wrong
+    result on 260926: the vehicle sat on a table for the first 283 s while the operator set up,
+    and again for 88 s after a bump test during which it was held down by hand and struck with a
+    hook. Both intervals hold an orientation well enough to be found here, and neither is a pose
+    -- nobody was trying to keep it still, and the strikes moved it.
+
+    Including them cost two specific errors. The 0.46 deg between the two upright spans was read
+    as evidence that a sensor mount had shifted, when it is just the vehicle having been hit. And
+    the two extra rows let a 6-parameter scale-and-bias fit report a 0.0006 g residual and a
+    1.03 deg rotation residual that looked like precision and were slack.
+
+    `after_s` and `before_s` restrict the search to the part of the session where the procedure
+    was actually being performed. WHICH SPANS ARE POSES IS OPERATOR KNOWLEDGE and is not
+    recoverable from the signal: an orientation held because someone is holding it and one held
+    because the vehicle is sitting on a bench look identical here.
+    """
     per = [held_spans(c, tol_deg, min_s) for c in captures]
+    if after_s is not None or before_s is not None:
+        lo = after_s if after_s is not None else -np.inf
+        hi = before_s if before_s is not None else np.inf
+        # CLIP, do not discard. A held span usually starts before the procedure does -- the
+        # vehicle was already sitting where it was put -- so dropping any span that begins
+        # before the cutoff throws away the pose instead of trimming the setup off its front.
+        clipped = []
+        for spans in per:
+            keep = []
+            for a, b in spans:
+                a2, b2 = int(np.ceil(max(a, lo))), int(np.floor(min(b, hi)))
+                if b2 - a2 + 1 >= min_s:
+                    keep.append((a2, b2))
+            clipped.append(keep)
+        per = clipped
     k = min(len(unit_directions_per_second(c)[0]) for c in captures)
     held = np.ones(k, bool)
     for spans in per:
@@ -123,14 +155,24 @@ def fit_scale_bias(vectors, g=1.0):
     orientation, and two poses a fraction of a degree apart do not count as two.
     """
     v = np.asarray(vectors, float)
+    ind = pose_independence(v)
+    if ind["n_independent"] < 6:
+        # Refuse rather than return something. Six parameters cannot be recovered from fewer than
+        # six independent orientations, and a solver asked anyway returns whichever member of the
+        # solution family it walked into -- a number with no error bar and no way to notice.
+        return dict(scale=None, bias=None, residual_g=None, rms_g=None,
+                    n_poses=len(v), n_parameters=6,
+                    n_independent_poses=ind["n_independent"],
+                    min_separation_deg=ind["min_separation_deg"],
+                    exactly_determined=False, underdetermined=True,
+                    short_by=6 - ind["n_independent"])
 
     def residual(p):
         return np.linalg.norm((v - p[3:]) * p[:3], axis=1) - g
 
     r = least_squares(residual, [1, 1, 1, 0, 0, 0], method="lm")
     scale, bias = r.x[:3], r.x[3:]
-    ind = pose_independence(v)
-    return dict(scale=scale, bias=bias, residual_g=residual(r.x),
+    return dict(scale=scale, bias=bias, residual_g=residual(r.x), underdetermined=False,
                 rms_g=float(np.sqrt((residual(r.x) ** 2).mean())),
                 n_poses=len(v), n_parameters=6,
                 n_independent_poses=ind["n_independent"],
@@ -144,9 +186,10 @@ def fit_scale_bias(vectors, g=1.0):
 def pose_independence(vectors, min_deg=5.0):
     """How many of these orientations are actually distinct, and by how little.
 
-    On 260926 the vehicle sat upright before and after the hook strikes, giving seven spans of
-    which two are the same orientation 0.5 degrees apart -- so the seventh span adds almost no
-    constraint even though it adds a row.
+    On 260926 the unrestricted search returns seven spans, two of which are within 0.5 degrees of
+    each other -- the table before and after a bump test. Those two add a row each and almost no
+    constraint. The five deliberate poses, by contrast, are at least 82 degrees apart, and five is
+    one short of what a 6-parameter fit needs.
     """
     v = np.asarray(vectors, float)
     u = v / np.linalg.norm(v, axis=1, keepdims=True)
@@ -205,6 +248,10 @@ def _main(argv=None):
     ap.add_argument("--tol-deg", type=float, default=2.0,
                     help="how far the direction may wander inside one held span (default 2)")
     ap.add_argument("--min-hold-s", type=int, default=10, help="shortest usable span (default 10)")
+    ap.add_argument("--after-s", type=float, default=None,
+                    help="ignore held spans before this time. A capture normally contains the "
+                         "setup period, which holds an orientation without being a pose.")
+    ap.add_argument("--before-s", type=float, default=None, help="ignore held spans after this time")
     ap.add_argument("--json", metavar="PATH", help="write the result here")
     args = ap.parse_args(argv)
 
@@ -214,7 +261,13 @@ def _main(argv=None):
         raise SystemExit(f"no accel-*.jsonl under {args.capture_dir}")
     caps = {os.path.basename(p)[len("accel-"):-len(".jsonl")]: load_accel_jsonl(p) for p in paths}
 
-    spans = common_held_spans(list(caps.values()), args.tol_deg, args.min_hold_s)
+    spans = common_held_spans(list(caps.values()), args.tol_deg, args.min_hold_s,
+                              args.after_s, args.before_s)
+    if args.after_s is None and args.before_s is None:
+        print("NOTE: --after-s/--before-s not given, so every held span is treated as a pose.\n"
+              "      A capture usually contains setup and handling time that holds an orientation\n"
+              "      without anyone intending it to. Those spans are indistinguishable from poses\n"
+              "      in the signal, and including them puts slack into the fit.")
     windows = centre_windows(spans, args.window_s)
     print(f"{len(spans)} span(s) where every channel holds one orientation for "
           f"{args.min_hold_s}+ s -> {len(windows)} usable")
@@ -229,6 +282,17 @@ def _main(argv=None):
         v, se = pose_vectors(cap, windows)
         vectors[label] = v
         fit = fit_scale_bias(v)
+        if fit.get("underdetermined"):
+            print(f"\n{label}: NOT FITTED. {fit['n_independent_poses']} independent orientation(s), "
+                  f"6 parameters -- short by {fit['short_by']}.")
+            print(f"   Scale and bias are not separable from this many orientations. Another "
+                  f"{fit['short_by']} well-separated held pose(s) would do it.")
+            out["channels"][label] = dict(
+                underdetermined=True, short_by=fit["short_by"],
+                n_poses=fit["n_poses"], n_independent_poses=fit["n_independent_poses"],
+                pose_vectors_g=[[float(x) for x in row] for row in v],
+                pose_direction_se_deg=float(np.degrees(se.max())))
+            continue
         print(f"\n{label}: scale {np.round(fit['scale'], 4)}  bias {np.round(fit['bias'], 4)} g")
         print(f"   {fit['n_poses']} poses, {fit['n_independent_poses']} independent "
               f"(closest pair {fit['min_separation_deg']:.2f} deg apart)")
@@ -251,15 +315,22 @@ def _main(argv=None):
     if len(labels) == 2:
         a, b = labels
         fa, fb = fit_scale_bias(vectors[a]), fit_scale_bias(vectors[b])
-        rot = relative_rotation(apply_calibration(vectors[a], fa["scale"], fa["bias"]),
-                                apply_calibration(vectors[b], fb["scale"], fb["bias"]))
+        if fa.get("underdetermined") or fb.get("underdetermined"):
+            print(f"\n{a} -> {b}: from RAW directions, because scale and bias were not solved. "
+                  "A rotation needs only directions, but uncorrected directions carry the scale "
+                  "and bias error, so the residual below is an upper bound and not a measure of "
+                  "how rigid the pair is.")
+            rot = relative_rotation(vectors[a], vectors[b])
+        else:
+            rot = relative_rotation(apply_calibration(vectors[a], fa["scale"], fa["bias"]),
+                                    apply_calibration(vectors[b], fb["scale"], fb["bias"]))
         print(f"\n{a} -> {b}: {rot['angle_deg']:.2f} deg about "
               f"({rot['axis'][0]:+.3f},{rot['axis'][1]:+.3f},{rot['axis'][2]:+.3f})")
         print(f"   residual rms {rot['rms_deg']:.3f} deg, max {rot['max_deg']:.3f} deg, "
               f"against a per-pose direction standard error near 0.02 deg")
         print("   A residual far above that standard error means one rigid rotation plus per-axis "
               "scale and bias does not describe this pair -- candidates are cross-axis "
-              "sensitivity, which this model has no term for, and the mounts moving between poses.")
+              "sensitivity, which this model has no term for, and the pair not being rigid.")
         out["relative_rotation"] = dict(
             from_=a, to=b, angle_deg=rot["angle_deg"],
             axis=[float(x) for x in rot["axis"]], R=[[float(x) for x in r] for r in rot["R"]],
