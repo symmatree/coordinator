@@ -475,3 +475,110 @@ def fc_absolute_time(bin_path):
           - datetime.timedelta(seconds=18))      # GPS-UTC leap seconds as of 2026
     return dict(t0_utc=t0, rate_error_ppm=float((slope - 1.0) * 1e6),
                 residual_ms=float(residual.std() * 1000), n_records=int(len(a)))
+
+
+# Candidate orientation sets, as gravity directions in the body frame. Named rather than inline
+# so a design question is asked against the same sets each time.
+POSE_SETS = {
+    "axes": [[0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]],
+    "tilts45": [[1, 0, -1], [-1, 0, -1], [0, 1, -1], [0, -1, -1], [1, 1, 0], [1, -1, 0]],
+    "cube": [[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)],
+    "circle8": [[np.cos(a), np.sin(a), 0.0]
+                for a in np.linspace(0, 2 * np.pi, 8, endpoint=False)],
+}
+
+
+def pose_set_identifiability(directions, n_sensors=2, cross_axis=True, sigma_g=2.5e-4, eps=1e-7):
+    """Can a given set of orientations determine the model, and how precisely?
+
+    Answers a question that has to be settled BEFORE a collection session, because the answer is
+    a property of the orientations alone and needs no data: build the Jacobian of the joint fit at
+    a synthetic truth, and report its rank deficiency and the parameter standard errors implied by
+    the measurement noise.
+
+    `cross_axis=True` fits a full 3x3 per sensor -- the rotation between sensors is absorbed into
+    it, so no separate rotation parameters -- with the first sensor's matrix constrained SYMMETRIC
+    to fix the arbitrary body frame. The latent gravity directions are free 3-vectors with a
+    unit-norm residual rather than two angles, because an angle parameterisation is singular at
+    the poles and two of the obvious poses sit exactly there, which shows up as a phantom rank
+    deficiency of 2.
+
+    Measured on 260926's noise (sigma_g 2.5e-4 g), and what it decided:
+
+      6 axes (what was flown)      short by 3     -- six of ANYTHING is 3 short of this model
+      6 x 45-degree tilts          short by 3
+      6 axes + 6 tilts             identifiable   -- cross-axis terms to 0.017 deg
+      8 cube vertices              short by 2
+      cube + axes (14)             identifiable   -- 0.012 deg
+      8-step circle, one plane     short by 7     -- the WORST, and it has eight poses
+
+    The circle result is the one worth keeping: a single-axis fixture never gives gravity a
+    component along its rotation axis, so stepping it finely does not help. If a fixture replaces
+    hand-holding it has to tilt about two axes.
+    """
+    d = np.asarray(directions, float)
+    d = d / np.linalg.norm(d, axis=1, keepdims=True)
+    n_poses, n_s = len(d), n_sensors
+    rng = np.random.default_rng(0)
+    mats = [np.eye(3) + 0.02 * rng.normal(size=(3, 3)) for _ in range(n_s)]
+    mats[0] = (mats[0] + mats[0].T) / 2
+    biases = [0.05 * rng.normal(size=3) for _ in range(n_s)]
+    obs = [np.linalg.solve(mats[s], d.T).T + biases[s] for s in range(n_s)]
+    per_sensor = 9 if cross_axis else 3
+    n_par = 6 + per_sensor * (n_s - 1) + 3 * n_s + 3 * n_poses if cross_axis \
+        else 3 * n_s + 3 * n_s + 3 * n_poses
+
+    def unpack(p):
+        i = 0
+        if cross_axis:
+            m = p[i:i + 6]; i += 6
+            ms = [np.array([[m[0], m[1], m[2]], [m[1], m[3], m[4]], [m[2], m[4], m[5]]])]
+            for _ in range(1, n_s):
+                ms.append(p[i:i + 9].reshape(3, 3)); i += 9
+        else:
+            ms = []
+            for _ in range(n_s):
+                ms.append(np.diag(p[i:i + 3])); i += 3
+        bs = [p[i + 3 * s:i + 3 * s + 3] for s in range(n_s)]; i += 3 * n_s
+        return ms, bs, p[i:i + 3 * n_poses].reshape(n_poses, 3)
+
+    def resid(p):
+        ms, bs, g = unpack(p)
+        out = [((obs[s] - bs[s]) @ ms[s].T - g).ravel() for s in range(n_s)]
+        out.append(np.linalg.norm(g, axis=1) - 1.0)
+        return np.concatenate(out)
+
+    x0 = np.zeros(n_par); i = 0
+    if cross_axis:
+        m0 = mats[0]
+        x0[i:i + 6] = [m0[0, 0], m0[0, 1], m0[0, 2], m0[1, 1], m0[1, 2], m0[2, 2]]; i += 6
+        for s in range(1, n_s):
+            x0[i:i + 9] = mats[s].ravel(); i += 9
+    else:
+        for s in range(n_s):
+            x0[i:i + 3] = np.diag(mats[s]); i += 3
+    for s in range(n_s):
+        x0[i:i + 3] = biases[s]; i += 3
+    x0[i:] = d.ravel()
+
+    f0 = resid(x0)
+    jac = np.zeros((len(f0), n_par))
+    for k in range(n_par):
+        xp = x0.copy(); xp[k] += eps
+        jac[:, k] = (resid(xp) - f0) / eps
+    sv = np.linalg.svd(jac, compute_uv=False)
+    rank = int((sv > sv[0] * 1e-9).sum())
+    out = dict(n_poses=n_poses, n_parameters=n_par, rank=rank, short_by=n_par - rank,
+               identifiable=bool(rank == n_par),
+               condition=float(sv[0] / sv[rank - 1]) if rank else float("inf"))
+    if out["identifiable"]:
+        cov = np.linalg.inv(jac.T @ jac) * sigma_g ** 2
+        se = np.sqrt(np.diag(cov))
+        off = [1, 2, 4] + [6 + k for s in range(n_s - 1) for k in (1, 2, 3, 5, 6, 7)] \
+            if cross_axis else []
+        out["se_cross_axis"] = float(se[off].max()) if off else None
+        out["se_cross_axis_deg"] = float(np.degrees(se[off].max())) if off else None
+        out["se_bias_g"] = float(se[6 + per_sensor * (n_s - 1):
+                                   6 + per_sensor * (n_s - 1) + 3 * n_s].max()) \
+            if cross_axis else None
+    return out
