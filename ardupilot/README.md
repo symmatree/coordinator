@@ -23,10 +23,17 @@ build, which is the point. Grouping is by device, so things that interact sit to
 the F9P Rover Lite's serial, GNSS, and onboard compass in `gps-compass`; the Walksnail's
 link, OSD, and power relay in `vtx-osd`.
 
-Anything the FC produces and updates on its own -- learned hover throttle, barometer
-ground pressure, auto-detected device IDs, boot/flight counters -- plus the per-unit
-sensor calibrations you re-establish by running a cal, stays only in the ground-truth
-export, never pinned here. Deliberate tuning (e.g. autotune results) *is* pinned.
+Anything the FC **produces and rewrites on its own** -- learned hover throttle, barometer
+ground pressure, auto-detected device IDs, boot/flight counters -- stays only in the
+ground-truth export, never pinned here. Pinning a value the firmware overwrites on its own
+schedule just makes `verify.py` wrong on a timer.
+
+**A calibration is not in that category and is pinned like anything else.** It is a
+measurement of *this* airframe, which is what the fragments are for -- most of what they
+hold is specific to this build. The one part of a cal that stays out is the **device id**,
+because it identifies the physical part as detected on a given boot and reads 0 whenever
+that part is off the bus; see the note in `inputs/gps-compass.param`. Deliberate tuning
+(e.g. autotune results) *is* pinned.
 
 ## Verifying
 
