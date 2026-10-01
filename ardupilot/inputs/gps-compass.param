@@ -42,5 +42,56 @@ COMPASS_EXTERN2,1
 COMPASS_USE2,0
 COMPASS_USE3,0
 # Orientation of the F9P mag as mounted (Yaw270).
+#
+# ORIENT is also a calibration output, conditionally: _accept_calibration() saves it
+# only when the report asks for an orientation check, the compass is external, and
+# COMPASS_AUTO_ROT >= 2 (it is 2 here). Both conditions hold on this airframe, so a cal
+# can move these.
 COMPASS_ORIENT,6
 COMPASS_ORIENT2,6
+#
+# --- Compass calibration (the measured numbers) ---
+#
+# What a successful cal actually writes, read off AP_Compass_Calibration.cpp
+# _accept_calibration(): offsets, diagonals, off-diagonals, scale factor, and
+# conditionally orientation (above). Nothing else -- COMPASS_USE and COMPASS_EXTERNAL
+# are configuration, not cal output, and COMPASS_MOT_* come from compassmot, a
+# different procedure.
+#
+# COMPASS_DEV_ID is deliberately NOT pinned even though the cal writes it.
+# set_and_save_offsets() -> save_offsets() does
+#     _state[id].dev_id.set_and_save(_state[id].detected_dev_id)
+# so it is the id of the physical part as detected on that boot, not a property of the
+# airframe. It reads 0 whenever the compass is off the bus, so pinning any value makes
+# verify.py permanently wrong in one direction or the other. Restoring these numbers
+# therefore does NOT make the compass "configured": Compass::configured() compares the
+# stored dev_id against the detected one, so the binding still needs a boot with the
+# compass attached, or a fresh cal.
+#
+# Instance 2 carries offsets and a scale but default diagonals and off-diagonals --
+# that is what was in the export, not an omission here.
+#
+# provenance: 3856c84 2026-09-23, the last export taken before the parameter store was
+# wiped (612c687 "Params after reset" zeroed all of these). These values are ahead of
+# the current export on purpose, which is the documented fragment-ahead-of-export state;
+# re-apply and re-export to bring them level, or supersede them with a fresh cal.
+COMPASS_OFS_X,-102.7058
+COMPASS_OFS_Y,31.46312
+COMPASS_OFS_Z,-24.97577
+COMPASS_DIA_X,0.9816729
+COMPASS_DIA_Y,0.9980292
+COMPASS_DIA_Z,1.031415
+COMPASS_ODI_X,-0.00401965
+COMPASS_ODI_Y,0.0365227
+COMPASS_ODI_Z,0.02941244
+COMPASS_SCALE,1.062919
+COMPASS_OFS2_X,173.6031
+COMPASS_OFS2_Y,-115.2469
+COMPASS_OFS2_Z,-1.972043
+COMPASS_DIA2_X,1
+COMPASS_DIA2_Y,1
+COMPASS_DIA2_Z,1
+COMPASS_ODI2_X,0
+COMPASS_ODI2_Y,0
+COMPASS_ODI2_Z,0
+COMPASS_SCALE2,0.8551114
