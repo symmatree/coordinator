@@ -73,16 +73,19 @@ def held_spans(capture, tol_deg=2.0, min_s=10):
 def common_held_spans(captures, tol_deg=2.0, min_s=10, after_s=None, before_s=None):
     """Spans where EVERY capture holds one orientation -- a pose is a property of the vehicle.
 
-    These are HELD SPANS, not poses. The distinction is not pedantry and it produced a wrong
-    result on 260926: the vehicle sat on a table for the first 283 s while the operator set up,
-    and again for 88 s after a bump test during which it was held down by hand and struck with a
-    hook. Both intervals hold an orientation well enough to be found here, and neither is a pose
-    -- nobody was trying to keep it still, and the strikes moved it.
+    These are HELD SPANS, not poses, and the difference is about NOISE CONTROL rather than
+    validity. On 260926 the vehicle sat on a table for the first 283 s while the operator set up,
+    and again for 88 s after a bump test. Those intervals are usable -- the vehicle was where it
+    was put and its direction is as stable as any deliberate pose -- but nobody was damping it,
+    and the operator had his feet on the table and was typing, so expect interfering noise from
+    being kicked rather than a quiet record. The bump-test interval is different in kind: the
+    vehicle was held down and struck, and the strikes moved it, so the orientation before and
+    after is not the same one.
 
-    Including them cost two specific errors. The 0.46 deg between the two upright spans was read
-    as evidence that a sensor mount had shifted, when it is just the vehicle having been hit. And
-    the two extra rows let a 6-parameter scale-and-bias fit report a 0.0006 g residual and a
-    1.03 deg rotation residual that looked like precision and were slack.
+    Taking them for deliberate poses cost two errors. The 0.46 deg between the two upright spans
+    was read as evidence that a sensor mount had shifted, when the vehicle had simply been struck
+    between them. And the two extra rows let a 6-parameter fit report a 0.0006 g residual that
+    looked like precision and was slack.
 
     `after_s` and `before_s` restrict the search to the part of the session where the procedure
     was actually being performed. WHICH SPANS ARE POSES IS OPERATOR KNOWLEDGE and is not
@@ -346,3 +349,71 @@ def _main(argv=None):
 
 if __name__ == "__main__":
     _main()
+
+
+def fc_pose_vectors(bin_path, windows, instance=0, g=9.80665):
+    """Gravity per pose from an ArduPilot dataflash `IMU` stream, in g.
+
+    The third instrument. Its accel is already calibrated by ArduPilot, so a scale-and-bias fit
+    over the same poses should come out near unity and near zero -- which makes it a usable
+    reference rather than another unknown, and a check on this module at the same time.
+
+    `windows` are in the dataflash's own TimeUS seconds from the first IMU record, not in the
+    campod's capture time. The two do not share a clock: see fc_absolute_time.
+    """
+    from pymavlink import mavutil
+    conn = mavutil.mavlink_connection(str(bin_path), robust_parsing=True)
+    rows = []
+    while True:
+        msg = conn.recv_match(type="IMU", blocking=False)
+        if msg is None:
+            break
+        if msg.I == instance:
+            rows.append((msg.TimeUS / 1e6, msg.AccX, msg.AccY, msg.AccZ))
+    a = np.array(rows)
+    if not len(a):
+        raise ValueError(f"{bin_path}: no IMU records for instance {instance}")
+    t = a[:, 0] - a[0, 0]
+    means, errs = [], []
+    for w0, w1 in windows:
+        m = (t >= w0) & (t <= w1)
+        v = a[m, 1:].T / g
+        means.append(v.mean(axis=1))
+        errs.append((v.std(axis=1) / np.sqrt(m.sum())).max())
+    return np.array(means), np.array(errs)
+
+
+def fc_absolute_time(bin_path):
+    """When the dataflash's TimeUS zero was, in UTC, and how fast its clock runs.
+
+    Fitted over every 3D-fix `GPS` record rather than read off the first one: the fit averages
+    the receiver's own jitter and, more usefully, its SLOPE is the FC clock's rate error against
+    GPS, which is the only absolute time reference anywhere on this vehicle.
+
+    The log's FILENAME is not this. The FC has no RTC, so a file created before GPS lock is named
+    from a 1980 epoch; the GPS week only appears in the records once locked. On 260926 the
+    filename says 1980-01-12 and the records say week 2437, day 6 -- Saturday 2026-09-26.
+
+    Returns dict(t0_utc, rate_error_ppm, residual_ms, n_records).
+    """
+    import datetime
+    from pymavlink import mavutil
+    conn = mavutil.mavlink_connection(str(bin_path), robust_parsing=True)
+    rows = []
+    while True:
+        msg = conn.recv_match(type="GPS", blocking=False)
+        if msg is None:
+            break
+        if getattr(msg, "Status", 0) >= 3 and msg.GWk > 0:
+            rows.append((msg.TimeUS / 1e6, msg.GWk, msg.GMS / 1000.0))
+    a = np.array(rows)
+    if len(a) < 10:
+        raise ValueError(f"{bin_path}: too few locked GPS records to fit a time base")
+    t, week, sow = a[:, 0], a[:, 1], a[:, 2]
+    slope, intercept = np.polyfit(t, sow, 1)
+    residual = sow - (slope * t + intercept)
+    epoch = datetime.datetime(1980, 1, 6, tzinfo=datetime.timezone.utc)
+    t0 = (epoch + datetime.timedelta(weeks=float(week[0]), seconds=float(intercept))
+          - datetime.timedelta(seconds=18))      # GPS-UTC leap seconds as of 2026
+    return dict(t0_utc=t0, rate_error_ppm=float((slope - 1.0) * 1e6),
+                residual_ms=float(residual.std() * 1000), n_records=int(len(a)))
