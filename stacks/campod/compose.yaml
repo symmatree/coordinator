@@ -82,10 +82,28 @@ services:
       # along-track smear -- drop toward 1500 if survey frames come back soft.
       CAMPOD_STILL_MAX_EXPOSURE_US: "5000"
       # Lens position in DIOPTRES (1/metres): 0.0 infinity, 0.5 = 2 m, 2.0 = 0.5 m.
-      # NOT the OAK-D's 0-255 scale. 0.8 = 1.25 m = hyperfocal, so 0.62 m to
-      # infinity falls inside a 2 px circle of confusion -- 2 px being the
-      # diffraction limit at f/2.2, where the Airy disk is already 2.1 px.
-      CAMPOD_STILL_FOCUS: "0.8"
+      # NOT the OAK-D's 0-255 scale.
+      #
+      # This was 0.8 (= 1.25 m) on the argument that 1.25 m is hyperfocal so
+      # 0.62 m to infinity lands inside a 2 px circle of confusion, 2 px being
+      # free because the Airy disk at f/2.2 is already 2.1 px. The second half of
+      # that is wrong: 2.44*lambda*N = 2.95 um = 2.1 px is the FIRST-NULL DIAMETER
+      # of the Airy pattern, not its blur width. The FWHM is 1.029*lambda*N =
+      # 1.24 um = 0.89 px, so at f/2.2 with 1.4 um pixels this lens is roughly
+      # pixel-matched rather than diffraction-limited -- and defocus does not hide
+      # underneath diffraction, the two compound.
+      #
+      # At a 1 px circle of confusion, which is what feature matching needs,
+      # hyperfocal is 2.46 m and focusing at 1.25 m gives 0.83 m to 2.55 m.
+      # Measured against the 260926 outdoor stills, which the model reproduces:
+      # table at ~0.06 m 36 px blur (visibly fuzzy), grass at ~0.9 m 0.7 px
+      # (sharp), tree at ~5 m 1.5 px, house at ~20 m 1.8 px, infinity 2.0 px.
+      #
+      # A mapping pass photographs the ground from flight altitude, so the subject
+      # is effectively at infinity and 2 px of defocus is a floor no exposure cap
+      # or mount change can lift. At infinity the defocus at 25 m is 0.10 px. The
+      # cost is the near field, which the mission does not use.
+      CAMPOD_STILL_FOCUS: "infinity"
       # off | server | client -- multi-campod sync is #24.
       CAMPOD_SYNC_MODE: "off"
     # Explicit even though it matches the image's CMD, because the accel service
