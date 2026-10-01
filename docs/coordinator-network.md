@@ -149,16 +149,13 @@ one campod-side rule disabled both halves.
 ### Closed network as the operating state
 
 A capture device's operating state is reachable over the gadget link and nothing else;
-WiFi is a bench mode. The reason is not throughput or power -- it is that a link reaching
-only the coordinator cannot carry unexpected traffic in either direction, which removes a
-class of alternative explanations from every measurement taken afterwards. An agent
-logging in to look at something, a timer reaching a mirror, a name lookup: gone, rather
-than argued about. With WiFi up, every anomaly keeps "was something else happening?"
-attached to it.
+WiFi is a bench mode. The network is a source of external influence and this is an embedded
+system: a link that reaches only the coordinator cannot carry unexpected traffic in either
+direction, so anomalies stop having "was something else happening?" attached to them.
 
-WiFi is still how a device gets there. The gadget link exists only after a converge, and
-the first converge arrives over WiFi, so the sequence is flash, converge, verify the
-gadget link, then go closed.
+WiFi is how a device gets there. The gadget link exists only after a converge and the first
+converge arrives over WiFi, so the sequence is flash, converge, verify the gadget link, then
+go closed.
 
 ```bash
 coord radio            # report, as TOML
@@ -166,14 +163,13 @@ coord radio closed     # disable WiFi; refuses unless it can reach the coordinat
 coord radio open       # enable WiFi
 ```
 
-`closed` is gated on the replacement path being demonstrated rather than assumed -- it
-pings the coordinator over the gadget segment and refuses if that fails. On the
-coordinator the same command refuses for a different reason: there is no gadget interface
-there, and its own closed-network path is a wired uplink that is not fitted.
+`closed` is gated on reaching the coordinator over the gadget segment, because that is the
+way back in. On the coordinator it refuses for a different reason: no gadget interface, and
+its own closed-network path is a wired uplink that is not fitted.
 
-**NetworkManager persists this.** `WirelessEnabled` is written to and read back from
-`/var/lib/NetworkManager/NetworkManager.state`, so `closed` survives reboots -- which is
-wanted, since closed is the intended steady state. The way back in is the gadget link.
+**NetworkManager persists this** -- `WirelessEnabled` in
+`/var/lib/NetworkManager/NetworkManager.state` -- so `closed` survives reboots, which is
+wanted since closed is the steady state.
 
 ### Checking it
 

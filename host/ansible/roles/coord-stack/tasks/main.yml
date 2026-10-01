@@ -114,12 +114,9 @@
     dest: /usr/local/bin/coord-sessions
     mode: "0755"
 
-# The radio control (#434). Installed on both roles deliberately: on a campod it
-# is how the device enters its closed-network operating state, and on the
-# coordinator the same command correctly REFUSES, because it finds no gadget
-# interface and so cannot demonstrate a way back in. That is the honest answer
-# there until a wired uplink is fitted, and it is better than the verb being
-# absent, which would read as "not applicable" rather than "not yet safe".
+# The radio control (#434). Both roles: on the coordinator it refuses, having no
+# gadget interface and so no way back in, which is the answer until a wired
+# uplink is fitted.
 - name: Install the radio control
   ansible.builtin.copy:
     remote_src: true
