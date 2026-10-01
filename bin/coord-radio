@@ -1,37 +1,22 @@
 #!/usr/bin/env python3
 """Report and set this device's WiFi radio state (#434).
 
-A capture device's operating state is a **closed network**: reachable over the USB
-gadget link and nothing else. That is not a performance measure -- it removes a
-whole class of alternative explanations from every measurement taken afterwards.
-A link that reaches only the coordinator cannot carry unexpected traffic in either
-direction; a link with the house network and the internet behind it always can, so
-every anomaly keeps "was something else happening?" attached to it. An agent
-logging in to look at something, a timer deciding to reach a mirror, a name
-lookup -- all gone, rather than argued about.
+    coord radio            report, as TOML
+    coord radio closed     disable WiFi
+    coord radio open       enable WiFi
 
-WiFi is therefore a bench mode, not the normal state. It is still required to get
-there: the gadget link only exists after a converge, and the first converge
-arrives over WiFi.
+Closed-network is the operating state and WiFi is a bench mode -- the network is a
+source of external influence and this is an embedded system. The path and the
+sequence to get there are in docs/coordinator-network.md.
 
-    coord radio                 report, as TOML
-    coord radio closed          disable WiFi -- refuses unless the gadget link works
-    coord radio open            enable WiFi
+`closed` refuses unless it can reach the coordinator over the gadget link first,
+because that is the way back in.
 
-`closed` is gated on the replacement path being **demonstrated**, not assumed: it
-pings the coordinator over the gadget link first and refuses if that fails. The
-gate is a positive check of the way in, not a proof that nothing can go wrong --
-WiFi was a dependency too, and #271 is WiFi failing.
+NM persists `WirelessEnabled` to /var/lib/NetworkManager/NetworkManager.state and
+reads it back at startup, so `closed` survives reboots.
 
-NM PERSISTS THIS. `WirelessEnabled` is written to and read back from
-/var/lib/NetworkManager/NetworkManager.state (NetworkManager `src/core/nm-config.c`),
-so `closed` survives reboots. That is wanted here, because closed is the intended
-steady state -- but it means a device put into `closed` stays there, and the way
-back in is the gadget link or `coord radio open` over it.
-
-EXIT CODES. `status` exits 0 whenever the probe ran; an absent radio is an answer,
-not a failure, same convention as coord-version. `closed` and `open` exit non-zero
-when they did not do the thing.
+`status` exits 0 whenever the probe ran; an absent radio is an answer. `closed` and
+`open` exit non-zero when they did not do the thing.
 """
 
 from __future__ import annotations
@@ -58,13 +43,10 @@ def run(*argv, timeout=20):
 
 
 def gadget_link():
-    """The gadget interface and its address, found by DEVTYPE rather than by name.
+    """The gadget interface and its address, by DEVTYPE rather than by name.
 
-    The name is a contract value (`campod_gadget_iface`), but the kernel property
-    is what the udev rule keys on and it cannot drift. On the coordinator there is
-    no gadget interface at all -- it is the USB host -- so this returns None there,
-    which is why `closed` correctly refuses on the coordinator today: its
-    replacement path is a wired uplink that is not fitted.
+    The name is a contract value; DEVTYPE is what the udev rule keys on. Returns
+    None on the coordinator, which has no gadget interface -- it is the USB host.
     """
     out = run("ip", "-details", "-json", "addr", "show")
     if not out:
@@ -100,12 +82,8 @@ def gadget_link():
 
 
 def peer_of(cidr):
-    """The coordinator's address on the gadget segment.
-
-    Derived rather than configured: `host/ansible/vars/gadget-net.yml` puts the
-    coordinator at the first host address of the segment, so there is nothing here
-    to keep in step with that file.
-    """
+    """The coordinator's address: first host of the gadget segment, per
+    host/ansible/vars/gadget-net.yml. Derived so nothing tracks that file."""
     net = ipaddress.ip_interface(cidr).network
     return str(next(net.hosts()))
 
