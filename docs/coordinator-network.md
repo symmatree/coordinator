@@ -181,6 +181,24 @@ no switch, and reaches the campods from there. A campod booted and not answering
 second-order case whose answer is a card pull or an agreed physical mechanism -- to be
 settled when it matters, not pre-empted here.
 
+### Reaching a campod through the coordinator
+
+The route that does not depend on the campod's own WiFi. Proven 2026-10-02 with campod-se's
+radio off:
+
+```bash
+ssh -o "ProxyCommand=ssh -i ~/.ssh/KEY -W %h:%p pi@<coordinator>" -i ~/.ssh/KEY pi@10.55.0.12
+```
+
+**`ssh -J` alone does not work here.** `-i` applies to the target connection and is not
+inherited by the jump hop, so `-J pi@<coordinator>` fails with `Permission denied (publickey)`
+against the coordinator while the same key works for a direct connection. An explicit
+`ProxyCommand` carrying `-i` on both hops is what succeeds. Nothing needs a key on the
+coordinator: it only forwards TCP, and the campod authenticates the operator's key directly.
+
+Today the coordinator itself is reached over WiFi. Once it has a wired address the same route
+works with no radio anywhere in the path.
+
 ### Checking it
 
 ```bash
