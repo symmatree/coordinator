@@ -69,6 +69,11 @@ services:
       # the payload half of the chain. If it is ever absent docker leaves an
       # empty directory here, which reads as the same unattributed log line.
       - /etc/fleet-image:/etc/fleet-image:ro
+      # The host's /tmp, which is where the capture flag lives. WITHOUT THIS the
+      # two containers each have their own /tmp and pod-link's writes are
+      # invisible here -- the gate would read absent forever and the camera would
+      # never capture, which looks exactly like a broken camera.
+      - /tmp:/tmp
     environment:
       CAMPOD_CAPTURE_HZ: "1.0"
       # 0 = sensor full resolution (IMX708 4608x2592)
@@ -125,6 +130,27 @@ services:
     # Explicit even though it matches the image's CMD, because the accel service
     # below overrides it -- reading one without the other would be misleading.
     command: ["python3", "/opt/campod/capture.py"]
+
+  # Receives capture intent from the coordinator and writes the flag capture.py
+  # reads. Resident on purpose: a packet into a process already in memory costs
+  # nothing, where an ssh command into this box costs an sshd fork and a page-cache
+  # eviction during exactly the window capture matters.
+  pod-link:
+    image: ghcr.io/symmatree/coordinator-pod-link:main
+    container_name: campod_pod_link
+    network_mode: host
+    volumes:
+      # /tmp is tmpfs here, so the flag never touches the card -- it changes on
+      # command and the write side should not be on the medium that fills.
+      - /tmp:/tmp
+      - /etc/hostname:/etc/host-hostname:ro
+      - /etc/fleet-image:/etc/fleet-image:ro
+    environment:
+      POD_LINK_ROLE: subscriber
+      # The coordinator's gadget-net address, which is the only way to it in
+      # flight. Static, and the same value host/ansible/vars/gadget-net.yml pins.
+      POD_LINK_BROKER: tcp://10.55.0.1:1883
+      POD_LINK_FLAG_FILE: /tmp/campod_capture
 
   campod-accel:
     image: ghcr.io/symmatree/coordinator-campod-camera:main
