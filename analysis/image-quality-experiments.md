@@ -87,6 +87,227 @@ explains all six. Repeat on a later capture and see whether the fitted values mo
 between captures with nothing touched, the premise fails and no cross-sensor amplitude comparison is
 available.
 
+### How the calibration is to be done
+
+Operator's direction, recorded here so it is not re-derived or quietly re-litigated. This is method,
+not a plan: it says how to do the solve whenever it is done, and what the data selection has to
+respect for the answer to mean anything.
+
+**Collection.** The vehicle is held by hand in each of six orientations. Between poses there is
+positioning, hand shake, and the operator settling into a stable hold -- so a session is a small
+number of usable spans separated by transients, not a continuous record of held poses.
+
+**Data selection: one contiguous span per pose.** Fitting the whole session lets the transients
+dominate, which is exactly backwards -- the point is to calibrate *from* the quiet parts, not to
+average the noisy ones in and then try to work around them.
+
+**Take the span from the CENTRE of a quiet period, not the first window that satisfies the
+criterion.** A first-satisfying-window search lands on the leading edge of the criterion, which is
+where the transient is still decaying and where the signal only just qualified. Centring the
+requested duration inside the quiet region avoids collecting exactly the samples the criterion was
+meant to exclude. This is a property of any threshold-crossing selector and applies beyond this
+calibration.
+
+**The whole-session alternative, kept rather than dismissed.** Processing the entire record and
+exploiting temporal continuity between poses is a real option and might use information that
+per-pose spans throw away. Its cost is that it also admits every positioning transient, so it needs
+a model that can represent those or a way to downweight them. Not chosen for the first pass; not
+ruled out.
+
+**Sampling-rate drift over the session should be looked at**, and it is probably clock drift rather
+than the part's output rate changing. It matters less here than it would elsewhere: the measurement
+is the **direction and magnitude of the gravity vector while stationary in each pose**, not a
+frequency response, so a slowly wrong time axis does not move a static mean. Look at it anyway --
+if it is large or steppy it says something about the sensor path that other analyses will care
+about, and "we thought we were measuring across samples what we were not" is the kind of thing that
+is cheap to check and expensive to assume.
+
+**What there is to solve for.** Six orientations give enough to determine scale and bias per axis
+per sensor, and from those the **relative orientation of the two accelerometers to each other**.
+With the FC dataflash covering the same poses there is a third instrument seeing the same gravity
+vector, which ties both sensors to the **flight controller's frame** -- either as part of the
+solution or as the residual that checks it. All three should agree about where gravity points in
+each pose, and any disagreement is the measurement.
+
+### What the literature says, and what transfers
+
+Searched 2026-10-02. The short version: the method being used here is the consensus method, and
+two things that were open are closed by it.
+
+**[Frosio et al., *Autocalibration of MEMS Accelerometers*](https://www.researchgate.net/publication/220408257_Autocalibration_of_MEMS_Accelerometers)
+and [Tedaldi et al., *A robust and easy to implement method for IMU calibration without external
+equipments*](https://www.researchgate.net/publication/273383944_A_robust_and_easy_to_implement_method_for_IMU_calibration_without_external_equipments).**
+The canonical in-field approach: the norm of the triad equals |g| during static intervals, solved
+as a non-linear least squares problem. *Transfers fully* -- same sensor class, same constraint of
+no external equipment, same few-deliberate-orientations regime. This is what `pose_calibration.py`
+does, arrived at independently. Tedaldi additionally chooses the static-interval threshold BY the
+fit, sweeping it and keeping the smallest residual, which is strictly better than choosing it by
+judgement and is now implemented. *Caveat found on implementing it:* the sweep needs a model with
+spare degrees of freedom. Swept against the 6-parameter fit on six poses it returns exactly zero
+for every threshold, because an exactly determined fit absorbs whatever the selection hands it.
+Pointed at an over-observed model it works -- and reports that for this capture the knob is not
+load-bearing, moving the residual 0.3% across a 16x range of tolerance.
+
+**[NXP AN4399, *High-Precision Calibration of a Three-Axis Accelerometer*](https://www.nxp.com/docs/en/application-note/AN4399.pdf)
+and the ellipsoid-fitting line of work.** The identifiability result here is the important one and
+it *transfers completely, being structural rather than empirical*: the magnitude constraint
+determines an **ellipsoid**, which is 9 parameters -- three axis lengths, three orientation angles,
+three offsets -- and those 9 cannot uniquely determine the 12 parameters of a full 3x3 gain matrix
+plus bias, because the matrix's nine coefficients are not recoverable from the ellipsoid's six
+shape-and-orientation parameters. **The rotation part of the matrix is invisible to |a| at any
+number of poses.** That is exactly the runaway this project hit -- biases to 4000 g with the matrix
+shrinking to compensate -- and it means the failure was structural, not a solver problem that
+bounds would have fixed. *What does not transfer:* the "high-precision" framing assumes a
+controlled fixture, where ours is a hand-held drone.
+
+**[Six-position testing of MEMS accelerometers](https://www.researchgate.net/publication/283140754_Six-position_testing_of_MEMS_accelerometer)
+and [An Optimal Calibration Method for a MEMS IMU](https://journals.sagepub.com/doi/10.5772/57516).**
+Six positions determine bias and scale factors but **cannot** estimate axis misalignments or
+non-orthogonalities. *Transfers exactly*, and was confirmed numerically here before it was read:
+the Jacobian is short by 3 for the cross-axis model at six poses, whether those poses are
+axis-aligned or tilted. *What does not transfer:* the procedure assumes a levelled surface with
+each axis pointing alternately up and down, which a hand-held airframe cannot achieve -- ours are
+approximate orientations, which is why the directions are solved for rather than assumed.
+
+**[Examining the number of required stationary orientations](https://www.researchgate.net/publication/368680217_Examining_the_number_of_required_stationary_orientations_for_efficient_accelerometer_calibration).**
+Classical methods need a minimum of twelve and preferably sixteen orientations, evenly spaced;
+improved methods reach seven or ten with less dependence on distribution. *Transfers*, and agrees
+with the independent Jacobian result in `pose_set_identifiability`: twelve minimum, fourteen
+better conditioned. Convergence from two directions on the same number is worth more than either.
+
+**[Attitude-Aided Linear Calibration of Triaxial Accelerometers](https://arxiv.org/html/2606.06308).**
+Needs only five arbitrary orientations -- but by using an external attitude reference. *Does NOT
+transfer as stated:* there is no attitude truth on this bench. The multi-sensor joint fit here is a
+weaker cousin, since the sensors give each other RELATIVE attitude but nothing gives absolute, so
+it buys spare degrees of freedom without buying the rotation part of the matrix.
+
+**[Autocalibration using local gravity and temperature](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4187052/).**
+The temperature term *transfers in principle and not in regime*: that work has days of wear data
+with abundant incidental static periods in uncontrolled orientations, where we have six deliberate
+ones. The reason to care is below.
+
+**[ADXL345 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/adxl345.pdf)
+-- this is the actual part, so it transfers trivially, and it settles the open residual.**
+
+| specification | ADXL345 | fitted here |
+|---|---|---|
+| cross-axis sensitivity | **+/-1%**, i.e. up to **0.57 deg** of apparent misalignment | joint-fit angular residual **0.30-0.43 deg** |
+| sensitivity | 230-282 LSB/g (3.5-4.3 mg/LSB), typ 256 / 3.9 -- a **+/-10%** spread | effective 3.77-3.98 mg/LSB |
+| zero-g offset X, Y | +/-150 mg (typ +/-35) | +44 to +55 mg |
+| zero-g offset Z | +/-250 mg (typ +/-40) | -72 and -15 mg |
+| sensitivity tempco | +/-0.01 %/degC | -- |
+| zero-g offset tempco | X,Y +/-0.4 mg/degC, **Z +/-1.2 mg/degC** | -- |
+
+**The unexplained residual is the part's specified cross-axis sensitivity.** 0.30-0.43 deg sits
+inside the 0.57 deg that +/-1% coupling permits, so there is nothing wrong with these sensors and
+nothing left to explain. Every fitted scale and bias is in spec too, and the 3.3% scale spread is
+small against the +/-10% the part allows -- using the header's nominal 3.9 mg/LSB was always going
+to leave a few percent on the table.
+
+**Correction to the identifiability claim above, which was too strong.** A general gain matrix
+factors as `M = R * S`, a rotation times a symmetric matrix. The magnitude constraint cannot see
+**R**, the package's overall rotation -- that part is genuinely invisible at any number of poses.
+But it fully determines **S**, and the off-diagonals of S *are* the cross-axis coupling. So
+non-orthogonality IS measurable from gravity alone; only the absolute rotation is not, and that is
+not needed here because sensor-to-sensor rotation is measured from the poses directly. The model to
+fit is therefore 9 parameters -- symmetric matrix plus bias -- not 6 and not 12.
+
+### What pose set to hold, for the 9-parameter model
+
+Two families appear in the literature and both are geometrically what one would guess:
+
+- **[Hung's twelve](https://www.iaeng.org/publication/WCE2011/WCE2011_pp2164-2167.pdf)**, as used
+  on a V-block rig: six orthogonal positions plus six at 45 degrees between two axes.
+- **[NASA TM-2020-5005041](https://ntrs.nasa.gov/api/citations/20205005041/downloads/NASA-TM-2020-5005041%20corrected.pdf)
+  Table A.1**: pitch +/-45 with roll at -45/45/135/225, which works out to every sign combination of
+  `(+-1/sqrt2, +-1/2, +-1/2)` -- 45 degrees from one axis and 60 from the other two.
+
+**Scored as ADDITIONS to the six already being held**, which is the question that gets asked --
+nobody discards poses they already have, and scoring sets in isolation answers a different and
+misleading one. `incremental_identifiability` does this; the diagram is
+`derived/pose-sets.png`.
+
+| addition to the 6 cardinals | added | total | short by | cross-axis SE |
+|---|---|---|---|---|
+| ring about **one** axis, 90 deg | 0 | 6 | 3 | -- |
+| ring about **one** axis, 45 deg | 4 | 10 | **2** | -- |
+| ring about **one** axis, 30 deg | 8 | 14 | **2** | -- |
+| ring about **one** axis, 22.5 deg | 12 | 18 | **2** | -- |
+| ring about **one** axis, 15 deg | 20 | 26 | **2** | -- |
+| **8 cube corners** | **8** | **14** | **0** | **0.0077 deg** |
+| NASA 8 | 8 | 14 | 0 | 0.0103 deg |
+| rings about all three axes, 45 deg | 12 | 18 | 0 | 0.0073 deg |
+| 12 edge midpoints (the same points) | 12 | 18 | 0 | 0.0073 deg |
+| rings about all three axes, 30 deg | 24 | 30 | 0 | 0.0059 deg |
+| edges + corners | 20 | 26 | 0 | 0.0053 deg |
+
+**A pose is the direction gravity points in the body frame -- 2 degrees of freedom -- and TWO
+DIFFERENT ROTATIONS get confused here.** Yaw about the **gravity** axis is a no-op: body-frame
+gravity is unchanged, so vehicle heading is free. Yaw about the **vehicle's own up axis** is NOT,
+once the vehicle is tilted: gravity moves between body x and y while the body z component holds, so
+spinning a tilted vehicle traces a line of constant elevation and every position is a new pose. The
+two coincide only when the vehicle is level, and an earlier version of this section checked the
+level case and wrongly concluded that look direction never matters.
+
+That second rotation is the physically cheap pose family -- **one tilt, then spin** -- and it is
+much easier to brace than separately setting up eight arbitrary orientations. Two facts decide
+whether a sweep is worth doing:
+
+- **PHASE MATTERS MORE THAN ELEVATION.** Spun to azimuth 0/90/180/270 the poses land in the same
+  vertical planes the cardinals already occupy, refining existing great circles instead of adding
+  one, and the cross-axis error comes out in the **millions of degrees**. Offset 45 degrees and it
+  is 0.010; anything from roughly 15 to 75 degrees of offset works.
+- **Tilt hard.** Elevation +/-35.26 deg -- the vehicle 54.7 deg off level -- gives 0.0077 deg.
+  Gentler is much worse: +/-60 deg elevation, only 30 deg of tilt, gives 0.0205.
+
+**Two sweeps of four at +/-35.26 degrees and 45 degrees of phase ARE the eight cube corners.** So
+the cheapest sufficient addition is a pair of tilt-and-spin sweeps, not eight separate setups.
+
+*Tool note:* `full_rank` is not `usable`. A rank test at a 1e-9 cutoff passed sets whose cross-axis
+standard error was in the millions of degrees -- numerically rank 9, usefully rank 7. Usability is
+now judged against the specification being measured: the part's own +/-1% cross-axis spec, 0.57 deg,
+since a calibration that cannot beat the spec it is measuring is not a calibration.
+
+**The right language is great circles, and the earlier claim that refining one axis "never helps"
+was wrong.** A circle is the set of tilts about one axis. Standalone deficiency:
+
+| circles sampled | 90 deg | 45 deg | 30 deg | 15 deg |
+|---|---|---|---|---|
+| 1 | short 5 | short 4 | short 4 | short 3 |
+| 2 | short 3 | short 1 | short 1 | short 1 |
+| 3 | **short 3** -- this *is* the six cardinals | **0** | 0 | 0 |
+
+Refining does help -- 5 to 4 to 3 on one circle -- but it **saturates near 45 degrees per circle**
+and never reaches sufficiency without all three. The six cardinals are exactly three circles at 90
+degrees, which is why they earn their place over any smaller set: they take the deficiency from 5
+to 3. And a 45-degree pose between "up" and "front" lies on the *y* circle, one of the three, so it
+is in the group that does help.
+
+What is true, and is the marginal case that got overstated: **refining a SINGLE circle past 45
+degrees adds nothing.** Added to the cardinals, an equatorial ring leaves the deficiency at 2
+whether it is sampled every 45 degrees (4 added) or every 15 (20 added). Points must land on more
+than one circle.
+
+Diagrams: `derived/pose-sets.png` (sphere) and `derived/pose-sets-flat.png` (azimuth against
+elevation, so nothing hides behind the sphere, with the three tilt circles drawn so set membership
+is visible).
+
+A caution on all of the above: these are rank and conditioning results for noiseless synthetic
+data at the measured noise level. They say which parameters are reachable and how precisely, not
+that a hand-held pose can be held steadily enough to realise it.
+
+**And this topic's own question gets a number from the datasheet rather than from more
+measurement.** Z-axis offset drifts +/-1.2 mg/degC, so a 20 degC change moves Z bias by 24 mg --
+a third of the camera-colocated sensor's fitted -72 mg. A calibration is therefore valid near the
+temperature it was taken at and not elsewhere, which makes temperature a parameter of the result
+rather than a caveat on it.
+
+**Where the code and the answers live.** Beyond very initial exploration, this is code in the repo,
+and the calibrations actually used are produced by CI or by a cluster job -- **not** numbers taken
+from an interactive analysis and pasted into the repo as the one true calibration. A calibration
+that cannot be regenerated from its inputs is not traceable to the data it came from, and the
+regeneration is what makes it checkable when a sensor is moved or a session is re-run.
+
 ---
 
 ## Topic 2 -- Is the blur largely a focus problem?
