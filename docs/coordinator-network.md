@@ -167,15 +167,19 @@ coord radio open       # enable WiFi
 way back in. On the coordinator it refuses for a different reason: no gadget interface, and
 its own closed-network path is a wired uplink that is not fitted.
 
-**The off-state lasts one boot.** NetworkManager persists `WirelessEnabled` in
-`/var/lib/NetworkManager/NetworkManager.state`, so `coord-radio-boot.service` re-enables the
-radio at every boot. Recovery from a closed device whose gadget link has since died is
-therefore a **power cycle** -- physical, needing no network. `coord radio open` is for when
-you still have a path and do not want to reboot; it is not the recovery mechanism, since it
-would need the link that failed.
+WiFi off is the state, and NetworkManager persists it (`WirelessEnabled` in
+`/var/lib/NetworkManager/NetworkManager.state`). Nothing turns it back on by itself.
 
-Closed is a state the device **reaches** each boot rather than a setting it remembers, which
-is the same shape as the rest of #434's readiness.
+The reason is not reachability -- there is physical access to these machines. It is that
+remote access existing at all is what stops agents leaving a flying vehicle alone, and that
+calling binaries is not free: invoking docker was enough to make a campod unusable through
+page-cache refaults. So `coord radio` is for a window where capture is stopped; it runs
+`nmcli`, `ip` and `ping`.
+
+**Bench recovery is deliberately not designed.** The coordinator has wired ethernet needing
+no switch, and reaches the campods from there. A campod booted and not answering is a
+second-order case whose answer is a card pull or an agreed physical mechanism -- to be
+settled when it matters, not pre-empted here.
 
 ### Checking it
 
