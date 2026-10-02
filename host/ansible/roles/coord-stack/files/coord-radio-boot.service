@@ -1,0 +1,21 @@
+# Managed by roles/coord-stack. Re-enables the WiFi radio at every boot, so that
+# `coord radio closed` lasts one boot rather than being remembered.
+#
+# NetworkManager persists WirelessEnabled in /var/lib/NetworkManager/NetworkManager.state
+# and reads it back at startup. Without this unit a closed device stays closed
+# across reboots, which makes a power cycle useless as recovery -- and a device
+# whose gadget link has since died then needs its card pulled.
+[Unit]
+Description=Enable the WiFi radio at boot (closed-network state is per-boot)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# NetworkManager may not be answering D-Bus the instant it starts, so retry
+# rather than racing it.
+ExecStart=/bin/sh -c 'for i in $(seq 1 15); do nmcli radio wifi on && exit 0; sleep 1; done; exit 1'
+
+[Install]
+WantedBy=multi-user.target

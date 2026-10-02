@@ -10,10 +10,14 @@ source of external influence and this is an embedded system. The path and the
 sequence to get there are in docs/coordinator-network.md.
 
 `closed` refuses unless it can reach the coordinator over the gadget link first,
-because that is the way back in.
+so going closed cannot cost you contact for the rest of this boot.
 
-NM persists `WirelessEnabled` to /var/lib/NetworkManager/NetworkManager.state and
-reads it back at startup, so `closed` survives reboots.
+**The off-state lasts one boot.** NM persists `WirelessEnabled` to
+/var/lib/NetworkManager/NetworkManager.state and reads it back at startup, so
+coord-radio-boot.service re-enables the radio on every boot. Recovery from a
+closed device whose gadget link has since died is therefore a power cycle --
+physical, needing no network. `coord radio open` is for when you still have a
+path and do not want to reboot; it is not the recovery mechanism.
 
 `status` exits 0 whenever the probe ran; an absent radio is an answer. `closed` and
 `open` exit non-zero when they did not do the thing.
@@ -104,6 +108,13 @@ def wifi_device_state():
     return "absent"
 
 
+def boot_unit_state():
+    """Whether the off-state is per-boot. Without this unit `closed` is permanent
+    and recovery needs a card, so a caller should know which it is dealing with."""
+    out = run("systemctl", "is-enabled", "coord-radio-boot.service")
+    return (out or "absent").strip()
+
+
 def reachable(iface, peer):
     return run("ping", "-c", PING_COUNT, "-W", PING_TIMEOUT, "-I", iface, peer,
                timeout=30) is not None
@@ -121,6 +132,7 @@ def report():
         ("GADGET_PEER", peer or "unknown"),
         ("GADGET_PEER_REACHABLE", "true" if ok else "false"),
         ("CLOSED_NETWORK_SAFE", "true" if ok else "false"),
+        ("RADIO_RESTORED_AT_BOOT", boot_unit_state()),
     ]
     print("[radio]")
     for key, value in rows:
