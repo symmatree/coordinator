@@ -106,6 +106,22 @@ services:
       CAMPOD_STILL_FOCUS: "infinity"
       # off | server | client -- multi-campod sync is #24.
       CAMPOD_SYNC_MODE: "off"
+      # Capture is PAUSED until something says otherwise (#434). The camera still
+      # comes up, warms through CAMPOD_WARMUP_FRAMES frames to pay the import and
+      # prove it can write, and then holds ready -- started, buffers allocated,
+      # retrieving nothing.
+      #
+      # This exists because a bench pod wrote 29 GB and filled its card, which does
+      # not present as a full disk: it presents as a pod that cannot capture, stops
+      # answering, and invites three wrong explanations. Collection is wanted for
+      # the minutes of a flight, not the hours beside one.
+      #
+      # UNTIL SOMETHING WRITES THIS FILE, A CAMPOD DOES NOT CAPTURE IN FLIGHT. The
+      # writer is the pod control path (#25); today it is a person. Set the value
+      # empty to disable gating entirely and capture continuously, which is the
+      # behaviour before this change.
+      CAMPOD_CAPTURE_FLAG: "/tmp/campod_capture"
+      CAMPOD_WARMUP_FRAMES: "10"
     # Explicit even though it matches the image's CMD, because the accel service
     # below overrides it -- reading one without the other would be misleading.
     command: ["python3", "/opt/campod/capture.py"]
