@@ -64,21 +64,24 @@ Asserts that the image's mechanisms took effect on a booted device -- sentinels 
 things, not a golden copy of the config. Baselines when last run (2026-09-23): coordinator
 14 pass / 0 fail, campod-sw 18 / 0.
 
-## Settled, so it does not need re-deriving
+## Established, with the check that would unseat it
 
-Each of these cost a session or more to establish.
+True when written (**2026-10-02**) and each cost a session or more to establish. None of
+them is settled in the sense of being beyond question -- a row whose check fails is a row
+that rotted, and the check is cheaper than the original derivation. Do that rather than
+deferring to this table.
 
-| | |
+| | check |
 |---|---|
-| **btrfs compression is off deliberately** | `dotfiles-symm` `011eb43`; it earned ~96 KB/s. Effective only between `f1bb7db` (09-12) and `011eb43` (09-16), so observations from cards outside that window never had it |
-| **`ro`-`/usr` holds** | A converge remounts it `rw` and cannot restore it live; the reboot that ends a converge does. A box reading `rw` has been converged since its last boot. Not a defect |
-| **tryboot is inert on the Zero 2 W** | Firmware accepts and stores the flag and ignores it. The **partition number** in the same reboot argument *is* honoured. [`BOOT-SELECTION.md`](https://github.com/symmatree/dotfiles-symm/blob/main/pi-image/BOOT-SELECTION.md) |
-| **`cma-128` carries ~1.3x, not 2.5x** | The running config allocates `buffer_count=2`: 99.6 MiB held of 128 MB. A third buffer (~145 MiB) does not fit |
-| **ADXL345 runs at full rate** | 3243 Hz at ODR 3200, both sensors, and the two differ ~3% from each other. The old 1567 Hz figure was the drain loop taking half of what accumulated |
-| **The gadget network works** | 199 Mbit/s to one pod, 241 Mbit/s aggregate across two, ~0.35 ms. Two NM defects fixed in #354 |
-| **`watchdog0/bootstatus` is always 0 here** | `bcm2835_wdt.c` declares no `WDIOF_CARDRESET` and never assigns the field. Not "did not fire" -- not reported |
-| **NM will not manage a `DEVTYPE=gadget` interface** | Without the `90-` udev override the campod's profile is inert and `usb0` stays DOWN with no error |
-| **NM keyfile list properties are `;`-separated** | A space-separated `match.driver` is one pattern matching nothing, and autoconnect falls back to a default DHCP profile silently |
+| **btrfs compression is off deliberately** (`dotfiles-symm` `011eb43`; it earned ~96 KB/s). Effective only between `f1bb7db` 09-12 and `011eb43` 09-16, so cards outside that window never had it | `grep -c compress /etc/fstab` -> `0`; `git log -S compress -- pi-image/assemble-btrfs.sh` for the window |
+| **`ro`-`/usr` holds.** A converge remounts it `rw` and cannot restore it live; the reboot ending a converge does. A box reading `rw` has been converged since its last boot | `findmnt /usr -o OPTIONS` |
+| **tryboot is inert on the Zero 2 W** -- firmware stores the flag and ignores it. The **partition number** in the same reboot argument *is* honoured ([`BOOT-SELECTION.md`](https://github.com/symmatree/dotfiles-symm/blob/main/pi-image/BOOT-SELECTION.md)) | `sudo vcmailbox 0x00030064 4 4 0` reads the flags; after `reboot '0 tryboot'`, `/boot/firmware/flash/result.txt` is still absent |
+| **`cma-128` carries ~1.3x, not 2.5x** -- the running config allocates `buffer_count=2`, 99.6 MiB of 128 MB. A third buffer (~145 MiB) does not fit | with capture running: `sudo cat /sys/kernel/debug/dma_buf/bufinfo \| tail -2` |
+| **ADXL345 runs at full rate** -- 3243 Hz at ODR 3200, both sensors, differing ~3% from each other. The old 1567 Hz was the drain loop taking half of what accumulated | fit `sum(n)` over the `boot_ns` span of any `accel-*.jsonl` |
+| **The gadget network works** -- 199 Mbit/s to one pod, 241 Mbit/s aggregate across two, ~0.35 ms (#354, #373) | `ping 10.55.0.1` from a pod; `ls /sys/class/net/br0/brif/` on the coordinator |
+| **`watchdog0/bootstatus` is always 0 here** -- `bcm2835_wdt.c` declares no `WDIOF_CARDRESET` and never assigns the field. Not "did not fire": not reported | grep `WDIOF_CARDRESET` and `bootstatus` in `drivers/watchdog/bcm2835_wdt.c` |
+| **NM will not manage a `DEVTYPE=gadget` interface.** Without the `90-` udev override the campod profile is inert and `usb0` stays DOWN with no error | `nmcli -f GENERAL.REASON device show usb0` -> reason 77 when the override is missing |
+| **NM keyfile list properties are `;`-separated.** A space-separated `match.driver` is one pattern matching nothing, and autoconnect falls back to a default DHCP profile silently | `nmcli connection up campod-bridge-port ifname usbN` names the mismatch explicitly |
 
 ## Open work in this layer (2026-10-02)
 
