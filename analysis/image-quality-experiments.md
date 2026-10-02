@@ -241,16 +241,35 @@ misleading one. `incremental_identifiability` does this; the diagram is
 | rings about all three axes, 30 deg | 24 | 30 | 0 | 0.0059 deg |
 | edges + corners | 20 | 26 | 0 | 0.0053 deg |
 
-**Sampling one rotation axis more finely never reaches the missing parameters.** Four added poses
-and twenty added poses leave exactly the same deficiency of 2. The AXIS COUNT is what matters and
-the angular step is not -- rings about all three axes are identifiable at the coarsest useful step,
-45 degrees, and those twelve points are the edge midpoints.
+**Yaw about gravity is irrelevant, so a single point fully specifies a pose.** A static
+accelerometer measures one vector; rotating the vehicle about the gravity axis leaves body-frame
+gravity unchanged (checked: 0, 30, 90 and 180 degrees of yaw all give the same reading). A pose is
+therefore 2 degrees of freedom, not 3, and look direction is free. This would NOT hold for a
+magnetometer or a gyro.
 
-**The cheapest identifiable addition is the eight cube corners**: full identifiability for eight
-extra orientations, at 0.0077 deg against the 0.0073 that twelve edges buy. Fifty percent more
-poses for a 5% improvement is not worth holding, and going finer still -- 24 added at 30 degrees --
-reaches 0.0059 deg, which is already 100x finer than the 0.57 deg the part's cross-axis spec
-permits. **Precision stopped being the constraint several rows up this table.**
+**The right language is great circles, and the earlier claim that refining one axis "never helps"
+was wrong.** A circle is the set of tilts about one axis. Standalone deficiency:
+
+| circles sampled | 90 deg | 45 deg | 30 deg | 15 deg |
+|---|---|---|---|---|
+| 1 | short 5 | short 4 | short 4 | short 3 |
+| 2 | short 3 | short 1 | short 1 | short 1 |
+| 3 | **short 3** -- this *is* the six cardinals | **0** | 0 | 0 |
+
+Refining does help -- 5 to 4 to 3 on one circle -- but it **saturates near 45 degrees per circle**
+and never reaches sufficiency without all three. The six cardinals are exactly three circles at 90
+degrees, which is why they earn their place over any smaller set: they take the deficiency from 5
+to 3. And a 45-degree pose between "up" and "front" lies on the *y* circle, one of the three, so it
+is in the group that does help.
+
+What is true, and is the marginal case that got overstated: **refining a SINGLE circle past 45
+degrees adds nothing.** Added to the cardinals, an equatorial ring leaves the deficiency at 2
+whether it is sampled every 45 degrees (4 added) or every 15 (20 added). Points must land on more
+than one circle.
+
+Diagrams: `derived/pose-sets.png` (sphere) and `derived/pose-sets-flat.png` (azimuth against
+elevation, so nothing hides behind the sphere, with the three tilt circles drawn so set membership
+is visible).
 
 A caution on all of the above: these are rank and conditioning results for noiseless synthetic
 data at the measured noise level. They say which parameters are reachable and how precisely, not
