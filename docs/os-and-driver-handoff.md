@@ -16,8 +16,13 @@ journald policy, i2c.
 
 ## The boundary with flight-platform, and the honest overlap
 
-[flight-platform-handoff.md](flight-platform-handoff.md) covers the payload. The split is
-not the directory, and the middle is genuinely shared. Seth's framing:
+[flight-platform-handoff.md](flight-platform-handoff.md) covers the payload. The usual case
+is clean and worth stating first: **device-tree configuration comes from the image, module
+loading comes from ansible.** An overlay is read by the firmware before userspace exists, so
+nothing in a converge substitutes for it; a module is loaded by a running system, so nothing
+in the image needs to.
+
+The split is not the directory, though, and the middle is genuinely shared. Seth's framing:
 
 - *"the payload is ignoring signals"* -- flight-platform's
 - *"the signal cannot be delivered"* -- this role's
