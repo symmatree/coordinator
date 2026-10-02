@@ -556,13 +556,50 @@ def ellipsoid_identifiability(directions, sigma_g=2.5e-4, eps=1e-7):
         jac[:, k] = (resid(xp) - f0) / eps
     sv = np.linalg.svd(jac, compute_uv=False)
     rank = int((sv > sv[0] * 1e-9).sum())
-    out = dict(n_poses=len(d), rank=rank, short_by=9 - rank, identifiable=bool(rank == 9),
+    out = dict(n_poses=len(d), rank=rank, short_by=9 - rank,
+               full_rank=bool(rank == 9),
                condition=float(sv[0] / sv[rank - 1]) if rank else float("inf"))
-    if out["identifiable"]:
+    if out["full_rank"]:
         se = np.sqrt(np.diag(np.linalg.inv(jac.T @ jac))) * sigma_g
         out["se_cross_axis_deg"] = float(np.degrees(se[[1, 2, 4]].max()))
         out["se_bias_mg"] = float(se[6:9].max() * 1000)
+    # FULL RANK IS NOT USABLE. A rank test with an arbitrary 1e-9 cutoff passed sets whose
+    # cross-axis standard error came out in the MILLIONS of degrees -- numerically rank 9, usefully
+    # rank 7. So usability is judged on the parameter error against the thing being measured: the
+    # part's own +/-1% cross-axis spec, which is 0.57 deg of apparent misalignment. Anything that
+    # cannot beat the specification it is trying to measure is not a calibration.
+    out["usable"] = bool(out["full_rank"] and out.get("se_cross_axis_deg", np.inf) < 0.57)
+    out["identifiable"] = out["usable"]
     return out
+
+
+def latitude_sweep(elevation_deg, n, phase_deg=45.0):
+    """One tilt, spun about the vehicle's OWN up axis into n positions.
+
+    This is the physically cheap pose family and it exists because yaw about the vehicle's up axis
+    is NOT a no-op once the vehicle is tilted: gravity moves between body x and y while the body z
+    component is unchanged, so spinning a tilted vehicle traces a line of constant elevation. (Yaw
+    about the GRAVITY axis is the no-op -- a different rotation, and confusing the two cost a wrong
+    claim that look direction never matters.)
+
+    Two facts that decide whether a sweep is worth performing:
+
+    * **PHASE MATTERS MORE THAN ELEVATION.** At `phase_deg` 0 or 90 the spun poses land at azimuth
+      0/90/180/270, which are the same vertical planes the six cardinals already occupy, so they
+      refine existing great circles instead of adding one -- cross-axis error comes out in the
+      millions of degrees. At 45 degrees it is 0.010; anything from roughly 15 to 75 works.
+    * **The best elevation is +/-35.26 degrees**, i.e. the vehicle tilted 54.7 degrees from level,
+      which gives 0.0077 deg. Gentler tilts are much worse: +/-60 deg elevation (30 deg of tilt)
+      gives 0.0205.
+
+    Two such sweeps at +/-35.26 degrees and phase 45 ARE the eight cube corners, which makes the
+    cheapest sufficient addition to the six cardinals a pair of tilt-and-spin sweeps rather than
+    eight separately braced orientations.
+    """
+    e = np.radians(elevation_deg)
+    az = np.radians(np.arange(n) * 360.0 / n + phase_deg)
+    return np.stack([np.cos(e) * np.cos(az), np.cos(e) * np.sin(az),
+                     np.full(n, np.sin(e))], 1)
 
 
 def pose_set_identifiability(directions, n_sensors=2, cross_axis=True, sigma_g=2.5e-4, eps=1e-7):

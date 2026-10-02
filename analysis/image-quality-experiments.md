@@ -241,11 +241,32 @@ misleading one. `incremental_identifiability` does this; the diagram is
 | rings about all three axes, 30 deg | 24 | 30 | 0 | 0.0059 deg |
 | edges + corners | 20 | 26 | 0 | 0.0053 deg |
 
-**Yaw about gravity is irrelevant, so a single point fully specifies a pose.** A static
-accelerometer measures one vector; rotating the vehicle about the gravity axis leaves body-frame
-gravity unchanged (checked: 0, 30, 90 and 180 degrees of yaw all give the same reading). A pose is
-therefore 2 degrees of freedom, not 3, and look direction is free. This would NOT hold for a
-magnetometer or a gyro.
+**A pose is the direction gravity points in the body frame -- 2 degrees of freedom -- and TWO
+DIFFERENT ROTATIONS get confused here.** Yaw about the **gravity** axis is a no-op: body-frame
+gravity is unchanged, so vehicle heading is free. Yaw about the **vehicle's own up axis** is NOT,
+once the vehicle is tilted: gravity moves between body x and y while the body z component holds, so
+spinning a tilted vehicle traces a line of constant elevation and every position is a new pose. The
+two coincide only when the vehicle is level, and an earlier version of this section checked the
+level case and wrongly concluded that look direction never matters.
+
+That second rotation is the physically cheap pose family -- **one tilt, then spin** -- and it is
+much easier to brace than separately setting up eight arbitrary orientations. Two facts decide
+whether a sweep is worth doing:
+
+- **PHASE MATTERS MORE THAN ELEVATION.** Spun to azimuth 0/90/180/270 the poses land in the same
+  vertical planes the cardinals already occupy, refining existing great circles instead of adding
+  one, and the cross-axis error comes out in the **millions of degrees**. Offset 45 degrees and it
+  is 0.010; anything from roughly 15 to 75 degrees of offset works.
+- **Tilt hard.** Elevation +/-35.26 deg -- the vehicle 54.7 deg off level -- gives 0.0077 deg.
+  Gentler is much worse: +/-60 deg elevation, only 30 deg of tilt, gives 0.0205.
+
+**Two sweeps of four at +/-35.26 degrees and 45 degrees of phase ARE the eight cube corners.** So
+the cheapest sufficient addition is a pair of tilt-and-spin sweeps, not eight separate setups.
+
+*Tool note:* `full_rank` is not `usable`. A rank test at a 1e-9 cutoff passed sets whose cross-axis
+standard error was in the millions of degrees -- numerically rank 9, usefully rank 7. Usability is
+now judged against the specification being measured: the part's own +/-1% cross-axis spec, 0.57 deg,
+since a calibration that cannot beat the spec it is measuring is not a calibration.
 
 **The right language is great circles, and the earlier claim that refining one axis "never helps"
 was wrong.** A circle is the set of tilts about one axis. Standalone deficiency:
