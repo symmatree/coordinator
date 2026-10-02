@@ -204,6 +204,49 @@ nothing left to explain. Every fitted scale and bias is in spec too, and the 3.3
 small against the +/-10% the part allows -- using the header's nominal 3.9 mg/LSB was always going
 to leave a few percent on the table.
 
+**Correction to the identifiability claim above, which was too strong.** A general gain matrix
+factors as `M = R * S`, a rotation times a symmetric matrix. The magnitude constraint cannot see
+**R**, the package's overall rotation -- that part is genuinely invisible at any number of poses.
+But it fully determines **S**, and the off-diagonals of S *are* the cross-axis coupling. So
+non-orthogonality IS measurable from gravity alone; only the absolute rotation is not, and that is
+not needed here because sensor-to-sensor rotation is measured from the poses directly. The model to
+fit is therefore 9 parameters -- symmetric matrix plus bias -- not 6 and not 12.
+
+### What pose set to hold, for the 9-parameter model
+
+Two families appear in the literature and both are geometrically what one would guess:
+
+- **[Hung's twelve](https://www.iaeng.org/publication/WCE2011/WCE2011_pp2164-2167.pdf)**, as used
+  on a V-block rig: six orthogonal positions plus six at 45 degrees between two axes.
+- **[NASA TM-2020-5005041](https://ntrs.nasa.gov/api/citations/20205005041/downloads/NASA-TM-2020-5005041%20corrected.pdf)
+  Table A.1**: pitch +/-45 with roll at -45/45/135/225, which works out to every sign combination of
+  `(+-1/sqrt2, +-1/2, +-1/2)` -- 45 degrees from one axis and 60 from the other two.
+
+`ellipsoid_identifiability` evaluates them against this project's measured noise:
+
+| pose set | n | short by | cond | cross-axis SE | bias SE |
+|---|---|---|---|---|---|
+| cardinals (as flown) | 6 | **3** | -- | -- | -- |
+| NASA 8 | 8 | **2** | -- | -- | -- |
+| cube corners | 8 | **2** | -- | -- | -- |
+| **edge midpoints** | 12 | 0 | 2.1 | **0.007 deg** | 0.12 mg |
+| Hung 12 | 12 | 0 | 2.8 | 0.013 deg | 0.18 mg |
+| cardinals + cube | 14 | 0 | 1.6 | 0.008 deg | 0.12 mg |
+| cardinals + edges | 18 | 0 | 1.5 | 0.007 deg | 0.10 mg |
+| single-axis circle | 8 | **4** | -- | -- | -- |
+
+**The cardinals contribute almost nothing to the cross terms**, so twelve edge midpoints alone beat
+Hung's cardinals-plus-six at the same pose count. An axis-aligned pose has zero projection on two
+axes and so cannot excite their coupling -- which is why adding 45-degree poses matters and adding
+more cardinals does not. **Eight of anything is insufficient**, including both published eight-point
+sets, and a single-axis rotary fixture is worse than six hand-held cardinals because gravity never
+acquires a component along its rotation axis.
+
+Against the datasheet's +/-1% cross-axis spec, which is 0.57 degrees of apparent misalignment,
+0.007 degrees is an 80x margin. So precision is not the constraint and the only real question is
+how many orientations can be held steadily: **twelve edge midpoints is the recommendation, and
+anything from twelve upward measures the coupling comfortably.**
+
 **And this topic's own question gets a number from the datasheet rather than from more
 measurement.** Z-axis offset drifts +/-1.2 mg/degC, so a 20 degC change moves Z bias by 24 mg --
 a third of the camera-colocated sensor's fitted -72 mg. A calibration is therefore valid near the

@@ -479,13 +479,90 @@ def fc_absolute_time(bin_path):
 
 # Candidate orientation sets, as gravity directions in the body frame. Named rather than inline
 # so a design question is asked against the same sets each time.
+_R2 = 1.0 / np.sqrt(2.0)
 POSE_SETS = {
-    "axes": [[0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]],
-    "tilts45": [[1, 0, -1], [-1, 0, -1], [0, 1, -1], [0, -1, -1], [1, 1, 0], [1, -1, 0]],
-    "cube": [[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)],
+    # Face normals of a cube: each axis alternately up and down. The classic six-position set.
+    "cardinals": [[0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]],
+    # Edge midpoints: 45 degrees between two axes, four in each of the three coordinate planes.
+    # These are what determine cross-axis coupling, because an axis-aligned pose puts ZERO signal
+    # into the coupling between the other two axes.
+    "edges12": ([[a, b, 0] for a in (1, -1) for b in (1, -1)]
+                + [[0, a, b] for a in (1, -1) for b in (1, -1)]
+                + [[a, 0, b] for a in (1, -1) for b in (1, -1)]),
+    # Cube corners: all three axes equally, 54.7 degrees from each.
+    "cube8": [[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)],
+    # NASA TM-2020-5005041 Table A.1: pitch +/-45 with roll at -45/45/135/225, which works out to
+    # every sign combination of (+-1/sqrt2, +-1/2, +-1/2) -- 45 deg from one axis, 60 from the others.
+    "nasa8": [[sx * _R2, sy * 0.5, sz * 0.5]
+              for sx in (1, -1) for sy in (1, -1) for sz in (1, -1)],
+    # Hung's twelve, as used in the WCE2011 V-block rig: six orthogonal plus six at 45 degrees.
+    "hung12": ([[0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]]
+               + [[1, 1, 0], [1, -1, 0], [0, 1, 1], [0, 1, -1], [1, 0, 1], [1, 0, -1]]),
+    # A single-axis rotary fixture. Included because it is the WORST of these by a wide margin:
+    # gravity never acquires a component along the rotation axis, so stepping it finely does not
+    # help and eight steps buy less than six hand-held cardinals.
     "circle8": [[np.cos(a), np.sin(a), 0.0]
                 for a in np.linspace(0, 2 * np.pi, 8, endpoint=False)],
 }
+
+
+def ellipsoid_identifiability(directions, sigma_g=2.5e-4, eps=1e-7):
+    """Can a pose set determine the model the MAGNITUDE CONSTRAINT can actually reach?
+
+    That model is 9 parameters: a SYMMETRIC 3x3 (per-axis scale on the diagonal, cross-axis
+    coupling off it) plus 3 bias. A general gain matrix factors as M = R * S, rotation times
+    symmetric, and |a| = |g| determines S and the bias but never R -- the package's overall
+    rotation is invisible to it at any number of poses. That is not a loss here: the off-diagonals
+    of S ARE the cross-axis coupling, which is the physical quantity, and sensor-to-sensor rotation
+    is measured separately from the poses themselves.
+
+    Measured on this project's noise, sigma_g = 2.5e-4 g:
+
+      cardinals (6)            short by 3    the classic six-position limitation, exactly
+      nasa8 (8)                short by 2
+      cube8 (8)                short by 2    eight of anything is not enough
+      edges12 (12)             cond 2.1      cross-axis to 0.007 deg  <- best at 12
+      hung12 (12)              cond 2.8      cross-axis to 0.013 deg
+      cardinals + cube8 (14)   cond 1.6      0.008 deg
+      cardinals + edges12 (18) cond 1.5      0.007 deg
+      circle8 (8)              short by 2    and far worse conditioned
+
+    The useful surprise: the cardinals contribute almost nothing to the cross terms, so edges12
+    alone beats hung12 at the same pose count. An axis-aligned pose has zero projection on two
+    axes and therefore cannot excite their coupling. Against the ADXL345's +/-1% cross-axis spec,
+    which is 0.57 deg of apparent misalignment, 0.007 deg is an 80x margin -- so any identifiable
+    set measures it comfortably and the choice is about pose count, not precision.
+    """
+    d = np.asarray(directions, float)
+    d = d / np.linalg.norm(d, axis=1, keepdims=True)
+    rng = np.random.default_rng(1)
+    s_true = np.eye(3) + 0.02 * rng.normal(size=(3, 3))
+    s_true = (s_true + s_true.T) / 2
+    b_true = 0.05 * rng.normal(size=3)
+    obs = np.linalg.solve(s_true, d.T).T + b_true
+
+    def sym(p):
+        return np.array([[p[0], p[1], p[2]], [p[1], p[3], p[4]], [p[2], p[4], p[5]]])
+
+    def resid(p):
+        return np.linalg.norm((obs - p[6:9]) @ sym(p).T, axis=1) - 1.0
+
+    x0 = np.array([s_true[0, 0], s_true[0, 1], s_true[0, 2],
+                   s_true[1, 1], s_true[1, 2], s_true[2, 2], *b_true])
+    f0 = resid(x0)
+    jac = np.zeros((len(f0), 9))
+    for k in range(9):
+        xp = x0.copy(); xp[k] += eps
+        jac[:, k] = (resid(xp) - f0) / eps
+    sv = np.linalg.svd(jac, compute_uv=False)
+    rank = int((sv > sv[0] * 1e-9).sum())
+    out = dict(n_poses=len(d), rank=rank, short_by=9 - rank, identifiable=bool(rank == 9),
+               condition=float(sv[0] / sv[rank - 1]) if rank else float("inf"))
+    if out["identifiable"]:
+        se = np.sqrt(np.diag(np.linalg.inv(jac.T @ jac))) * sigma_g
+        out["se_cross_axis_deg"] = float(np.degrees(se[[1, 2, 4]].max()))
+        out["se_bias_mg"] = float(se[6:9].max() * 1000)
+    return out
 
 
 def pose_set_identifiability(directions, n_sensors=2, cross_axis=True, sigma_g=2.5e-4, eps=1e-7):
