@@ -117,6 +117,23 @@
 # The radio control (#434). Both roles: on the coordinator it refuses, having no
 # gadget interface and so no way back in, which is the answer until a wired
 # uplink is fitted.
+# Makes `coord radio closed` last one boot rather than being remembered. NM
+# persists WirelessEnabled, so without this a closed device needs a card pulled if
+# its gadget link later fails -- a power cycle would not help.
+- name: Install the boot-time radio restore unit
+  ansible.builtin.copy:
+    src: coord-radio-boot.service
+    dest: /etc/systemd/system/coord-radio-boot.service
+    mode: "0644"
+
+# daemon_reload here rather than a handler: the unit has to be known before it can
+# be enabled, and this role has no systemd handler to hang it off.
+- name: Enable the boot-time radio restore
+  ansible.builtin.systemd_service:
+    name: coord-radio-boot.service
+    enabled: true
+    daemon_reload: true
+
 - name: Install the radio control
   ansible.builtin.copy:
     remote_src: true

@@ -167,9 +167,15 @@ coord radio open       # enable WiFi
 way back in. On the coordinator it refuses for a different reason: no gadget interface, and
 its own closed-network path is a wired uplink that is not fitted.
 
-**NetworkManager persists this** -- `WirelessEnabled` in
-`/var/lib/NetworkManager/NetworkManager.state` -- so `closed` survives reboots, which is
-wanted since closed is the steady state.
+**The off-state lasts one boot.** NetworkManager persists `WirelessEnabled` in
+`/var/lib/NetworkManager/NetworkManager.state`, so `coord-radio-boot.service` re-enables the
+radio at every boot. Recovery from a closed device whose gadget link has since died is
+therefore a **power cycle** -- physical, needing no network. `coord radio open` is for when
+you still have a path and do not want to reboot; it is not the recovery mechanism, since it
+would need the link that failed.
+
+Closed is a state the device **reaches** each boot rather than a setting it remembers, which
+is the same shape as the rest of #434's readiness.
 
 ### Checking it
 
