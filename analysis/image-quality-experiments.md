@@ -129,6 +129,87 @@ vector, which ties both sensors to the **flight controller's frame** -- either a
 solution or as the residual that checks it. All three should agree about where gravity points in
 each pose, and any disagreement is the measurement.
 
+### What the literature says, and what transfers
+
+Searched 2026-10-02. The short version: the method being used here is the consensus method, and
+two things that were open are closed by it.
+
+**[Frosio et al., *Autocalibration of MEMS Accelerometers*](https://www.researchgate.net/publication/220408257_Autocalibration_of_MEMS_Accelerometers)
+and [Tedaldi et al., *A robust and easy to implement method for IMU calibration without external
+equipments*](https://www.researchgate.net/publication/273383944_A_robust_and_easy_to_implement_method_for_IMU_calibration_without_external_equipments).**
+The canonical in-field approach: the norm of the triad equals |g| during static intervals, solved
+as a non-linear least squares problem. *Transfers fully* -- same sensor class, same constraint of
+no external equipment, same few-deliberate-orientations regime. This is what `pose_calibration.py`
+does, arrived at independently. Tedaldi additionally chooses the static-interval threshold BY the
+fit, sweeping it and keeping the smallest residual, which is strictly better than choosing it by
+judgement and is now implemented. *Caveat found on implementing it:* the sweep needs a model with
+spare degrees of freedom. Swept against the 6-parameter fit on six poses it returns exactly zero
+for every threshold, because an exactly determined fit absorbs whatever the selection hands it.
+Pointed at an over-observed model it works -- and reports that for this capture the knob is not
+load-bearing, moving the residual 0.3% across a 16x range of tolerance.
+
+**[NXP AN4399, *High-Precision Calibration of a Three-Axis Accelerometer*](https://www.nxp.com/docs/en/application-note/AN4399.pdf)
+and the ellipsoid-fitting line of work.** The identifiability result here is the important one and
+it *transfers completely, being structural rather than empirical*: the magnitude constraint
+determines an **ellipsoid**, which is 9 parameters -- three axis lengths, three orientation angles,
+three offsets -- and those 9 cannot uniquely determine the 12 parameters of a full 3x3 gain matrix
+plus bias, because the matrix's nine coefficients are not recoverable from the ellipsoid's six
+shape-and-orientation parameters. **The rotation part of the matrix is invisible to |a| at any
+number of poses.** That is exactly the runaway this project hit -- biases to 4000 g with the matrix
+shrinking to compensate -- and it means the failure was structural, not a solver problem that
+bounds would have fixed. *What does not transfer:* the "high-precision" framing assumes a
+controlled fixture, where ours is a hand-held drone.
+
+**[Six-position testing of MEMS accelerometers](https://www.researchgate.net/publication/283140754_Six-position_testing_of_MEMS_accelerometer)
+and [An Optimal Calibration Method for a MEMS IMU](https://journals.sagepub.com/doi/10.5772/57516).**
+Six positions determine bias and scale factors but **cannot** estimate axis misalignments or
+non-orthogonalities. *Transfers exactly*, and was confirmed numerically here before it was read:
+the Jacobian is short by 3 for the cross-axis model at six poses, whether those poses are
+axis-aligned or tilted. *What does not transfer:* the procedure assumes a levelled surface with
+each axis pointing alternately up and down, which a hand-held airframe cannot achieve -- ours are
+approximate orientations, which is why the directions are solved for rather than assumed.
+
+**[Examining the number of required stationary orientations](https://www.researchgate.net/publication/368680217_Examining_the_number_of_required_stationary_orientations_for_efficient_accelerometer_calibration).**
+Classical methods need a minimum of twelve and preferably sixteen orientations, evenly spaced;
+improved methods reach seven or ten with less dependence on distribution. *Transfers*, and agrees
+with the independent Jacobian result in `pose_set_identifiability`: twelve minimum, fourteen
+better conditioned. Convergence from two directions on the same number is worth more than either.
+
+**[Attitude-Aided Linear Calibration of Triaxial Accelerometers](https://arxiv.org/html/2606.06308).**
+Needs only five arbitrary orientations -- but by using an external attitude reference. *Does NOT
+transfer as stated:* there is no attitude truth on this bench. The multi-sensor joint fit here is a
+weaker cousin, since the sensors give each other RELATIVE attitude but nothing gives absolute, so
+it buys spare degrees of freedom without buying the rotation part of the matrix.
+
+**[Autocalibration using local gravity and temperature](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4187052/).**
+The temperature term *transfers in principle and not in regime*: that work has days of wear data
+with abundant incidental static periods in uncontrolled orientations, where we have six deliberate
+ones. The reason to care is below.
+
+**[ADXL345 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/adxl345.pdf)
+-- this is the actual part, so it transfers trivially, and it settles the open residual.**
+
+| specification | ADXL345 | fitted here |
+|---|---|---|
+| cross-axis sensitivity | **+/-1%**, i.e. up to **0.57 deg** of apparent misalignment | joint-fit angular residual **0.30-0.43 deg** |
+| sensitivity | 230-282 LSB/g (3.5-4.3 mg/LSB), typ 256 / 3.9 -- a **+/-10%** spread | effective 3.77-3.98 mg/LSB |
+| zero-g offset X, Y | +/-150 mg (typ +/-35) | +44 to +55 mg |
+| zero-g offset Z | +/-250 mg (typ +/-40) | -72 and -15 mg |
+| sensitivity tempco | +/-0.01 %/degC | -- |
+| zero-g offset tempco | X,Y +/-0.4 mg/degC, **Z +/-1.2 mg/degC** | -- |
+
+**The unexplained residual is the part's specified cross-axis sensitivity.** 0.30-0.43 deg sits
+inside the 0.57 deg that +/-1% coupling permits, so there is nothing wrong with these sensors and
+nothing left to explain. Every fitted scale and bias is in spec too, and the 3.3% scale spread is
+small against the +/-10% the part allows -- using the header's nominal 3.9 mg/LSB was always going
+to leave a few percent on the table.
+
+**And this topic's own question gets a number from the datasheet rather than from more
+measurement.** Z-axis offset drifts +/-1.2 mg/degC, so a 20 degC change moves Z bias by 24 mg --
+a third of the camera-colocated sensor's fitted -72 mg. A calibration is therefore valid near the
+temperature it was taken at and not elsewhere, which makes temperature a parameter of the result
+rather than a caveat on it.
+
 **Where the code and the answers live.** Beyond very initial exploration, this is code in the repo,
 and the calibrations actually used are produced by CI or by a cluster job -- **not** numbers taken
 from an interactive analysis and pasted into the repo as the one true calibration. A calibration

@@ -582,3 +582,59 @@ def pose_set_identifiability(directions, n_sensors=2, cross_axis=True, sigma_g=2
                                    6 + per_sensor * (n_s - 1) + 3 * n_s].max()) \
             if cross_axis else None
     return out
+
+
+def select_tolerance_by_residual(captures, tolerances=(0.5, 1.0, 2.0, 3.0, 5.0, 8.0),
+                                 window_s=8.0, min_s=10, after_s=None, before_s=None,
+                                 model="global_scale_and_bias"):
+    """Choose the held-span tolerance BY THE FIT, not by judgement beforehand.
+
+    Tedaldi's method does this for the static-interval detector: run the nonlinear least squares
+    for each candidate threshold and keep the one with the smallest residual, rather than picking
+    a threshold and hoping. It removes the analyst's thumb from a knob that moves the answer.
+
+    THE MODEL MATTERS AND THE OBVIOUS CHOICE DOES NOT WORK. Swept against the 6-parameter
+    scale-and-bias fit on six poses, every tolerance returns a residual of exactly zero -- the fit
+    is exactly determined, so it absorbs whatever the selection hands it and the sweep cannot
+    discriminate at all. The sweep therefore defaults to an OVER-OBSERVED model from the ladder,
+    which has spare degrees of freedom and so can be made worse by a bad selection. That is the
+    same requirement Tedaldi's method has and it is easy to miss, because the sweep appears to run
+    and returns a confident answer either way.
+
+    One caveat it cannot escape: a looser tolerance admits longer and sometimes MORE spans, and a
+    residual over seven poses is not comparable with one over six. So the sweep reports the pose
+    count alongside, and `best` is chosen only among tolerances agreeing on the modal count -- a
+    tolerance that silently changed what was being fitted would otherwise win by changing the
+    question.
+    """
+    rows = []
+    for tol in tolerances:
+        spans = common_held_spans(captures, tol, min_s, after_s, before_s)
+        windows = centre_windows(spans, window_s)
+        if not windows:
+            rows.append(dict(tol_deg=tol, n_poses=0, rms_g=None, n_independent=0))
+            continue
+        worst = 0.0
+        n_ind = None
+        for cap in captures:
+            v, se = pose_vectors(cap, windows)
+            ind = pose_independence(v)
+            n_ind = ind["n_independent"] if n_ind is None else min(n_ind, ind["n_independent"])
+            spec = MODEL_LADDER[model]
+            if len(windows) <= spec["n"]:
+                worst = float("inf")
+                continue
+            r = least_squares(lambda p: spec["resid"](v, p), spec["x0"], method="lm")
+            worst = max(worst, float(np.sqrt((spec["resid"](v, r.x) ** 2).mean())))
+        rows.append(dict(tol_deg=tol, n_poses=len(windows), n_independent=n_ind,
+                         rms_g=None if worst == float("inf") else worst))
+    counts = [r["n_poses"] for r in rows if r["rms_g"] is not None]
+    if not counts:
+        return dict(sweep=rows, best=None,
+                    note="no tolerance produced a determinable fit")
+    modal = max(set(counts), key=counts.count)
+    eligible = [r for r in rows if r["rms_g"] is not None and r["n_poses"] == modal]
+    best = min(eligible, key=lambda r: r["rms_g"])
+    return dict(sweep=rows, best=best, modal_pose_count=modal, model=model,
+                note=("chosen among tolerances agreeing on the modal pose count, because a "
+                      "residual over a different number of poses answers a different question"))
