@@ -76,8 +76,10 @@ Fields that matter, and how to read them:
 - **`counters.drops_down`** -- **meaningless.** The backpack keeps one global sequence counter
   across three interleaving MAVLink sources, so per-source gaps read as huge drop counts.
   Use `overflows_down` instead.
-- **`ip.gcs`** -- which GCS it latched to; expected `10.0.99.14` (mavproxy, hostNetwork on
-  acebase).
+- **`ip.gcs`** -- which GCS it latched to. Not a value to check against a constant: the backpack
+  **discovers** this by latching whoever answers first, and the address it should be is whatever
+  host runs mavproxy (acebase, `hostNetwork`), which is DHCP-assigned and has changed. Read it as
+  "is this the mavproxy host", not "is this 10.0.x.y".
 
 ## Where the output belongs
 

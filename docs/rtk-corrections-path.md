@@ -112,8 +112,8 @@ The two cases are *consistent* with this theory but do not prove it. Still missi
 
 - **No GCS caught red-handed** -- `ip.gcs` pointing at a non-acebase host during a
   failure is the direct evidence, and it has not been seen. Every sample taken since
-  the endpoint became readable shows the expected `10.0.99.14`, including through the
-  2026-08-14 link loss -- so that particular failure was *not* this mechanism.
+  the endpoint became readable has shown acebase, `10.0.99.14` at the time, including
+  through the 2026-08-14 link loss -- so that particular failure was *not* this mechanism.
 - The predicted recovery (down the offender -> power-cycle -> mavproxy wins) has not
   been run as a deliberate predict-then-confirm.
 
@@ -131,7 +131,8 @@ its own status endpoint should name that GCS, without any packet capture.
 { "enabled": true,
   "counters": { "packets_down": N, "packets_up": N, "drops_down": N, "overflows_down": N },
   "ports":    { "listen": 14555, "send": 14550 },
-  "ip":       { "gcs": "10.0.99.14" },   // "IP UNSET" == still broadcasting, unlatched
+  "ip":       { "gcs": "10.0.99.14" },   // a sample, not a constant -- see below.
+                                        // "IP UNSET" == still broadcasting, unlatched
   "protocol": "UDP",
   "link":     { "rssi": -78, "ssid": "...", "bssid": "...", "reconnects": 1, "uptime_ms": 211727 } }
 ```
@@ -139,8 +140,10 @@ its own status endpoint should name that GCS, without any packet capture.
 The `link` block is our patch's addition, not stock -- its presence is also how you tell
 which firmware is on the unit.
 
-- `ip.gcs` would be the offender -- the GCS it anchored to. If it is not acebase's
-  address (`10.0.99.14`), that host has the link. `"IP UNSET"` means it hasn't latched yet.
+- `ip.gcs` would be the offender -- the GCS it anchored to. If it is not the address of
+  whichever host is running mavproxy, that host has the link. **Resolve that address rather
+  than comparing against a remembered one:** acebase's is DHCP-assigned and has changed.
+  `"IP UNSET"` means it hasn't latched yet.
 - `counters` need care, and have already produced wrong readings. `drops_down` is one
   global sequence counter across three interleaving MAVLink sources, so per-source gaps
   read as huge losses -- **use `overflows_down`**. And `packets_up` is **not** proof of
