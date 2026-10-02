@@ -41,6 +41,16 @@
         "runner": "ubuntu-24.04",
         "lockfile": ""
       },
+      "pod-link": {
+        "paths": [
+          "containers/pod-link/**"
+        ],
+        "image": "ghcr.io/symmatree/coordinator-pod-link",
+        "context": "containers/pod-link",
+        "dockerfile": "containers/pod-link/Dockerfile",
+        "platforms": "linux/arm64",
+        "runner": "ubuntu-24.04-arm"
+      },
       "sh1106-display": {
         "paths": [
           "containers/sh1106-display/**"

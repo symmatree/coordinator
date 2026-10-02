@@ -153,6 +153,36 @@ services:
   # #115: coordinator front-panel status OLED. Drives the SH1106 on the Pi's I2C
   # (0x3C, /dev/i2c-1) -- a separate bus from the FC's compass. Reads the captures
   # dir (read-only) to show capture activity. Runs whenever the coordinator is up.
+  # The broker the pods reach the coordinator through. Upstream image, pinned by
+  # digest like every other base we pull (#145): a floating tag is how the Pi ends
+  # up re-downloading something nobody changed.
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    container_name: coordinator_mosquitto
+    network_mode: host
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  # Publishes capture intent to the pods. It reads the arm file the router already
+  # writes (#88) rather than speaking MAVLink itself, so there is one place that
+  # decides what "armed" means and this is downstream of it.
+  pod-link:
+    image: ghcr.io/symmatree/coordinator-pod-link:main
+    container_name: coordinator_pod_link
+    network_mode: host
+    depends_on:
+      - mosquitto
+    volumes:
+      # The arm file lives in the shared ipc dir the router mounts as /tmp.
+      - /var/lib/coordinator/ipc:/ipc:ro
+      - /etc/hostname:/etc/host-hostname:ro
+      - /etc/fleet-image:/etc/fleet-image:ro
+    environment:
+      POD_LINK_ROLE: publisher
+      POD_LINK_BROKER: tcp://127.0.0.1:1883
+      POD_LINK_ARM_FILE: /ipc/fc_armed
+      POD_LINK_PERIOD_S: "2"
+
   sh1106-display:
     image: ghcr.io/symmatree/coordinator-sh1106-display:main
     container_name: coordinator_sh1106_display
