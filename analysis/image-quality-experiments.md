@@ -222,30 +222,39 @@ Two families appear in the literature and both are geometrically what one would 
   Table A.1**: pitch +/-45 with roll at -45/45/135/225, which works out to every sign combination of
   `(+-1/sqrt2, +-1/2, +-1/2)` -- 45 degrees from one axis and 60 from the other two.
 
-`ellipsoid_identifiability` evaluates them against this project's measured noise:
+**Scored as ADDITIONS to the six already being held**, which is the question that gets asked --
+nobody discards poses they already have, and scoring sets in isolation answers a different and
+misleading one. `incremental_identifiability` does this; the diagram is
+`derived/pose-sets.png`.
 
-| pose set | n | short by | cond | cross-axis SE | bias SE |
-|---|---|---|---|---|---|
-| cardinals (as flown) | 6 | **3** | -- | -- | -- |
-| NASA 8 | 8 | **2** | -- | -- | -- |
-| cube corners | 8 | **2** | -- | -- | -- |
-| **edge midpoints** | 12 | 0 | 2.1 | **0.007 deg** | 0.12 mg |
-| Hung 12 | 12 | 0 | 2.8 | 0.013 deg | 0.18 mg |
-| cardinals + cube | 14 | 0 | 1.6 | 0.008 deg | 0.12 mg |
-| cardinals + edges | 18 | 0 | 1.5 | 0.007 deg | 0.10 mg |
-| single-axis circle | 8 | **4** | -- | -- | -- |
+| addition to the 6 cardinals | added | total | short by | cross-axis SE |
+|---|---|---|---|---|
+| ring about **one** axis, 90 deg | 0 | 6 | 3 | -- |
+| ring about **one** axis, 45 deg | 4 | 10 | **2** | -- |
+| ring about **one** axis, 30 deg | 8 | 14 | **2** | -- |
+| ring about **one** axis, 22.5 deg | 12 | 18 | **2** | -- |
+| ring about **one** axis, 15 deg | 20 | 26 | **2** | -- |
+| **8 cube corners** | **8** | **14** | **0** | **0.0077 deg** |
+| NASA 8 | 8 | 14 | 0 | 0.0103 deg |
+| rings about all three axes, 45 deg | 12 | 18 | 0 | 0.0073 deg |
+| 12 edge midpoints (the same points) | 12 | 18 | 0 | 0.0073 deg |
+| rings about all three axes, 30 deg | 24 | 30 | 0 | 0.0059 deg |
+| edges + corners | 20 | 26 | 0 | 0.0053 deg |
 
-**The cardinals contribute almost nothing to the cross terms**, so twelve edge midpoints alone beat
-Hung's cardinals-plus-six at the same pose count. An axis-aligned pose has zero projection on two
-axes and so cannot excite their coupling -- which is why adding 45-degree poses matters and adding
-more cardinals does not. **Eight of anything is insufficient**, including both published eight-point
-sets, and a single-axis rotary fixture is worse than six hand-held cardinals because gravity never
-acquires a component along its rotation axis.
+**Sampling one rotation axis more finely never reaches the missing parameters.** Four added poses
+and twenty added poses leave exactly the same deficiency of 2. The AXIS COUNT is what matters and
+the angular step is not -- rings about all three axes are identifiable at the coarsest useful step,
+45 degrees, and those twelve points are the edge midpoints.
 
-Against the datasheet's +/-1% cross-axis spec, which is 0.57 degrees of apparent misalignment,
-0.007 degrees is an 80x margin. So precision is not the constraint and the only real question is
-how many orientations can be held steadily: **twelve edge midpoints is the recommendation, and
-anything from twelve upward measures the coupling comfortably.**
+**The cheapest identifiable addition is the eight cube corners**: full identifiability for eight
+extra orientations, at 0.0077 deg against the 0.0073 that twelve edges buy. Fifty percent more
+poses for a 5% improvement is not worth holding, and going finer still -- 24 added at 30 degrees --
+reaches 0.0059 deg, which is already 100x finer than the 0.57 deg the part's cross-axis spec
+permits. **Precision stopped being the constraint several rows up this table.**
+
+A caution on all of the above: these are rank and conditioning results for noiseless synthetic
+data at the measured noise level. They say which parameters are reachable and how precisely, not
+that a hand-held pose can be held steadily enough to realise it.
 
 **And this topic's own question gets a number from the datasheet rather than from more
 measurement.** Z-axis offset drifts +/-1.2 mg/degC, so a 20 degC change moves Z bias by 24 mg --

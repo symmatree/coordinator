@@ -715,3 +715,59 @@ def select_tolerance_by_residual(captures, tolerances=(0.5, 1.0, 2.0, 3.0, 5.0, 
     return dict(sweep=rows, best=best, modal_pose_count=modal, model=model,
                 note=("chosen among tolerances agreeing on the modal pose count, because a "
                       "residual over a different number of poses answers a different question"))
+
+
+def ring(axis, step_deg):
+    """Directions every `step_deg` around one axis -- the great circle perpendicular to it.
+
+    What a single-axis rotary fixture produces, and what "sample every K degrees about this axis"
+    means geometrically.
+    """
+    t = np.radians(np.arange(0, 360, step_deg))
+    if axis == "z":
+        return np.stack([np.cos(t), np.sin(t), np.zeros_like(t)], 1)
+    if axis == "y":
+        return np.stack([np.cos(t), np.zeros_like(t), np.sin(t)], 1)
+    return np.stack([np.zeros_like(t), np.cos(t), np.sin(t)], 1)
+
+
+def added_to(base, addition, tol=1e-6):
+    """The directions in `addition` not already present in `base`, so "additive" really is."""
+    b = np.asarray(base, float); b = b / np.linalg.norm(b, axis=1, keepdims=True)
+    out = []
+    for v in np.asarray(addition, float):
+        u = v / np.linalg.norm(v)
+        if not np.any(np.linalg.norm(b - u, axis=1) < tol):
+            out.append(u)
+    return np.array(out) if out else np.zeros((0, 3))
+
+
+def incremental_identifiability(base, additions, sigma_g=2.5e-4):
+    """Marginal value of ADDING each candidate set to a baseline already being collected.
+
+    This is the question that actually gets asked -- nobody discards the poses they already hold --
+    and scoring sets in isolation answers a different and misleading one. Scored in isolation a
+    single-axis ring looks catastrophic; scored as an addition it is merely useless, which is a
+    different claim.
+
+    What it decided for this project, on a baseline of the six cardinals:
+
+      ring about ONE axis       short by 2 at EVERY step from 90 to 15 degrees. Sampling a single
+                               rotation axis more finely never reaches the missing parameters --
+                               4 added poses and 20 added poses are equally deficient. The axis
+                               COUNT matters, the step does not.
+      rings about all three     identifiable at 45 degrees (12 added). Those twelve points ARE the
+                               edge midpoints; going to 30 degrees costs 24 added poses and
+                               improves the cross-axis error only from 0.0073 to 0.0059 deg.
+      8 cube corners            identifiable for 8 added poses at 0.0077 deg -- the CHEAPEST
+                               identifiable addition, and within a hair of twelve edges.
+      NASA 8                    identifiable for 8 added, 0.0103 deg.
+    """
+    out = {}
+    base = np.asarray(base, float)
+    out["baseline"] = dict(ellipsoid_identifiability(base), n_added=0)
+    for name, add in additions.items():
+        extra = added_to(base, add)
+        total = np.vstack([base, extra]) if len(extra) else base
+        out[name] = dict(ellipsoid_identifiability(total, sigma_g), n_added=int(len(extra)))
+    return out
