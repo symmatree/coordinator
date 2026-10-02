@@ -81,6 +81,7 @@ deferring to this table.
 | **The gadget network works** -- 199 Mbit/s to one pod, 241 Mbit/s aggregate across two, ~0.35 ms (#354, #373) | `ping 10.55.0.1` from a pod; `ls /sys/class/net/br0/brif/` on the coordinator |
 | **`watchdog0/bootstatus` is always 0 here** -- `bcm2835_wdt.c` declares no `WDIOF_CARDRESET` and never assigns the field. Not "did not fire": not reported | grep `WDIOF_CARDRESET` and `bootstatus` in `drivers/watchdog/bcm2835_wdt.c` |
 | **NM will not manage a `DEVTYPE=gadget` interface.** Without the `90-` udev override the campod profile is inert and `usb0` stays DOWN with no error | `nmcli -f GENERAL.REASON device show usb0` -> reason 77 when the override is missing |
+| **Container uptime is not a duration.** These boards have no RTC, so a container's start is recorded under the pre-NTP clock while elapsed time is computed against the post-step one -- a coordinator reporting `Up 2 days` against a host uptime of 49 minutes is arithmetic between two clocks. `boot_ns` in the accel stream and `monotonic_ns` in the capture sidecars are honest, which is why time-since-boot is recoverable from a session at all | `docker ps` uptime against `/proc/uptime`; a container figure larger than the host's means the clock stepped |
 | **NM keyfile list properties are `;`-separated.** A space-separated `match.driver` is one pattern matching nothing, and autoconnect falls back to a default DHCP profile silently | `nmcli connection up campod-bridge-port ifname usbN` names the mismatch explicitly |
 
 ## Open work in this layer (2026-10-02)
