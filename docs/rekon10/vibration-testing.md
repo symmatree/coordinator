@@ -129,6 +129,46 @@ things from it bear on the method above:
   understood, damping from a strike test on this airframe is not usable, and damping was the reason
   for doing a strike test rather than reading a running spectrum.
 
+**Two tricks of the trade from the modal-testing literature, and whether they apply here**
+(searched 2026-10-02).
+
+- **The exponential window.** Impact-test practice multiplies the response by a decaying
+  exponential before transforming, which forces it to zero at the end of the record and removes
+  the leakage that otherwise smears a lightly damped mode into a wide flat hump. That is why a
+  windowed spectrum shows narrow peaks where the raw one shows humps, even for something that
+  rings audibly. **It is not free and the correction is analytic:** the window adds artificial
+  damping, so measured damping reads HIGH by an amount determined by the window's time constant
+  and the mode's natural frequency, and that term must be subtracted back out. Rule of thumb is a
+  time constant around one quarter of the record length, and the correction is numerically awkward
+  precisely for lightly damped structures, where the added damping can dominate the real thing.
+  **Does not apply to `ringdown.py` as written**, which fits the decay envelope in the time domain
+  and never transforms, so it never applies a window and never incurs the bias. The equivalent
+  judgement calls here are `decay_db` and `MIN_CYCLES`. It WOULD apply to any frequency-domain FRF
+  route, and anyone reading a damping figure from a windowed spectrum needs to know whether the
+  correction was applied.
+  ([Agilent AN 243-3](https://rotorlab.tamu.edu/me459/APP%20Note%20243-3%20The%20Fundamentals%20of%20Modal%20Testing.pdf),
+  [Unbiased expression of FRF with exponential window](https://www.sciencedirect.com/science/article/abs/pii/S0022460X0301126X),
+  [Damping uncertainty due to noise and exponential windowing](https://www.researchgate.net/publication/251480551_Damping_uncertainty_due_to_noise_and_exponential_windowing))
+
+- **Roving the sensor to map the mode shape.** Strike one fixed point repeatedly and move the
+  ACCELEROMETER along the structure; the relative response amplitudes at a resonance trace the
+  deflection pattern and locate its nodes, where motion is minimal, and antinodes, where it is
+  maximal. (The dual, moving the hammer with the sensor fixed, is equivalent by reciprocity.)
+  **A crude version is available here without new hardware** -- the two pod sensors already sit at
+  two positions on one arm, so each capture is two points of a mode shape, and remounting them
+  would add more.
+  ([Experimental determination of mode shapes of beams by roving impact test](https://www.sciencedirect.com/science/article/abs/pii/S2214785320301814),
+  [Roving accelerometer impact tests](https://itestsystem.com/posts/roving-accelerometer-impact-test/))
+
+**Which raises a possibility that cuts both ways, and is not a claim.** If a mode's node happens to
+fall near a sensor, that sensor cannot see that mode -- modal practice treats a sensor at a node as
+a reason to move it and repeat. So a camera placed at a node would be protected from that mode,
+which is a real mitigation if a mode ever turns out to matter; and a SENSOR near a node
+under-reports it, which is an untested candidate for the amplitude differences measured between the
+two pod sensors, alongside the difference in their mounts. Neither is established, and resonance is
+not currently believed to be the main problem -- the value of knowing it is to avoid walking into it
+while changing something else.
+
 What that capture did and did not show is argued in
 [`analysis/image-quality-experiments.md`](../../analysis/image-quality-experiments.md) rather than
 here -- this section is the method.
