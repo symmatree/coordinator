@@ -1,9 +1,28 @@
 # Experiments: Pi Zero 2 W unresponsiveness (campod startup and teardown)
 
-A campod (Zero 2 W, 512 MB nominal / `MemTotal` ~417 MiB, no swap, SD card) becomes
+> [!IMPORTANT]
+> **The teardown half is resolved (#355, closed 2026-10-02).** `coord stop` no longer
+> goes through docker -- it signals `dumb-init` directly (`pgrep`/`pkill`), and `bin/coord`
+> carries the reasoning citing the measurements below. A campod now takes roughly 20 s to
+> answer when probed after a boot, on the bench at a transition into maintenance. That is
+> acceptable and not a problem to work.
+>
+> Two theories below describe code that is no longer invoked at teardown: **T5** (the
+> docker CLI and compose plugin as the allocation) and **T7** (dockerd degrading ~100x).
+> T7 remains true of dockerd and is simply off the path.
+>
+> The **startup** half is live and is now #434's, which measures boot-to-first-frame and
+> wants an idle-ready state. Its mechanism risk is CMA buffer release, not page-cache
+> reclaim -- CMA buffers are not pageable -- so the reclaim theories here do not carry
+> over to it unchanged.
+>
+> Kept as the record of how the teardown behaviour was characterised, not as an open
+> investigation.
+
+A campod (Zero 2 W, 512 MB nominal / `MemTotal` ~417 MiB, no swap, SD card) became
 barely able to make progress at two points in its life: **starting the capture stack**
-and **stopping it**. In the worst cases the machine stops answering SSH for minutes and
-sometimes resets uncleanly.
+and **stopping it**. In the worst cases the machine stopped answering SSH for minutes and
+sometimes reset uncleanly.
 
 Scoped as one document across both ends deliberately. It is **not** established that
 they share a cause. They are here together because they share the whole investigative
