@@ -18,6 +18,9 @@ Config via environment (all optional):
                       cap the shutter (default: 5000; 0 = uncapped AE)
   CAMPOD_STILL_FOCUS     infinity | <dioptres> (default: infinity)
   CAMPOD_SYNC_MODE       off | server | client (default: off) -- see note below
+  CAMPOD_WARMUP_FRAMES   frames to capture at startup before going ready (default: 10)
+  CAMPOD_CAPTURE_FLAG    path whose contents gate capture; empty disables gating
+                      and captures continuously (default: /tmp/campod_capture)
 """
 
 import datetime as dt
@@ -242,6 +245,33 @@ def _wait_for_camera():
 HOST_HOSTNAME_PATH = Path("/etc/host-hostname")
 
 
+def _capture_wanted(flag_path):
+    """Should we be writing frames right now?
+
+    A FILE, READ PER TICK, rather than a signal. The distinction matters: a signal
+    cannot say "keep running but stop retrieving", which is the whole state this
+    exists to hold -- the camera must stay start()ed, because its buffers are what
+    we warmed up for. Measured on two pods, identical to the byte: 99.6 MiB of
+    dma_buf against a 128 MiB CMA reservation, so there is 28 MiB of headroom and a
+    second set could not be allocated even transiently. Anything that calls
+    picam2.stop() pays the whole startup again.
+
+    Same shape as the arm file coordinator-mavlink already writes for vio-tracker
+    (#88): an atomic write someone else does, a stat() we do. It costs nothing on a
+    box where invoking a binary is measured in seconds, and the writer can be
+    anything -- today a person, later whatever carries arm state to the pods (#25).
+
+    Absent means paused. A gate whose failure mode is "capture everything forever"
+    is the behaviour we are removing.
+    """
+    if flag_path is None:
+        return True
+    try:
+        return flag_path.read_text().strip() in ("1", "true", "on", "yes")
+    except OSError:
+        return False
+
+
 # Baked into the image at build time; a module var so the test can redirect it.
 MANIFEST_SOURCES = (
     (Path("/etc/container-image"), None),
@@ -322,6 +352,9 @@ def main():
     max_exposure_us = _env_int("CAMPOD_STILL_MAX_EXPOSURE_US", 5000)
     focus = (os.getenv("CAMPOD_STILL_FOCUS") or "infinity").strip().lower()
     sync_mode = (os.getenv("CAMPOD_SYNC_MODE") or "off").strip().lower()
+    warmup_frames = _env_int("CAMPOD_WARMUP_FRAMES", 10)
+    flag_raw = os.getenv("CAMPOD_CAPTURE_FLAG", "/tmp/campod_capture")
+    flag_path = Path(flag_raw) if flag_raw.strip() else None
 
     interval = 1.0 / hz if hz > 0 else 1.0
 
@@ -369,9 +402,45 @@ def main():
 
     seq = 0
     next_tick = time.monotonic()
+    # Warm up, then hold ready. The frames are real and are kept: capturing and
+    # writing them is what proves the path end to end and pays the allocations --
+    # the camera import is ~16-20 MiB/s of reads for the first minute and a half,
+    # and doing it when the operator is waiting to arm costs flight time he is
+    # paying for in battery.
+    #
+    # They are marked `phase` in the sidecar so analysis can drop them without
+    # guessing at a frame count.
+    phase = "warmup" if warmup_frames > 0 else "capture"
+    capturing = True
+    ready_logged = False
     try:
         while not _stop:
             now = time.monotonic()
+
+            if phase == "warmup" and seq >= warmup_frames:
+                phase = "capture"
+
+            if phase == "capture":
+                wanted = _capture_wanted(flag_path)
+                if not ready_logged:
+                    # The device records its own time-to-ready. Reading it afterwards
+                    # costs nothing; watching for it costs the thing being measured.
+                    print(f"capture: READY after {seq} warmup frames at "
+                          f"{time.monotonic():.1f}s since start, "
+                          f"{'capturing' if wanted else 'paused'}", flush=True)
+                    ready_logged = True
+                    capturing = wanted
+                elif wanted != capturing:
+                    capturing = wanted
+                    print(f"capture: {'resumed' if capturing else 'paused'} at "
+                          f"{time.monotonic():.1f}s ({seq} frames written)", flush=True)
+                if not capturing:
+                    # Camera stays started; we simply do not retrieve. No file I/O,
+                    # no encode, buffers held.
+                    time.sleep(min(interval, 0.5))
+                    next_tick = time.monotonic()
+                    continue
+
             if now < next_tick:
                 time.sleep(min(next_tick - now, 0.1))
                 continue
@@ -406,6 +475,7 @@ def main():
                 "frame_duration_us": metadata.get("FrameDuration"),
                 "size": [size[0], size[1]],
                 "sync_mode": sync_active or "off",
+                "phase": phase,
             }
             (session_dir / f"{stem}.json").write_text(json.dumps(sidecar))
             seq += 1

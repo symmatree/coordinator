@@ -185,6 +185,37 @@ else:
     ).returncode
     check("sourceable by /bin/sh with FLEET_UNIT set", rc == 0, f"rc={rc}")
 
+# --- the capture gate (#434) -------------------------------------------------
+#
+# Default-paused is the point: a campod sitting on a bench wrote 29 GB and filled
+# its card, which presents as a device that cannot capture rather than as a full
+# disk. So the gate's absent/unreadable cases must mean PAUSED -- a gate that fails
+# open restores exactly the behaviour being removed.
+import tempfile as _tempfile
+from pathlib import Path as _Path
+
+_tmp = _Path(_tempfile.mkdtemp())
+_flag = _tmp / "campod_capture"
+
+check("absent flag means paused", capture._capture_wanted(_flag) is False)
+
+for _v, _want in (("1", True), ("true", True), ("on", True), ("yes", True),
+                  ("0", False), ("", False), ("nonsense", False)):
+    _flag.write_text(_v)
+    check(f"flag {_v!r} -> {'capture' if _want else 'paused'}",
+          capture._capture_wanted(_flag) is _want)
+
+_flag.write_text(" 1\n")
+check("surrounding whitespace is tolerated", capture._capture_wanted(_flag) is True)
+
+_unreadable = _tmp / "a-directory-not-a-file"
+_unreadable.mkdir()
+check("an unreadable flag means paused, not a crash",
+      capture._capture_wanted(_unreadable) is False)
+
+check("gating disabled (None) captures continuously",
+      capture._capture_wanted(None) is True)
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)
