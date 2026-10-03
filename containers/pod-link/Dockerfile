@@ -15,13 +15,10 @@ ARG BASE_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01cc
 # accel reader's stage in campod-camera.
 FROM --platform=$BUILDPLATFORM golang:1.26-trixie@sha256:771f3162219f7a66bb6be3fea1ba31f418932946a99ad9eac26ffd555dfcf393 AS build
 WORKDIR /src
-COPY go.mod ./
-# NOTE: no go.sum is committed, so this resolves and records dependencies at build
-# time. That is weaker than a pinned sum -- it means the build is not reproducible
-# against a moved upstream -- and it is here because the author had no Go toolchain
-# to generate one. The first build on a machine with Go should commit the go.sum it
-# produces and this line becomes `go mod download`.
-RUN go mod tidy
+COPY go.mod go.sum ./
+# Pinned by go.sum, so a moved upstream fails the build rather than silently
+# changing what ships -- the same reason the base images are digest-pinned (#145).
+RUN go mod download
 COPY *.go ./
 # Hardware-free and broker-free: the tests cover the gate's failure direction
 # (absent and unreadable must mean paused, matching capture.py), the atomic write,
