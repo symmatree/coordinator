@@ -1,0 +1,36 @@
+# mochi-mqtt on the coordinator -- the same broker the cluster runs
+# (tales/tanka/environments/mochi-mqtt), configured for a vehicle rather than a
+# datacentre. Shape deliberately mirrors that environment's config so the two are
+# comparable; the differences below are the vehicle's, each with its reason.
+listeners:
+  # The link itself. Everything the pods say and hear goes through here.
+  - type: tcp
+    id: mqtt
+    address: ":1883"
+  # Kept from the cluster config because it is the cheapest possible answer to
+  # "is the broker up", and on a vehicle that question is asked by a front panel
+  # (#110) rather than by a kubelet.
+  - type: healthcheck
+    id: http-health
+    address: ":8080"
+  #
+  # DROPPED from the cluster config: `ws` (nothing here speaks websockets) and
+  # `sysinfo` (broker statistics over HTTP, useful in a cluster, one more listener
+  # on a box whose radio is off in flight).
+
+hooks:
+  auth:
+    # Same as the cluster. The control here is that the radio is off in flight and
+    # the broker is only reachable over the gadget net; authentication would be a
+    # second answer to a question the network layer already answers.
+    allow_all: true
+  #
+  # NO `storage` HOOK, which is the real divergence from the cluster config. There
+  # it persists to pebble on a PVC; here that would be retained messages written to
+  # the SD card on a box whose power is pulled without warning and whose disk
+  # filling is a documented failure mode. Nothing is lost: pod-link republishes
+  # intent on every connect, so retained state is re-established within one poll of
+  # the broker returning rather than recovered from disk.
+
+options: {}
+logging: {}
