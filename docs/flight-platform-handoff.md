@@ -59,70 +59,113 @@ Two properties rank above features:
 - **[docs/build-and-provenance.md](build-and-provenance.md)** -- which labels and tags are
   load-bearing, and why `org.opencontainers.image.ref.name` is not one of them.
 
+- **[analysis/image-quality-experiments.md](../analysis/image-quality-experiments.md)** -- why
+  the stills are not usable, as open topics rather than conclusions. Newer than this file's
+  other entries, and the imagery side is the deliverable.
+
 In code: **`bin/coord`** is the device CLI and is short; **`containers/campod-camera/capture.py`**
 and **`accel/main.go`** are the two things that actually collect; **`bin/coord-version`** is
-the probe the ground platform reads.
+the probe the ground platform reads. Read **`containers/fleet-control/src/quiesce.ts`** and
+**`probe.ts`** too, short as they are -- they decide what every remote operation costs, and one
+of them stops the whole fleet.
 
-## Where things stand (2026-09-27)
+## Where things stand (2026-10-06)
 
-**The flight data path works end to end, and one thing collects it.** 260923 was the first
-flight collected completely -- coordinator captures, campod session, FC dataflash, journald,
-collectd, backpack metrics, mavproxy tlog, base-station raw GNSS -- 1.1 GB in
-`datasets/flights/rekon10/260923-new-props/`, with a README saying how each piece was
-retrieved. That run is also the argument for everything since: it was a hand-built one-off,
-and none of it happened for the calibration runs that followed.
+**The live thread is the capture lifecycle, and it is most of what is open.** The shape, agreed
+with Seth over several passes: a pod boots, warms up, holds **idle-ready** -- camera started,
+buffers allocated, writing nothing -- reports that it is ready, and starts capturing when the
+coordinator tells it the vehicle armed. The session ends by power cut. Everything else in this
+section hangs off that.
 
-So collection moved onto one rule: **a session is a boot, and anything keyed to a boot is
-SELECTED by boot id, never filtered on a wall clock.** That clock is wrong from boot until
-NTP lands and in the field is never corrected. Concretely, since #395/#401:
+- **#434** is the requirement: warm up, hold ready, start on command, and *say* when ready.
+  Carries the measured settle number (~95 s, three controlled runs) and the CMA arithmetic.
+- **#439** is the implementation and is **open, unmerged, unverified on hardware**. Two halves
+  that must land together: `capture.py` gated on a flag file, and `containers/pod-link` -- one
+  Go binary, publisher on the coordinator (watches the arm file the router already writes) and
+  subscriber on each campod (writes the flag). Merging the gate alone switches capture off with
+  nothing to switch it on. Broker is **mochi-mqtt**, the same implementation the cluster runs
+  (`tales/tanka/environments/mochi-mqtt`), because federating this bus upward later should be
+  two instances of one thing.
+- **#25** is where the control surface belongs. #439 consumes its open contract; the topics and
+  the status/readiness half are still to design.
 
-- captures are `captures/<hostname>/<boot-id>/` on both device kinds; the coordinator's used
-  to be `captures/<oak-d-mxid>/<ISO>/`, which `coord-sessions` could not see at all
-- `timesync.jsonl` and `vehicle.tlog` are written INSIDE the session, where
-  `flight-data-layout.md` always said they belonged
-- collectd writes `/var/log/collectd/<boot-id>/`, so a session's samples are a directory
-- `coord sessions package` carries the boot's `journal.log` and collectd tree in the bundle
-- `docker logs` and `coord version` are deliberately NOT in it -- a container outlives a boot,
-  and a probe of *now* would be a lie about an old session
+**What a campod costs, measured, so nobody re-derives it:** settle ~95 s with a real 60 s
+spread run to run; peak read 19.2-20.6 MB/s (the card's ceiling, invariant); steady write
+~1.75 MB/s; CMA 99.6 MiB of a 128 MiB reservation at `buffer_count=2`, leaving 28 MiB and no
+room for a third buffer. **The card fills in about 4.2 hours and nothing caps it** -- it filled
+twice in one week, and a full card presents as a pod that cannot capture and stops answering,
+not as a disk error. That is the case #439 exists for.
 
-**Not migrated, and cannot be:** 26 MxId-named session directories on the coordinator and six
-NAS flight directories. Which boot each belonged to was never recorded, so there is no `mv`,
-only leave or delete. `analysis/coordinator_captures.py` indexes `captures/<device>/<session>/`
-generically and reads both shapes.
-
-**FC dataflash comes off through the coordinator now** (#77, `bin/coord-fc-log`): no second
-device on the FC, no card pull. `list` emits JSON; `pull` streams the log to stdout with JSONL
-events on stderr, and fleet-control drives both (#400). It took four attempts to get right and
-every failure was us mishandling ArduPilot's log state machine -- see the next section.
+**The FC parameter store reset itself to defaults on 2026-09-27** and took `SERIAL4_PROTOCOL`
+with it, so the coordinator's UART went quiet and every log pull failed at `wait_heartbeat`.
+Recorded in the build log (#429) with the dating method. Params were reloaded from the
+version-controlled export; the compass calibration was the one thing the export could not
+restore on its own and is pinned in a fragment afterwards (#433). **The link works again.**
 
 Open work:
 
 | | |
 |---|---|
-| retry log 50 into `260926-sixpose-and-bump` | #408 is merged but NOT yet converged onto the coordinator. Converge, then let flight-analysis run it |
-| #11, #370 | time and state distribution. The next task, and mostly doable with no hardware -- see below |
-| #355 | campod unresponsiveness, still a record rather than a theory |
-| #341, #302, #313, #315 | unchanged |
+| **#439** | the lifecycle change. Needs review, then CI build, then a device run. Nothing else in the lifecycle moves until this does |
+| **#435** | `coord radio` (os-and-driver-guy). `coord radio` only reaches a device via a converge, so merging it before a campod converge saves a second one |
+| **#430** | the router writes `BAD_DATA` into `vehicle.tlog`, desyncing the tlog framing. Bites exactly when the link is noisy |
+| **#434** | parent requirement; carries the numbers |
+| **#11, #370** | time distribution. #11's wiring is specified to pin level in `central-hub.md`; nothing is built |
+| **#355, #341, #302, #313, #315, #316** | unchanged |
 
-**The next task, and why it is cheap.** Analysis currently recovers campod timing by fitting
-observed accelerations against a tap, which is noisy and needs someone to tap. It does not have
-to: `timesync.jsonl` already bridges FC clock to coordinator monotonic, and campod sidecars
-already carry a stable monotonic. **The only missing link is campod monotonic to coordinator
-monotonic** -- two counters from unrelated origins with nothing between them. One round trip
-over the gadget net bounds that offset by RTT/2, measured at 0.35 ms. Two crystals drift up to
-~100 ppm relative, so a single exchange leaves ~18 ms across a 3-minute armed window;
-exchanging every 10 s lets you fit the slope and puts the whole flight under a millisecond.
-Forwarding ARM/DISARM is the other half and nearly free -- the coordinator already derives it
-for the tracker's arm gate -- and it gives analysis the shared marker it is manufacturing with
-a tap. Both records belong in the campod's capture session, which now collects automatically.
-No RTC, no PPS, no new hardware.
+**Not mine, but they block things here.** `eth0` is unconfigured on the coordinator -- no NM
+profile anywhere in `host/ansible`, so a direct cable gets a DHCP timeout and a link-local
+address. Until that lands, "coordinator on wired Ethernet, campods reached through it" does not
+work and the coordinator is reachable only over wifi (`wlan0`, `eth0` DOWN). Also: `coord-fc-log`
+addresses logs by **list position**, not identity (`log_num = oldest_log + list_entry - 1`), so a
+listing and a later pull can disagree and `fc-log-<id>.bin` names a position -- unfiled, and worth
+knowing before trusting an archived filename.
 
-The DS3234 breakouts are in hand (SparkFun BOB-10160, SPI, SQW broken out, ±2 ppm). #11 has
-the conceptual layer written as five edges of who feeds time to whom, with the electrical
-detail deliberately left open. Keep those levels apart; mixing them is how that issue
-previously filled with over-specified detail that had to be thrown away.
+**Ideas that are not yet issues, so they live here or nowhere.**
+
+- **Readiness belongs to the process.** `capture.py` has ground truth about whether it is warm;
+  RSS plateau and refault rates are proxies for it. The OS-level numbers are for *validating*
+  that claim once and diagnosing a bad boot, not for watching continuously. #439 already prints
+  a READY line naming the monotonic second.
+- **A one-shot boot-window sampler** beats always-on collectd plugins for the warm-up question:
+  it can read `workingset_refault_file` (collectd's `vmem` structurally cannot -- it predates
+  the counter), samples at the resolution the window needs, and costs nothing once the window
+  closes. os-and-driver-guy's proposal; his to build if it happens.
+- **Wifi is a mode, not a fixture.** Off is the operating state; first boot still provisions over
+  it and the converge takes it down afterwards; an MQTT command brings it back for bench work.
+  The off mechanism has to be userspace (`rfkill`/NM), because `dtoverlay=disable-wifi` cannot be
+  undone by a command. A physical recovery input -- jumper two pins to mean "do not bring up the
+  capture stack" -- is what makes an aggressive default safe.
+- **Stop-capture and stop-the-stack are different operations.** Only the second needs signals;
+  the first is a flag an already-running process notices, which is why the gate is a file.
 
 ## What must not be dropped
+
+**These are embedded devices that happen to run Linux. Do not interrogate a running one.**
+Configure, power, collect. On a device that is capturing, the only safe operation is to stop it
+with signals and then WAIT -- not `docker ps`, not a probe, not a polling loop however cheap,
+not "just confirming it came up". Every ssh forks an sshd on a box that cannot spare it, and
+observation IS the load. The docker CLI alone faults in ~71 MiB of mapped text on a 417 MiB
+board with no swap; `docker ps` measures 2.1-22.0 s with capture running against 136-223 ms
+without. **A command returning is not evidence it was harmless** -- the cost is page cache, not
+exit status, and it outlives the call (E4: I/O continuing ~6 min after the command was killed).
+
+**`GET /status` quiesces EVERY node.** `probe.ts:64` is `PROBE_COMMAND = quiesced('coord version')`
+and `probeAll` maps it over the whole roster, so looking at the status page stops the fleet
+capturing -- and with no `restart:` policy anywhere, the containers stay stopped until a reboot.
+Use `GET /nodes/<name>/status` for one device. This also collides with #434: asking whether pods
+are ready is what makes them not ready.
+
+**The card fills in about 4.2 hours and nothing caps it.** A full card does not present as a
+disk error -- it presents as a pod that cannot capture, stops answering, and invites several
+wrong explanations. **Run `df` before theorising.** `coord sessions delete` does work on a full
+btrfs card, measured twice: 26.5 GB in 20 s and in 26 s.
+
+**collectd answers most of this retroactively.** `/var/log/collectd/<boot-id>/<node>/`, 10 s raw
+counters, ~7 boots retained, written by the device with nobody touching it. Settle behaviour,
+the import storm, when a card filled, when a stack died -- all recoverable afterwards. It is the
+first place to look and it costs the device nothing.
+
 
 **Every command to a device must quiesce first, as root.** The capture tree and the container
 inits are root-owned; `pi` cannot signal or delete them. This bit twice in one session, in
@@ -172,6 +215,42 @@ a multiple of 90, so it could only ever have worked on short logs. Cloning the r
 implementation would have been cheaper than any of my reasoning about it.
 
 ## How to work here
+
+**A found sample is not data.** The single most repeated mistake of this session: taking a
+device that happened to be in some state, measuring it, and reporting the result as a finding.
+A controlled run states its provenance before it starts -- same code, known starting condition,
+one variable, nothing touched in between -- and the difference is not cosmetic. Seven *found*
+boots gave a 60-260 s settle spread; three controlled ones gave 70-130, and most of that range
+had been image and condition differences rather than the thing being measured. If you cannot
+say what was fixed, you have an anecdote.
+
+**Measure by reading what the device wrote, not by watching it.** The window worth measuring is
+the window you must not observe. Sidecar `monotonic_ns`, the accel stream's `boot_ns`, and the
+collectd tree are all time-since-boot and all free. Protocol: power cycle, hands off, stop with
+signals, collect, compute.
+
+**Look at the artifact.** I reported "90 seconds of successful capture" from a file count
+without opening a single frame. It happened to be true; had it not been, the report would have
+been a spontaneous hardware failure that was really someone disturbing a cable. Two images and
+four minutes would have settled it either way.
+
+**Reach before declaring something unreachable.** Twice in one session I declared a capability
+absent after one failed check -- no ssh key (it was in `~/.ssh/OnePKey`) and no Go toolchain (a
+download away). Both became load-bearing excuses in artifacts before anyone corrected them.
+
+**Do not propose in-flight detection.** The reflex to add a watcher, a health check, a failsafe
+is almost always wrong here: the platform cannot yet fly a sunny-day mission, nothing can safely
+watch a capturing pod anyway, and the operator is standing right there. Fix the thing.
+
+**Do not write "today it is a person" or anything like it.** If a mechanism does not exist, say
+it does not exist. A placeholder phrase that makes an unfinished design sound finished is worse
+than an admitted hole, and it will be read as a plan.
+
+**When he corrects a framing, check whether it also invalidates what you built on it.** Several
+times I accepted a correction and then kept quoting a number that the correction had just
+retired -- stop timings from a run whose camera had failed, first-frame as a readiness measure
+after being told it was not one.
+
 
 **Fresh worktree off `origin/main` for every change, and remove it when merged.** Never stack
 PRs; ordering goes in the body, not the base branch.
