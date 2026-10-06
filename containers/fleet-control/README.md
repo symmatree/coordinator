@@ -165,7 +165,6 @@ starts after the pre-arm window where the RTK problems are.
 | | |
 |---|---|
 | `<start>-armed-<a>-disarmed-<d>.tlog` | each tlog named, copied off the share tlog-split writes to (tiles#794) |
-| `<date>_*.ubx` + `.ubx.tag` | the base station's raw observations for every UTC day the range touches -- the PPK inputs |
 | `backpack-metrics-<date>.json` | every `backpack_*` series over the range, from Mimir |
 
 **The listing is a listing.** It stats the files and reads the stamps out of their names; it never
@@ -178,7 +177,7 @@ run**, because the screen unticks on success and an unticked file reads as colle
 then what "Delete the rest" spares. The metrics are the other way round: a flight missing its
 backpack series is still worth its tlog, so that is recorded as "not collected, and why".
 
-**No range and no tlog means no observations and no backpack series**, which is right -- if the radio was never
+**No range and no tlog means no backpack series**, which is right -- if the radio was never
 connected there is nothing on the ground worth having.
 
 An open `.tlog.part` can be collected and **keeps its name**, because that name is the true thing to
@@ -194,16 +193,18 @@ reported, so a coarse answer is visible as one.
 have pods get/list, `pods/log` and `pods/exec` in `mavproxy` and `ntrip` for four reads. One moved
 and two were dropped:
 
-- **`<date>_*.ubx`** -- moved, not dropped. rtkbase's `[local_storage] datadir` is now
-  `datasets/gps-logs/attic-rtk-base/raw/`, mounted at that path in the `ntrip` environment, so
-  these are a directory read here. Before that they were `kubectl exec ... cat` into a 64 MB
-  buffer against a few hundred MB of file, which could never have worked and never had
-  ([#416](https://github.com/symmatree/coordinator/issues/416)).
+- **`<date>_*.ubx`**, the base station's raw observations. **Nothing logs them any more.** In two
+  months the only use was one 24 h session for the base's own survey-in, pulled by hand, and
+  nothing in `analysis/` parses a `.ubx` at all -- so a one-off capture for a PPP solve is a
+  `str2str` against the receiver when it is wanted, not something collected every flight. The
+  curated session and its `rinex/` package stay where they are on the share.
 
-  That directory is where the base's logs already lived -- its top level holds the session curated
-  for a PPP re-solve of the base position, and `raw/` is continuous capture.
+  It also never collected anything here: the original path was `kubectl exec ... cat` into a 64 MB
+  buffer against a few hundred MB of file
+  ([#416](https://github.com/symmatree/coordinator/issues/416)), and the share mount meant to
+  replace it was refused by the NAS export.
 
-Dropped:
+Also dropped:
 
 - **`mavproxy-console.log`** -- cluster debugging output, not flight data. Everything it said about
   the vehicle is derived from heartbeats that are in the tlog; what is only there is mavproxy's own
@@ -427,7 +428,6 @@ which is the way out of a stuck box and so cannot be the thing a stuck box refus
 | `FLEET_MQTT_URL` / `FLEET_MQTT_SETTLE_MS` | *(empty)* / `1500` | the pod bus; see above. Empty disables it |
 | `FLEET_FLIGHTS_DIR` | `/mnt/flights` | where flight directories are assembled |
 | `FLEET_GROUND_TLOGS` | `/mnt/ground-tlogs` | tlog-split's output, read-only (tiles#794) |
-| `FLEET_BASE_OBS` | `/mnt/base-observations` | rtkbase's raw observations, read-only. `gps-logs/attic-rtk-base/raw/` on the share |
 | `FLEET_MIMIR_URL` / `FLEET_MIMIR_TENANT` | `http://mimir-gateway.mimir.svc` / `tiles` | for the backpack series. The tenant is the cluster name, and there is more than one cluster |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | |
 
