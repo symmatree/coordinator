@@ -114,6 +114,16 @@
     dest: /usr/local/bin/coord-sessions
     mode: "0755"
 
+# The radio control (#434). Both roles: on the coordinator it refuses, having no
+# gadget interface and so no way back in, which is the answer until a wired
+# uplink is fitted.
+- name: Install the radio control
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ coord_checkout }}/bin/coord-radio"
+    dest: /usr/local/bin/coord-radio
+    mode: "0755"
+
 # The FC dataflash puller (#77). Same install, same reason -- but only where there
 # is an FC to talk to: the campods have no serial link to one, so installing it
 # there would advertise a verb that cannot work. It carries no deps of its own; it

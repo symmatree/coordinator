@@ -86,6 +86,9 @@ Commands:
   restart           docker compose restart [service]
   status            docker compose ps
   version           print what this machine is running, one TOML table per unit
+  radio             report the WiFi radio and gadget-link state, as TOML
+  radio closed      disable WiFi (refuses unless the gadget link is proven)
+  radio open        enable WiFi
   fc-log list       FC dataflash logs, over ttyAMA0 (stack must be stopped)
   fc-log pull <id> <out>  fetch one FC log to a file
   sessions list     capture sessions on this device, as JSON
@@ -187,6 +190,13 @@ version)
 	# with no stack installed, which is one of the things the caller needs to be
 	# able to tell apart from a machine that did not answer (#326).
 	exec /usr/local/bin/coord-version "$@"
+	;;
+radio)
+	# No require_compose_file either, and for a sharper reason than the others: the
+	# machine you most need this on is one whose stack is broken or absent, and
+	# `radio open` is the way back to a device whose gadget link stopped working.
+	# Gating it on a stack would make the recovery verb need the thing that failed.
+	exec /usr/local/bin/coord-radio "$@"
 	;;
 sessions)
 	# Same reasoning: captures outlive any stack, and a machine whose stack was

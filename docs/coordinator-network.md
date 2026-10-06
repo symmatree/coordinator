@@ -146,6 +146,59 @@ These were coupled, which is what made it confusing: because the gadget end neve
 the host end never saw carrier, so the coordinator's bridge port never activated either --
 one campod-side rule disabled both halves.
 
+### Closed network as the operating state
+
+A capture device's operating state is reachable over the gadget link and nothing else;
+WiFi is a bench mode. The network is a source of external influence and this is an embedded
+system: a link that reaches only the coordinator cannot carry unexpected traffic in either
+direction, so anomalies stop having "was something else happening?" attached to them.
+
+WiFi is how a device gets there. The gadget link exists only after a converge and the first
+converge arrives over WiFi, so the sequence is flash, converge, verify the gadget link, then
+go closed.
+
+```bash
+coord radio            # report, as TOML
+coord radio closed     # disable WiFi; refuses unless it can reach the coordinator first
+coord radio open       # enable WiFi
+```
+
+`closed` is gated on reaching the coordinator over the gadget segment, because that is the
+way back in. On the coordinator it refuses for a different reason: no gadget interface, and
+its own closed-network path is a wired uplink that is not fitted.
+
+WiFi off is the state, and NetworkManager persists it (`WirelessEnabled` in
+`/var/lib/NetworkManager/NetworkManager.state`). Nothing turns it back on by itself.
+
+The reason is not reachability -- there is physical access to these machines. It is that
+remote access existing at all is what stops agents leaving a flying vehicle alone, and that
+calling binaries is not free: invoking docker was enough to make a campod unusable through
+page-cache refaults. So `coord radio` is for a window where capture is stopped; it runs
+`nmcli`, `ip` and `ping`.
+
+**Bench recovery is deliberately not designed.** The coordinator has wired ethernet needing
+no switch, and reaches the campods from there. A campod booted and not answering is a
+second-order case whose answer is a card pull or an agreed physical mechanism -- to be
+settled when it matters, not pre-empted here.
+
+### Reaching a campod through the coordinator
+
+The route that does not depend on the campod's own WiFi. Proven 2026-10-02 with campod-se's
+radio off:
+
+```bash
+ssh -o "ProxyCommand=ssh -i ~/.ssh/KEY -W %h:%p pi@<coordinator>" -i ~/.ssh/KEY pi@10.55.0.12
+```
+
+**`ssh -J` alone does not work here.** `-i` applies to the target connection and is not
+inherited by the jump hop, so `-J pi@<coordinator>` fails with `Permission denied (publickey)`
+against the coordinator while the same key works for a direct connection. An explicit
+`ProxyCommand` carrying `-i` on both hops is what succeeds. Nothing needs a key on the
+coordinator: it only forwards TCP, and the campod authenticates the operator's key directly.
+
+Today the coordinator itself is reached over WiFi. Once it has a wired address the same route
+works with no radio anywhere in the path.
+
 ### Checking it
 
 ```bash
