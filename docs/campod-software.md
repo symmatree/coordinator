@@ -447,7 +447,7 @@ Each of these has to be agreed on both sides, and each is owned by a pair of iss
 |----------|-------------|------------------|---------------|
 | Gadget-net reachability | [#24](https://github.com/symmatree/coordinator/issues/24) | [#12](https://github.com/symmatree/coordinator/issues/12) | subnet, static vs DHCP, per-node address (see the `g_ether` MAC note below) |
 | Time | [#24](https://github.com/symmatree/coordinator/issues/24) | [#11](https://github.com/symmatree/coordinator/issues/11) | NTP server address, shared epoch. No PPS is wired anywhere on this vehicle, so this is not on the path for #211 |
-| Control + status | [#25](https://github.com/symmatree/coordinator/issues/25) | [#10](https://github.com/symmatree/coordinator/issues/10) | start/stop and status wire format and transport |
+| Control + status | [#25](https://github.com/symmatree/coordinator/issues/25) | [#10](https://github.com/symmatree/coordinator/issues/10) | **settled: MQTT, contract in [pod-bus.md](pod-bus.md).** Capture intent, stack and radio as retained desired state; reboot not retained; one retained status document per pod |
 
 ### Verified in passing: `g_ether` really does randomise its MAC every boot
 

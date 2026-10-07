@@ -20,11 +20,20 @@ COPY go.mod go.sum ./
 # changing what ships -- the same reason the base images are digest-pinned (#145).
 RUN go mod download
 COPY *.go ./
-# Hardware-free and broker-free: the tests cover the gate's failure direction
-# (absent and unreadable must mean paused, matching capture.py), the atomic write,
-# role validation, and that status topics are per node. A broken gate fails the
-# build rather than a flight.
-RUN go vet ./... && go test ./...
+# Hardware-free, but NOT broker-free any more: link_test.go runs mochi-mqtt
+# in-process -- the same implementation stacks/coordinator/compose.yaml deploys --
+# and drives arm file -> publisher -> broker -> subscriber -> capture flag. Retained
+# delivery to a late subscriber and per-pod addressing are broker behaviour, so
+# asserting them against a mock would prove nothing. The rest covers the gate's
+# failure direction (absent and unreadable must mean paused, matching capture.py),
+# the atomic write, the reconciler, and the /proc walk that finds sibling inits.
+#
+# -race because the end-to-end test is concurrent by nature and found a real bug in
+# the publisher the first time it ran: `last` was shared between paho's on-connect
+# goroutine and the publish loop, and losing that write means intent is never
+# republished after a broker restart -- every pod holding `disarmed` through a
+# flight. Cheap here, and the kind of fault that does not reproduce on demand.
+RUN go vet ./... && go test -race ./...
 ARG TARGETARCH
 ARG GIT_SHA=""
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
