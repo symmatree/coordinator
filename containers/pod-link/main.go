@@ -2,17 +2,18 @@
 //
 // One binary, two roles, selected by POD_LINK_ROLE:
 //
-//	publisher (coordinator)  watches the arm file the MAVLink router already
-//	                         writes and publishes it as capture intent
-//	subscriber (campod)      reconciles this pod to the states it is told to be
-//	                         in -- capture, stack, radio -- and publishes what it
-//	                         actually is, including the two capture processes'
-//	                         own status documents
+//	publisher (coordinator)  additionally watches the arm file the MAVLink router
+//	                         already writes and publishes it as capture intent
+//	subscriber (campod)      additionally writes the capture flag capture.py reads
 //
-// THE COORDINATOR IS NOT MANAGED THROUGH THIS. Only the subscriber reconciles. The
-// broker runs on the coordinator, so a bus instruction to stop its stack would
-// take the bus down with it; and ssh to a Pi 4B is cheap in a way ssh to a Zero is
-// not, which is the problem this exists to solve.
+// BOTH roles reconcile the states a device can be told to be in -- services, stack,
+// radio -- and both publish what they actually are. The role selects only the two
+// lines above. The coordinator wants this too: pulling an FC log needs
+// coordinator-mavlink to let go of /dev/ttyAMA0, and per-service control is how that
+// is expressed without taking down the broker that carries the instruction.
+//
+// A LIMITED VOCABULARY IS THE POINT. The aim is a small resident foothold that stays
+// in RAM and answers predictably, in place of an ssh session that can do anything.
 //
 // WHY A RESIDENT PROCESS. On a campod, invoking a binary is the expensive
 // operation: the docker CLI faults in ~71 MiB of mapped text on a 417 MiB board
@@ -61,8 +62,8 @@ const (
 	// without waiting for the next heartbeat.
 	topicStatusFmt = "rekon/pod/%s/status"
 	// Per-pod desired state, retained, one topic per concern. Subscribed as a
-	// wildcard and dispatched on the last segment, so a new concern is a new case
-	// rather than a new subscription.
+	// subtree and dispatched on the remainder, so a new concern is a new case rather
+	// than a new subscription -- `service/<container>` uses that second level.
 	//
 	// PER POD, where intent is fleet-wide, and the asymmetry has a reason: capture
 	// intent is a property of the VEHICLE (it armed, so every pod should be
@@ -84,8 +85,9 @@ func topicFor(node string) string { return fmt.Sprintf(topicStatusFmt, node) }
 func desiredPrefix(node string) string { return fmt.Sprintf(topicDesiredFmt, node) }
 func rebootTopic(node string) string   { return fmt.Sprintf(topicRebootFmt, node) }
 
-// concern is the part of a desired-state topic that says what is being asked for.
-// Returns "" for a topic that is not under the prefix at all.
+// concern is the part of a desired-state topic that says what is being asked for --
+// "radio", "stack", or "service/<container>". Returns "" for a topic that is not
+// under this pod's prefix at all.
 func concern(node, topic string) string {
 	prefix := desiredPrefix(node)
 	if !strings.HasPrefix(topic, prefix) {
@@ -106,6 +108,9 @@ type config struct {
 	accelStatusFile  string
 	// Whose free space is reported. The captures mount, read-only.
 	dataDir string
+	// The Docker API socket, for per-service start and stop. Empty, or absent from
+	// the container, disables that concern and says so in the status.
+	dockerSocket string
 	// How often the subscriber reconciles and republishes. Separate from `period`
 	// and slower by default: intent has to be fast because it sets the arm-to-first
 	// -frame latency, while nothing is waiting on a status refresh. Each pass is a
@@ -133,6 +138,7 @@ func loadConfig() (config, error) {
 		cameraStatusFile: env("POD_LINK_CAMERA_STATUS_FILE", "/tmp/campod_camera_status"),
 		accelStatusFile:  env("POD_LINK_ACCEL_STATUS_FILE", "/tmp/campod_accel_status"),
 		dataDir:          env("POD_LINK_DATA_DIR", "/captures"),
+		dockerSocket:     env("POD_LINK_DOCKER_SOCKET", "/var/run/docker.sock"),
 	}
 	secs, err := strconv.Atoi(env("POD_LINK_PERIOD_S", "2"))
 	if err != nil || secs < 1 {
@@ -269,110 +275,66 @@ func (w *wanted) snapshot() map[string]string {
 	return out
 }
 
-// runPublisher watches the arm file and republishes it when it changes.
+// run connects, subscribes, and then reconciles on a tick until stopped.
 //
-// POLLED, not inotify. The file is written by a different container through a
-// shared mount, where inotify's guarantees get thin, and a 2 s stat on a Pi 4B is
-// free. Capture starting up to 2 s after arm is inside the arm-to-takeoff window.
-func runPublisher(c config, stop <-chan struct{}) error {
-	// GUARDED, and this is not pedantry. `last` is written by the on-connect
-	// handler, which runs on paho's goroutine, and read and written by the loop
-	// below. Unsynchronised, the reconnect's reset can be lost -- the loop
-	// overwrites it with the payload it just published -- and then no republish
-	// happens.
-	//
-	// The consequence is specific: the broker has no storage hook, so a broker
-	// restart loses the retained intent, and this forced republish is the only thing
-	// that puts it back. Losing it leaves every pod holding `disarmed` through a
-	// flight. Found by link_test.go under -race, which is what that test is for.
-	var mu sync.Mutex
-	var last string
-	cl := clientFor(c, func(cl mqtt.Client) {
-		fmt.Printf("pod-link: connected to %s as publisher\n", c.broker)
-		mu.Lock()
-		last = "" // force a republish, so a reconnect re-establishes the retained value
-		mu.Unlock()
-	})
-	if t := cl.Connect(); t.Wait() && t.Error() != nil {
-		return t.Error()
-	}
-
-	tick := time.NewTicker(c.period)
-	defer tick.Stop()
-
-	for {
-		armed := readFlagFile(c.armFile)
-		payload := `{"capture":false,"reason":"disarmed"}`
-		if armed {
-			payload = `{"capture":true,"reason":"armed"}`
-		}
-		mu.Lock()
-		changed := payload != last
-		if changed {
-			last = payload
-		}
-		mu.Unlock()
-		if changed {
-			publish(cl, topicIntent, payload)
-			fmt.Printf("pod-link: intent -> %s\n", payload)
-		}
-		select {
-		case <-stop:
-			fmt.Println("pod-link: stop requested")
-			cl.Disconnect(250)
-			return nil
-		case <-tick.C:
-		}
-	}
-}
-
-// runSubscriber reconciles this pod to what it is told to be, and says what it is.
-//
-// It writes the capture flag on EVERY intent message rather than on change: the
-// file is the authority capture.py reads, and a retained message arriving after a
-// reconnect must restore it even if this process believes nothing changed.
-func runSubscriber(c config, stop <-chan struct{}) error {
+// One function for both roles. The role adds the arm-file poll (publisher) or the
+// capture-flag write (subscriber); everything else -- services, stack, radio, reboot,
+// the status document -- is the same on both, because both are devices somebody needs
+// to put into a known state from the bench without an ssh session.
+func run(c config, stop <-chan struct{}) error {
 	status := topicFor(c.node)
 	want := newWanted()
 	h := &host{}
+	var docker *dockerClient
+	if c.dockerSocket != "" {
+		docker = newDockerClient(c.dockerSocket)
+	}
+
+	// Publisher state: the last intent published. Guarded because the on-connect
+	// handler clears it from paho's goroutine while the loop below reads it, and
+	// losing that write means no republish after a reconnect -- which matters because
+	// the broker holds no retained state across a restart of its own.
+	var mu sync.Mutex
+	var lastIntent string
 	var applied string
 
 	cl := clientFor(c, func(cl mqtt.Client) {
-		fmt.Printf("pod-link: connected to %s as subscriber\n", c.broker)
+		fmt.Printf("pod-link: connected to %s as %s\n", c.broker, c.role)
+		mu.Lock()
+		lastIntent = ""
+		mu.Unlock()
 
-		t := cl.Subscribe(topicIntent, 1, func(_ mqtt.Client, m mqtt.Message) {
-			capture := strings.Contains(string(m.Payload()), `"capture":true`)
-			// Recorded like every other desire, so the status document shows what was
-			// asked for next to what is true and the tick can heal a failed write.
-			want.set("capture", fmt.Sprintf("%t", capture))
-			// But ALSO written right here, which is the one concern not left to the
-			// tick. The operator arms and launches within a few seconds; the publisher
-			// already spends up to its 2 s poll noticing the arm, and adding a status
-			// period on top would put the first frame outside the arm-to-takeoff
-			// window. Stack and radio are bench operations with no such budget.
-			if err := writeFlagFile(c.flagFile, capture); err != nil {
-				fmt.Fprintf(os.Stderr, "pod-link: cannot write %s: %v\n", c.flagFile, err)
-				return
+		if c.role == "subscriber" {
+			t := cl.Subscribe(topicIntent, 1, func(_ mqtt.Client, m mqtt.Message) {
+				capture := strings.Contains(string(m.Payload()), `"capture":true`)
+				// Recorded like every other desire so the status shows asked-for beside
+				// actual, and written here rather than on the tick: arm comes from the
+				// operator's controller and the first frame should not wait a status
+				// period on top of the publisher's poll.
+				want.set("capture", fmt.Sprintf("%t", capture))
+				if err := writeFlagFile(c.flagFile, capture); err != nil {
+					fmt.Fprintf(os.Stderr, "pod-link: cannot write %s: %v\n", c.flagFile, err)
+					return
+				}
+				if got := fmt.Sprintf("%t", capture); got != applied {
+					applied = got
+					fmt.Printf("pod-link: capture flag -> %t\n", capture)
+				}
+			})
+			if !t.WaitTimeout(10*time.Second) || t.Error() != nil {
+				fmt.Fprintf(os.Stderr, "pod-link: subscribe %s failed: %v\n", topicIntent, t.Error())
 			}
-			if got := fmt.Sprintf("%t", capture); got != applied {
-				applied = got
-				fmt.Printf("pod-link: capture flag -> %t\n", capture)
-			}
-		})
-		if !t.WaitTimeout(10*time.Second) || t.Error() != nil {
-			fmt.Fprintf(os.Stderr, "pod-link: subscribe %s failed: %v\n", topicIntent, t.Error())
 		}
 
-		// One wildcard for every desired-state concern. Recorded here and acted on
-		// by the reconcile tick rather than in the handler, so the whole of this
-		// pod's state is decided in one place from one view -- and so a message
-		// arriving mid-reconcile cannot interleave with it.
-		dt := cl.Subscribe(desiredPrefix(c.node)+"+", 1, func(_ mqtt.Client, m mqtt.Message) {
+		// One subtree for every desired-state concern. Recorded here and acted on by
+		// the tick, so the whole of this device's state is decided in one place from
+		// one view.
+		dt := cl.Subscribe(desiredPrefix(c.node)+"#", 1, func(_ mqtt.Client, m mqtt.Message) {
 			k := concern(c.node, m.Topic())
-			v := strings.TrimSpace(string(m.Payload()))
 			if k == "" {
 				return
 			}
+			v := strings.TrimSpace(string(m.Payload()))
 			fmt.Printf("pod-link: desired %s -> %q\n", k, v)
 			want.set(k, v)
 		})
@@ -380,15 +342,12 @@ func runSubscriber(c config, stop <-chan struct{}) error {
 			fmt.Fprintf(os.Stderr, "pod-link: subscribe desired failed: %v\n", dt.Error())
 		}
 
-		// Reboot is the one message that is not a state, so it is handled here and
-		// now rather than reconciled. See reconcile.go for why it cannot be
-		// retained; this refuses a retained one rather than honouring it, because
-		// honouring it is an unattended boot loop and the pod would come back only
-		// to read the same instruction again.
+		// Reboot is not a state, so it happens here rather than on the tick. Refused if
+		// retained, because the device would come back and read the same instruction.
 		rt := cl.Subscribe(rebootTopic(c.node), 1, func(_ mqtt.Client, m mqtt.Message) {
 			if m.Retained() {
-				fmt.Fprintf(os.Stderr, "pod-link: REFUSING a retained reboot request "+
-					"(it would re-apply on every boot); publish it with retain off\n")
+				fmt.Fprintf(os.Stderr, "pod-link: refusing a retained reboot request; "+
+					"it would re-apply on every boot. Publish it with retain off\n")
 				return
 			}
 			fmt.Printf("pod-link: reboot requested: %s\n", strings.TrimSpace(string(m.Payload())))
@@ -404,25 +363,58 @@ func runSubscriber(c config, stop <-chan struct{}) error {
 		return t.Error()
 	}
 
-	tick := time.NewTicker(c.statusPeriod)
-	defer tick.Stop()
+	// Two cadences. Intent is polled at the faster one because it carries arm state;
+	// nothing waits on a status refresh.
+	armTick := time.NewTicker(c.period)
+	defer armTick.Stop()
+	statusTick := time.NewTicker(c.statusPeriod)
+	defer statusTick.Stop()
 
-	for {
-		doc := reconcile(c, h, want)
+	publishIntent := func() {
+		if c.role != "publisher" {
+			return
+		}
+		payload := `{"capture":false,"reason":"disarmed"}`
+		if readFlagFile(c.armFile) {
+			payload = `{"capture":true,"reason":"armed"}`
+		}
+		mu.Lock()
+		changed := payload != lastIntent
+		if changed {
+			lastIntent = payload
+		}
+		mu.Unlock()
+		if changed {
+			publish(cl, topicIntent, payload)
+			fmt.Printf("pod-link: intent -> %s\n", payload)
+		}
+	}
+
+	publishStatusNow := func() {
+		doc := reconcile(c, h, docker, want)
 		if body, err := json.Marshal(doc); err == nil {
 			publishStatus(cl, status, string(body))
 		} else {
 			fmt.Fprintf(os.Stderr, "pod-link: cannot marshal status: %v\n", err)
 		}
+	}
+
+	publishIntent()
+	publishStatusNow()
+
+	for {
 		select {
 		case <-stop:
 			fmt.Println("pod-link: stop requested")
-			// Leave the flag as it is. A pod told to stop by being shut down is a pod
-			// whose power is about to go; rewriting the file on the way out would be a
-			// write we do not need on a card we are about to lose.
+			// Leave the capture flag as it is. A pod told to stop by being shut down is
+			// a pod whose power is about to go, and that is the ordinary case rather
+			// than an exception: the plug is the lifecycle here.
 			cl.Disconnect(250)
 			return nil
-		case <-tick.C:
+		case <-armTick.C:
+			publishIntent()
+		case <-statusTick.C:
+			publishStatusNow()
 		}
 	}
 }
@@ -434,14 +426,20 @@ func runSubscriber(c config, stop <-chan struct{}) error {
 // this self-healing against a change made some other way (somebody turning the
 // radio on by hand) and against an action that failed. The cost of a no-op pass is
 // a comparison.
-func reconcile(c config, h *host, want *wanted) *podStatus {
+func reconcile(c config, h *host, docker *dockerClient, want *wanted) *podStatus {
 	w := want.snapshot()
+	// The coordinator has no capture flag of its own; what it knows is the arm state
+	// it publishes from, which is the honest thing for it to report.
+	captureFile := c.flagFile
+	if c.role == "publisher" {
+		captureFile = c.armFile
+	}
 	doc := &podStatus{
 		State:     "ok",
 		Node:      c.node,
 		Build:     buildSHA,
 		AsOfBootS: uptimeS(),
-		Capture:   readFlagFile(c.flagFile),
+		Capture:   readFlagFile(captureFile),
 		Stack:     unknown,
 		Radio:     unknown,
 		Desired:   w,
@@ -450,12 +448,47 @@ func reconcile(c config, h *host, want *wanted) *podStatus {
 		doc.Errors = append(doc.Errors, fmt.Sprintf(format, args...))
 	}
 
+	// Services, by container name. The reason this granularity exists: the FC log
+	// pull needs coordinator-mavlink to release /dev/ttyAMA0, and whole-stack control
+	// on the coordinator would take the broker down with the instruction.
+	for k, v := range w {
+		name, ok := strings.CutPrefix(k, "service/")
+		if !ok || name == "" {
+			continue
+		}
+		if v != stackRunning && v != stackStopped {
+			fail("desired service/%s %q is not %q or %q", name, v, stackRunning, stackStopped)
+			continue
+		}
+		if docker == nil {
+			fail("service/%s wants %q but there is no docker socket mounted", name, v)
+			continue
+		}
+		isRunning, err := docker.running(name)
+		if err != nil {
+			fail("%v", err)
+			continue
+		}
+		if doc.Services == nil {
+			doc.Services = map[string]string{}
+		}
+		doc.Services[name] = stackStopped
+		if isRunning {
+			doc.Services[name] = stackRunning
+		}
+		if isRunning != (v == stackRunning) {
+			if err := docker.setRunning(name, v == stackRunning); err != nil {
+				fail("%v", err)
+			}
+		}
+	}
+
 	// Capture. Written in the intent handler for latency; re-asserted here so a
 	// write that failed transiently does not leave the pod dark for the flight
 	// while the broker still holds the intent that would fix it.
 	switch w["capture"] {
 	case "true", "false":
-		if got := fmt.Sprintf("%t", doc.Capture); got != w["capture"] {
+		if got := fmt.Sprintf("%t", doc.Capture); c.role == "subscriber" && got != w["capture"] {
 			if err := writeFlagFile(c.flagFile, w["capture"] == "true"); err != nil {
 				fail("writing %s: %v", c.flagFile, err)
 			} else {
@@ -497,15 +530,18 @@ func reconcile(c config, h *host, want *wanted) *podStatus {
 		}
 	}
 
-	// Radio.
-	radio, err := h.radio()
+	// Radio. Read every pass, because "is this pod's radio on" is worth knowing
+	// unasked -- but a FAILED read is only an error when somebody wanted a radio
+	// state. A device with no D-Bus socket mounted reports `radio: unknown`, which
+	// is the fact rather than a fault, and repeating it as an error every five
+	// seconds would bury the ones that mean something.
+	radio, radioErr := h.radio()
 	doc.Radio = radio
-	if err != nil {
-		fail("%v", err)
-	}
 	switch wantRadio := w["radio"]; wantRadio {
 	case radioOpen, radioClosed:
-		if err == nil && radio != wantRadio {
+		if radioErr != nil {
+			fail("%v", radioErr)
+		} else if radio != wantRadio {
 			if err := h.setRadio(wantRadio); err != nil {
 				fail("%v", err)
 			}
@@ -561,15 +597,13 @@ func main() {
 	}
 	fmt.Printf("pod-link: role=%s node=%s broker=%s build=%s\n", c.role, c.node, c.broker, buildSHA)
 	stop := signalStop()
-	if c.role == "publisher" {
-		err = runPublisher(c, stop)
-	} else {
+	if c.role == "subscriber" {
 		if err := os.MkdirAll(filepath.Dir(c.flagFile), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "pod-link: %v\n", err)
 			os.Exit(1)
 		}
-		err = runSubscriber(c, stop)
 	}
+	err = run(c, stop)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pod-link: %v\n", err)
 		os.Exit(1)

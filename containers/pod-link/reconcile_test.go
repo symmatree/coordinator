@@ -92,16 +92,16 @@ func TestStackInitsToleratesAVanishedProcess(t *testing.T) {
 // that asserted success from the signal would be lying for up to 19 s.
 func TestStackReadsStoppedOnlyWhenTheInitsAreActuallyGone(t *testing.T) {
 	dir := t.TempDir()
-	c := config{node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
+	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
 	want := newWanted()
 
 	withProc(t, fakeProc(t, map[int]string{1: initComm, 2: "sshd"}))
-	if doc := reconcile(c, &host{}, want); doc.Stack != stackRunning || doc.StackInits != 1 {
+	if doc := reconcile(c, &host{}, nil, want); doc.Stack != stackRunning || doc.StackInits != 1 {
 		t.Errorf("stack=%q inits=%d, want running/1 while an init is alive", doc.Stack, doc.StackInits)
 	}
 
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
-	if doc := reconcile(c, &host{}, want); doc.Stack != stackStopped || doc.StackInits != 0 {
+	if doc := reconcile(c, &host{}, nil, want); doc.Stack != stackStopped || doc.StackInits != 0 {
 		t.Errorf("stack=%q inits=%d, want stopped/0 once they are gone", doc.Stack, doc.StackInits)
 	}
 }
@@ -110,14 +110,14 @@ func TestStackReadsStoppedOnlyWhenTheInitsAreActuallyGone(t *testing.T) {
 // treating "off" as "stopped" would mean an operator's typo reads as success.
 func TestUnknownDesiredValueIsReportedNotGuessed(t *testing.T) {
 	dir := t.TempDir()
-	c := config{node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
+	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 
 	want := newWanted()
 	want.set("stack", "off")
 	want.set("radio", "on")
 
-	doc := reconcile(c, &host{}, want)
+	doc := reconcile(c, &host{}, nil, want)
 	joined := strings.Join(doc.Errors, " | ")
 	if !strings.Contains(joined, `"off"`) {
 		t.Errorf("no error naming the bad stack value: %s", joined)
@@ -130,12 +130,12 @@ func TestUnknownDesiredValueIsReportedNotGuessed(t *testing.T) {
 // Desired and observed travel together, so "did it take" is one read.
 func TestStatusCarriesDesiredBesideObserved(t *testing.T) {
 	dir := t.TempDir()
-	c := config{node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
+	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 
 	want := newWanted()
 	want.set("stack", stackStopped)
-	doc := reconcile(c, &host{}, want)
+	doc := reconcile(c, &host{}, nil, want)
 
 	if doc.Desired["stack"] != stackStopped {
 		t.Errorf("desired stack missing from the document: %+v", doc.Desired)
@@ -150,13 +150,13 @@ func TestStatusCarriesDesiredBesideObserved(t *testing.T) {
 func TestCaptureIsReassertedWhenObservationDisagrees(t *testing.T) {
 	dir := t.TempDir()
 	flag := filepath.Join(dir, "flag")
-	c := config{node: "campod-sw", flagFile: flag, dataDir: dir}
+	c := config{role: "subscriber", node: "campod-sw", flagFile: flag, dataDir: dir}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 
 	want := newWanted()
 	want.set("capture", "true") // as if the handler recorded it and the write failed
 
-	doc := reconcile(c, &host{}, want)
+	doc := reconcile(c, &host{}, nil, want)
 	if !doc.Capture {
 		t.Error("reconcile did not re-assert capture")
 	}
@@ -170,11 +170,14 @@ func TestCaptureIsReassertedWhenObservationDisagrees(t *testing.T) {
 // that cannot reach NetworkManager still has to fly.
 func TestAMissingBusDoesNotStopTheRestOfThePass(t *testing.T) {
 	dir := t.TempDir()
-	c := config{node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
+	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(dir, "no-such-socket"))
 
-	doc := reconcile(c, &host{}, newWanted())
+	want := newWanted()
+	want.set("radio", radioOpen) // asked for, so the failure is worth reporting
+
+	doc := reconcile(c, &host{}, nil, want)
 	if doc.Radio != unknown {
 		t.Errorf("radio=%q, want %q with no bus", doc.Radio, unknown)
 	}
@@ -189,15 +192,32 @@ func TestAMissingBusDoesNotStopTheRestOfThePass(t *testing.T) {
 	}
 }
 
+// Unasked, an unreachable bus reports `unknown` and stays quiet. Repeating it as an
+// error every pass would bury the errors that mean something.
+func TestAnUnreachableBusIsNotAnErrorIfNobodyAskedForTheRadio(t *testing.T) {
+	dir := t.TempDir()
+	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
+	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
+	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(dir, "no-such-socket"))
+
+	doc := reconcile(c, &host{}, nil, newWanted())
+	if doc.Radio != unknown {
+		t.Errorf("radio=%q, want %q", doc.Radio, unknown)
+	}
+	if len(doc.Errors) != 0 {
+		t.Errorf("errors=%v, want none when nothing was asked for", doc.Errors)
+	}
+}
+
 // No wall clock in the published document, for the same reason as the other two:
 // this board has no RTC, so a wall stamp is wrong by the size of a step that has
 // not happened yet and nothing says which side of it produced the number.
 func TestPublishedStatusCarriesNoWallClock(t *testing.T) {
 	dir := t.TempDir()
-	c := config{node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
+	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 
-	body, err := json.Marshal(reconcile(c, &host{}, newWanted()))
+	body, err := json.Marshal(reconcile(c, &host{}, nil, newWanted()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,11 +245,11 @@ func TestCaptureDocumentsArePassedThroughUntouched(t *testing.T) {
 	if err := os.WriteFile(cam, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c := config{node: "campod-sw", flagFile: filepath.Join(dir, "flag"),
+	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"),
 		dataDir: dir, cameraStatusFile: cam}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 
-	doc := reconcile(c, &host{}, newWanted())
+	doc := reconcile(c, &host{}, nil, newWanted())
 	if strings.TrimSpace(string(doc.Camera)) != body {
 		t.Errorf("camera document altered:\n got %s\nwant %s", doc.Camera, body)
 	}

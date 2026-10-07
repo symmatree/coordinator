@@ -54,6 +54,10 @@ type podStatus struct {
 	Stack      string `json:"stack"`
 	StackInits int    `json:"stack_inits"`
 	Radio      string `json:"radio"`
+	// Per-container state, for the containers somebody has expressed a desire about.
+	// Only those: listing every container would mean an inspect per container per
+	// pass for answers nobody asked for.
+	Services map[string]string `json:"services,omitempty"`
 
 	// What this pod was last told to be. Present only for concerns somebody has
 	// actually published a desire for.

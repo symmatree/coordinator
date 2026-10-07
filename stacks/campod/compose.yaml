@@ -185,6 +185,13 @@ services:
       POD_LINK_CAMERA_STATUS_FILE: /tmp/campod_camera_status
       POD_LINK_ACCEL_STATUS_FILE: /tmp/campod_accel_status
       POD_LINK_DATA_DIR: /captures
+      # No Docker socket here, deliberately. Per-service control would have to go
+      # through dockerd, and dockerd is the layer that degrades on this board --
+      # 2.1-22.0 s per call with capture running against 136-223 ms without. The
+      # cheap path on a Zero is `desired/stack`, which signals the container inits
+      # directly and never touches the daemon. The coordinator, which can afford the
+      # daemon, is where per-service control lives.
+      POD_LINK_DOCKER_SOCKET: ""
       # How often this pod reconciles and republishes. Slower than the intent poll
       # on purpose: intent sets the arm-to-first-frame latency, nothing waits on a
       # status refresh, and each pass is a /proc walk plus a few small reads on a

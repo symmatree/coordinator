@@ -1,8 +1,9 @@
-# The pod bus: how a campod is told what to be, and how it says what it is
+# The pod bus: how a device is told what to be, and how it says what it is
 
-The MQTT contract between the coordinator and the campods. Written so something can
-be built against it without reading Go -- the ground platform's side of this is
-publishing to these topics instead of opening an ssh session.
+The MQTT contract between the coordinator and the campods -- and, running the same
+binary, the coordinator itself. Written so something can be built against it without
+reading Go: the ground platform's side of this is publishing to these topics instead
+of opening an ssh session.
 
 Implements the control-surface half of
 [#25](https://github.com/symmatree/coordinator/issues/25), whose transport was left
@@ -13,44 +14,33 @@ implementation the cluster runs (`tales/tanka/environments/mochi-mqtt`), so
 federating this bus upward later is two instances of one thing rather than a
 translation.
 
-## Why a bus and not ssh
+## What it is for
 
-Not tidiness. **Every ssh forks an sshd on a board that cannot spare it**, and the
-cost is page cache rather than CPU: the docker CLI alone faults in ~71 MiB of mapped
-text on a 417 MiB Zero with no swap, which is why `docker ps` measures 2.1-22.0 s
-with capture running against 136-223 ms without. A packet into a process already
-resident costs none of that.
+A small resident foothold with a **limited vocabulary**, in place of an ssh session
+that can do anything. It stays in RAM, answers predictably, and the set of things it
+can be asked is short enough to read in one table.
 
-So the bus's job is narrower and more useful than "replace ssh": **it is how you get
-a pod quiet, after which everything else is cheap again.** Stopping the capture stack
-is the precondition for every other remote operation -- a converge, an FC log pull,
-packaging a session -- and it is the operation you least want to pay an ssh for,
-because the box is at its least responsive exactly then. Once stopped, ssh is back to
-milliseconds and ansible can do what ansible is for.
+The cost it avoids is specific: every ssh forks an sshd on a board that cannot spare
+it, and the cost is page cache rather than CPU -- the docker CLI alone faults in
+~71 MiB of mapped text on a 417 MiB Zero with no swap, which is why `docker ps`
+measures 2.1-22.0 s with capture running against 136-223 ms without.
 
-## Everything is a desired state, except one thing
+**This is a bench and maintenance surface, not a flight one.** In flight the lifecycle
+is the power plug: it is pulled before switching to battery -- sometimes repeatedly,
+chasing a radio link or RTCM -- and again at the end. Capture is actuated by the arm
+flag from the operator's controller, through the router. Nothing on this bus is in
+that path except the intent that carries arm state.
 
-"Stack running" is a node; "stop the stack" is the edge into it. Publishing the node
-and letting the pod walk the edge buys three properties that an RPC would have to
-implement:
+So the bus earns its place on the bench, where the operations are: stop a job so
+something else can have the serial port, bring it back, open a radio, get a device
+back to paused-but-ready after a converge.
 
-- **Idempotence.** The same retained message applied twice is the same state.
-- **Recovery with no retry policy.** The broker holds the last desired value, so a
-  pod whose link blipped reconciles on reconnect rather than having missed a
-  one-shot.
-- **No waiting.** `pkill` returns when the signal is sent, not when the process is
-  gone -- measured at 1.1 s for the accel reader and 19.0 s for the camera, both
-  *after* the command returned. Every imperative caller therefore needs its own wait
-  loop, and two of ours shipped without one. A reconciler has none to forget:
-  `stack` reads `running` until the inits are actually gone.
+## Everything is a desired state, except reboot
 
-**The test for whether something belongs in this model is not state-versus-action.
-It is whether the desired value stays true once it has been reached.** "Stopped"
-does. "Rebooted" does not -- the box comes back in the node it left, so a retained
-reboot request means reboot, come up, read it again, reboot. Reboot is therefore the
-one message published **not retained**, and a retained one is refused rather than
-honoured. ("Delete all sessions" fails the same test for a worse reason: it stays
-true and keeps consuming every future session.)
+Controls are desired states, reconciled every pass, with one exception. Reboot is not
+a state -- the device comes back in the state it left, so a *retained* reboot request
+would re-apply on every boot. It is therefore the one message published unretained,
+and a retained one is refused.
 
 ## Topics
 
@@ -59,6 +49,7 @@ true and keeps consuming every future session.)
 | `rekon/capture/intent` | yes | `{"capture":true,"reason":"armed"}` | coordinator -> all pods |
 | `rekon/pod/<node>/desired/stack` | yes | `running` \| `stopped` | anyone -> one pod |
 | `rekon/pod/<node>/desired/radio` | yes | `open` \| `closed` | anyone -> one pod |
+| `rekon/pod/<node>/desired/service/<container>` | yes | `running` \| `stopped` | anyone -> one device |
 | `rekon/pod/<node>/reboot` | **no** | free text (a reason, logged) | anyone -> one pod |
 | `rekon/pod/<node>/status` | yes | the document below | pod -> anyone |
 
@@ -68,12 +59,15 @@ host's `/etc/hostname` rather than the container's, which is an ephemeral docker
 Desired-state payloads are **bare words, not JSON**. One enum value does not need a
 wrapper, and `mosquitto_sub -t 'rekon/#' -v` at a bench stays readable.
 
-**Capture intent is fleet-wide; stack and radio are per pod.** The asymmetry has a
-reason: capture intent is a property of the *vehicle* -- it armed, so every pod should
-be collecting -- while stopping a stack or opening a radio is a bench operation on one
-device. Four publishes is what stopping four pods costs, which is nothing.
+**Capture intent is fleet-wide; everything else is per device.** Capture intent is a
+property of the *vehicle* -- it armed, so every pod should be collecting -- while
+stopping a job or opening a radio is a bench operation on one box. Four publishes is
+what stopping four pods costs, which is nothing.
 
-A pod ignores another pod's desired topics; there is no fleet-wide form of them.
+A device ignores another device's desired topics; there is no fleet-wide form of them.
+
+`<node>` includes the **coordinator**, which runs the same binary in the publisher
+role and reconciles the same way. See [On the coordinator](#on-the-coordinator).
 
 ## The status document
 
@@ -91,7 +85,8 @@ whole current picture in one subscribe with nothing to assemble.
   "stack": "running",
   "stack_inits": 2,
   "radio": "closed",
-  "desired": {"capture": "true", "radio": "closed"},
+  "services": {"campod_camera": "running"},
+  "desired": {"capture": "true", "radio": "closed", "service/campod_camera": "running"},
   "data_free_bytes": 12802234368,
   "camera": {
     "node": "campod-sw", "session": "<boot-id>", "camera": "present",
@@ -143,26 +138,57 @@ about 4.2 hours and nothing caps it, and a full card does not present as a disk 
 it presents as a pod that cannot capture and stops answering. Worth reading before a
 flight rather than diagnosing after one.
 
-## What the pod does with each desire
+## What a device does with each desire
 
 | desired | reconciled by | notes |
 |---|---|---|
-| `capture` | writing `/tmp/campod_capture`, which `capture.py` reads once per tick | written in the message handler, not on the tick, because this latency is inside the arm-to-takeoff window; re-asserted on the tick if a write failed |
-| `stack: stopped` | `SIGTERM` to every container init but its own | the same selection `coord stop` and the ansible quiesce make (`dumb-init` by name). No escalation to `SIGKILL`: a container that will not exit is a result worth seeing |
+| `capture` | writing `/tmp/campod_capture`, which `capture.py` reads once per tick | written in the message handler rather than on the tick: arm comes from the operator's controller and the first frame should not wait a status period on top of the publisher's poll. Re-asserted on the tick if a write failed |
+| `service/<container>` | the Docker API over its socket, by the `container_name` pinned in the stack file | the granularity that matters on the coordinator. 304 (already in that state) is success. The daemon owns the grace period and any escalation, so there is nothing to reimplement and nothing to wait for |
+| `stack: stopped` | `SIGTERM` to every container init but its own | the same selection `coord stop` and the ansible quiesce make (`dumb-init` by name), and it never touches the daemon -- which is why it is the cheap path on a Zero. No escalation to `SIGKILL`: a container that will not exit is a result worth seeing |
 | `stack: running` | **nothing** | see below |
-| `radio` | NetworkManager's `WirelessEnabled` over the system bus | the same property `coord radio` sets, persisted by NM across boots |
+| `radio` | NetworkManager's `WirelessEnabled` over the system bus | the same property `coord radio` sets, persisted by NM across boots. Read every pass whether or not anything asked; a failed *read* is reported as `unknown` rather than as an error, because a device with no bus socket is not a fault |
+
+A device with no Docker socket mounted says so if asked for a service change, and is
+otherwise silent about it. That is the campod's configuration on purpose: per-service
+control would have to go through dockerd, and dockerd is exactly the layer that
+degrades there, so `desired/stack` is the Zero's path.
 
 ### Why `stack: running` is not reconciled
 
-Starting the stack means `docker compose up`, and invoking the docker CLI is the
-~71 MiB page-cache cost this whole process exists to avoid. The way back to `running`
-is a **reboot**: the boot unit's `ExecStart` is unconditional
-([#256](https://github.com/symmatree/coordinator/issues/256)), so coming up *is*
-starting the stack.
+Starting the whole stack means `docker compose up`, which is the page-fault cost this
+process exists to avoid, and it is not the operation anybody actually wants: for normal
+operations the thing you express is that the stack *is* up, which is the default a
+power-up produces.
 
-So the graph is connected -- `stopped --reboot--> running` -- the edge just is not
-labelled "start". There is also a power cycle between bench and flight by
-construction, which is the same edge taken by hand.
+The boot unit's `ExecStart` is unconditional
+([#256](https://github.com/symmatree/coordinator/issues/256)), so coming up **is**
+starting the stack -- and on this vehicle the power plug is how that happens, several
+times a session. `reboot` is the same edge for a box you are not standing next to.
+
+For one job rather than the whole stack, `service/<container>` starts as well as
+stops, which is what makes the log-pull workflow a round trip instead of a one-way one.
+
+## On the coordinator
+
+The coordinator runs the same binary and reconciles the same desires. The one it exists
+for:
+
+```bash
+# Give up /dev/ttyAMA0 so `coord fc-log` can have it.
+mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -m stopped
+# ... pull the log ...
+mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -m running
+```
+
+Per-service rather than whole-stack **because the broker is in that stack**: stopping
+everything would cut the path the instruction arrived on, and the whole point is to
+stop one job and leave the rest answering. Nothing prevents setting the coordinator's
+`desired/stack` to `stopped` -- it will do it, the broker goes with it, and a power
+cycle is the way back.
+
+Its `capture` field reports the arm file it publishes from, which is what this box
+knows about capture. It has no `camera` or `accel` section: the tracker and the router
+write into the session rather than publishing status documents.
 
 ### Going closed needs no gate here
 
@@ -180,11 +206,17 @@ evidenced than the ssh one.
   whoever is building that -- not guessed at here. The coordinator's `vehicle.tlog`
   records everything the FC sends meanwhile, so nothing is being lost while that waits.
 - **No queries.** Interrogating a capturing pod is the documented way to break it, and
-  after a flight ssh is affordable. The pod pushes what it knows; nothing asks.
-- **No coordinator management.** Only the subscriber role reconciles. The broker runs
-  on the coordinator, so a bus instruction to stop its stack would take the bus down
-  with it -- and ssh to a Pi 4B is cheap in the way ssh to a Zero is not, which is the
-  problem this exists to solve.
+  after a flight ssh is affordable. A device pushes what it knows; nothing asks.
+- **No lockout against using these at the wrong moment.** Nothing sends a reboot or a
+  stack stop mid-flight, and the radio is off. If a gate is ever wanted the shape is a
+  flag held true while armed that each device checks, but there is no evidence it is
+  needed.
+- **No bench-capture override.** Capturing while disarmed is wanted, and it does not
+  belong here: the route is MAVLink -- from the radio, or injected by the router to
+  itself -- so that the one actuator for capture stays the arm state the router already
+  owns. This bus carries that state; it does not get a second opinion about it.
+  (Mechanically it could not work anyway: the publisher recomputes intent from the arm
+  file every 2 s, so a hand-published intent is overwritten within one tick.)
 - **No authentication.** `allow_all`, matching the cluster's config. The radio is off in
   flight and the only route to the broker is the gadget segment, so the network layer
   already answers the question an auth hook would ask.
@@ -195,11 +227,12 @@ evidenced than the ssh one.
 ## Driving it by hand
 
 ```bash
-# On the coordinator, where the broker is.
-mosquitto_sub -t 'rekon/#' -v                        # everything, including retained
-mosquitto_pub -t rekon/pod/campod-sw/desired/radio -m open
-mosquitto_pub -t rekon/pod/campod-sw/desired/stack -m stopped
-mosquitto_pub -t rekon/pod/campod-sw/reboot -m 'card swap'     # NOT -r
+# On the coordinator, where the broker is. -r so the value survives a pod reconnect.
+mosquitto_sub -t 'rekon/#' -v                                     # including retained
+mosquitto_pub -t rekon/pod/campod-sw/desired/radio -r -m open
+mosquitto_pub -t rekon/pod/campod-sw/desired/stack -r -m stopped
+mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -m stopped
+mosquitto_pub -t rekon/pod/campod-sw/reboot -m 'back to idle-ready'   # NOT -r
 ```
 
 Clearing a desire is an empty retained payload on its topic, which is MQTT's way of
@@ -214,9 +247,13 @@ mosquitto_pub -t rekon/pod/campod-sw/desired/stack -r -n
 `containers/pod-link/link_test.go` runs a real `mochi-mqtt` in-process -- the same
 implementation the coordinator deploys, imported as a library -- and drives the whole
 path: arm file, publisher, broker, subscriber, capture flag. It covers retained
-delivery to a late subscriber and per-pod addressing, both of which are broker
-behaviour and could not be asserted against a mock. It runs at image build time, so a
-wire-level regression fails the build.
+delivery to a late subscriber and per-device addressing, both of which are broker
+behaviour and could not be asserted against a mock.
+
+`service_test.go` serves the Docker API over a real unix socket, so the start/stop
+round trip and the 304-is-success case are exercised rather than stubbed.
+
+Both run at image build time under `-race`, so a wire-level regression fails the build.
 
 ## Related
 

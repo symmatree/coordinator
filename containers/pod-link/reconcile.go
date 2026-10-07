@@ -2,25 +2,14 @@ package main
 
 // What a pod does when it is told what state to be in.
 //
-// EVERY CONTROL HERE IS A DESIRED STATE, NOT A COMMAND, and that is the whole
-// design rather than a stylistic preference. "Stack running" is a node and "stop
-// the stack" is the edge into it; publishing the node and letting the pod walk
-// the edge gets three properties free that a command would have to build:
+// Controls are desired states, reconciled each pass. One consequence worth knowing
+// while reading the code: nothing here waits. `pkill` returns when the signal is
+// sent, not when the process is gone -- 1.1 s for the accel and 19.0 s for the
+// camera, both after the command returned -- so `stack` keeps reading `running`
+// until the inits are actually gone, and the next pass is what notices.
 //
-//   * Idempotence. The same retained message applied twice is the same state.
-//   * Recovery without a retry policy. The broker holds the last desired value,
-//     so a pod whose link blipped reconciles on reconnect instead of having
-//     missed a one-shot.
-//   * No waiting. `pkill` returns when the signal is sent, not when the process
-//     is gone -- measured at 1.1 s for the accel and 19.0 s for the camera, both
-//     AFTER the command returned -- so every imperative caller has to carry its
-//     own wait loop, and two of ours shipped without one. A reconciler has no
-//     wait to forget: `stack` reads `running` until the inits are actually gone.
-//
-// The one exception is reboot, at the bottom, and the test that makes it an
-// exception is sharp: does the desired value stay true once it has been reached?
-// "Stopped" does. "Rebooted" does not -- the box comes back in the node it left,
-// so a retained reboot request means reboot, come up, read it again, reboot.
+// Reboot is the exception, at the bottom: a retained "rebooted" would re-apply on
+// every boot, since the box comes back in the state it left.
 
 import (
 	"fmt"
@@ -30,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -207,21 +197,36 @@ func (h *host) setRadio(want string) error {
 	return nil
 }
 
+// How long to let the flush below run before rebooting anyway.
+const syncBudget = 5 * time.Second
+
 // reboot asks systemd for an ordered restart.
 //
-// login1's Reboot, not the reboot(2) syscall, and the difference is the whole
-// point: systemd stops the units, which gives the capture containers their
-// stop_grace_period to finish writing. A hard syscall reboot would skip that on a
-// device whose only deliverable is what reached the card.
+// What this is FOR: getting a device back to paused-but-ready after bench
+// maintenance -- a log pull, a converge -- without walking over to it. It is not
+// part of the flight lifecycle, where the mechanism is the power plug.
 //
-// sync() first anyway, because the reboot might not be the thing that kills us --
-// on this vehicle a power pull usually is.
+// login1's Reboot rather than the reboot(2) syscall so systemd stops the units and
+// each container gets the grace period its stack file asks for.
+//
+// The flush is a nicety and is BOUNDED. syscall.Sync() blocks until the whole
+// writeback queue is clean, which on a contended card is an open-ended wait for
+// something a reboot does not depend on -- systemd's own shutdown syncs anyway. So
+// it runs on its own goroutine and gets syncBudget; if the card is busier than that,
+// reboot regardless. The goroutine is left to finish on its own, which it does well
+// before the units are down.
 func (h *host) reboot() error {
 	conn, err := h.bus()
 	if err != nil {
 		return err
 	}
-	syscall.Sync()
+	flushed := make(chan struct{})
+	go func() { syscall.Sync(); close(flushed) }()
+	select {
+	case <-flushed:
+	case <-time.After(syncBudget):
+		fmt.Fprintf(os.Stderr, "pod-link: flush still running after %s; rebooting anyway\n", syncBudget)
+	}
 	if call := conn.Object(login1Service, login1Path).Call(login1Reboot, 0, false); call.Err != nil {
 		return fmt.Errorf("%s: %w", login1Reboot, call.Err)
 	}
