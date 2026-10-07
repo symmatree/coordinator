@@ -13,6 +13,8 @@ Interval {{ metrics_interval }}
 
 LoadPlugin cpu
 LoadPlugin memory
+LoadPlugin vmem
+LoadPlugin processes
 LoadPlugin disk
 LoadPlugin thermal
 LoadPlugin interface
@@ -51,11 +53,74 @@ LoadPlugin csv
   ValuesPercentage false
 </Plugin>
 
+<Plugin vmem>
+  # Why: the campod's measured failure mode is read volume on a saturated card,
+  # and the memory plugin cannot say whether a read was a page fault or a file
+  # read. pgmajfault is the counter that separates them.
+  #
+  # Verbose true, which is what gets the nr_* fields -- nr_dirty and nr_writeback
+  # are the writeback picture, and whether Dirty is flat with Writeback at zero is
+  # the difference between "writes are keeping up" and "writes are queued behind
+  # reads". The plugin dispatches 51 nr_* fields on this kernel; that is the whole
+  # cost of this option and it is text in a CSV, not a sample per interval per
+  # field in a time-series database.
+  Verbose true
+</Plugin>
+
+<Plugin processes>
+  # Whole-disk counters cannot attribute I/O to a process, which is the question
+  # every episode so far has turned on. This gives per-process RSS plus minor and
+  # major fault counts, so "who is thrashing" is answerable from the record rather
+  # than needing somebody logged in during the window sampling /proc by hand --
+  # which is itself load on the box being measured.
+  #
+  # ProcessMatch, not Process: `Process` matches comm, which the kernel truncates
+  # to 15 characters and which for a Python program is "python3". ProcessMatch
+  # matches the command line -- /proc/<pid>/cmdline with its NULs turned into
+  # spaces (processes.c ps_get_cmdline), so these patterns are written against the
+  # space-joined form. They are POSIX regexes and unanchored.
+  #
+  # collectd runs on the host in the host PID namespace, so container processes
+  # appear here with their host PIDs; nothing has to reach into a container.
+  ProcessMatch "capture" "python3 /opt/campod/capture.py"
+  ProcessMatch "accel" "/opt/campod/campod-accel"
+  # The ~56 MiB resident jump at storm onset has never been attributed, and these
+  # are the candidates big enough to be it. "containerd" also matches the
+  # per-container shims, so read that row as the container runtime in total rather
+  # than as the daemon alone.
+  ProcessMatch "dockerd" "/usr/bin/dockerd"
+  ProcessMatch "containerd" "/usr/bin/containerd"
+  # The instrument's own cost, because on this board observation IS load and a
+  # measurement that cannot state its own footprint is asking to be trusted.
+  ProcessMatch "collectd" "/usr/sbin/collectd"
+
+  # COST, stated rather than buried: this plugin stats every entry in /proc every
+  # interval -- it has to, in order to classify them -- so it is a procfs walk of
+  # every process at {{ metrics_interval }}s, whatever the match list says. In-kernel
+  # reads, no card I/O, but not free on a four-core Zero.
+  #
+  # CollectMemoryMaps is the one option whose cost scales with the address space
+  # rather than being fixed: it reads /proc/<pid>/smaps, walking every VMA, every
+  # interval, on the box whose paging is the thing under measurement. Off.
+  CollectMemoryMaps false
+  # Cheap, and a process switching hard while making no progress looks different
+  # from one that is simply blocked.
+  CollectContextSwitch true
+  CollectFileDescriptor false
+</Plugin>
+
 <Plugin disk>
-  # Whole disks only, not partitions. Queue depth is a property of the device;
-  # per-partition rows would triple the cardinality and answer nothing. This also
-  # picks up pending_operations, which is the in-flight request count from
-  # /proc/diskstats -- the io-queue-depth signal.
+  # Whole disks only, not partitions. Per-partition rows would triple the
+  # cardinality and answer nothing.
+  #
+  # This comment used to claim the plugin also records pending_operations as an
+  # io-queue-depth signal. It does not: an archived tree from a real device
+  # carries disk_io_time, disk_merged, disk_octets, disk_ops and disk_time and
+  # nothing else. The utilization signal we actually have is disk_io_time, whose
+  # io_time field is milliseconds during which the device had I/O in flight --
+  # so a 10 s interval advancing it by 10000 is a device that was busy
+  # throughout. Read saturation off that, not off a byte rate against a guessed
+  # ceiling.
   Disk "/^mmcblk[0-9]+$/"
   Disk "/^nvme[0-9]+n[0-9]+$/"
   IgnoreSelected false
