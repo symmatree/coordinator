@@ -94,15 +94,40 @@ func TestStackReadsStoppedOnlyWhenTheInitsAreActuallyGone(t *testing.T) {
 	dir := t.TempDir()
 	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
 	want := newWanted()
+	want.set("stack", stackRunning) // a desire, so the observation is taken at all
 
 	withProc(t, fakeProc(t, map[int]string{1: initComm, 2: "sshd"}))
-	if doc := reconcile(c, &host{}, nil, want); doc.Stack != stackRunning || doc.StackInits != 1 {
-		t.Errorf("stack=%q inits=%d, want running/1 while an init is alive", doc.Stack, doc.StackInits)
+	doc := reconcile(c, &host{}, nil, want)
+	if doc.Stack != stackRunning || doc.StackInits == nil || *doc.StackInits != 1 {
+		t.Errorf("stack=%q inits=%v, want running/1 while an init is alive", doc.Stack, doc.StackInits)
 	}
 
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
-	if doc := reconcile(c, &host{}, nil, want); doc.Stack != stackStopped || doc.StackInits != 0 {
-		t.Errorf("stack=%q inits=%d, want stopped/0 once they are gone", doc.Stack, doc.StackInits)
+	doc = reconcile(c, &host{}, nil, want)
+	if doc.Stack != stackStopped || doc.StackInits == nil || *doc.StackInits != 0 {
+		t.Errorf("stack=%q inits=%v, want stopped/0 once they are gone", doc.Stack, doc.StackInits)
+	}
+}
+
+// Nobody asked about the stack, so nothing walks /proc. The walk touches no card but
+// it is still work on a box whose failure mode is not making progress, and it tells us
+// nothing we do not already have: this document existing proves pod-link is up, and
+// the camera and accel sections carry the other containers' liveness.
+func TestNoStackDesireMeansNoProcWalk(t *testing.T) {
+	dir := t.TempDir()
+	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
+	// A /proc that would fail loudly if it were read at all.
+	withProc(t, filepath.Join(dir, "no-such-proc"))
+
+	doc := reconcile(c, &host{}, nil, newWanted())
+	if doc.Stack != unknown {
+		t.Errorf("stack=%q, want %q when nobody asked", doc.Stack, unknown)
+	}
+	if doc.StackInits != nil {
+		t.Errorf("stack_inits=%v, want absent when nobody looked", *doc.StackInits)
+	}
+	if len(doc.Errors) != 0 {
+		t.Errorf("errors=%v, want none -- an unread /proc is not a failure", doc.Errors)
 	}
 }
 
@@ -181,8 +206,8 @@ func TestAMissingBusDoesNotStopTheRestOfThePass(t *testing.T) {
 	if doc.Radio != unknown {
 		t.Errorf("radio=%q, want %q with no bus", doc.Radio, unknown)
 	}
-	if doc.Stack == unknown {
-		t.Error("the stack observation was lost along with the bus")
+	if doc.Stack != unknown {
+		t.Errorf("stack=%q, want %q -- nothing asked about it here", doc.Stack, unknown)
 	}
 	if doc.DataFreeBytes <= 0 {
 		t.Error("free space was lost along with the bus")

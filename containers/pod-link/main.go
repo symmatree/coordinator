@@ -497,37 +497,49 @@ func reconcile(c config, h *host, docker *dockerClient, want *wanted) *podStatus
 		}
 	}
 
-	// Stack. Observation is the list of container inits other than our own; there
-	// is no waiting to implement, because `running` simply stays until they are
-	// gone.
-	own := ownInit()
-	inits, err := stackInits(own)
-	if err != nil {
-		fail("listing container inits: %v", err)
-	} else {
-		doc.StackInits = len(inits)
+	// Stack. ONLY WALKED WHEN SOMETHING ASKED, which is almost never.
+	//
+	// The walk is a few hundred in-memory reads and touches no card, but it is still
+	// work done on a box whose characteristic failure is not making progress, and it
+	// bought nothing in the normal case: pod-link publishing this document at all
+	// proves the stack is up, since pod-link is in it. The useful question is whether
+	// the OTHER containers are alive, and the camera and accel documents answer that
+	// better than a process count does -- they carry an advancing as_of, a frame count
+	// and a sample count, and they are two small tmpfs reads this pass makes anyway.
+	//
+	// So the observation happens when there is a desire to reconcile against it, and
+	// `stack` reads `unknown` the rest of the time. Unknown because nobody looked, not
+	// because something failed.
+	switch w["stack"] {
+	case stackStopped, stackRunning:
+		own := ownInit()
+		inits, err := stackInits(own)
+		if err != nil {
+			fail("listing container inits: %v", err)
+			break
+		}
+		n := len(inits)
+		doc.StackInits = &n
 		doc.Stack = stackStopped
-		if len(inits) > 0 {
+		if n > 0 {
 			doc.Stack = stackRunning
 		}
-		switch w["stack"] {
-		case stackStopped:
-			if len(inits) > 0 {
-				if err := signalStack(inits); err != nil {
-					fail("stopping the stack: %v", err)
-				}
+		if w["stack"] == stackStopped && n > 0 {
+			if err := signalStack(inits); err != nil {
+				fail("stopping the stack: %v", err)
 			}
-		case stackRunning, "":
-			// NOT reconciled, and this is the one edge the graph does not carry.
-			// Starting the stack means `docker compose up`, and invoking the docker
-			// CLI faults in ~71 MiB of mapped text on a 417 MiB board with no swap --
-			// the exact cost this whole process exists to avoid paying. The way back
-			// to `running` is a reboot: the boot unit's ExecStart is unconditional
-			// (#256), so coming up IS starting the stack. That edge is the reboot
-			// message, so the graph is connected; it just is not labelled "start".
-		default:
-			fail("desired stack %q is not %q or %q", w["stack"], stackRunning, stackStopped)
 		}
+		if w["stack"] == stackRunning {
+			// NOT reconciled. Starting the stack means `docker compose up`, and
+			// invoking the docker CLI faults in ~71 MiB of mapped text on a 417 MiB
+			// board with no swap. Coming up is what starts the stack -- the boot
+			// unit's ExecStart is unconditional (#256) -- and on this vehicle that
+			// happens by the power plug, several times a session.
+			_ = n
+		}
+	case "":
+	default:
+		fail("desired stack %q is not %q or %q", w["stack"], stackRunning, stackStopped)
 	}
 
 	// Radio. Read every pass, because "is this pod's radio on" is worth knowing
