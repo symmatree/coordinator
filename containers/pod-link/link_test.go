@@ -94,7 +94,8 @@ func TestArmFileReachesTheCaptureFlagThroughTheBroker(t *testing.T) {
 
 	pubStop, subStop := make(chan struct{}), make(chan struct{})
 	pub := config{role: "publisher", broker: url, node: "coordinator",
-		armFile: armFile, period: 50 * time.Millisecond}
+		armFile: armFile, dataDir: dir,
+		period: 50 * time.Millisecond, statusPeriod: 50 * time.Millisecond}
 	sub := config{role: "subscriber", broker: url, node: "campod-sw",
 		flagFile: flagFile, dataDir: dir,
 		period: 50 * time.Millisecond, statusPeriod: 50 * time.Millisecond}
@@ -102,12 +103,12 @@ func TestArmFileReachesTheCaptureFlagThroughTheBroker(t *testing.T) {
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 
 	go func() {
-		if err := runPublisher(pub, pubStop); err != nil {
+		if err := run(pub, pubStop); err != nil {
 			t.Logf("publisher: %v", err)
 		}
 	}()
 	go func() {
-		if err := runSubscriber(sub, subStop); err != nil {
+		if err := run(sub, subStop); err != nil {
 			t.Logf("subscriber: %v", err)
 		}
 	}()
@@ -148,8 +149,9 @@ func TestALateSubscriberGetsTheCurrentIntent(t *testing.T) {
 
 	pubStop := make(chan struct{})
 	go func() {
-		_ = runPublisher(config{role: "publisher", broker: url, node: "coordinator",
-			armFile: armFile, period: 50 * time.Millisecond}, pubStop)
+		_ = run(config{role: "publisher", broker: url, node: "coordinator",
+			armFile: armFile, dataDir: dir,
+			period: 50 * time.Millisecond, statusPeriod: 50 * time.Millisecond}, pubStop)
 	}()
 	t.Cleanup(func() { close(pubStop) })
 
@@ -158,7 +160,7 @@ func TestALateSubscriberGetsTheCurrentIntent(t *testing.T) {
 
 	subStop := make(chan struct{})
 	go func() {
-		_ = runSubscriber(config{role: "subscriber", broker: url, node: "campod-ne",
+		_ = run(config{role: "subscriber", broker: url, node: "campod-ne",
 			flagFile: flagFile, dataDir: dir,
 			period: 50 * time.Millisecond, statusPeriod: 50 * time.Millisecond}, subStop)
 	}()
@@ -181,7 +183,7 @@ func TestDesiredStateIsPerPodAndOtherPodsAreIgnored(t *testing.T) {
 		flagFile: filepath.Join(dir, "flag"), dataDir: dir,
 		period: 50 * time.Millisecond, statusPeriod: 50 * time.Millisecond}
 	go func() {
-		_ = runSubscriber(sub, stop)
+		_ = run(sub, stop)
 	}()
 	t.Cleanup(func() { close(stop) })
 
