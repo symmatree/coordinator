@@ -180,6 +180,19 @@ mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -m
 mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -m running
 ```
 
+**A retained desire outlives a `coord start`.** If `service/coordinator_mavlink` is
+retained as `stopped` and somebody runs `coord start`, compose brings the container up
+and pod-link stops it again within a status period. That is reconciliation working, but
+it presents as a container that will not stay up, so clear the desire when you are done
+with it:
+
+```bash
+mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -n
+```
+
+An empty retained payload is MQTT's way of deleting a retained message, and an empty
+value here means "no opinion" rather than any state.
+
 Per-service rather than whole-stack **because the broker is in that stack**: stopping
 everything would cut the path the instruction arrived on, and the whole point is to
 stop one job and leave the rest answering. Nothing prevents setting the coordinator's
