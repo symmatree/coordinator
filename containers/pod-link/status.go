@@ -50,9 +50,11 @@ type podStatus struct {
 	AsOfBootS float64 `json:"as_of_boot_s"`
 
 	// Observed.
-	Capture    bool   `json:"capture"`
-	Stack      string `json:"stack"`
-	StackInits int    `json:"stack_inits"`
+	Capture bool   `json:"capture"`
+	Stack   string `json:"stack"`
+	// Nil unless the container inits were actually counted, which happens only when
+	// there is a stack desire to reconcile against. Absent means nobody looked.
+	StackInits *int   `json:"stack_inits,omitempty"`
 	Radio      string `json:"radio"`
 	// Per-container state, for the containers somebody has expressed a desire about.
 	// Only those: listing every container would mean an inspect per container per

@@ -184,11 +184,11 @@ func TestNoDockerSocketIsReportedNotFatal(t *testing.T) {
 	if len(doc.Errors) == 0 {
 		t.Error("a missing docker socket was not reported")
 	}
-	if doc.Stack == unknown {
-		t.Error("the stack observation was lost with it")
-	}
 	if doc.DataFreeBytes <= 0 {
-		t.Error("free space was lost with it")
+		t.Error("free space was lost along with the service concern")
+	}
+	if doc.Camera != nil || doc.Accel != nil {
+		t.Error("pass-through sections appeared from nowhere")
 	}
 }
 

@@ -192,10 +192,11 @@ services:
       # directly and never touches the daemon. The coordinator, which can afford the
       # daemon, is where per-service control lives.
       POD_LINK_DOCKER_SOCKET: ""
-      # How often this pod reconciles and republishes. Slower than the intent poll
-      # on purpose: intent sets the arm-to-first-frame latency, nothing waits on a
-      # status refresh, and each pass is a /proc walk plus a few small reads on a
-      # board where what you invoke matters more than what you compute.
+      # How often this pod reconciles and republishes. Slower than the intent poll on
+      # purpose: intent sets the arm-to-first-frame latency, and nothing waits on a
+      # status refresh. A pass is two small tmpfs reads, a statfs and a publish -- no
+      # card reads, no forks. The /proc walk is NOT in a pass; it happens only when
+      # something has asked about the stack.
       POD_LINK_STATUS_PERIOD_S: "5"
 
   campod-accel:

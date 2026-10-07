@@ -107,6 +107,15 @@ whole current picture in one subscribe with nothing to assemble.
 }
 ```
 
+**`stack` is `unknown` unless something asked about it.** Counting container inits
+means walking /proc, and in the normal case it buys nothing: this document existing
+proves pod-link is up, because pod-link is in the stack. Whether the *other* containers
+are alive is better answered by the `camera` and `accel` sections, which carry an
+advancing `as_of` plus a frame and a sample count and cost two small tmpfs reads. So the
+walk happens only when there is a `desired/stack` to reconcile against, and `stack_inits`
+is absent the rest of the time -- absent because nobody looked, not because anything
+failed.
+
 **`desired` sits beside the observed fields on purpose.** That is what makes "did it
 take" a single read: no cross-referencing two topics, no inferring success from the
 absence of an error. If they disagree the pod is either mid-transition or `errors`
