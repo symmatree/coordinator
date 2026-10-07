@@ -87,7 +87,7 @@ and a retained one is refused.
 
 | topic | retained | payload | direction |
 |---|---|---|---|
-| `rekon/capture/intent` | yes | `{"capture":true,"reason":"armed"}` | coordinator -> all pods |
+| `rekon/capture/intent` | yes | JSON with a boolean `capture`, or a bare `true`/`false` | coordinator -> all pods |
 | `rekon/pod/<node>/desired/stack` | yes | `running` \| `stopped` | anyone -> one pod |
 | `rekon/pod/<node>/desired/radio` | yes | `open` \| `closed` | anyone -> one pod |
 | `rekon/pod/<node>/desired/status_period` | yes | seconds, e.g. `5` | anyone -> one device |
@@ -100,6 +100,19 @@ host's `/etc/hostname` rather than the container's, which is an ephemeral docker
 
 Desired-state payloads are **bare words, not JSON**. One enum value does not need a
 wrapper, and `mosquitto_sub -t 'rekon/#' -v` at a bench stays readable.
+
+**Capture intent is the exception and takes either form.** Our publisher emits
+`{"capture":true,"reason":"armed"}`; a hand publish of `true` works too, and so does any
+JSON carrying a boolean `capture` whatever its whitespace or key order. It is parsed, not
+pattern-matched -- it used to be matched as the substring `"capture":true`, so a payload
+written with the ordinary space after the colon read as **false**, closed the gate, and
+said nothing. Diagnosed on campod-se 2026-10-07 only by comparing it against a topic that
+worked.
+
+A payload that cannot be parsed means **paused**, and says so: in the log, and as
+`last_intent_error` in the status. The gate failing closed is deliberate
+([#439](https://github.com/symmatree/coordinator/pull/439)); the gate failing *silently*
+is what that bug cost.
 
 **Capture intent is fleet-wide; everything else is per device.** Capture intent is a
 property of the *vehicle* -- it armed, so every pod should be collecting -- while
@@ -162,6 +175,12 @@ failed.
 take" a single read: no cross-referencing two topics, no inferring success from the
 absence of an error. If they disagree the pod is either mid-transition or `errors`
 says why it cannot get there.
+
+**`last_intent` is the payload AS RECEIVED, verbatim**, with `last_intent_at_boot_s` and
+`last_intent_error`. Verbatim because the failure worth catching is a payload the pod read
+differently than its publisher meant, and a pod reporting only its own interpretation
+cannot show you that. It is also the answer to "did my publish arrive", off the bus,
+without reading a container log over ssh.
 
 **`state` is liveness.** `"gone"` is published by the broker as the pod's last will
 when its connection drops, because otherwise absence and silence look identical.
