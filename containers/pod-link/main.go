@@ -251,6 +251,33 @@ func publishStatus(cl mqtt.Client, topic, payload string) {
 	cl.Publish(topic, 0, true, payload)
 }
 
+// seenIntent remembers the last intent payload as RECEIVED, verbatim, and whether it
+// parsed. It goes in the status document so "did my publish arrive, and what did the
+// pod make of it" is answerable from the bus rather than by reading a container log
+// over ssh -- which is the diagnosis path that the substring bug made necessary.
+type seenIntent struct {
+	mu      sync.Mutex
+	payload string
+	atBootS float64
+	err     string
+}
+
+func (s *seenIntent) set(payload string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.payload, s.atBootS = payload, uptimeS()
+	s.err = ""
+	if err != nil {
+		s.err = err.Error()
+	}
+}
+
+func (s *seenIntent) snapshot() (payload string, atBootS float64, errText string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.payload, s.atBootS, s.err
+}
+
 // wanted is what this pod has been told to be, per concern.
 //
 // Guarded because paho delivers messages on its own goroutine while the reconcile
@@ -290,6 +317,7 @@ func (w *wanted) snapshot() map[string]string {
 func run(c config, stop <-chan struct{}) error {
 	status := topicFor(c.node)
 	want := newWanted()
+	seen := &seenIntent{}
 	h := &host{}
 	var docker *dockerClient
 	if c.dockerSocket != "" {
@@ -302,7 +330,6 @@ func run(c config, stop <-chan struct{}) error {
 	// the broker holds no retained state across a restart of its own.
 	var mu sync.Mutex
 	var lastIntent string
-	var applied string
 
 	cl := clientFor(c, func(cl mqtt.Client) {
 		fmt.Printf("pod-link: connected to %s as %s\n", c.broker, c.role)
@@ -312,19 +339,24 @@ func run(c config, stop <-chan struct{}) error {
 
 		if c.role == "subscriber" {
 			t := cl.Subscribe(topicIntent, 1, func(_ mqtt.Client, m mqtt.Message) {
-				capture := strings.Contains(string(m.Payload()), `"capture":true`)
-				// Recorded like every other desire so the status shows asked-for beside
-				// actual, and written here rather than on the tick: arm comes from the
-				// operator's controller and the first frame should not wait a status
-				// period on top of the publisher's poll.
+				body := string(m.Payload())
+				capture, err := parseIntent(body)
+				// EVERY intent message leaves a trace, not just one that changes
+				// something. The substring bug this replaced was invisible for exactly
+				// that reason: it parsed a hand-published payload as false, the applied
+				// value was already false, so nothing logged and the status reported
+				// `false` as though that were what had been asked for. "Did my publish
+				// arrive" has to be answerable from the device.
+				fmt.Printf("pod-link: intent %q -> capture=%t%s\n", body, capture,
+					map[bool]string{true: "", false: " (UNPARSEABLE, failing closed)"}[err == nil])
+				seen.set(body, err)
 				want.set("capture", fmt.Sprintf("%t", capture))
+				// Written here rather than on the tick: arm comes from the operator's
+				// controller and the first frame should not wait a status period on top
+				// of the publisher's poll.
 				if err := writeFlagFile(c.flagFile, capture); err != nil {
 					fmt.Fprintf(os.Stderr, "pod-link: cannot write %s: %v\n", c.flagFile, err)
 					return
-				}
-				if got := fmt.Sprintf("%t", capture); got != applied {
-					applied = got
-					fmt.Printf("pod-link: capture flag -> %t\n", capture)
 				}
 			})
 			if !t.WaitTimeout(10*time.Second) || t.Error() != nil {
@@ -403,6 +435,7 @@ func run(c config, stop <-chan struct{}) error {
 
 	publishStatusNow := func() {
 		doc := reconcile(c, h, docker, want)
+		doc.LastIntent, doc.LastIntentAtBootS, doc.LastIntentError = seen.snapshot()
 		if body, err := json.Marshal(doc); err == nil {
 			publishStatus(cl, status, string(body))
 		} else {
@@ -435,6 +468,44 @@ func run(c config, stop <-chan struct{}) error {
 			}
 		}
 	}
+}
+
+// parseIntent reads a capture intent payload.
+//
+// THIS REPLACED A SUBSTRING MATCH, `strings.Contains(payload, "capture":true)`, and the
+// way that failed is worth keeping written down. Our own publisher emits exactly
+// `{"capture":true,...}` with no spaces, so the flight path worked -- but a payload
+// published by hand as standard JSON, `{"capture": true, "reason": "bench"}`, has a
+// space after the colon and read as FALSE. Diagnosed on hardware (campod-se,
+// 2026-10-07) only because somebody compared it against a topic that did work.
+//
+// So: parse it. Lenient about FORM, strict about ABSENCE --
+//
+//   - valid JSON with a boolean `capture` is the contract the publisher emits;
+//   - a bare word (`true`, `1`, `on`, `yes`) is accepted too, because the bench case
+//     that found this bug was a person with mosquitto_pub, and the desired-state topics
+//     already use bare words;
+//   - anything else is FALSE and returns an error, so it fails closed AND says so. A
+//     gate whose failure mode is "capture everything forever" is the behaviour #439
+//     removed; one whose failure mode is silence is what cost an afternoon here.
+func parseIntent(payload string) (bool, error) {
+	trimmed := strings.TrimSpace(payload)
+	switch strings.ToLower(trimmed) {
+	case "1", "true", "on", "yes":
+		return true, nil
+	case "0", "false", "off", "no":
+		return false, nil
+	}
+	var doc struct {
+		Capture *bool `json:"capture"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &doc); err != nil {
+		return false, fmt.Errorf("intent %q is neither JSON nor a boolean word: %w", payload, err)
+	}
+	if doc.Capture == nil {
+		return false, fmt.Errorf("intent %q carries no \"capture\" key", payload)
+	}
+	return *doc.Capture, nil
 }
 
 // desiredPeriod reads the wanted status cadence, falling back to the configured one.
