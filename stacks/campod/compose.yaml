@@ -127,6 +127,13 @@ services:
       # behaviour before this change.
       CAMPOD_CAPTURE_FLAG: "/tmp/campod_capture"
       CAMPOD_WARMUP_FRAMES: "10"
+      # Where this process says what it is doing -- warm, ready, paused, how many
+      # frames, and whether libcamera can see a camera at all. pod-link reads it and
+      # publishes it; see docs/pod-bus.md. On tmpfs, so none of it touches the card.
+      #
+      # It is the only route by which "this pod is blind" leaves the vehicle without
+      # an ssh: a half-seated ribbon currently says so once, in a container log.
+      CAMPOD_STATUS_FILE: "/tmp/campod_camera_status"
     # Explicit even though it matches the image's CMD, because the accel service
     # below overrides it -- reading one without the other would be misleading.
     command: ["python3", "/opt/campod/capture.py"]
@@ -139,18 +146,58 @@ services:
     image: ghcr.io/symmatree/coordinator-pod-link:main
     container_name: campod_pod_link
     network_mode: host
+    # The container inits of the OTHER containers have to be visible for `desired/
+    # stack: stopped` to mean anything. Without this, pod-link is in its own PID
+    # namespace and /proc shows only itself -- the sibling inits are not merely
+    # unreachable, they are invisible, so the stack would read `stopped` while it was
+    # running and the signal would go nowhere.
+    #
+    # Not `privileged`. Root in the host PID namespace is enough to signal the
+    # root-owned inits, and the D-Bus socket below is enough for the radio and the
+    # reboot. The isolation that matters here is fault isolation -- a broken handler
+    # must not take capture down with it -- not privilege separation; the radio is
+    # off in flight and the only network is the gadget link.
+    pid: host
     volumes:
       # /tmp is tmpfs here, so the flag never touches the card -- it changes on
-      # command and the write side should not be on the medium that fills.
+      # command and the write side should not be on the medium that fills. The two
+      # capture processes write their status documents here for the same reason.
       - /tmp:/tmp
       - /etc/hostname:/etc/host-hostname:ro
       - /etc/fleet-image:/etc/fleet-image:ro
+      # The system bus, for the radio (NetworkManager's WirelessEnabled, the same
+      # property `coord radio` sets) and for an ordered reboot through systemd. The
+      # SOCKET, not the directory: narrower, and it sidesteps whether connect()
+      # works through a read-only mount. Absent, those two verbs fail and say so in
+      # the pod's status while capture intent keeps working.
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      # Read-only, and only so statfs can report free space. A card that fills does
+      # not present as a disk error -- it presents as a pod that cannot capture and
+      # stops answering -- and it fills in about 4.2 hours with nothing capping it.
+      - /var/lib/campod/captures:/captures:ro
     environment:
       POD_LINK_ROLE: subscriber
       # The coordinator's gadget-net address, which is the only way to it in
       # flight. Static, and the same value host/ansible/vars/gadget-net.yml pins.
       POD_LINK_BROKER: tcp://10.55.0.1:1883
       POD_LINK_FLAG_FILE: /tmp/campod_capture
+      # The two documents passed through into this pod's status, verbatim.
+      POD_LINK_CAMERA_STATUS_FILE: /tmp/campod_camera_status
+      POD_LINK_ACCEL_STATUS_FILE: /tmp/campod_accel_status
+      POD_LINK_DATA_DIR: /captures
+      # No Docker socket here, deliberately. Per-service control would have to go
+      # through dockerd, and dockerd is the layer that degrades on this board --
+      # 2.1-22.0 s per call with capture running against 136-223 ms without. The
+      # cheap path on a Zero is `desired/stack`, which signals the container inits
+      # directly and never touches the daemon. The coordinator, which can afford the
+      # daemon, is where per-service control lives.
+      POD_LINK_DOCKER_SOCKET: ""
+      # How often this pod reconciles and republishes. Slower than the intent poll on
+      # purpose: intent sets the arm-to-first-frame latency, and nothing waits on a
+      # status refresh. A pass is two small tmpfs reads, a statfs and a publish -- no
+      # card reads, no forks. The /proc walk is NOT in a pass; it happens only when
+      # something has asked about the stack.
+      POD_LINK_STATUS_PERIOD_S: "5"
 
   campod-accel:
     image: ghcr.io/symmatree/coordinator-campod-camera:main
@@ -177,6 +224,11 @@ services:
     privileged: true
     volumes:
       - /var/lib/campod/captures:/captures
+      # The host's /tmp, which this service did NOT have before: its status document
+      # goes here for pod-link to read, and without the mount it would write into
+      # its own private /tmp where nothing can see it -- which looks exactly like a
+      # reader that is not running.
+      - /tmp:/tmp
       # Same reason as the camera service: a container's hostname is its
       # container ID, so the host's name has to be mounted in for the data to
       # know which pod it came from (#272).
@@ -195,4 +247,8 @@ services:
       # 0.41 px of image shift. Empty until it is measured on the airframe.
       CAMPOD_ACCEL_SEPARATION_M: ""
       CAMPOD_ACCEL_SYNC_KIB: "0"
+      # Per-sensor presence, self-test verdict and counters, for pod-link to publish.
+      # A chip select that answered nothing appears here as absent WITH the DEVID it
+      # read, which is the pre-flight question these parts actually fail.
+      CAMPOD_ACCEL_STATUS_FILE: "/tmp/campod_accel_status"
     command: ["/opt/campod/campod-accel"]

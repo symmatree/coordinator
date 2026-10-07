@@ -58,15 +58,29 @@ func readerID() string {
 }
 
 type config struct {
-	dir       string
-	node      string
-	session   string
-	odrHz     int
-	rangeG    int
-	spiHz     uint32
-	poolDepth int
-	syncKiB   int
-	sepM      string
+	dir string
+	// Where per-sensor presence and liveness is published for pod-link to read.
+	// Empty disables it, which is what a bench run outside the stack wants: there
+	// is no reader there, and /tmp is not the shared tmpfs.
+	statusFile string
+	node       string
+	session    string
+	odrHz      int
+	rangeG     int
+	spiHz      uint32
+	poolDepth  int
+	syncKiB    int
+	sepM       string
+}
+
+// envStr returns the default for an UNSET variable but honours an explicitly
+// empty one, because empty is a meaningful value here: it switches the status
+// file off. os.LookupEnv is the only way to tell those apart.
+func envStr(k, def string) string {
+	if v, ok := os.LookupEnv(k); ok {
+		return v
+	}
+	return def
 }
 
 func envInt(k string, def int) int {
@@ -106,15 +120,16 @@ func nodeName() string {
 
 func loadConfig() config {
 	c := config{
-		dir:       os.Getenv("CAMPOD_ACCEL_DIR"),
-		node:      os.Getenv("CAMPOD_NODE_NAME"),
-		session:   bootID(),
-		sepM:      os.Getenv("CAMPOD_ACCEL_SEPARATION_M"),
-		odrHz:     envInt("CAMPOD_ACCEL_ODR_HZ", 3200),
-		rangeG:    envInt("CAMPOD_ACCEL_RANGE_G", 16),
-		spiHz:     uint32(envInt("CAMPOD_ACCEL_SPI_HZ", defaultSPIHz)),
-		poolDepth: envInt("CAMPOD_ACCEL_POOL", 256),
-		syncKiB:   envInt("CAMPOD_ACCEL_SYNC_KIB", syncEveryBytes/1024),
+		dir:        os.Getenv("CAMPOD_ACCEL_DIR"),
+		statusFile: envStr("CAMPOD_ACCEL_STATUS_FILE", "/tmp/campod_accel_status"),
+		node:       os.Getenv("CAMPOD_NODE_NAME"),
+		session:    bootID(),
+		sepM:       os.Getenv("CAMPOD_ACCEL_SEPARATION_M"),
+		odrHz:      envInt("CAMPOD_ACCEL_ODR_HZ", 3200),
+		rangeG:     envInt("CAMPOD_ACCEL_RANGE_G", 16),
+		spiHz:      uint32(envInt("CAMPOD_ACCEL_SPI_HZ", defaultSPIHz)),
+		poolDepth:  envInt("CAMPOD_ACCEL_POOL", 256),
+		syncKiB:    envInt("CAMPOD_ACCEL_SYNC_KIB", syncEveryBytes/1024),
 	}
 	if c.dir == "" {
 		c.dir = "/captures"
@@ -214,6 +229,10 @@ func wallNS() int64 { return clockGettime(clockRealtime) }
 
 type stats struct {
 	batches, samples, overruns, drops, readErrs atomic.Int64
+	// CLOCK_BOOTTIME of the most recent drain. Atomic because the capture
+	// goroutine writes it and the status goroutine reads it; it is what separates
+	// "present but producing nothing" from "present and capturing".
+	lastSampleNS atomic.Int64
 }
 
 func main() {
@@ -246,16 +265,23 @@ func run() error {
 	var lives []*live
 	var writers []*writer
 	var wg sync.WaitGroup
+	// What did NOT come up, and why. Carried rather than only printed, so the
+	// status file can report a chip select that answered nothing instead of
+	// silently describing a two-sensor pod as a one-sensor pod.
+	var absent []*deviceStatus
+	selfTests := map[string]string{}
 
 	for _, d := range devices {
 		bus, err := openSPI(d.path, 3, c.spiHz) // mode 3
 		if err != nil {
 			fmt.Printf("accel: %s (%s): %v; skipping\n", d.label, d.path, err)
+			absent = append(absent, absentDevice(d.label, err))
 			continue
 		}
 		s := newSensor(d.label, d.path, bus, c.odrHz, c.rangeG)
 		if err := s.probe(); err != nil {
 			fmt.Printf("accel: %v; skipping\n", err)
+			absent = append(absent, absentDevice(d.label, err))
 			bus.Close()
 			continue
 		}
@@ -266,6 +292,7 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("%s: self-test: %w", d.label, err)
 		}
+		selfTests[d.label] = map[bool]string{true: "pass", false: "fail"}[stRes.AllPass]
 		fmt.Printf("accel: %s: DEVID ok, self-test %s (x=%+.2fg y=%+.2fg z=%+.2fg)\n",
 			d.label, map[bool]string{true: "PASS", false: "FAIL"}[stRes.AllPass],
 			stRes.DeltaG["x"], stRes.DeltaG["y"], stRes.DeltaG["z"])
@@ -362,14 +389,35 @@ func run() error {
 		}(p, w, st)
 	}
 
+	sw := &statusWriter{
+		path: c.statusFile, session: c.session, reader: readerID(),
+		lives: lives, selfTests: selfTests, absent: absent,
+	}
+	statusDone := make(chan struct{})
+
 	if len(lives) == 0 {
+		// Write it ONCE before giving up. Both chip selects answering nothing is
+		// precisely the state worth getting off the vehicle, and exiting silently
+		// leaves the pod's only account of it in a container log nobody can reach
+		// from the bus. The document says which ends were tried and what came back;
+		// its as_of then stops advancing, which is what a dead reader looks like.
+		if c.statusFile != "" {
+			if err := sw.write(bootNS()); err != nil {
+				fmt.Fprintf(os.Stderr, "accel: cannot write status to %s: %v\n", c.statusFile, err)
+			}
+		}
 		return fmt.Errorf("no ADXL345 answered on either chip select; " +
 			"check dtparam=spi=on and the wiring")
+	}
+
+	if c.statusFile != "" {
+		go sw.loop(statusDone)
 	}
 	fmt.Printf("accel: logging %d device(s) odr=%d range=+/-%dg spi=%d pool=%d\n",
 		len(lives), c.odrHz, c.rangeG, c.spiHz, c.poolDepth)
 
 	capture(lives, c, stop)
+	close(statusDone)
 
 	for _, lv := range lives {
 		close(lv.pool.filled)
@@ -380,9 +428,13 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "accel: close: %v\n", err)
 		}
 	}
-	for i, lv := range lives {
+	for _, lv := range lives {
+		// lv.s.label, not devices[i].label: a chip select that did not come up is
+		// absent from `lives`, so the indices stop corresponding and a one-sensor
+		// session reported the surviving device's counters under the missing
+		// device's name. The sensor has carried its own label all along.
 		fmt.Printf("accel: %s: %d samples in %d batches, %d overruns, %d dropped batches, %d read errors\n",
-			devices[i].label, lv.st.samples.Load(), lv.st.batches.Load(),
+			lv.s.label, lv.st.samples.Load(), lv.st.batches.Load(),
 			lv.st.overruns.Load(), lv.pool.drops.Load(), lv.st.readErrs.Load())
 		lv.s.bus.Close()
 	}
@@ -459,6 +511,7 @@ func capture(lives []*live, c config, stop <-chan os.Signal) {
 				continue
 			}
 			b.DrainNS = bootNS() - t0
+			lv.st.lastSampleNS.Store(t0)
 			lv.pool.put(b)
 		}
 

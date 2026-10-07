@@ -58,6 +58,7 @@ the app images, never an implicit move.
 | `sh1106-display` | arm64 | -- | `debian@digest` | small; no heavy shared content |
 | `coordinator-mavlink` | arm64 | -- | `debian@digest` | small; no heavy shared content |
 | `campod-camera` | arm64 | -- | `debian@digest` (via `BASE_IMAGE`) | small; adds the Raspberry Pi apt suite for matched `libcamera`/`picamera2` |
+| `pod-link` | arm64 | `golang@digest` (cross-compiles on the builder) | `debian@digest` (via `BASE_IMAGE`) | small; a static binary plus `dumb-init`. Its deps are pinned by `go.sum`, and `go vet`/`go test` run in the build stage -- including an end-to-end test against an in-process `mochi-mqtt`, so a wire-level regression fails the build rather than a flight |
 
 The rule of thumb: **factor a base only for content that is both heavy and shared/expensive to
 rebuild** (the C++ depthai build; the OpenCV runtime). Small images, or ones on a self-contained

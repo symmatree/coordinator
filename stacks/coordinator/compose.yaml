@@ -179,16 +179,39 @@ services:
     network_mode: host
     depends_on:
       - mochi-mqtt
+    # Same as the campod's, and for the same two reasons: the container inits have to
+    # be visible for stack control, and the Docker socket below is how ONE service is
+    # stopped. That is the granularity this box needs -- `coord fc-log` requires
+    # coordinator-mavlink to let go of /dev/ttyAMA0, and stopping the whole stack here
+    # would take the broker down with the instruction that asked for it.
+    pid: host
     volumes:
       # The arm file lives in the shared ipc dir the router mounts as /tmp.
       - /var/lib/coordinator/ipc:/ipc:ro
       - /etc/hostname:/etc/host-hostname:ro
       - /etc/fleet-image:/etc/fleet-image:ro
+      # Per-service start and stop, by the container_name pinned in this file.
+      # Four HTTP calls over the socket, not the docker CLI -- the CLI is the thing
+      # that costs page faults, and this box can afford the daemon either way.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # For an ordered reboot after a converge, and to report the radio state. The
+      # coordinator's radio cannot go closed yet (no wired uplink fitted), so this is
+      # the reboot half in practice.
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      # Free space where captures land, read-only, for the status document.
+      - /var/lib/coordinator/captures:/captures:ro
     environment:
       POD_LINK_ROLE: publisher
       POD_LINK_BROKER: tcp://127.0.0.1:1883
       POD_LINK_ARM_FILE: /ipc/fc_armed
       POD_LINK_PERIOD_S: "2"
+      POD_LINK_DATA_DIR: /captures
+      # This box has no capture processes of its own writing status documents; the
+      # tracker and the router write into the session instead. Empty, so the status
+      # document carries no camera or accel section rather than an error about two
+      # files that were never meant to exist here.
+      POD_LINK_CAMERA_STATUS_FILE: ""
+      POD_LINK_ACCEL_STATUS_FILE: ""
 
   sh1106-display:
     image: ghcr.io/symmatree/coordinator-sh1106-display:main
