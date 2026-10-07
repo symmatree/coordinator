@@ -180,19 +180,6 @@ mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -m
 mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -m running
 ```
 
-**A retained desire outlives a `coord start`.** If `service/coordinator_mavlink` is
-retained as `stopped` and somebody runs `coord start`, compose brings the container up
-and pod-link stops it again within a status period. That is reconciliation working, but
-it presents as a container that will not stay up, so clear the desire when you are done
-with it:
-
-```bash
-mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -n
-```
-
-An empty retained payload is MQTT's way of deleting a retained message, and an empty
-value here means "no opinion" rather than any state.
-
 Per-service rather than whole-stack **because the broker is in that stack**: stopping
 everything would cut the path the instruction arrived on, and the whole point is to
 stop one job and leave the rest answering. Nothing prevents setting the coordinator's
@@ -233,9 +220,18 @@ evidenced than the ssh one.
 - **No authentication.** `allow_all`, matching the cluster's config. The radio is off in
   flight and the only route to the broker is the gadget segment, so the network layer
   already answers the question an auth hook would ask.
-- **No persistence on the broker.** Retained state is held in memory. On the coordinator
-  a storage hook would mean card writes on a box whose power is pulled without warning;
-  nothing is lost, because the publisher re-establishes intent on every connect.
+- **No persistence on the broker, and that is the right amount of durability.** There is
+  no storage hook, so retained state lives in the broker's memory on the coordinator: it
+  survives a *pod* reconnect or reboot, and dies with the coordinator's power. Adding a
+  hook would mean card writes on a box whose power is pulled without warning.
+
+  Nothing is lost, because **nothing on this bus is a source of truth.** Every desire is
+  either re-derived or already held by whatever owns the real state: capture intent comes
+  back from the router's arm file on the publisher's next connect, the radio state is
+  persisted by NetworkManager itself, and a stopped container or stack stays stopped
+  because the only thing that starts either is a boot. So losing the retained set reverts
+  nothing -- it just means nobody is currently asserting anything, which is the correct
+  state for a box that was just power-cycled.
 
 ## Driving it by hand
 
