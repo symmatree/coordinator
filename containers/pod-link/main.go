@@ -39,6 +39,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -145,7 +147,11 @@ func loadConfig() (config, error) {
 		return c, fmt.Errorf("POD_LINK_PERIOD_S=%q is not a positive integer", os.Getenv("POD_LINK_PERIOD_S"))
 	}
 	c.period = time.Duration(secs) * time.Second
-	statusSecs, err := strconv.Atoi(env("POD_LINK_STATUS_PERIOD_S", "5"))
+	// SLOW BY DEFAULT. In flight nothing reads this, and every wake-up is a chance to
+	// fault pages back in on a box where the camera's residency is the thing being
+	// protected. A bench operator who is actually watching raises it through
+	// `desired/status_period`; see docs/pod-bus.md.
+	statusSecs, err := strconv.Atoi(env("POD_LINK_STATUS_PERIOD_S", "60"))
 	if err != nil || statusSecs < 1 {
 		return c, fmt.Errorf("POD_LINK_STATUS_PERIOD_S=%q is not a positive integer",
 			os.Getenv("POD_LINK_STATUS_PERIOD_S"))
@@ -367,7 +373,12 @@ func run(c config, stop <-chan struct{}) error {
 	// nothing waits on a status refresh.
 	armTick := time.NewTicker(c.period)
 	defer armTick.Stop()
-	statusTick := time.NewTicker(c.statusPeriod)
+	// The status cadence is itself a desired state, so a bench operator who is
+	// watching can have it fast and a flying vehicle does not pay for a reading
+	// nobody reads. Retained, like every other desire: a rate is a state, not a
+	// command. Default 60 s; `desired/status_period` in seconds overrides it.
+	statusPeriod := c.statusPeriod
+	statusTick := time.NewTicker(statusPeriod)
 	defer statusTick.Stop()
 
 	publishIntent := func() {
@@ -415,8 +426,33 @@ func run(c config, stop <-chan struct{}) error {
 			publishIntent()
 		case <-statusTick.C:
 			publishStatusNow()
+			// Retime if somebody asked for a different cadence. Done here rather than
+			// in the handler so the ticker is only ever touched by this goroutine.
+			if want := desiredPeriod(want, c.statusPeriod); want != statusPeriod {
+				fmt.Printf("pod-link: status period %s -> %s\n", statusPeriod, want)
+				statusPeriod = want
+				statusTick.Reset(statusPeriod)
+			}
 		}
 	}
+}
+
+// desiredPeriod reads the wanted status cadence, falling back to the configured one.
+//
+// A value that does not parse, or is below a second, falls back rather than failing --
+// and the status document carries the desire verbatim, so a consumer can see that what
+// was asked for is not what is running. Floored at 1 s because a ticker cannot take
+// less and because the point of this knob is to ask for LESS work, not more.
+func desiredPeriod(want *wanted, fallback time.Duration) time.Duration {
+	raw := want.snapshot()["status_period"]
+	if raw == "" {
+		return fallback
+	}
+	secs, err := strconv.Atoi(raw)
+	if err != nil || secs < 1 {
+		return fallback
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // reconcile does one pass: observe, act where observation and desire disagree,
@@ -575,6 +611,8 @@ func reconcile(c config, h *host, docker *dockerClient, want *wanted) *podStatus
 		doc.Accel = acc
 	}
 
+	doc.SelfRSSBytes, doc.SelfMajorFaults = selfCost()
+
 	if free, err := freeBytes(c.dataDir); err != nil {
 		fail("%v", err)
 	} else {
@@ -601,7 +639,26 @@ func signalStop() <-chan struct{} {
 	return stop
 }
 
+// The Go runtime, held down.
+//
+// GOMAXPROCS(1) because this process has nothing to parallelise -- it waits, and
+// occasionally writes a small file -- and every additional P costs the runtime a
+// scheduler structure and a thread stack on a board with 417 MiB and no swap.
+//
+// A soft memory limit as a backstop rather than a tuning knob: it makes the runtime
+// return pages eagerly instead of sitting on a heap it grew once. The steady heap here
+// is a few KB a tick, so this should never bind -- it exists so that if something ever
+// does allocate, it is bounded rather than competing with the camera's buffers.
+//
+// Neither of these is the main lever. The main lever is how often this process is
+// woken at all, which is why the status period defaults slow and is a desired state.
+func limitRuntime() {
+	runtime.GOMAXPROCS(1)
+	debug.SetMemoryLimit(32 << 20)
+}
+
 func main() {
+	limitRuntime()
 	c, err := loadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pod-link: %v\n", err)

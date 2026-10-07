@@ -35,6 +35,47 @@ So the bus earns its place on the bench, where the operations are: stop a job so
 something else can have the serial port, bring it back, open a radio, get a device
 back to paused-but-ready after a converge.
 
+## What it costs, measured
+
+There is no evidence that anything fits in a campod's margin, and that includes this. So
+the process reports its own cost and the numbers below are measurements, not assurances.
+
+**pod-link alone, x86-64, connected and reconciling at a 2 s period:**
+
+| | |
+|---|---|
+| RSS | **6620 kB (6.5 MiB)**, `VmHWM` identical -- no peak above steady state |
+| major faults | **0** |
+| threads | 6 |
+| stripped arm64 binary | 6.0 MB |
+
+Against the board's 417 MiB `MemTotal`, and against the camera's 99.6 MiB of CMA buffers
+and the 71 MiB the docker CLI faults in. **Unconfirmed on arm64 on a real Zero** -- the
+status document publishes `self_rss_bytes` and `self_major_faults`, so the first converge
+answers it from the device rather than from this table.
+
+`self_major_faults` is the load-bearing one. It counts pages this process had to read
+back off the card. A count that is non-zero and growing is pod-link being paged out
+between wake-ups and faulting back in -- which is the mechanism by which *delivering*
+"start capturing" could cost the camera its residency, rather than this process merely
+sitting there. Zero and staying zero is the evidence that is not happening.
+
+What is done to keep it there, in rough order of how much it matters:
+
+1. **Few wake-ups.** The status period defaults to **60 s** and is itself a desired state
+   (`desired/status_period`, in seconds) -- fast while somebody is watching at a bench,
+   slow or unasked-for in flight. The MQTT keepalive is 60 s rather than 10 s for the same
+   reason: a keepalive is a wake-up that says nothing.
+2. **Nothing walks `/proc` periodically.** The container-init count is taken only when a
+   `desired/stack` exists.
+3. `GOMAXPROCS(1)` and a 32 MiB soft memory limit, so the Go runtime holds no more
+   scheduler structures, thread stacks or heap than this work needs.
+4. **No docker on a campod.** `POD_LINK_DOCKER_SOCKET` is empty there; per-service control
+   lives on the coordinator, which can afford the daemon.
+
+A periodic pass is therefore: two small tmpfs reads, a `statfs`, a `json.Marshal` and a
+QoS 0 publish. No card reads, no forks, no `/proc` walk.
+
 ## Everything is a desired state, except reboot
 
 Controls are desired states, reconciled every pass, with one exception. Reboot is not
@@ -49,6 +90,7 @@ and a retained one is refused.
 | `rekon/capture/intent` | yes | `{"capture":true,"reason":"armed"}` | coordinator -> all pods |
 | `rekon/pod/<node>/desired/stack` | yes | `running` \| `stopped` | anyone -> one pod |
 | `rekon/pod/<node>/desired/radio` | yes | `open` \| `closed` | anyone -> one pod |
+| `rekon/pod/<node>/desired/status_period` | yes | seconds, e.g. `5` | anyone -> one device |
 | `rekon/pod/<node>/desired/service/<container>` | yes | `running` \| `stopped` | anyone -> one device |
 | `rekon/pod/<node>/reboot` | **no** | free text (a reason, logged) | anyone -> one pod |
 | `rekon/pod/<node>/status` | yes | the document below | pod -> anyone |

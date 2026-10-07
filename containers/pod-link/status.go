@@ -67,6 +67,22 @@ type podStatus struct {
 
 	DataFreeBytes int64 `json:"data_free_bytes,omitempty"`
 
+	// WHAT THIS PROCESS ITSELF COSTS, reported by the process in question.
+	//
+	// There is no evidence anything fits in this board's margin, and that includes
+	// this. Asserting it is cheap would be the same mistake as asserting the docker
+	// CLI was: resident set and major faults are the two numbers that decide it, and
+	// both are two fields of /proc/self/stat(m) away. So they are published rather
+	// than argued about, and a run can subtract them from the margin it measured.
+	//
+	// MajorFaults is the load-bearing one. It counts pages this process had to read
+	// back from the card -- so a non-zero and growing count is this process being
+	// paged out between wake-ups and faulting back in, which is exactly the mechanism
+	// that would make delivering "start capturing" cost the camera its residency.
+	// Zero and staying zero is the evidence that is not happening.
+	SelfRSSBytes    int64 `json:"self_rss_bytes,omitempty"`
+	SelfMajorFaults int64 `json:"self_major_faults,omitempty"`
+
 	// The capture processes' own documents, passed through untouched.
 	Camera json.RawMessage `json:"camera,omitempty"`
 	Accel  json.RawMessage `json:"accel,omitempty"`
@@ -110,6 +126,34 @@ func freeBytes(path string) (int64, error) {
 		return 0, fmt.Errorf("statfs %s: %w", path, err)
 	}
 	return int64(st.Bavail) * int64(st.Bsize), nil
+}
+
+// selfCost is this process's resident set and cumulative major-fault count.
+//
+// /proc/self/statm field 2 is resident pages; /proc/self/stat field 12 is majflt.
+// Two small reads of in-memory files, no allocation beyond the slices, and it answers
+// the only question that matters about whether this process belongs on the board.
+func selfCost() (rssBytes, majorFaults int64) {
+	if body, err := os.ReadFile(filepath.Join(procRoot, "self", "statm")); err == nil {
+		if f := strings.Fields(string(body)); len(f) > 1 {
+			if pages, err := strconv.ParseInt(f[1], 10, 64); err == nil {
+				rssBytes = pages * int64(os.Getpagesize())
+			}
+		}
+	}
+	// Field 12 of /proc/self/stat, 1-indexed, is majflt. comm (field 2) can contain
+	// spaces inside parentheses, so count fields after the closing paren rather than
+	// splitting the whole line.
+	if body, err := os.ReadFile(filepath.Join(procRoot, "self", "stat")); err == nil {
+		if i := strings.LastIndexByte(string(body), ')'); i >= 0 {
+			f := strings.Fields(string(body)[i+1:])
+			// After the paren the next field is state (3), so majflt (12) is index 9.
+			if len(f) > 9 {
+				majorFaults, _ = strconv.ParseInt(f[9], 10, 64)
+			}
+		}
+	}
+	return rssBytes, majorFaults
 }
 
 // passThrough reads one of the capture processes' status documents.
