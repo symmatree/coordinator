@@ -21,6 +21,8 @@ Config via environment (all optional):
   CAMPOD_WARMUP_FRAMES   frames to capture at startup before going ready (default: 10)
   CAMPOD_CAPTURE_FLAG    path whose contents gate capture; empty disables gating
                       and captures continuously (default: /tmp/campod_capture)
+  CAMPOD_STATUS_FILE     path this writes its own state to, for pod-link to publish;
+                      empty disables (default: /tmp/campod_camera_status)
 """
 
 import datetime as dt
@@ -182,10 +184,15 @@ CAMERA_PROBE_INTERVAL_S = 30.0
 CAMERA_WAIT_HEARTBEAT_PROBES = 10
 
 
-def _wait_for_camera():
+def _wait_for_camera(heartbeat=None):
     """Return libcamera's camera list, blocking until one appears.
 
     Returns None if a stop signal arrives while waiting.
+
+    heartbeat is called once per probe. A pod with a half-seated ribbon is the
+    field fault these have, and it has to keep re-stamping its status while it
+    waits: a document that stops advancing reads as a dead process, which is a
+    different fault needing a different response.
 
     Probing BEFORE constructing Picamera2() is load-bearing: Picamera2() on a node
     with no camera raises picamera2's own `IndexError: list index out of range`
@@ -221,6 +228,8 @@ def _wait_for_camera():
         if _stop:
             break
 
+        if heartbeat is not None:
+            heartbeat()
         cameras = Picamera2.global_camera_info()
         probes += 1
         if cameras:
@@ -270,6 +279,36 @@ def _capture_wanted(flag_path):
         return flag_path.read_text().strip() in ("1", "true", "on", "yes")
     except OSError:
         return False
+
+
+def _write_status(path, payload):
+    """Publish our own state where pod-link can read it. Best-effort, always.
+
+    The mirror of _capture_wanted: that reads a file somebody else writes, this
+    writes one somebody else reads. Same medium (tmpfs, so no card writes), same
+    atomic temp-and-rename so a single read cannot land on a half-written
+    document, and no new dependency in this process -- one resident MQTT client
+    per pod is the footprint budget and it is pod-link's.
+
+    NO WALL CLOCK IN HERE. The pod has no RTC, so a wall stamp written before time
+    service arrives is wrong by the size of the step that has not happened yet,
+    and nothing in the document would say which side of it produced the number.
+    monotonic is time since boot and is true at every moment of a session; the
+    accel reader's status and the sidecars agree with it.
+
+    Wrapped broadly and deliberately: every failure mode here -- a full tmpfs, a
+    path that is not there, a permissions surprise -- is a reason to carry on
+    capturing without status, never a reason to stop capturing. The frames are
+    the deliverable.
+    """
+    if path is None:
+        return
+    try:
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(payload))
+        tmp.replace(path)
+    except OSError:
+        pass
 
 
 # Baked into the image at build time; a module var so the test can redirect it.
@@ -355,6 +394,8 @@ def main():
     warmup_frames = _env_int("CAMPOD_WARMUP_FRAMES", 10)
     flag_raw = os.getenv("CAMPOD_CAPTURE_FLAG", "/tmp/campod_capture")
     flag_path = Path(flag_raw) if flag_raw.strip() else None
+    status_raw = os.getenv("CAMPOD_STATUS_FILE", "/tmp/campod_camera_status")
+    status_path = Path(status_raw) if status_raw.strip() else None
 
     interval = 1.0 / hz if hz > 0 else 1.0
 
@@ -368,9 +409,33 @@ def main():
     session_dir.mkdir(parents=True, exist_ok=True)
     _copy_manifests(session_dir)
 
-    cameras = _wait_for_camera()
+    # One mutable document, stamped and written by publish(). Everything a
+    # consumer needs to tell the three states apart that look alike from outside:
+    # blind (no camera), warm but holding (ready, not capturing), and capturing.
+    state = {
+        "node": node,
+        "session": session,
+        "camera": "waiting",
+        "phase": "startup",
+        "ready": False,
+        "ready_at_mono_s": None,
+        "capturing": False,
+        "frames": 0,
+        "last_frame_mono_s": None,
+    }
+
+    def publish():
+        state["as_of_mono_s"] = round(time.monotonic(), 3)
+        _write_status(status_path, state)
+
+    publish()
+    cameras = _wait_for_camera(heartbeat=publish)
     if cameras is None:  # SIGTERM while waiting
+        state["camera"] = "stopped-while-waiting"
+        publish()
         return 0
+    state["camera"] = "present"
+    publish()
     print(
         "capture: libcamera sees "
         + ", ".join(
@@ -413,32 +478,47 @@ def main():
     phase = "warmup" if warmup_frames > 0 else "capture"
     capturing = True
     ready_logged = False
+    state["phase"] = phase
+    publish()
     try:
         while not _stop:
             now = time.monotonic()
 
             if phase == "warmup" and seq >= warmup_frames:
                 phase = "capture"
+                state["phase"] = phase
 
             if phase == "capture":
                 wanted = _capture_wanted(flag_path)
                 if not ready_logged:
                     # The device records its own time-to-ready. Reading it afterwards
                     # costs nothing; watching for it costs the thing being measured.
+                    ready_at = time.monotonic()
                     print(f"capture: READY after {seq} warmup frames at "
-                          f"{time.monotonic():.1f}s since start, "
+                          f"{ready_at:.1f}s since start, "
                           f"{'capturing' if wanted else 'paused'}", flush=True)
                     ready_logged = True
                     capturing = wanted
+                    # Ready is the readiness signal #434 asks for, and this process
+                    # holds the ground truth for it: the camera is started and its
+                    # buffers are allocated. RSS and refault rates are proxies for
+                    # this line, useful for validating it once, not for watching.
+                    state["ready"] = True
+                    state["ready_at_mono_s"] = round(ready_at, 3)
+                    state["capturing"] = capturing
+                    publish()
                 elif wanted != capturing:
                     capturing = wanted
                     print(f"capture: {'resumed' if capturing else 'paused'} at "
                           f"{time.monotonic():.1f}s ({seq} frames written)", flush=True)
+                    state["capturing"] = capturing
+                    publish()
                 if not capturing:
                     # Camera stays started; we simply do not retrieve. No file I/O,
                     # no encode, buffers held.
                     time.sleep(min(interval, 0.5))
                     next_tick = time.monotonic()
+                    publish()
                     continue
 
             if now < next_tick:
@@ -451,6 +531,7 @@ def main():
             jpeg_path = session_dir / f"{stem}.jpg"
 
             metadata = picam2.capture_file(str(jpeg_path), format="jpeg")
+            sidecar_mono = time.monotonic_ns()
 
             sidecar = {
                 "node": node,
@@ -458,7 +539,7 @@ def main():
                 "file": jpeg_path.name,
                 "wall_clock_utc": wall.isoformat().replace("+00:00", "Z"),
                 "wall_clock_unix": wall.timestamp(),
-                "monotonic_ns": time.monotonic_ns(),
+                "monotonic_ns": sidecar_mono,
                 # SensorTimestamp is CLOCK_BOOTTIME ns at exposure -- the field
                 # that anchors PPK-style interpolation against ArduPilot pose.
                 "sensor_timestamp_ns": metadata.get("SensorTimestamp"),
@@ -479,10 +560,21 @@ def main():
             }
             (session_dir / f"{stem}.json").write_text(json.dumps(sidecar))
             seq += 1
+            # Count plus the time of the last one. A count alone cannot distinguish
+            # "capturing" from "stopped at 412", and a consumer must not have to
+            # poll this pod to find out -- polling a capturing campod is the one
+            # thing that reliably breaks it.
+            state["frames"] = seq
+            state["last_frame_mono_s"] = round(sidecar_mono / 1e9, 3)
+            publish()
             if seq % 30 == 0:
                 print(f"capture: {seq} frames -> {session_dir}", flush=True)
     finally:
         picam2.stop()
+        state["phase"] = "stopped"
+        state["ready"] = False
+        state["capturing"] = False
+        publish()
         print(f"capture: stopped after {seq} frames", flush=True)
 
 

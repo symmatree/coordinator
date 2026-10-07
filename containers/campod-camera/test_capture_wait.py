@@ -9,6 +9,8 @@ that only an absent camera produces can be exercised on a build machine --
   * a camera appearing later is picked up without a process restart
   * SIGTERM during the wait returns promptly instead of hanging for a full
     probe interval (docker stop's grace period is 10 s)
+  * the status document pod-link publishes is atomic, carries no wall clock, and
+    cannot take capture down when the write fails
 
 The regression this guards is the crash loop: capture.py used to `return 1` on an
 absent camera, so docker restarted it and each restart re-paid the picamera2
@@ -215,6 +217,39 @@ check("an unreadable flag means paused, not a crash",
 
 check("gating disabled (None) captures continuously",
       capture._capture_wanted(None) is True)
+
+# 7. The status document (pod-link reads this; see docs/pod-bus.md).
+import json as _json
+
+with tempfile.TemporaryDirectory() as td:
+    _sp = Path(td) / "campod_camera_status"
+    _doc = {"node": "campod-sw", "frames": 7, "ready": True, "as_of_mono_s": 12.5}
+    capture._write_status(_sp, _doc)
+    check("status is written", _sp.is_file())
+    check("status round-trips as JSON", _json.loads(_sp.read_text()) == _doc)
+    check("no temp file survives the rename",
+          [p.name for p in Path(td).iterdir()] == ["campod_camera_status"])
+
+    # Rewritten in place, so a reader always finds one file and never a partial.
+    capture._write_status(_sp, {"frames": 8})
+    check("status is replaced, not appended", _json.loads(_sp.read_text()) == {"frames": 8})
+
+    # The pod has no RTC: a wall stamp written before time service arrives is
+    # wrong by the size of a step that has not happened yet, and nothing in the
+    # document would say which side of it produced the number.
+    check("the document carries no wall clock",
+          not ({"wall_clock_unix", "wall_clock_utc", "wall_ns"}
+               & set(_json.loads(_sp.read_text()))))
+
+    # Every failure here is a reason to keep capturing without status, never a
+    # reason to stop: the frames are the deliverable.
+    try:
+        capture._write_status(Path(td) / "no-such-dir" / "status", {"a": 1})
+        check("an unwritable status path does not raise", True)
+    except Exception as exc:  # noqa: BLE001
+        check("an unwritable status path does not raise", False, repr(exc))
+
+    check("status disabled (None) is a no-op", capture._write_status(None, {"a": 1}) is None)
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
