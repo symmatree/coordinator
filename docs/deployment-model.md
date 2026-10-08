@@ -91,6 +91,115 @@ two channels below.
   appliance model the OS version is normally a property of the image (#96), upgraded by reflash;
   `-e dist_upgrade=true` is the in-place alternative. A field config deploy no longer touches the OS.
 
+## The GPU/CPU memory split, and why it is 32 on a campod
+
+A Raspberry Pi hands part of its RAM to the VideoCore before Linux starts, and what
+is left is all the kernel ever sees. On a campod the firmware default was never a
+choice: there is no `gpu_mem` line in a stock `config.txt`, and the default for a
+board under 1 GB is 64 MiB. Against a 512 MiB part that is 64 MiB the kernel never
+counts, on a device with no display, no `vc4-kms-v3d`, `drm` blacklisted, no cards
+in `/sys/class/drm` and "no soundcards" in `/proc/asound`.
+
+**It is `gpu_mem=32`, and the value below that is unavailable rather than merely
+tight.** Measured on `campod-se` 2026-10-08, one variable at a time, from image
+`campod-pi-20261008.img`:
+
+| `gpu_mem` set | `vcgencmd get_mem gpu` | firmware | VCHI | ISP nodes | camera |
+|---|---|---|---|---|---|
+| 16 | `gpu=16M` | `start_cd` | fails `-22` | absent | `rpicam` refuses |
+| 17 | `gpu=16M` | `start_cd` | fails `-22` | absent | `rpicam` refuses |
+| 24 | `gpu=16M` | `start_cd` | fails `-22` | absent | `rpicam` refuses |
+| **32** | **`gpu=32M`** | **full** | **ok** | **`video13`-`16`** | **enumerates 4608x2592** |
+| 64 (default) | `gpu=64M` | full | ok | present | works |
+
+`MemTotal` moves 424,728 -> 457,432 kB, so **31.9 MiB returns to the ARM**. For
+scale, the only reclaimable memory on a capturing campod is ~162 MiB of page cache
+plus ~29 MiB free; anonymous memory, unreclaimable slab and the `dma_buf`-held part
+of the CMA region cannot be reclaimed under any pressure (#434).
+
+### Two things the Raspberry Pi documentation does not say
+
+**The firmware rounds `gpu_mem` down to a multiple of 16.** 17 and 24 both report
+`gpu=16M`. The documentation presents the cut-down firmware as selected by the
+exact value 16 -- "The only way to enable the cut-down firmware is to specify
+`gpu_mem=16`" -- and in practice anything that rounds to 16 selects it. No
+granularity is published and `start.elf` is closed, so this is measurement rather
+than citation.
+
+**The cut-down firmware takes the camera with it.** Its own description is
+"removes support for hardware blocks such as codecs and 3D as well as debug
+logging support" -- an open list, and the ISP is in it. Under `start_cd`:
+
+```
+vc_sm_cma_vchi_init: failed to open VCHI service (-22)
+[vc_sm_connected_init]: failed to initialize shared memory service
+bcm2835_mmal_vchiq: Failed to open VCHI service connection (status=-22)
+```
+
+`bcm2835_isp` then creates no device nodes -- `/dev/video13..16` are simply absent
+-- and libcamera's Raspberry Pi `vc4` pipeline drives the ISP through exactly that
+path. The sensor and Unicam are unaffected throughout: `imx708` probes and reads
+module ID `0x0302` over I2C, and `/dev/video0`, `/dev/video1` and `/dev/media0`
+exist. That combination is what makes the failure confusing -- it presents as a
+camera that will not start, names nothing about memory, and leaves every part you
+would check first looking healthy.
+
+`rpicam-hello` reports `ERROR: rpicam-apps currently only supports the Raspberry Pi
+platforms` on a Raspberry Pi, which is the same cause wearing a misleading message.
+
+### The consequence for anyone changing this
+
+The 16 MiB that only the cut-down firmware offers is not available to this fleet at
+any price, so 32 is the floor rather than a compromise. The check on any change
+here is #316's and it is the only one that matters: **capture works at full sensor
+resolution.** A value that is too small, or a missing firmware component, fails
+inside libcamera's allocation and surfaces as a camera that will not start -- not
+as an out-of-memory message, and not as anything a boot log flags.
+
+`config.txt` is an ordinary file on a mounted FAT partition, so a candidate value
+can be tried on a booted device and backed out with one edit and a reboot. It does
+not need a reflash to test, which is how the table above was produced.
+
+## What a campod costs before anything is converged
+
+The state a freshly flashed card is in exists only until the first converge, so it
+is worth having written down. `campod-se`, `campod-pi-20261008.img` with
+`gpu_mem=32`, booted and never converged -- no containers, no collectd, no
+`coord`, no gadget network, WiFi up from the cloud-init seed:
+
+| | |
+|---|---|
+| `MemTotal` | 457,432 kB (446.7 MiB) |
+| `MemFree` | 217,028 kB |
+| `MemAvailable` | **312,176 kB (305.1 MiB)** |
+| `Cached` | 134,556 kB |
+| `AnonPages` | **24,736 kB (24.2 MiB)** |
+| `Mapped` | 37,612 kB |
+| `Slab` | 38,104 kB, of which `SUnreclaim` **24,948 kB** |
+| `KernelStack` / `PageTables` | 2,328 / 1,696 kB |
+| `CmaFree` of `CmaTotal` | 126,644 of 131,072 kB |
+| userspace RSS, summed | 143.6 MiB across 138 processes |
+| loaded modules | 41, 5.02 MiB |
+
+**The bare OS holds about 49 MiB that cannot be reclaimed** -- 24.2 MiB of
+anonymous memory plus 24.4 MiB of unreclaimable slab -- and both figures are
+unchanged at `gpu_mem=16`, so they are a property of the OS rather than of the
+split. `CmaFree` sitting at 126.6 of 131.1 MiB is simply the camera not having
+started; the region fills with movable pages under load and that number stops
+meaning anything (#434).
+
+### What it says about where the footprint is
+
+Set against the same pod converged and capturing (#434): 97.1 MiB of anon and
+30.4 MiB of unreclaimable slab. So **the OS accounts for roughly a quarter of the
+unreclaimable anonymous memory and the payload stack for the other three
+quarters.** For comparison, `dockerd` and `containerd` together held 41.3 MiB of
+anon -- more than the entire bare OS -- which is the measurement behind
+[#449](https://github.com/symmatree/coordinator/issues/449).
+
+That ordering is the useful part: shrinking the base system is a real but bounded
+win, because the base system is not where the memory goes.
+
 ## Boot without a network
 
 A normal power-up must need **no network and no `coord pull`**. That falls out of the model:
