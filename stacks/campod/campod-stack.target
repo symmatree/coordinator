@@ -1,17 +1,5 @@
-# The campod stack as one thing to start and stop.
-#
-# Not a quadlet file -- quadlet only processes .container/.volume/.network/.pod, so
-# this is a plain systemd target and ansible installs it to /etc/systemd/system/.
-#
-# It replaces the old campod-stack.service, whose whole job was to run `coord start`
-# at boot because nothing else would (#97). Each container unit is WantedBy this
-# target and PartOf it, so enabling the target is what makes the stack come up on
-# every boot, and `systemctl stop campod-stack.target` stops the set. No CLI is
-# faulted in to do either.
 [Unit]
 Description=Rekon campod stack
-# The containers pull their images from local storage only, so this needs no network
-# and must not wait for one: a power-up on a vehicle may have none at all.
 
 [Install]
 WantedBy=multi-user.target

@@ -1,25 +1,7 @@
 ---
-# Shared across coordinator (Pi 4B) and campod (Pi Zero 2 W): the container runtime.
-# No device-specific paths or hardware here -- that lives in the device roles.
-#
-# PODMAN, NOT DOCKER (#449). Docker held 41.3 MiB of anonymous memory -- unreclaimable,
-# there being no swap -- across dockerd and containerd, measured at zero CPU and zero
-# I/O on four counters while capture ran. On a board with 414.8 MiB total, of which
-# ~300 MiB cannot be reclaimed under any pressure, that was ~22% of the only slack
-# there is. And dockerd was separately measured degrading ~100x under load while
-# containerd did not (`docker ps` 2.1-22.0 s against `ctr` at 126-213 ms, same box,
-# same moment) -- so it was both the resident cost and the layer that became unusable
-# exactly when it was needed.
-#
-# Podman has no daemon. Containers run as systemd services generated from quadlet
-# files by podman-system-generator, so between starts there is no runtime resident at
-# all: `podman` is a command that exits, and what persists is conmon per running
-# container.
-#
-# This also puts `systemctl stop` on the stop path -- PID 1 doing work it is already
-# resident for -- rather than faulting in a 42.6 MiB CLI plus a 28.8 MiB compose
-# plugin. #355 moved stop to raw signals for exactly that reason; this makes it the
-# architecture rather than a workaround.
+# The container runtime, shared by both device roles. podman with no daemon: the
+# payload runs as systemd services generated from the quadlet units in stacks/.
+# Why podman rather than Docker: docs/deployment-model.md, #449.
 
 - name: Assert arm64 host for container images
   ansible.builtin.assert:
@@ -28,54 +10,34 @@
     fail_msg: >-
       Coordinator/campod images are linux/arm64. Install 64-bit Raspberry Pi OS.
 
-# From the distro, not a vendor repo. Docker needed its own apt repo and GPG key
-# because Debian's docker.io lags badly; podman is current in Trixie, so the whole
-# keyring/repository dance goes away and the runtime moves with the image's base.
 - name: Install podman
   ansible.builtin.apt:
     install_recommends: false
     name:
-      # The runtime, the quadlet generator, and crun.
+      # Brings the quadlet generator and crun.
       - podman
-      # Rootless-capable user namespaces. Not used today -- the payload containers are
-      # privileged with host devices and run as root -- but podman warns loudly without
-      # it and the package is small.
+      # podman warns without it; unused while the payload containers are rootful.
       - uidmap
     state: present
     update_cache: true
   when: ansible_os_family == "Debian"
-  # See the note on bootstrap_prereqs: site.yaml's reboot keys on whether this run
-  # actually installed anything.
+  # site.yaml's reboot keys on whether this run installed anything.
   register: podman_host_pkgs
 
-# No daemon to enable, and no `podman` group: these containers are rootful, started by
-# systemd as root. The docker role had a group because the docker socket needed one;
-# nothing here has a socket.
-#
-# podman.socket is deliberately NOT enabled either. It exists for Docker-API
-# compatibility, and enabling it would put a listening daemon back on the box, which
-# is the thing this role removed.
-
-# The quadlet generator reads this directory at every boot and on daemon-reload. Owned
-# by root because what it finds becomes a systemd unit.
+# Read by the quadlet generator at boot and on every daemon-reload.
 - name: Ensure the quadlet unit directory exists
   ansible.builtin.file:
     path: /etc/containers/systemd
     state: directory
     mode: "0755"
 
-# Images from GHCR by their full name, which is what the quadlet units carry. Podman
-# has no implicit docker.io prefix, so `short-name-mode` being anything but
-# "permissive" would break a bare name -- the units use fully-qualified names so this
-# never arises, and this task only asserts the file exists for a reader looking for it.
-- name: Record that image names are fully qualified
+# The quadlet units name every image in full, so there is nothing to search for.
+- name: Require fully-qualified image names
   ansible.builtin.copy:
     dest: /etc/containers/registries.conf.d/010-rekon.conf
     mode: "0644"
     content: |
-      # Every image this fleet runs is named in full in its quadlet unit
-      # (ghcr.io/..., docker.io/...), so no unqualified-search-registries entry is
-      # needed or wanted: an image that cannot be named exactly is one we do not run.
       unqualified-search-registries = []
 
-# No reboot task here: site.yaml's post_tasks own it, and now actually perform it.
+# No daemon to enable and no group to add anyone to. site.yaml's post_tasks own the
+# reboot.

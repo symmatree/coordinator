@@ -147,13 +147,10 @@ def containers() -> tuple[list[tuple[str, dict[str, str]]], str]:
     exec'ing into the container: same vocabulary and it does not need the payload
     to cooperate.
 
-    RUNNING CONTAINERS ONLY, and that is a change from docker (#449). Quadlet runs
-    each container with --rm and removes it again in ExecStop, so a stopped stack has
-    no containers to list at all -- where docker left them behind and this reported
-    them with their state. `ps -a` is kept because it costs nothing and will show a
-    container that exited without being cleaned up, which is a state worth seeing.
-    What a stopped stack is running is answered by the units, not by here: ask
-    `coord units` and `systemctl is-active`.
+    Running containers only. The quadlet units run with --rm and remove the container
+    in ExecStop, so a stopped stack has none to list; `ps -a` still shows one that
+    exited without being cleaned up. What a stopped stack is defined to run is in its
+    units, and whether it is up is `systemctl is-active`.
     """
     if shutil.which("podman") is None:
         return [], "podman is not installed"
@@ -168,17 +165,12 @@ def containers() -> tuple[list[tuple[str, dict[str, str]]], str]:
     tables: list[tuple[str, dict[str, str]]] = []
     rows = [(c + ["", ""])[:3] for c in (ln.split("\t") for ln in out.splitlines())]
 
-    # One inspect for every distinct image, not two per container. A campod runs both
-    # of its containers from the SAME image, so this is 4 invocations replaced by 1.
-    # It mattered more under docker, where each call went through a daemon measured at
-    # 2.1-22.0s while capture ran; podman has no daemon, but the call still costs a
-    # process start on a board where that is the expensive part.
+    # One inspect per distinct image, not per container: a campod runs both of its
+    # containers from the same image, and a process start is the expensive part here.
     #
     # The RepoDigests guard matters: a locally built image that was never pushed has
-    # none, and `index` on an empty list aborts the template for EVERY object in the
-    # call, not just that one. Both format strings were checked against podman 4.9.3:
-    # `{{json .Config.Labels}}` returns the full label map and the guard returns the
-    # digest, identically to docker.
+    # none, and `index` on an empty list aborts the template for every object in the
+    # call, not just that one.
     meta: dict[str, tuple[str, str]] = {}
     images = list(dict.fromkeys(image for _, image, _ in rows))
     if images:

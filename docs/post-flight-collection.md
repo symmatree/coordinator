@@ -68,11 +68,9 @@ correct, not stale.
 > need for a boot that predates that, and for the one thing that is still not per-boot:
 > `coord version`.
 >
-> **Container logs are in the journal from #449 onward.** The payload runs as systemd
-> units, so container output goes to journald rather than to a json-file driver on the
-> card -- and the boot's journal is already in the bundle. `coord logs` is
-> `journalctl -u`. For a boot that predates #449 the container logs are still only
-> reachable with `docker logs` on the device.
+> **Container logs are in the journal.** The payload runs as systemd units, so
+> container output goes to journald, and the boot's journal is already in the bundle.
+> `coord logs` is `journalctl -u`. A bundle from a boot before #449 will not have them.
 
 
 ```sh

@@ -72,10 +72,8 @@
     # page-faulting large binaries is the failure mode we are avoiding. Same
     # reasoning and same selection as site.yaml; see there for the detail.
     #
-    # rc=1 means the target was already inactive, which is fine. `systemctl stop` is
-    # synchronous, so unlike the pkill it replaced there is no wait loop here to get
-    # wrong -- it returns when the units are down or when their own TimeoutStopSec
-    # expires and systemd has killed them (#449).
+    # rc=1 means the target was already inactive, which is fine. Synchronous: returns
+    # when the units are down.
     - name: Stop data collection before staging
       ansible.builtin.raw: systemctl stop {{ device_role }}-stack.target
       register: reimage_quiesced

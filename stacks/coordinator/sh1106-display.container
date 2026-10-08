@@ -1,5 +1,5 @@
-# #115: coordinator front-panel status OLED. Drives the SH1106 on the Pi's I2C
-# (0x3C, /dev/i2c-1) -- a separate bus from the FC's compass.
+# Front-panel status OLED, SH1106 on /dev/i2c-1 (#115). Separate bus from the FC's
+# compass. display.py's defaults are all correct, so it takes no environment.
 [Unit]
 Description=Coordinator front-panel OLED
 PartOf=coordinator-stack.target
@@ -10,10 +10,7 @@ ContainerName=coordinator_sh1106_display
 Pull=never
 PodmanArgs=--stop-timeout=10
 AddDevice=/dev/i2c-1
-# Read-only: it shows capture activity and must not be able to affect it.
 Volume=/var/lib/coordinator/captures:/captures:ro
-# No environment: display.py's defaults are already what we want (hostname, bus 1,
-# 0x3C, /captures, 1.0 s).
 
 [Service]
 TimeoutStopSec=30

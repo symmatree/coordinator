@@ -33,12 +33,12 @@ runtime-written data, never hand-tuned config.
 
 ## Config is git-authoritative -- no on-box override
 
-> **The stack definition is podman quadlet units from #449 onward, not `compose.yaml`.**
-> `stacks/<name>/*.container` plus a `<name>-stack.target`; the ansible role symlinks
-> them into `/etc/containers/systemd/` and podman's generator turns each into a
-> `.service` at boot. Everything this section says about git-authority, symlinks and no
-> on-box override holds unchanged -- the file format changed, the model did not. Read
-> `compose.yaml` below as "the stack definition".
+> **The stack definition is podman quadlet units**: `stacks/<name>/*.container` plus a
+> `<name>-stack.target`, symlinked into `/etc/containers/systemd/`, where podman's
+> generator turns each into a `.service` at boot. Read `compose.yaml` below as "the
+> stack definition"; git-authority and the symlink deploy are unchanged. The runtime
+> choice and the measurements behind it are in
+> [#449](https://github.com/symmatree/coordinator/issues/449).
 
 There is **no per-box config override and no hand-editing on the device.** The stack
 definition lives in git, ships in the image, and is the only source -- values included, since both
@@ -175,7 +175,7 @@ Dockge itself does not.
 | Dockge dropped | **decided** |
 | btrfs subvolume substrate ([#41](https://github.com/symmatree/coordinator/issues/41)/[#96](https://github.com/symmatree/coordinator/issues/96)) | **built**; boots on all three roles from `dotfiles-symm/pi-image`. Base is Trixie ([#238](https://github.com/symmatree/coordinator/issues/238)) |
 | Copy -> symlink deploy ([#48](https://github.com/symmatree/coordinator/issues/48)) | **built** |
-| podman + quadlet instead of Docker; no runtime resident between starts ([#449](https://github.com/symmatree/coordinator/issues/449)) | **built, unverified on hardware.** Recovers 41.3 MiB of unreclaimable anon measured held by dockerd and containerd at zero CPU and zero I/O, and removes the layer measured degrading ~100x under load. `systemctl stop` becomes the stop path and container logs move to the journal |
+| podman + quadlet; the payload runs as systemd units ([#449](https://github.com/symmatree/coordinator/issues/449)) | **built, unverified on hardware.** `systemctl stop` is the stop path; container logs go to the journal |
 | Split `dist-upgrade` out of the config deploy (`-e dist_upgrade=true`, default false) | **built** |
 | Convergence driven from another machine over SSH; `one_time.sh` and its `/usr` shell helper deleted | **built** |
 | Pin bases + `vio-tracker-base` (depthai) + `vio-runtime-base` (OpenCV) -- layer-cache fix ([#145](https://github.com/symmatree/coordinator/issues/145)) | **built** (#146 pins, #147 pin script, #148 tracker build-base, #151 runtime base + both VIO images rewired onto it) |

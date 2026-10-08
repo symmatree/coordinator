@@ -57,17 +57,9 @@
     state: link
     force: true
 
-# THE CONTAINERS ARE SYSTEMD UNITS (#449). podman's quadlet generator reads
-# /etc/containers/systemd at every boot and on every daemon-reload, and turns each
-# .container file into a .service. Symlinked rather than copied, for the same reason
-# /opt/stacks is: `git pull` is the deploy and the deployed unit IS the repo's by
-# construction (#48).
-#
-# This replaced a coord-stack.service whose whole job was to run `coord start` at boot
-# because nothing else would (#97). Each container unit is WantedBy the stack target,
-# the generator writes the .wants symlinks itself, and enabling the target is what
-# makes the stack come up. There is no longer anything in the boot path that invokes a
-# container CLI.
+# The quadlet units, symlinked so `git pull` is the deploy (#48). podman's generator
+# turns each into a .service at boot and on daemon-reload; each is WantedBy the stack
+# target, so enabling the target is what makes the stack come up.
 - name: Find this stack's quadlet units
   ansible.builtin.find:
     paths: "{{ coord_checkout }}/stacks/{{ coord_stack_name }}"
@@ -92,10 +84,7 @@
   loop_control:
     label: "{{ item.path | basename }}"
 
-# Remove units from a previous converge that this stack no longer defines. Without
-# this, renaming or dropping a service leaves its unit behind and the generator keeps
-# starting a container the repo no longer describes -- the drift #48 exists to prevent,
-# reintroduced one directory over.
+# Drop units a previous converge installed that this stack no longer defines.
 - name: List quadlet units currently installed
   ansible.builtin.find:
     paths: /etc/containers/systemd
@@ -121,8 +110,7 @@
     state: link
     force: true
 
-# Remove the pre-#449 boot unit. It and the target have the same job and would both
-# try to do it.
+# The target supersedes it.
 - name: Remove the superseded {{ coord_stack_name }}-stack boot service
   ansible.builtin.systemd:
     name: "{{ coord_stack_name }}-stack.service"
@@ -135,10 +123,8 @@
     path: "/etc/systemd/system/{{ coord_stack_name }}-stack.service"
     state: absent
 
-# daemon_reload on the task rather than a handler notify: coord-stack is reached
-# through include_role from both device roles, and handler resolution across that
-# boundary is not worth relying on for something this small. The reload is also what
-# runs the quadlet generator over the units symlinked above.
+# daemon_reload rather than a handler: coord-stack is reached through include_role from
+# both device roles. The reload is also what runs the quadlet generator.
 - name: Enable {{ coord_stack_name }}-stack.target on boot
   ansible.builtin.systemd:
     name: "{{ coord_stack_name }}-stack.target"
@@ -212,9 +198,7 @@
 # rather than merely absent, and the boot unit can fail fast instead of starting an
 # unattended fetch on a vehicle that may have no network (#269).
 #
-# A bare pull rather than `coord pull`: coord pull stops the stack, fetches and starts
-# it again, which would tear down a running stack on every converge. This only
-# fetches; the reboot at the end of the play is what brings the stack back.
+# Fetch only; the reboot at the end of the play brings the stack back.
 #
 # Slow and that is expected -- 4m22s measured for campod-camera on a Zero 2 W over
 # WiFi, ~364 MB for the coordinator's four images.
@@ -223,9 +207,7 @@
 # interface. Nothing depends on it -- the reboot condition in site.yaml keys on the
 # apt registers, not on these -- so a wrong reading here is cosmetic noise in the
 # recap rather than a behaviour change. Said out loud so nobody later builds on it.
-# The units are the only place an image name appears, so the pull reads them rather
-# than carrying a second list that could disagree. Fully-qualified names, which is
-# what `unqualified-search-registries = []` in podman-host requires.
+# Image names come from the units, which are the only place they appear.
 - name: Pull the stack images
   ansible.builtin.shell:
     cmd: >-
@@ -235,11 +217,8 @@
       | xargs -r -n1 podman pull --quiet
     executable: /bin/bash
   register: coord_stack_pull
-  # podman pull prints the image id on a fetch and on a cache hit alike, so there is
-  # no output to key "changed" on. Reported as changed never: nothing downstream reads
-  # it -- site.yaml's reboot keys on the apt registers -- and a wrong reading here
-  # would be cosmetic noise in the recap rather than a behaviour change. Said out loud
-  # so nobody later builds on it.
+  # podman pull prints the image id on a fetch and a cache hit alike, so there is
+  # nothing to key "changed" on. Nothing downstream reads it.
   changed_when: false
 
 # Deliberately NOT followed by a start. The converge ends by rebooting -- bootstrap
