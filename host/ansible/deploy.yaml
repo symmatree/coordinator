@@ -1,0 +1,104 @@
+---
+# The routine converge: config, stack definition, and container images. Runs every
+# time. Pair: provision.yaml, which installs the software and runs once per card.
+#
+#   ansible-playbook host/ansible/deploy.yaml -i '10.0.2.49,' -u pi \
+#     -e device_role=campod
+#
+# INSTALLS NOTHING AND TOUCHES NO PACKAGES. Everything here writes to /etc, /opt, /var
+# or the checkout in /home -- all writable subvolumes. /usr is a read-only subvolume
+# and nothing in this play opens it, which is why this play does not reboot: the hatch
+# is what used to force one on every run.
+#
+# `git pull` is the deploy (#48). The stack definition, the quadlet units and the
+# /usr/local/bin tools are all symlinks into the checkout, so updating it updates them.
+
+- name: Rekon config deploy
+  hosts: all
+  become: true
+  # Off so the capture quiesce below runs FIRST. Automatic gathering happens before
+  # pre_tasks, which meant the heaviest thing in the play ran while the payload was
+  # still writing. Measured on campod-se 2026-09-15: coord-throttle-log missed six
+  # firings, so the whole system stalled, and it began BEFORE the stop was invoked.
+  gather_facts: false
+  vars_files:
+    - vars/gadget-net.yml
+
+  pre_tasks:
+    - name: Refuse check mode
+      ansible.builtin.fail:
+        msg: >-
+          This play does not support --check. Check mode skips the capture quiesce and
+          the image pull, so it cannot validate what matters. Use --syntax-check.
+      when: ansible_check_mode
+
+    # FIRST, and with as little in front of it as possible. Capture and convergence
+    # contend for the two things a Pi has least of -- the same SD card and, on a Zero,
+    # the CPU. A campod converge that should take minutes took over an hour with the
+    # capture container crash-looping beside it (#278).
+    #
+    # `raw` so ansible does not start python3.13 on the target to run it: on a box
+    # whose failure mode is page-faulting large binaries, that startup costs more than
+    # the command.
+    #
+    # Synchronous -- it returns when the units are down, or when their TimeoutStopSec
+    # expires and systemd has killed them. The per-unit ceilings are in the quadlet
+    # units.
+    #
+    # rc 5 is systemd for "no such unit", which is the first deploy onto a card that
+    # has been provisioned but never deployed: the target is a symlink this play has
+    # not made yet. Nothing to stop is success.
+    - name: Stop data collection for the duration of the deploy
+      ansible.builtin.raw: systemctl stop {{ device_role }}-stack.target
+      register: coord_stack_quiesced
+      changed_when: coord_stack_quiesced.rc == 0
+      failed_when: coord_stack_quiesced.rc not in [0, 1, 5]
+
+    - name: Gather only the facts this playbook reads
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - '!min'
+          - architecture
+          - distribution
+          - platform
+
+  roles:
+    # First: everything below reads from the checkout.
+    - role: checkout
+    - role: metrics
+    - role: coordinator
+      when: device_role == 'coordinator'
+    - role: campod
+      when: device_role == 'campod'
+
+  post_tasks:
+    # Only when a package asked for one, which in this play means a kernel or firmware
+    # change arriving some other way. Nothing here opens the /usr hatch, so unlike the
+    # old combined converge there is no reboot-every-run.
+    #
+    # The stack is left STOPPED by the quiesce above. The target is enabled, so a power
+    # cycle brings it back, and there is a power cycle between bench and flight by
+    # construction. To start it now without rebooting: `coord start`.
+    - name: Check whether a reboot is pending
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: deploy_reboot_required
+
+    - name: Reboot and wait for the device to come back
+      ansible.builtin.reboot:
+        msg: Rekon deploy -- a package asked for a reboot
+      when:
+        - allow_reboot | bool
+        - ansible_connection | default('ssh') != 'local'
+        - deploy_reboot_required.stat.exists
+
+    - name: Report what the device ended up in
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} deployed (device_role={{ device_role }}).
+          {% if deploy_reboot_required.stat.exists %}
+          Rebooted, so the stack is back up.
+          {% else %}
+          Not rebooted. The stack is stopped -- power-cycle it, or `coord start`.
+          {% endif %}

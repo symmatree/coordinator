@@ -1,0 +1,68 @@
+---
+# collectd's software and its fixed plumbing. Provision: none of this changes when the
+# repo changes.
+#
+# The DataDir helper is here rather than with the config because it writes under /usr,
+# which is a read-only subvolume -- keeping it on the provision side is what lets the
+# deploy play leave /usr alone and therefore skip its reboot. Its content is inline and
+# static, so there is nothing for a deploy to update.
+
+- name: Install collectd
+  ansible.builtin.apt:
+    install_recommends: false
+    # collectd-core, NOT collectd: the metapackage pulls rrdtool and the full plugin
+    # dependency set for plugins this config never loads. We are not writing RRD.
+    name: collectd-core
+    state: present
+    update_cache: false
+
+# Fully qualified here too, for the same reason as the handler: the bare name is
+# ambiguous between collectd-core's init script and its unit. This task happened to
+# succeed where the handler did not, which makes the ambiguity worse rather than
+# better -- an inconsistency that shows up only sometimes is one nobody debugs.
+# Keyed by boot id so a session's samples are selected rather than filtered -- see the
+# DataDir comment in collectd.conf.j2 for why a wall-clock filter is not an option here.
+#
+# A script rather than an inline `sh -c`: systemd expands $VAR in Exec* lines itself, so
+# a shell variable written inline is substituted away to empty before sh ever sees it.
+- name: Install collectd's per-boot DataDir helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/collectd-per-boot-datadir
+    content: |
+      #!/bin/sh
+      # Managed by ansible (roles/metrics). Point collectd's DataDir at this boot.
+      set -eu
+      boot=$(cat /proc/sys/kernel/random/boot_id)
+      dir="/var/log/collectd/$boot"
+      install -d -m 0755 "$dir"
+      ln -sfn "$dir" /run/collectd-datadir
+    mode: "0755"
+  notify: Restart collectd
+
+# `copy` does not create a dest's parent, and this directory does not exist by default
+# -- the same gotcha roles/power-resilience records for journald.conf.d.
+
+- name: Ensure the collectd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/collectd.service.d
+    state: directory
+    mode: "0755"
+
+- name: Run the DataDir helper before collectd starts
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/collectd.service.d/10-per-boot-datadir.conf
+    content: |
+      # Managed by ansible (roles/metrics).
+      [Service]
+      ExecStartPre=/usr/local/bin/collectd-per-boot-datadir
+    mode: "0644"
+  notify: Restart collectd
+
+- name: Create collectd data directory
+  ansible.builtin.file:
+    path: /var/log/collectd
+    state: directory
+    mode: "0755"
+
+# Age-based cleanup rather than logrotate: the csv plugin already writes one file
+# per type per day, so there is nothing to rotate -- only old days to drop.

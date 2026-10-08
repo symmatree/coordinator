@@ -1,0 +1,91 @@
+---
+# First-run setup: the software and the hardware wiring. Runs once per card, or once in
+# a long while. Pair: deploy.yaml, which is the one that runs routinely.
+#
+#   ansible-playbook host/ansible/provision.yaml -i '10.0.2.49,' -u pi \
+#     -e device_role=campod
+#
+# DRIVEN FROM ANOTHER MACHINE, over SSH. A freshly flashed card needs nothing installed
+# on it first -- python3, sudo with passwordless and sshd are all in the image.
+#
+# What is here: packages, the /usr read-write hatch they need, udev rules, masked
+# getty and maintenance timers, the USB gadget link, the campod bridge, and the
+# /usr/local/bin symlinks. All of it is a property of the device rather than of a
+# commit, so none of it belongs in a converge that runs between flights.
+#
+# In-place OS upgrade is off unless asked for:
+#     ansible-playbook host/ansible/provision.yaml ... -e dist_upgrade=true
+#
+# No capture quiesce here. A card being provisioned has no stack, no containers and no
+# capture to stop.
+
+- name: Rekon first-run provisioning
+  hosts: all
+  become: true
+  # Off so the heaviest thing in the play does not run before the cheap asserts.
+  gather_facts: false
+  vars_files:
+    # The gadget-net contract, read by both device roles so the two halves cannot
+    # drift apart. See the file for why it is not in each role's defaults.
+    - vars/gadget-net.yml
+
+  pre_tasks:
+    # Check mode skips every command task, so it cannot exercise the half of this play
+    # that matters, while still costing a full apt refresh and fact gather on a device
+    # with no slack for it. --syntax-check is what a dry run is actually useful for.
+    - name: Refuse check mode
+      ansible.builtin.fail:
+        msg: >-
+          This play does not support --check. Use --syntax-check to validate
+          structure, or run the play for real.
+      when: ansible_check_mode
+
+    # Only the facts this play reads. A full gather collects 99; the ones that touch
+    # hardware (ansible_devices runs lsblk, ansible_mounts stats every mount) are the
+    # plausible candidates for a stall on a 416 MB box with no swap.
+    - name: Gather only the facts this playbook reads
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - '!min'
+          - architecture
+          - distribution
+          - platform
+
+  roles:
+    - role: bootstrap
+    - role: podman-host
+    # Unconditional, both roles: they sit on the same power rail and the same SD
+    # medium, so neither has a reason to be blind.
+    - role: collectd-install
+    # Appliance: nothing updates or maintains itself on a timer.
+    - role: no-scheduled-maintenance
+    - role: host-cli
+    - role: coordinator-hardware
+      when: device_role == 'coordinator'
+    - role: campod-hardware
+      when: device_role == 'campod'
+
+  post_tasks:
+    # Always, because bootstrap opens the /usr read-write hatch and only a boot closes
+    # it again. A first run is a bench operation, so a reboot is free here in a way it
+    # is not in deploy.yaml.
+    - name: Reboot and wait for the device to come back
+      ansible.builtin.reboot:
+        msg: Rekon provisioning -- applying kernel/firmware/module changes and restoring read-only /usr
+      when:
+        - allow_reboot | bool
+        # ansible.builtin.reboot refuses under connection=local rather than rebooting
+        # its own control node, and it would refuse at the LAST task. Skip and say so.
+        - ansible_connection | default('ssh') != 'local'
+
+    - name: Report what the device ended up in
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} provisioned (device_role={{ device_role }}).
+          {% if allow_reboot | bool and ansible_connection | default('ssh') != 'local' %}
+          Rebooted, which is what restores read-only /usr. Run deploy.yaml next; until
+          then this device has no checkout and no stack.
+          {% else %}
+          NOT rebooted -- /usr is still writable. Reboot before flight.
+          {% endif %}

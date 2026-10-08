@@ -1,0 +1,53 @@
+---
+# Shared by provision.yaml and deploy.yaml. Here rather than in each playbook so the
+# two cannot drift apart.
+
+device_role: coordinator
+
+# Only the PLAYBOOK comes from the control node. Everything else -- bin/coord,
+# the VIO tools, coord-throttle-log -- is copied from the TARGET's own checkout
+# with remote_src, so it can never be shipped independently of the stack config
+# it manages.
+#
+# The asymmetry is irreducible rather than untidy: you cannot fetch the playbook
+# from a target you have not cloned yet, and the playbook is what does the
+# cloning. Everything after the clone can and should come from the target.
+#
+# This also means the control node needs only host/ansible/**, not the repo --
+# which is what the cluster container has to carry.
+#
+# coord_repo_version is the hook for pinning: it floats at main today, and when
+# there are named releases worth pinning to, the control node clones a specified
+# version rather than whatever main happens to be.
+coord_checkout: "/home/{{ ansible_user | default('pi') }}/coordinator"
+
+
+# In-place `apt upgrade dist`. OFF by default: in the appliance model the OS
+# version is a property of the flashed image (#96) and a reflash is the primary
+# way to move it, so a routine config deploy must not drag a dist-upgrade and
+# its reboot behind it (#48). This is the in-place alternative for a box you do
+# not want to reflash yet -- run it deliberately, expect it to be slow.
+dist_upgrade: false
+
+# How stale the apt index may be before bootstrap refreshes it, in seconds. A day,
+# because the host's package set is meant to be static: nothing in a steady-state
+# converge installs anything, so the index is only needed when a package is added
+# or a card is fresh. Set to 0 to force a refresh.
+#
+# The index refresh was the per-converge apt cost -- five roles each asking for one,
+# on a Zero over WiFi. There is now exactly one, in bootstrap.
+apt_cache_max_age: 86400
+coord_repo_url: https://github.com/symmatree/coordinator.git
+coord_repo_version: main
+
+# No container-runtime group variable. Docker needed one because its socket was
+# group-owned; podman has no socket and the payload containers are rootful systemd
+# units, so there is nothing for a group to grant (#449). The variable that used to
+# be here was also a footgun: it started as lookup('env','USER'), which resolves on
+# the CONTROL NODE, so driving remotely added the driver's username to the device.
+
+# From outside, ansible can reboot the target AND WAIT, so the old
+# "exit 1, reboot, run it again" dance collapses into one play. #113 had to
+# remove auto-reboot precisely because it ran locally, where ansible refuses to
+# reboot its own control node.
+allow_reboot: true

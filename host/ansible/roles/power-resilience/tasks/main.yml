@@ -102,13 +102,6 @@
 - name: Install throttle forensics timer (only where vcgencmd exists)
   when: vcgencmd_check.rc == 0
   block:
-    - name: Install coord-throttle-log helper
-      ansible.builtin.copy:
-        remote_src: true
-        src: "{{ coord_checkout }}/bin/coord-throttle-log"
-        dest: /usr/local/bin/coord-throttle-log
-        mode: "0755"
-
     - name: Install throttle service + timer units
       ansible.builtin.copy:
         src: "{{ item }}"

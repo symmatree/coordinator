@@ -72,13 +72,14 @@
     # page-faulting large binaries is the failure mode we are avoiding. Same
     # reasoning and same selection as site.yaml; see there for the detail.
     #
-    # rc=1 means the target was already inactive, which is fine. Synchronous: returns
-    # when the units are down.
+    # rc=1 means the target was already inactive and rc=5 means there is no such unit
+    # -- a card that has never been deployed. Nothing to stop is success. Synchronous:
+    # returns when the units are down.
     - name: Stop data collection before staging
       ansible.builtin.raw: systemctl stop {{ device_role }}-stack.target
       register: reimage_quiesced
       changed_when: reimage_quiesced.rc == 0
-      failed_when: reimage_quiesced.rc not in [0, 1]
+      failed_when: reimage_quiesced.rc not in [0, 1, 5]
 
   tasks:
     # Only one compressed image fits in p1. Removed before the space check so the

@@ -1,0 +1,171 @@
+---
+# The coordinator's hardware and OS wiring. Provision: device tree, udev, the FC UART,
+# the I2C bus the front panel sits on, and the bridge the campods' gadget links join.
+# None of it changes when the repo changes.
+
+- name: Install Luxonis udev rules for OAK-D (MyriadX USB re-enumeration)
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/80-movidius.rules
+    content: 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"'
+    mode: "0644"
+  notify: Reload udev rules
+
+# The coordinator's boot config comes from the IMAGE, not from here:
+# dotfiles-symm pi-image/roles/coordinator/config.append.txt supplies
+# enable_uart=1 + dtoverlay=disable-bt (PL011 on GPIO14/15 for the FC at
+# 1.5 Mbaud, trading away onboard Bluetooth) and dtparam=i2c_arm=on for the
+# front-panel display's I2C bus, and CMDLINE_REMOVE keeps the serial console off
+# that UART so kernel and systemd output is never transmitted into the FC's
+# MAVLink link. All three are built into the image, so routine convergence never
+# writes /boot/firmware -- see dotfiles-symm pi-image/roles/campod/config.append.txt
+# for why that matters and for the deliberate exceptions.
+#
+# Still ours, because none of these is /boot/firmware: turning off the serial
+# gettys, installing i2c-tools, and LOADING i2c-dev (below).
+# MASK, not disable -- and here the stakes are higher than on a campod. This UART
+# is the FC link. A getty on it does not just occupy the port, it WRITES: a login
+# banner and prompt injected into the MAVLink stream the flight controller is
+# reading. `enabled: false` is a persistent symlink removal, and two things defeat
+# it. A package upgrade re-applying the systemd preset can put it back, the same
+# way it would for a timer. And if a console= ever returns to this cmdline -- a
+# debugging session, a role change -- systemd-getty-generator creates the want in
+# /run at every boot and daemon-reload, which no `disable` can remove. That is not
+# hypothetical: it is exactly what happened on campod-se, where the generator
+# recreated the want during the same converge that disabled it.
+#
+# Today the generator has nothing to act on here, because roles/coordinator.env
+# sets CMDLINE_REMOVE=console=serial0,* with no append, so a coordinator card has
+# no serial console at all. Masking costs nothing and does not depend on that
+# staying true.
+
+- name: Mask serial-getty on the FC UART
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: true
+    state: stopped
+  loop:
+    - serial-getty@ttyAMA0.service
+    - serial-getty@ttyS0.service
+  failed_when: false
+
+- name: Install i2c-tools (i2cdetect for display bring-up / debugging)
+  ansible.builtin.apt:
+    install_recommends: false
+    name: i2c-tools
+    state: present
+    update_cache: false
+
+# i2c-dev is what creates /dev/i2c-N. dtparam=i2c_arm=on (from the image) only
+# enables the CONTROLLER -- it gets i2c_bcm2835 bound and an adapter registered in
+# the kernel, but no character device, because the userspace interface lives in a
+# separate module that nothing autoloads. Observed on the first coordinator flashed
+# from the btrfs image: dtparam present, i2c_bcm2835 loaded, /dev/i2c-* absent.
+#
+# The failure is not subtle but it is misattributed: sh1106-display declares
+# `devices: [/dev/i2c-1:/dev/i2c-1]`, and a devices: entry naming a node that does
+# not exist fails the CONTAINER at start, so it reads as a broken display service
+# rather than a missing host module.
+#
+# Exactly the same image/ansible split as dwc2 + g_ether on the campod: the device
+# tree half has to come from the image, the module-loading half is ours. Stock Pi OS
+# gets here via raspi-config's do_i2c, which appends i2c-dev to /etc/modules -- we do
+# not run raspi-config, so nobody ever did it.
+
+- name: Load i2c-dev at boot (creates /dev/i2c-N for the front-panel display)
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/coordinator-i2c.conf
+    mode: "0644"
+    content: |
+      # Managed by roles/coordinator. i2c_bcm2835 is bound by dtparam=i2c_arm=on in
+      # the image; this is the userspace char-device interface it does not imply.
+      i2c-dev
+  notify: Reload systemd
+
+# modules-load.d only takes effect at boot, and nothing here touches config.txt, so
+# nothing here sets /var/run/reboot-required and the play does not reboot. Without this the
+# bootstrap reports success and the display has no bus until somebody happens to
+# reboot, with no message saying so. Same reasoning as roles/campod loading g_ether
+# in-run rather than leaving it for the next boot.
+
+- name: Check whether i2c-dev is already loaded
+  ansible.builtin.command: lsmod
+  changed_when: false
+  register: coordinator_lsmod
+
+- name: Load i2c-dev now
+  ansible.builtin.command: modprobe i2c-dev
+  when: "'i2c_dev' not in coordinator_lsmod.stdout"
+  changed_when: true
+
+# Below the module loading, not above it. coord-stack's last task starts the
+# stack, and sh1106-display declares `devices: [/dev/i2c-1:/dev/i2c-1]`, which
+# fails the container -- and so the unit start -- when the node is absent.
+# On a freshly flashed card it is absent until i2c-dev is loaded, so this used
+# to fail on exactly the first converge after a reimage and no other run.
+
+# ---------------------------------------------------------------------------
+# USB gadget network -- coordinator half (#12).
+#
+# The campods are USB devices on a hub whose upstream is this machine, so each one
+# appears here as a network interface when it boots and disappears when it does
+# not. They all land on one bridge: one L2 segment, one address here, static
+# addresses there. No DHCP and no dnsmasq (#211) -- #12's title predates that
+# decision.
+- name: Create the campod bridge
+  # stp off and forward-delay 0: this is a star of point-to-point USB links with
+  # no possible loop, and 30 s of listening/learning on every campod reboot would be
+  # a real cost for no benefit.
+  ansible.builtin.copy:
+    dest: "/etc/NetworkManager/system-connections/{{ campod_gadget_bridge }}.nmconnection"
+    mode: "0600"
+    content: |
+      # Managed by roles/coordinator.
+      [connection]
+      id={{ campod_gadget_bridge }}
+      type=bridge
+      interface-name={{ campod_gadget_bridge }}
+      autoconnect=true
+
+      [bridge]
+      stp=false
+      forward-delay=0
+
+      [ipv4]
+      method=manual
+      address1={{ campod_gadget_coordinator_ip }}/{{ campod_gadget_prefix }}
+      never-default=true
+
+      [ipv6]
+      method=disabled
+  when: campod_gadget_enabled | bool
+  notify: Reload NetworkManager connections
+
+- name: Enslave campod gadget interfaces to the bridge as they appear
+  # multi-connect=3 (MULTI_CONNECT_MULTIPLE) lets ONE profile be active on every
+  # matching device at once, which is what makes this work for a variable number
+  # of campods with no per-campod profile and no udev glue.
+  #
+  # match.driver rather than match.interface-name on purpose: the primary name of
+  # a USB NIC here is path-based (enp1s0u1u2...), so it identifies the hub port
+  # rather than the campod. The driver is the invariant. See vars/gadget-net.yml.
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/system-connections/campod-bridge-port.nmconnection
+    mode: "0600"
+    content: |
+      # Managed by roles/coordinator.
+      [connection]
+      id=campod-bridge-port
+      type=ethernet
+      autoconnect=true
+      multi-connect=3
+      master={{ campod_gadget_bridge }}
+      slave-type=bridge
+
+      [match]
+      driver={{ campod_gadget_host_drivers | join(';') }};
+  when: campod_gadget_enabled | bool
+  notify: Reload NetworkManager connections
+
+- name: Configure power-bounce resilience
+  ansible.builtin.include_role:
+    name: power-resilience
