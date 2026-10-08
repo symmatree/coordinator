@@ -163,6 +163,18 @@
   # removing the source blind.
   when: "'NO_INDEX' not in bootstrap_rpi_auto_pkgs.stdout"
 
+# The ONLY apt index refresh in the converge. Every install below and in later roles
+# runs with update_cache: false, so a steady-state converge touches the network for
+# apt at most once a day instead of once per role.
+#
+# The host's package set is meant to be static -- `apt_cache_max_age` is the knob, and
+# `-e dist_upgrade=true` is still the only thing that upgrades anything.
+- name: Refresh the apt index, at most once a day
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: "{{ apt_cache_max_age }}"
+  when: ansible_os_family == "Debian"
+
 - name: Install prerequisites
   ansible.builtin.apt:
     install_recommends: false
@@ -171,8 +183,7 @@
       - curl
       - git
     state: present
-    update_cache: true
-    cache_valid_time: 3600
+    update_cache: false
   when: ansible_os_family == "Debian"
   # Registered so site.yaml's reboot can key on whether anything was actually
   # installed. Registered vars are host facts for the whole play, so they are

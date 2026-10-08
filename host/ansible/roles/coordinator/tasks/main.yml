@@ -51,8 +51,7 @@
     install_recommends: false
     name: i2c-tools
     state: present
-    update_cache: true
-    cache_valid_time: 3600
+    update_cache: false
 
 # i2c-dev is what creates /dev/i2c-N. dtparam=i2c_arm=on (from the image) only
 # enables the CONTROLLER -- it gets i2c_bcm2835 bound and an adapter registered in

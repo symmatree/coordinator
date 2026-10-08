@@ -71,6 +71,15 @@
     # its reboot behind it (#48). This is the in-place alternative for a box you do
     # not want to reflash yet -- run it deliberately, expect it to be slow.
     dist_upgrade: false
+
+    # How stale the apt index may be before bootstrap refreshes it, in seconds. A day,
+    # because the host's package set is meant to be static: nothing in a steady-state
+    # converge installs anything, so the index is only needed when a package is added
+    # or a card is fresh. Set to 0 to force a refresh.
+    #
+    # The index refresh was the per-converge apt cost -- five roles each asking for one,
+    # on a Zero over WiFi. There is now exactly one, in bootstrap.
+    apt_cache_max_age: 86400
     coord_repo_url: https://github.com/symmatree/coordinator.git
     coord_repo_version: main
 

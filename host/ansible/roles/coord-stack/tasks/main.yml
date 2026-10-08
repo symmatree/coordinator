@@ -156,8 +156,7 @@
     install_recommends: false
     name: zstd
     state: present
-    update_cache: true
-    cache_valid_time: 3600
+    update_cache: false
 
 # Post-flight recovery's device half (#302). Installed the same way and for the
 # same reason: `coord sessions` execs it, and the platform can also call it over

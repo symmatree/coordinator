@@ -30,8 +30,7 @@
     # dependency set for plugins this config never loads. We are not writing RRD.
     name: collectd-core
     state: present
-    update_cache: true
-    cache_valid_time: 3600
+    update_cache: false
 
 - name: Create collectd data directory
   ansible.builtin.file:
