@@ -68,10 +68,23 @@ COPY host/ansible /app/ansible
 # The playbook runs local-connection on purpose so the same recipes work inside an image build
 # (see site.yaml). Use that here: a syntax error fails CI rather than a provisioning run.
 #
-# BOTH the service can invoke, not just site.yaml. reimage.yaml was reachable from a button
+# EVERY playbook the service can invoke, each named. reimage.yaml was reachable from a button
 # with nothing checking it, which is the case this guard exists for.
+#
+# provision.yaml and deploy.yaml are named even though site.yaml imports both (#453), because
+# `import_playbook` is static -- so parsing site.yaml does parse them today, and stops doing so
+# the moment anything changes what site.yaml imports. A guard that covers a file only by
+# accident of another file's contents is one edit away from covering nothing, silently.
+#
+# What this does NOT catch: a notify with no matching handler. `--syntax-check` does not resolve
+# handlers, which is how six orphaned ones survived the #453 split and failed a real converge.
+# `host/ansible/test_notifies.py` is that check and runs in `tests`, so it gates the merge rather
+# than the rebuild -- the better end, since this build is the thing that would ship the bug.
 RUN ansible-playbook --syntax-check -i localhost, --connection=local \
-      /app/ansible/site.yaml /app/ansible/reimage.yaml
+      /app/ansible/site.yaml \
+      /app/ansible/provision.yaml \
+      /app/ansible/deploy.yaml \
+      /app/ansible/reimage.yaml
 
 USER node
 EXPOSE 8080
