@@ -2,6 +2,7 @@
 import { loadInventory, type Inventory } from './inventory.js';
 import type { ActionContext } from './actions.js';
 import type { GithubOptions } from './github.js';
+import type { BusConfig } from './bus.js';
 
 export interface Config {
   inventory: Inventory;
@@ -12,6 +13,8 @@ export interface Config {
   flightsDir: string;
   /** Where notifications go. An empty url disables them. See notify.ts. */
   notify: { url: string; tag: string };
+  /** The pod bus. An empty url disables it. See bus.ts and docs/pod-bus.md. */
+  bus: BusConfig;
   /** Where the ground station's own record of a flight lives. See cluster.ts. */
   cluster: {
     mimirUrl: string;
@@ -71,6 +74,14 @@ export function loadConfig(): Config {
       // Apprise routes by tag and an untagged notify reaches nobody, so this defaults to the
       // cluster name the way Alloy's notifier does rather than to empty.
       tag: env('FLEET_NOTIFY_TAG', 'tiles'),
+    },
+    bus: {
+      // The broker is mochi-mqtt on the coordinator, listening on every interface, so this is
+      // the coordinator's own address -- not a cluster service.
+      url: env('FLEET_MQTT_URL', ''),
+      // Retained messages arrive right after SUBACK with no count to expect, so the read ends by
+      // stopping rather than by being satisfied. Long enough for four pods on a 2.4 GHz hop.
+      settleMs: Number(env('FLEET_MQTT_SETTLE_MS', '1500')),
     },
     cluster: {
       mimirUrl: env('FLEET_MIMIR_URL', 'http://mimir-gateway.mimir.svc'),

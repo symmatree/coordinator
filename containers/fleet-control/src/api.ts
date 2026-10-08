@@ -15,6 +15,7 @@ import { offloadFcLog, offloadSession, readNotes, validFlightName, writeNotes } 
 import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
 import { collectGround, listTlogs } from './cluster.js';
+import { configured as busConfigured, readPods, setDesired } from './bus.js';
 import { build } from './build.js';
 import { notify, runEnded } from './notify.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
@@ -136,6 +137,55 @@ export function buildServer(
       return reply.code(409).send({ error: (err as Error).message });
     }
   });
+
+  // ---- the pod bus -----------------------------------------------------------------------
+  //
+  // What the devices say about themselves, read off MQTT. It costs them nothing: the status
+  // documents are retained and already being published, so this is a subscribe rather than a
+  // question. `GET /status` below is the other thing -- it asks what is INSTALLED and pays a
+  // quiesce to do it, which is why readiness moved here (#434, docs/pod-bus.md).
+
+  app.get('/pods', async (_req, reply) => {
+    if (!busConfigured(cfg.bus)) return { configured: false, pods: [] };
+    const read = await readPods(cfg.bus);
+    // A bus that could not be read is a 502; a bus that was read and holds nothing is 200 with
+    // an empty list. "No pods are publishing" and "there is no broker" are different answers,
+    // and an empty result must not be able to mean either.
+    if (read.error !== undefined) return reply.code(502).send({ error: read.error });
+    return { configured: true, pods: read.pods };
+  });
+
+  /**
+   * Stop or start the container set on one device, over the bus.
+   *
+   * The same selection the ssh quiesce makes -- SIGTERM to every container init by `dumb-init`
+   * name -- for the cost of a publish instead of an sshd fork and a docker CLI that faults in
+   * ~71 MiB of mapped text on a 417 MiB board.
+   *
+   * `stack: running` is NOT reconciled device-side (docs/pod-bus.md): it clears the desire to be
+   * stopped, and a power cycle is what actually brings the stack back. So this is the honest verb
+   * for "stop collecting" and deliberately not a start button pretending to be one.
+   */
+  app.post<{ Params: { name: string }; Querystring: { desired?: string } }>(
+    '/nodes/:name/stack',
+    async (req, reply) => {
+      const node = findNode(cfg.inventory, req.params.name);
+      if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+      const desired = req.query.desired;
+      if (desired !== 'running' && desired !== 'stopped') {
+        return reply.code(400).send({ error: `desired is running or stopped, not ${JSON.stringify(desired)}` });
+      }
+      if (!busConfigured(cfg.bus)) {
+        return reply.code(501).send({ error: 'no pod bus configured -- set FLEET_MQTT_URL' });
+      }
+      try {
+        await setDesired(cfg.bus, node.name, 'stack', desired);
+        return { node: node.name, desired };
+      } catch (err) {
+        return reply.code(502).send({ error: (err as Error).message });
+      }
+    },
+  );
 
   // ---- status -------------------------------------------------------------------------
   // On demand, never polled: nothing should touch the fleet while it is flying, and a probe
