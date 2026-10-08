@@ -1,114 +1,134 @@
 package main
 
-// Starting and stopping one container by name.
+// Starting and stopping one service by name.
 //
-// The case this exists for: pulling an FC log needs `coordinator-mavlink` to let go
-// of /dev/ttyAMA0, and bringing it back afterwards should not need a reboot. Whole-
-// stack control cannot express that -- on the coordinator it would take the broker
-// down with it, and on a campod it is the wrong granularity.
+// The case this exists for: pulling an FC log needs `coordinator-mavlink` to let go of
+// /dev/ttyAMA0, and bringing it back afterwards should not need a reboot. Whole-stack
+// control cannot express that -- on the coordinator it would take the broker down with
+// the instruction that asked for it.
 //
-// Talks to the Docker API over its socket with net/http, rather than linking the
-// docker client or shelling to the CLI. The CLI is the thing that costs 71 MiB of
-// page faults on a Zero; the client library is a large dependency for four calls.
-// An HTTP request over a unix socket is neither.
+// SYSTEMD, over the system bus (#449). The containers are quadlet units now, so a
+// service IS a systemd unit and `StopUnit` is the operation -- which means this reuses
+// the D-Bus connection already open for the radio and the reboot, and needs no
+// container socket mounted at all.
 //
-// Names come from `container_name:` in the stack files, which are pinned, so a
-// desire names exactly one container. A name that does not exist gets a 404 from
-// the daemon, which answers "is this possible" in the one step we were taking
-// anyway -- there is no list of permitted names here.
+// What this replaced: four HTTP calls over the Docker API socket. That was already
+// chosen to avoid the CLI's page faults, but it is the wrong layer now. Stopping a
+// container behind systemd's back leaves the unit and the container disagreeing about
+// what is running, and systemd owns the stop timeout and the ordering either way.
+//
+// Names come from the quadlet units, which are pinned in the stack directory, so a
+// desire names exactly one unit. A name systemd does not know comes back as
+// `not-found` rather than an error, which is reported as what it is -- there is no list
+// of permitted names here.
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"time"
+	"strings"
+
+	"github.com/godbus/dbus/v5"
 )
 
-// dockerClient is an HTTP client bound to the daemon's unix socket.
+const (
+	systemdService  = "org.freedesktop.systemd1"
+	systemdPath     = dbus.ObjectPath("/org/freedesktop/systemd1")
+	systemdManager  = "org.freedesktop.systemd1.Manager"
+	methodStartUnit = systemdManager + ".StartUnit"
+	methodStopUnit  = systemdManager + ".StopUnit"
+	methodListNames = systemdManager + ".ListUnitsByNames"
+)
+
+// unitName normalises what somebody published into a systemd unit name.
 //
-// The host part of the URL is ignored by the dialer but has to be present for
-// net/http to build a request, hence the conventional "docker" placeholder.
-type dockerClient struct {
-	http *http.Client
+// A bare name, a `.service` name and a `.container` name are all things a reader of
+// the stack directory might reasonably type, and the quadlet file for
+// `coordinator-mavlink.container` generates `coordinator-mavlink.service`. Accepting
+// all three costs two lines and removes the only sharp edge in the topic.
+func unitName(name string) string {
+	name = strings.TrimSuffix(strings.TrimSpace(name), ".container")
+	if !strings.HasSuffix(name, ".service") {
+		name += ".service"
+	}
+	return name
 }
 
-func newDockerClient(socket string) *dockerClient {
-	return &dockerClient{http: &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-			},
-		},
-	}}
-}
-
-// do issues one request and returns the status and body.
-func (d *dockerClient) do(method, path string) (int, []byte, error) {
-	req, err := http.NewRequest(method, "http://docker"+path, nil)
+// unitState is systemd's ActiveState for one unit: "active", "inactive", "failed",
+// "activating", "deactivating", or "not-found" for a unit systemd does not know.
+//
+// ListUnitsByNames rather than GetUnit, because GetUnit errors on a unit that is not
+// loaded and a stopped quadlet unit may well not be. This returns a row either way,
+// which is what lets "stopped" and "no such unit" be different answers rather than
+// the same error.
+func (h *host) unitState(name string) (string, error) {
+	conn, err := h.bus()
 	if err != nil {
-		return 0, nil, err
+		return unknown, err
 	}
-	resp, err := d.http.Do(req)
-	if err != nil {
-		return 0, nil, fmt.Errorf("docker socket: %w", err)
+	// UnitStatus is a 10-field struct; index 3 is active_state. Decoded into a slice
+	// of dbus.Variant rather than a typed struct so a systemd that adds a field does
+	// not break the decode.
+	var out [][]dbus.Variant
+	call := conn.Object(systemdService, systemdPath).Call(methodListNames, 0, []string{name})
+	if call.Err != nil {
+		return unknown, fmt.Errorf("%s: %w", methodListNames, call.Err)
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	return resp.StatusCode, body, err
+	if err := call.Store(&out); err != nil {
+		return unknown, fmt.Errorf("decoding %s: %w", methodListNames, err)
+	}
+	if len(out) == 0 {
+		return "not-found", nil
+	}
+	row := out[0]
+	if len(row) < 4 {
+		return unknown, fmt.Errorf("%s returned %d fields, expected at least 4", methodListNames, len(row))
+	}
+	state, ok := row[3].Value().(string)
+	if !ok {
+		return unknown, fmt.Errorf("active_state is %T, not a string", row[3].Value())
+	}
+	return state, nil
 }
 
-// running reports whether one container is running.
+// setUnit starts or stops one unit and does NOT wait for the job.
 //
-// Unversioned API paths, so the daemon answers with whatever it speaks rather than
-// us pinning a version that a later image moves past.
-func (d *dockerClient) running(name string) (bool, error) {
-	code, body, err := d.do("GET", "/containers/"+name+"/json")
-	if err != nil {
-		return false, err
-	}
-	if code == http.StatusNotFound {
-		return false, fmt.Errorf("no container named %q", name)
-	}
-	if code != http.StatusOK {
-		return false, fmt.Errorf("inspecting %s: HTTP %d", name, code)
-	}
-	var out struct {
-		State struct{ Running bool } `json:"State"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return false, fmt.Errorf("inspecting %s: %w", name, err)
-	}
-	return out.State.Running, nil
-}
-
-// setRunning starts or stops one container.
+// "replace" is systemd's standard job mode: supersede any conflicting job rather than
+// failing or queueing behind it. The next reconcile pass observes the result, which is
+// the same reason nothing else here waits -- `stack` reads `running` until the inits
+// are actually gone, and a unit reads `activating` until it is up.
 //
-// 304 is the daemon saying it was already in that state, which is success for a
-// reconciler -- the desired state holds either way.
-//
-// Stopping goes through the daemon rather than signalling the init directly,
-// deliberately: the daemon owns the grace period from the stack file and the
-// escalation after it, and reimplementing that one layer up is the same thrashing
-// twice. This is also why there is no wait here -- the next pass observes.
-func (d *dockerClient) setRunning(name string, want bool) error {
-	verb := "stop"
-	if want {
-		verb = "start"
-	}
-	code, body, err := d.do("POST", "/containers/"+name+"/"+verb)
+// systemd owns the stop timeout, from TimeoutStopSec in the quadlet unit, next to the
+// measurement that justifies it. Nothing is reimplemented here.
+func (h *host) setUnit(name string, want bool) error {
+	conn, err := h.bus()
 	if err != nil {
 		return err
 	}
-	switch code {
-	case http.StatusNoContent, http.StatusNotModified:
-		return nil
-	case http.StatusNotFound:
-		return fmt.Errorf("no container named %q", name)
-	default:
-		return fmt.Errorf("%sping %s: HTTP %d: %s", verb, name, code, body)
+	method, verb := methodStopUnit, "stop"
+	if want {
+		method, verb = methodStartUnit, "start"
 	}
+	var job dbus.ObjectPath
+	call := conn.Object(systemdService, systemdPath).Call(method, 0, name, "replace")
+	if call.Err != nil {
+		return fmt.Errorf("%sing %s (polkit may refuse this): %w", verb, name, call.Err)
+	}
+	if err := call.Store(&job); err != nil {
+		// The job was accepted; only the reply shape surprised us. Worth saying, not
+		// worth failing: the next pass reads the real state regardless.
+		return fmt.Errorf("%sing %s was accepted but the reply did not decode: %w", verb, name, err)
+	}
+	return nil
+}
+
+// activeFromState maps systemd's vocabulary onto the two words this bus uses.
+//
+// "activating" and "deactivating" are transitional and deliberately report as their
+// destination's opposite -- a unit that is still coming up is not yet running, so a
+// consumer comparing desired against actual sees them still disagreeing, which is
+// true, rather than seeing success early.
+func activeFromState(state string) string {
+	if state == "active" {
+		return stackRunning
+	}
+	return stackStopped
 }

@@ -1,0 +1,39 @@
+[Unit]
+Description=Coordinator MAVLink router
+PartOf=coordinator-stack.target
+# Ordering only, not a hard requirement: the router consumes pose once the estimator
+# publishes and tolerates it being absent. Compose expressed this as depends_on.
+After=vio-estimator.service
+
+[Container]
+Image=ghcr.io/symmatree/coordinator-mavlink:main
+ContainerName=coordinator_mavlink
+Pull=never
+Network=host
+PodmanArgs=--privileged --stop-timeout=30
+
+# The REAL node /dev/ttyAMA0, NOT the /dev/serial0 symlink: a device mapping does not
+# follow symlinks, so /dev/serial0 never appears inside the container and the router
+# crash-loops on ENOENT. With disable-bt (supplied by the image), ttyAMA0 is the PL011
+# primary UART, which is what /dev/serial0 points to. Verified on the bench 2026-07-09.
+AddDevice=/dev/ttyAMA0
+Volume=/var/lib/coordinator/ipc:/tmp
+# #167/#220: timesync.jsonl and vehicle.tlog land in THIS BOOT's session directory
+# under here, so collecting the session collects them.
+Volume=/var/lib/coordinator/captures:/captures
+Volume=/etc/hostname:/etc/host-hostname:ro
+
+Environment=MAVLINK_DEVICE=/dev/ttyAMA0
+Environment=MAVLINK_BAUD=1500000
+# #88: the router is the writer of the arm-state file vio-tracker reads.
+Environment=OAK_ARM_FILE=/tmp/fc_armed
+# The captures ROOT, not a file path: the router appends <node>/<boot-id>/ itself,
+# because the boot id is not known until boot. Empty disables both logs.
+Environment=COORD_CAPTURES_DIR=/captures
+
+[Service]
+TimeoutStopSec=60
+Restart=no
+
+[Install]
+WantedBy=coordinator-stack.target

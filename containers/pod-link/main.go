@@ -110,9 +110,7 @@ type config struct {
 	accelStatusFile  string
 	// Whose free space is reported. The captures mount, read-only.
 	dataDir string
-	// The Docker API socket, for per-service start and stop. Empty, or absent from
-	// the container, disables that concern and says so in the status.
-	dockerSocket string
+
 	// How often the subscriber reconciles and republishes. Separate from `period`
 	// and slower by default: intent has to be fast because it sets the arm-to-first
 	// -frame latency, while nothing is waiting on a status refresh. Each pass is a
@@ -140,7 +138,6 @@ func loadConfig() (config, error) {
 		cameraStatusFile: env("POD_LINK_CAMERA_STATUS_FILE", "/tmp/campod_camera_status"),
 		accelStatusFile:  env("POD_LINK_ACCEL_STATUS_FILE", "/tmp/campod_accel_status"),
 		dataDir:          env("POD_LINK_DATA_DIR", "/captures"),
-		dockerSocket:     env("POD_LINK_DOCKER_SOCKET", "/var/run/docker.sock"),
 	}
 	secs, err := strconv.Atoi(env("POD_LINK_PERIOD_S", "2"))
 	if err != nil || secs < 1 {
@@ -319,10 +316,6 @@ func run(c config, stop <-chan struct{}) error {
 	want := newWanted()
 	seen := &seenIntent{}
 	h := &host{}
-	var docker *dockerClient
-	if c.dockerSocket != "" {
-		docker = newDockerClient(c.dockerSocket)
-	}
 
 	// Publisher state: the last intent published. Guarded because the on-connect
 	// handler clears it from paho's goroutine while the loop below reads it, and
@@ -434,7 +427,7 @@ func run(c config, stop <-chan struct{}) error {
 	}
 
 	publishStatusNow := func() {
-		doc := reconcile(c, h, docker, want)
+		doc := reconcile(c, h, want)
 		doc.LastIntent, doc.LastIntentAtBootS, doc.LastIntentError = seen.snapshot()
 		if body, err := json.Marshal(doc); err == nil {
 			publishStatus(cl, status, string(body))
@@ -533,7 +526,7 @@ func desiredPeriod(want *wanted, fallback time.Duration) time.Duration {
 // this self-healing against a change made some other way (somebody turning the
 // radio on by hand) and against an action that failed. The cost of a no-op pass is
 // a comparison.
-func reconcile(c config, h *host, docker *dockerClient, want *wanted) *podStatus {
+func reconcile(c config, h *host, want *wanted) *podStatus {
 	w := want.snapshot()
 	// The coordinator has no capture flag of its own; what it knows is the arm state
 	// it publishes from, which is the honest thing for it to report.
@@ -555,23 +548,20 @@ func reconcile(c config, h *host, docker *dockerClient, want *wanted) *podStatus
 		doc.Errors = append(doc.Errors, fmt.Sprintf(format, args...))
 	}
 
-	// Services, by container name. The reason this granularity exists: the FC log
-	// pull needs coordinator-mavlink to release /dev/ttyAMA0, and whole-stack control
-	// on the coordinator would take the broker down with the instruction.
+	// Services, by systemd unit. The reason this granularity exists: the FC log pull
+	// needs coordinator-mavlink to release /dev/ttyAMA0, and whole-stack control on the
+	// coordinator would take the broker down with the instruction that asked for it.
 	for k, v := range w {
-		name, ok := strings.CutPrefix(k, "service/")
-		if !ok || name == "" {
+		short, ok := strings.CutPrefix(k, "service/")
+		if !ok || short == "" {
 			continue
 		}
 		if v != stackRunning && v != stackStopped {
-			fail("desired service/%s %q is not %q or %q", name, v, stackRunning, stackStopped)
+			fail("desired service/%s %q is not %q or %q", short, v, stackRunning, stackStopped)
 			continue
 		}
-		if docker == nil {
-			fail("service/%s wants %q but there is no docker socket mounted", name, v)
-			continue
-		}
-		isRunning, err := docker.running(name)
+		name := unitName(short)
+		state, err := h.unitState(name)
 		if err != nil {
 			fail("%v", err)
 			continue
@@ -579,12 +569,15 @@ func reconcile(c config, h *host, docker *dockerClient, want *wanted) *podStatus
 		if doc.Services == nil {
 			doc.Services = map[string]string{}
 		}
-		doc.Services[name] = stackStopped
-		if isRunning {
-			doc.Services[name] = stackRunning
+		// Reported under the name that was asked for, not the normalised one, so a
+		// consumer can match its own request without redoing the normalisation.
+		doc.Services[short] = state
+		if state == "not-found" {
+			fail("no unit %s on this device", name)
+			continue
 		}
-		if isRunning != (v == stackRunning) {
-			if err := docker.setRunning(name, v == stackRunning); err != nil {
+		if activeFromState(state) != v {
+			if err := h.setUnit(name, v == stackRunning); err != nil {
 				fail("%v", err)
 			}
 		}

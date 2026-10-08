@@ -110,11 +110,11 @@ def probe_env(**env):
     p = _sp.run([sys.executable, str(HERE / "coord-version")], capture_output=True, text=True, env=e)
     return tomllib.loads(p.stdout)
 
-doc = probe_env(PATH="/nonexistent")  # no docker on PATH at all
+doc = probe_env(PATH="/nonexistent")  # no container runtime on PATH at all
 enum = doc.get("enumeration", {})
 check(
-    "docker absent reports a kind-level error",
-    enum.get("FLEET_ENUM_CONTAINER") == "docker is not installed"
+    "podman absent reports a kind-level error",
+    enum.get("FLEET_ENUM_CONTAINER") == "podman is not installed"
     and enum.get("FLEET_ENUM_CONTAINER_COUNT") == "0",
     f"{enum.get('FLEET_ENUM_CONTAINER')!r} count={enum.get('FLEET_ENUM_CONTAINER_COUNT')!r}",
 )
@@ -139,7 +139,7 @@ ids = [p["FLEET_UNIT_ID"] for t, p in doc.items()
 check("unit ids are unique within the machine", len(ids) == len(set(ids)), str(ids))
 
 # 7. End to end: exit 0 and valid TOML even on this machine, which has no
-#    /etc/fleet-image and no reachable docker.
+#    /etc/fleet-image and no reachable podman.
 p = subprocess.run([sys.executable, str(HERE / "coord-version")], capture_output=True, text=True)
 check("probe exits 0 with things missing", p.returncode == 0, f"rc={p.returncode}")
 try:
@@ -201,24 +201,24 @@ check(
 
 # 9. Containers: one inspect for every distinct image, not two per container. A campod
 #    runs BOTH containers from the same image, so this is the difference between 1
-#    dockerd round-trip and 4 -- and dockerd is what costs 2.1-22.0s per call under load.
+#    invocation and 4 -- a process start is the expensive part on this board (#449).
 calls = []
 real_run, real_which = cv.run, cv.shutil.which
-cv.shutil.which = lambda _: "/usr/bin/docker"
+cv.shutil.which = lambda _: "/usr/bin/podman"
 
 
 def fake_run(*cmd, timeout=20):
     calls.append(cmd)
-    if cmd[:2] == ("docker", "ps"):
+    if cmd[:2] == ("podman", "ps"):
         return 0, "campod_camera\timg:main\trunning\ncampod_accel\timg:main\trunning"
-    if cmd[:2] == ("docker", "inspect"):
+    if cmd[:2] == ("podman", "inspect"):
         return 0, '{"org.opencontainers.image.revision":"abc"}\timg@sha256:dd'
     return 1, ""
 
 
 cv.run = fake_run
 tables, err = cv.containers()
-inspects = [c for c in calls if c[:2] == ("docker", "inspect")]
+inspects = [c for c in calls if c[:2] == ("podman", "inspect")]
 check("enumeration succeeded", err == "", err)
 check("one inspect call, not one per container", len(inspects) == 1, str(len(inspects)))
 check("and it asks for the image once, not twice",
@@ -234,9 +234,9 @@ check("no probe error when it worked",
 #     template for EVERY object in the call, so the guard is not optional.
 def fake_no_digest(*cmd, timeout=20):
     calls.append(cmd)
-    if cmd[:2] == ("docker", "ps"):
+    if cmd[:2] == ("podman", "ps"):
         return 0, "c1\timg:local\trunning"
-    if cmd[:2] == ("docker", "inspect"):
+    if cmd[:2] == ("podman", "inspect"):
         return 0, '{"a":"b"}\t'
     return 1, ""
 
@@ -247,11 +247,11 @@ check("no digest is not an error", not any("FLEET_PROBE_ERROR" in p for _, p in 
 check("and no empty digest key is emitted",
       not any("FLEET_CONTAINER_IMAGE_DIGEST" in p for _, p in tables))
 check("the template guards RepoDigests",
-      any("if .RepoDigests" in a for c in calls if c[:2] == ("docker", "inspect") for a in c))
+      any("if .RepoDigests" in a for c in calls if c[:2] == ("podman", "inspect") for a in c))
 
 # 11. A failed inspect is a per-container error, not a lost unit.
 def fake_bad(*cmd, timeout=20):
-    if cmd[:2] == ("docker", "ps"):
+    if cmd[:2] == ("podman", "ps"):
         return 0, "c1\timg:x\trunning"
     return 1, ""
 

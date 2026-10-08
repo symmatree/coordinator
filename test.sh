@@ -19,6 +19,7 @@ TESTS=(
 	bin/test_coord_version.py
 	bin/test_coord_sessions.py
 	bin/test_coord_fc_log.py
+	bin/test_quadlet_units.py
 	harness/test_input_replayer.py
 	harness/test_router_stack.py
 	harness/test_router_telem.py

@@ -1,0 +1,20 @@
+[Unit]
+Description=VINS-Fusion estimator
+PartOf=coordinator-stack.target
+
+[Container]
+Image=ghcr.io/symmatree/coordinator-vio-estimator:main
+ContainerName=coordinator_vio_estimator
+Pull=never
+PodmanArgs=--stop-timeout=30
+Volume=/var/lib/coordinator/ipc:/tmp
+Volume=/var/lib/coordinator/config:/config:ro
+# No environment: the entrypoint reads only VINS_CONFIG, which defaults to
+# /config/oak_d.yaml (mounted above).
+
+[Service]
+TimeoutStopSec=60
+Restart=no
+
+[Install]
+WantedBy=coordinator-stack.target

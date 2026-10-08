@@ -1,218 +1,86 @@
 package main
 
 import (
-	"fmt"
-	"net"
-	"net/http"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
-// fakeDocker answers the four calls service.go makes, over a real unix socket, so
-// the transport is exercised rather than stubbed.
-type fakeDocker struct {
-	mu      sync.Mutex
-	running map[string]bool
-	calls   []string
-	socket  string
-}
-
-func newFakeDocker(t *testing.T, running map[string]bool) *fakeDocker {
-	t.Helper()
-	// Socket paths are capped near 108 bytes, and t.TempDir() under a long scratch
-	// path can exceed it -- hence the short name rather than a descriptive one.
-	socket := filepath.Join(t.TempDir(), "d.sock")
-	f := &fakeDocker{running: running, socket: socket}
-
-	l, err := net.Listen("unix", socket)
-	if err != nil {
-		t.Fatalf("listening on %s: %v", socket, err)
-	}
-	srv := &http.Server{Handler: f}
-	go func() { _ = srv.Serve(l) }()
-	t.Cleanup(func() { _ = srv.Close() })
-	return f
-}
-
-func (f *fakeDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
-
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 3 || parts[0] != "containers" {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	name, verb := parts[1], parts[2]
-	state, known := f.running[name]
-	if !known {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	switch verb {
-	case "json":
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"State":{"Running":%t}}`, state)
-	case "stop", "start":
-		wantRunning := verb == "start"
-		if state == wantRunning {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		f.running[name] = wantRunning
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		w.WriteHeader(http.StatusBadRequest)
-	}
-}
-
-func (f *fakeDocker) isRunning(name string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.running[name]
-}
-
-// The case this granularity exists for: the FC log pull needs coordinator-mavlink to
-// release /dev/ttyAMA0, and the broker carrying the instruction is in the same stack,
-// so stopping the whole stack cannot express it.
-func TestStoppingOneServiceLeavesTheOthersAlone(t *testing.T) {
-	f := newFakeDocker(t, map[string]bool{
-		"coordinator_mavlink":    true,
-		"coordinator_mochi_mqtt": true,
-	})
-	dir := t.TempDir()
-	c := config{role: "publisher", node: "coordinator", armFile: filepath.Join(dir, "arm"),
-		dataDir: dir, dockerSocket: f.socket}
-	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
-
-	want := newWanted()
-	want.set("service/coordinator_mavlink", stackStopped)
-
-	doc := reconcile(c, &host{}, newDockerClient(f.socket), want)
-	if len(doc.Errors) != 0 {
-		t.Fatalf("unexpected errors: %v", doc.Errors)
-	}
-	if f.isRunning("coordinator_mavlink") {
-		t.Error("the fc-talker is still running")
-	}
-	if !f.isRunning("coordinator_mochi_mqtt") {
-		t.Error("the broker was stopped too, which would cut the instruction's own path")
-	}
-
-	// And the state observed on the NEXT pass is what says it took.
-	doc = reconcile(c, &host{}, newDockerClient(f.socket), want)
-	if doc.Services["coordinator_mavlink"] != stackStopped {
-		t.Errorf("services=%v, want coordinator_mavlink stopped", doc.Services)
-	}
-}
-
-// Back up again without a reboot, which is the half that makes the log-pull workflow
-// usable rather than a one-way trip.
-func TestAServiceCanBeStartedAgain(t *testing.T) {
-	f := newFakeDocker(t, map[string]bool{"coordinator_mavlink": false})
-	dir := t.TempDir()
-	c := config{role: "publisher", node: "coordinator", armFile: filepath.Join(dir, "arm"),
-		dataDir: dir, dockerSocket: f.socket}
-	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
-
-	want := newWanted()
-	want.set("service/coordinator_mavlink", stackRunning)
-
-	doc := reconcile(c, &host{}, newDockerClient(f.socket), want)
-	if len(doc.Errors) != 0 {
-		t.Fatalf("unexpected errors: %v", doc.Errors)
-	}
-	if !f.isRunning("coordinator_mavlink") {
-		t.Error("the fc-talker was not started")
-	}
-}
-
-// Already in the desired state is success, not an error: the daemon answers 304 and
-// a reconciler has nothing to do.
-func TestAlreadyInTheDesiredStateIsNotAnError(t *testing.T) {
-	f := newFakeDocker(t, map[string]bool{"campod_camera": true})
-	dir := t.TempDir()
-	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"),
-		dataDir: dir, dockerSocket: f.socket}
-	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
-
-	want := newWanted()
-	want.set("service/campod_camera", stackRunning)
-
-	for i := 0; i < 3; i++ {
-		if doc := reconcile(c, &host{}, newDockerClient(f.socket), want); len(doc.Errors) != 0 {
-			t.Fatalf("pass %d reported %v", i, doc.Errors)
+// A bare name, a .service name and a .container name are all things a reader of the
+// stack directory might reasonably publish, and the quadlet file for
+// coordinator-mavlink.container generates coordinator-mavlink.service.
+func TestUnitNameAcceptsEveryFormSomebodyWouldType(t *testing.T) {
+	for in, want := range map[string]string{
+		"coordinator-mavlink":           "coordinator-mavlink.service",
+		"coordinator-mavlink.service":   "coordinator-mavlink.service",
+		"coordinator-mavlink.container": "coordinator-mavlink.service",
+		"  campod-camera  ":             "campod-camera.service",
+	} {
+		if got := unitName(in); got != want {
+			t.Errorf("unitName(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if !f.isRunning("campod_camera") {
-		t.Error("a no-op reconcile changed the state")
+}
+
+// systemd's vocabulary is wider than this bus's two words, and the transitional states
+// must report as NOT yet at their destination -- a unit still coming up is not running,
+// so desired and actual should still disagree rather than reading as early success.
+func TestTransitionalStatesDoNotReadAsSuccess(t *testing.T) {
+	for state, want := range map[string]string{
+		"active":       stackRunning,
+		"inactive":     stackStopped,
+		"failed":       stackStopped,
+		"activating":   stackStopped,
+		"deactivating": stackStopped,
+		"not-found":    stackStopped,
+	} {
+		if got := activeFromState(state); got != want {
+			t.Errorf("activeFromState(%q) = %q, want %q", state, got, want)
+		}
 	}
 }
 
-// A name the daemon does not know is reported as what it is. There is no allowlist
-// here on purpose -- the 404 answers the question in the step we were taking anyway.
-func TestAnUnknownContainerNameIsReported(t *testing.T) {
-	f := newFakeDocker(t, map[string]bool{"campod_camera": true})
+// With no bus reachable the service concern is lost and nothing else is. The reason
+// these are handlers in one process is fault isolation, not least privilege: a pod that
+// cannot reach systemd still has to fly.
+func TestNoBusCostsTheServiceConcernAndNothingElse(t *testing.T) {
 	dir := t.TempDir()
-	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"),
-		dataDir: dir, dockerSocket: f.socket}
+	c := config{role: "subscriber", node: "campod-sw",
+		flagFile: filepath.Join(dir, "flag"), dataDir: dir}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
+	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(dir, "no-such-socket"))
 
 	want := newWanted()
-	want.set("service/typo_mavlink", stackStopped)
+	want.set("service/campod-camera", stackStopped)
 
-	doc := reconcile(c, &host{}, newDockerClient(f.socket), want)
-	if len(doc.Errors) == 0 || !strings.Contains(strings.Join(doc.Errors, " "), "typo_mavlink") {
-		t.Errorf("errors=%v, want one naming typo_mavlink", doc.Errors)
-	}
-}
-
-// No socket mounted costs the service concern and nothing else.
-func TestNoDockerSocketIsReportedNotFatal(t *testing.T) {
-	dir := t.TempDir()
-	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"),
-		dataDir: dir}
-	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
-
-	want := newWanted()
-	want.set("service/campod_camera", stackStopped)
-
-	doc := reconcile(c, &host{}, nil, want)
+	doc := reconcile(c, &host{}, want)
 	if len(doc.Errors) == 0 {
-		t.Error("a missing docker socket was not reported")
+		t.Error("an unreachable bus was not reported")
 	}
 	if doc.DataFreeBytes <= 0 {
-		t.Error("free space was lost along with the service concern")
+		t.Error("free space was lost along with the bus")
 	}
 	if doc.Camera != nil || doc.Accel != nil {
 		t.Error("pass-through sections appeared from nowhere")
 	}
 }
 
-// Only containers somebody asked about are inspected. Listing every container every
-// pass would be an inspect per container for answers nobody wanted.
-func TestOnlyRequestedServicesAreInspected(t *testing.T) {
-	f := newFakeDocker(t, map[string]bool{"a": true, "b": true, "c": true})
+// A desired value we do not understand is reported, not guessed at, and the unit is
+// never touched on the strength of a typo.
+func TestUnknownServiceValueIsReportedNotGuessed(t *testing.T) {
 	dir := t.TempDir()
-	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"),
-		dataDir: dir, dockerSocket: f.socket}
+	c := config{role: "publisher", node: "coordinator",
+		armFile: filepath.Join(dir, "arm"), dataDir: dir}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 
 	want := newWanted()
-	want.set("service/b", stackRunning)
-	reconcile(c, &host{}, newDockerClient(f.socket), want)
+	want.set("service/coordinator-mavlink", "off")
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, call := range f.calls {
-		if strings.Contains(call, "/containers/a/") || strings.Contains(call, "/containers/c/") {
-			t.Errorf("inspected a container nobody asked about: %s", call)
-		}
+	doc := reconcile(c, &host{}, want)
+	if !strings.Contains(strings.Join(doc.Errors, " "), `"off"`) {
+		t.Errorf("errors=%v, want one naming the bad value", doc.Errors)
 	}
-	if len(f.calls) == 0 {
-		t.Error("no calls were made at all")
+	if _, reported := doc.Services["coordinator-mavlink"]; reported {
+		t.Error("a unit with an invalid desire was still queried")
 	}
 }

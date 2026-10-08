@@ -96,7 +96,7 @@
 
 # Below the module loading, not above it. coord-stack's last task starts the
 # stack, and sh1106-display declares `devices: [/dev/i2c-1:/dev/i2c-1]`, which
-# fails the container -- and so `docker compose up` -- when the node is absent.
+# fails the container -- and so the unit start -- when the node is absent.
 # On a freshly flashed card it is absent until i2c-dev is loaded, so this used
 # to fail on exactly the first converge after a reimage and no other run.
 - name: Install coordinator stack and state dirs

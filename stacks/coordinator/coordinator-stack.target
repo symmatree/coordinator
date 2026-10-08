@@ -1,0 +1,7 @@
+# The coordinator stack as one thing to start and stop. See
+# stacks/campod/campod-stack.target for why this is a plain target and not a quadlet.
+[Unit]
+Description=Rekon coordinator stack
+
+[Install]
+WantedBy=multi-user.target

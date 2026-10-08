@@ -221,15 +221,18 @@ flight rather than diagnosing after one.
 | desired | reconciled by | notes |
 |---|---|---|
 | `capture` | writing `/tmp/campod_capture`, which `capture.py` reads once per tick | written in the message handler rather than on the tick: arm comes from the operator's controller and the first frame should not wait a status period on top of the publisher's poll. Re-asserted on the tick if a write failed |
-| `service/<container>` | the Docker API over its socket, by the `container_name` pinned in the stack file | the granularity that matters on the coordinator. 304 (already in that state) is success. The daemon owns the grace period and any escalation, so there is nothing to reimplement and nothing to wait for |
-| `stack: stopped` | `SIGTERM` to every container init but its own | the same selection `coord stop` and the ansible quiesce make (`dumb-init` by name), and it never touches the daemon -- which is why it is the cheap path on a Zero. No escalation to `SIGKILL`: a container that will not exit is a result worth seeing |
+| `service/<unit>` | `StartUnit`/`StopUnit` on systemd over the system bus | the granularity that matters on the coordinator. The unit name is the quadlet file's (`coordinator-mavlink`), and a bare name, `.service` or `.container` all work. systemd owns the stop timeout -- from `TimeoutStopSec` in the unit, next to the measurement that justifies it -- so there is nothing to reimplement and nothing to wait for |
+| `stack: stopped` | `SIGTERM` to every container init but its own | the whole-stack hammer, independent of the runtime: it signals `dumb-init` by name and needs nothing else running. `coord stop` and the ansible quiesce now both use `systemctl stop` on the stack target instead, which is synchronous; this stays as the path that works when systemd cannot be reached |
 | `stack: running` | **nothing** | see below |
 | `radio` | NetworkManager's `WirelessEnabled` over the system bus | the same property `coord radio` sets, persisted by NM across boots. Read every pass whether or not anything asked; a failed *read* is reported as `unknown` rather than as an error, because a device with no bus socket is not a fault |
 
-A device with no Docker socket mounted says so if asked for a service change, and is
-otherwise silent about it. That is the campod's configuration on purpose: per-service
-control would have to go through dockerd, and dockerd is exactly the layer that
-degrades there, so `desired/stack` is the Zero's path.
+The same system bus carries the radio and the reboot, so per-service control needs no
+container socket mounted anywhere -- which is what it used to need, as four HTTP calls
+over the Docker API (#449). A device that cannot reach the bus loses all three verbs
+and says so, and keeps carrying capture intent.
+
+A unit systemd does not know reports as `not-found` rather than as an error, so
+"stopped" and "no such unit" are different answers. There is no allowlist of names.
 
 ### Why `stack: running` is not reconciled
 
