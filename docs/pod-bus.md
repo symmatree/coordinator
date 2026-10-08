@@ -45,20 +45,28 @@ the process reports its own cost and the numbers below are measurements, not ass
 | | |
 |---|---|
 | RSS | **6620 kB (6.5 MiB)**, `VmHWM` identical -- no peak above steady state |
-| major faults | **0** |
+| major faults | 0 |
 | threads | 6 |
 | stripped arm64 binary | 6.0 MB |
 
-Against the board's 417 MiB `MemTotal`, and against the camera's 99.6 MiB of CMA buffers
-and the 71 MiB the docker CLI faults in. **Unconfirmed on arm64 on a real Zero** -- the
-status document publishes `self_rss_bytes` and `self_major_faults`, so the first converge
-answers it from the device rather than from this table.
+**And measured on the hardware, campod-se, boot `93af8de7`, n=1:** RSS **5.7 MiB**
+idle-paused rising to **6.5 MiB** capturing, so the x86 figure held; the coordinator's
+instance **7.6 MiB**. Against the campod's 414.8 MiB `MemTotal` -- of which about 300 MiB
+cannot be reclaimed under any pressure, leaving ~162 MiB of page cache and ~29 MiB free as
+the only slack there is.
 
-`self_major_faults` is the load-bearing one. It counts pages this process had to read
-back off the card. A count that is non-zero and growing is pod-link being paged out
-between wake-ups and faulting back in -- which is the mechanism by which *delivering*
-"start capturing" could cost the camera its residency, rather than this process merely
-sitting there. Zero and staying zero is the evidence that is not happening.
+`self_major_faults` is the load-bearing one. It counts pages this process had to read back
+off the card. A count that is non-zero and growing is pod-link being paged out between
+wake-ups and faulting back in -- which is the mechanism by which *delivering* "start
+capturing" could cost the camera its residency, rather than this process merely sitting
+there.
+
+**It is not zero on hardware.** campod-se read **31 rising to 36 across about seventeen
+minutes**, and the coordinator 7. Five faults in seventeen minutes is slow growth rather
+than a startup cost that has settled -- an earlier reading of the same window was reported
+as stable and that was wrong. What this does NOT yet have is an hour of a box doing real
+work, which is the window that would say whether the rate holds, decays, or climbs under
+capture load. Until then: non-zero, slowly growing, unexplained.
 
 What is done to keep it there, in rough order of how much it matters:
 

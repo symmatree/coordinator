@@ -114,6 +114,13 @@ Campod sessions land at `captures/<campod-hostname>/<session>/` and are collecte
 per-file sha256 `manifest.json`. **Check the extracted bytes against that manifest**, not just
 the transport digest.
 
+**The manifest states the journal's fate either way**, under a `journal` key: `collected:
+true` with a byte count, or `collected: false` with the reason journalctl gave. A bundle came
+off campod-se (2026-10-07) with no `journal.log` and no recoverable reason -- the only account
+of it went to stderr, which the offload discards for a run that succeeded. An absent member
+cannot distinguish "not wanted" from "wanted and failed", so the bundle now carries its own
+explanation. If a bundle has no journal, read that key before anything else.
+
 ## 4. Ground side: backpack link health
 
 The live backpack data is metrics, not a log file. `bin/backpack-link-watch` is a hand-run
