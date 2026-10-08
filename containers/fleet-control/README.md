@@ -466,8 +466,18 @@ against. That coupling is the one that bit us when this shelled `one_time.sh` an
 changed underneath it.
 
 The build then runs `ansible-playbook --syntax-check -i localhost, --connection=local`, using
-the local-connection property `site.yaml` documents. A broken playbook fails CI rather than a
-provisioning run.
+the local-connection property `site.yaml` documents, over **every playbook this service can
+invoke** -- `site.yaml`, `provision.yaml`, `deploy.yaml`, `reimage.yaml`. A broken playbook fails
+CI rather than a provisioning run.
+
+All four are named rather than relying on `site.yaml` importing two of them: `import_playbook` is
+static, so parsing `site.yaml` does parse them today and stops doing so the moment anything
+changes what it imports.
+
+**It does not resolve handlers**, which is the limit worth knowing: six orphaned `notify`s
+survived the [#453](https://github.com/symmatree/coordinator/pull/453) split and failed a real
+first-time converge. `host/ansible/test_notifies.py` is that check, and it runs in `tests` --
+gating the merge rather than this rebuild, which is the better end of the chain.
 
 ## Known limitations
 
