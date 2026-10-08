@@ -84,44 +84,12 @@
   loop_control:
     label: "{{ item.path | basename }}"
 
-# Drop units a previous converge installed that this stack no longer defines.
-- name: List quadlet units currently installed
-  ansible.builtin.find:
-    paths: /etc/containers/systemd
-    patterns: "*.container"
-    file_type: any
-  register: coord_stack_installed
-
-- name: Remove quadlet units this stack no longer defines
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ coord_stack_installed.files }}"
-  loop_control:
-    label: "{{ item.path | basename }}"
-  when: >-
-    item.path | basename
-    not in (coord_stack_units.files | map(attribute='path') | map('basename') | list)
-
 - name: Symlink the {{ coord_stack_name }} stack target
   ansible.builtin.file:
     path: "/etc/systemd/system/{{ coord_stack_name }}-stack.target"
     src: "{{ coord_checkout }}/stacks/{{ coord_stack_name }}/{{ coord_stack_name }}-stack.target"
     state: link
     force: true
-
-# The target supersedes it.
-- name: Remove the superseded {{ coord_stack_name }}-stack boot service
-  ansible.builtin.systemd:
-    name: "{{ coord_stack_name }}-stack.service"
-    enabled: false
-    state: stopped
-  failed_when: false
-
-- name: Delete the superseded boot service unit file
-  ansible.builtin.file:
-    path: "/etc/systemd/system/{{ coord_stack_name }}-stack.service"
-    state: absent
 
 # daemon_reload rather than a handler: coord-stack is reached through include_role from
 # both device roles. The reload is also what runs the quadlet generator.
