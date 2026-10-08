@@ -1,0 +1,106 @@
+# Still capture from the Camera Module 3 (IMX708).
+#
+# Values live HERE, not in an environment file beside it: what you read is what runs.
+# The box gets this file through a symlink into the checkout, so `git pull` is the
+# deploy (#48) and a value you want different is a commit, not a local edit.
+[Unit]
+Description=campod still capture
+PartOf=campod-stack.target
+
+[Container]
+Image=ghcr.io/symmatree/coordinator-campod-camera:main
+ContainerName=campod_camera
+Exec=python3 /opt/campod/capture.py
+
+# NEVER fetches. A power-up must need no network and no pull (deployment-model.md),
+# and this unit starts unattended on a vehicle that may have none. Convergence ends
+# with a pull, so a converged node has its images by definition and a missing one is
+# a fault to report in seconds rather than an unattended fetch nobody is watching.
+Pull=never
+
+# libcamera/IMX708 passthrough, and /dev/spidev* for the ADXL345 reader (#211).
+# privileged populates the container /dev from the host and lifts the device cgroup;
+# there is no Privileged= key in quadlet, so this is the documented route.
+# The host still needs dtparam=spi=on for the spidev nodes to exist at all.
+PodmanArgs=--privileged --stop-timeout=90
+# Lets libcamera enumerate the camera. Without it enumeration fails and capture.py
+# reports no cameras, which looks identical to a badly seated ribbon.
+Volume=/run/udev:/run/udev:ro
+
+# /var/lib/campod is where the image mounts the @data btrfs subvolume; see
+# docs/campod.md for why that path is load-bearing across two repos.
+Volume=/var/lib/campod/captures:/captures
+Volume=/var/lib/campod/config:/config:ro
+# The node's own name. A container's hostname is its container id -- meaningless, and
+# different after every recreate -- so the host's name is mounted in and the host is
+# the single source of truth. This line is byte-identical on all four pods, which is
+# the point: it replaced a per-unit literal that made every pod claim to be
+# campod-sw and the data misidentify its own origin (#272).
+Volume=/etc/hostname:/etc/host-hostname:ro
+# The card-image manifest, recorded into every session by both writers.
+Volume=/etc/fleet-image:/etc/fleet-image:ro
+# The host's /tmp, which is where the capture flag lives. WITHOUT THIS the containers
+# each have their own /tmp, pod-link's writes are invisible here, the gate reads
+# absent forever and the camera never captures -- which looks exactly like a broken
+# camera.
+Volume=/tmp:/tmp
+
+Environment=CAMPOD_CAPTURE_HZ=1.0
+# 0 = sensor full resolution (IMX708 4608x2592)
+Environment=CAMPOD_CAPTURE_WIDTH=0
+Environment=CAMPOD_CAPTURE_HEIGHT=0
+Environment=CAMPOD_JPEG_QUALITY=90
+# Cap the shutter so auto-exposure trades to gain instead of a blurring long
+# exposure; 0 = uncapped. Matches OAK_STILL_MAX_EXPOSURE_US on the coordinator so the
+# two cameras stay comparable. Blur budget at 5 ms: hover at 2.5 m is negligible,
+# survey at 25 m and 5 m/s is ~3.5 px of along-track smear -- drop toward 1500 if
+# survey frames come back soft.
+Environment=CAMPOD_STILL_MAX_EXPOSURE_US=5000
+# Lens position in DIOPTRES (1/metres): 0.0 infinity, 0.5 = 2 m, 2.0 = 0.5 m. NOT the
+# OAK-D's 0-255 scale. A mapping pass photographs the ground from flight altitude, so
+# the subject is effectively at infinity; at infinity the defocus at 25 m is 0.10 px.
+# The cost is the near field, which the mission does not use. Full derivation,
+# including why the earlier 1.25 m hyperfocal argument was wrong, is in git history
+# for this file's compose.yaml predecessor and in docs/campod.md.
+Environment=CAMPOD_STILL_FOCUS=infinity
+# off | server | client -- multi-campod sync is #24.
+Environment=CAMPOD_SYNC_MODE=off
+# Capture is PAUSED until something says otherwise (#434). The camera still comes up,
+# warms through CAMPOD_WARMUP_FRAMES frames to pay the import and prove it can write,
+# and then holds ready -- started, buffers allocated, retrieving nothing.
+#
+# This exists because a bench pod wrote 29 GB and filled its card, which does not
+# present as a full disk: it presents as a pod that cannot capture, stops answering,
+# and invites three wrong explanations. Collection is wanted for the minutes of a
+# flight, not the hours beside one.
+#
+# UNTIL SOMETHING WRITES THIS FILE, A CAMPOD DOES NOT CAPTURE IN FLIGHT. The writer is
+# the pod control path (#25). Set the value empty to disable gating entirely and
+# capture continuously, which is the behaviour before this change.
+Environment=CAMPOD_CAPTURE_FLAG=/tmp/campod_capture
+Environment=CAMPOD_WARMUP_FRAMES=10
+# Where this process says what it is doing -- warm, ready, paused, how many frames,
+# and whether libcamera can see a camera at all. pod-link reads it and publishes it;
+# see docs/pod-bus.md. On tmpfs, so none of it touches the card.
+Environment=CAMPOD_STATUS_FILE=/tmp/campod_camera_status
+
+[Service]
+# SIGTERM -> SIGKILL grace. The only complete graceful exit measured took 35.0s under
+# systemd's shutdown, with both containers exiting 0. Docker's 10s default SIGKILLed
+# the camera at under a third of what it needed, which is why this is set at all.
+# 90s is the ceiling that successful exit actually ran under.
+#
+# Two timeouts, deliberately: podman's --stop-timeout (set in [Container], because
+# PodmanArgs is a [Container] key and in [Service] quadlet passes it through as an
+# unknown systemd directive that podman never sees) and systemd's TimeoutStopSec here.
+# systemd must outlast podman or it kills the thing doing the waiting.
+TimeoutStopSec=120
+# No restart. A container that dies mid-run stays dead until the next boot and that is
+# wanted: none of these come up happy mid-flight. A restart policy also fought the
+# boot unit once, bringing containers back DURING a shutdown on campod-se where the
+# accelerometer reader had exited cleanly and a fresh session started 22 s later on a
+# box that was going down.
+Restart=no
+
+[Install]
+WantedBy=campod-stack.target

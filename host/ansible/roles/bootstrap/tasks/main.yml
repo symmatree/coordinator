@@ -88,7 +88,7 @@
 
 # --- the Raspberry Pi archive ------------------------------------------------
 # We install NOTHING from it. Walk the roles: bootstrap takes ca-certificates,
-# curl and git from Debian; docker-host takes its four packages from Docker's own
+# curl and git from Debian; podman-host takes podman from Debian's own
 # repo; metrics takes collectd-core from Debian; coordinator takes i2c-tools from
 # Debian. power-resilience only DETECTS vcgencmd with `command -v` -- it never
 # installs it. So the archive is consulted by every apt-get update and supplies

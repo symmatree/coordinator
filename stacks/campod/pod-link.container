@@ -1,0 +1,61 @@
+# Carries capture intent from the coordinator and reports what this pod actually is.
+# Resident on purpose: a packet into a process already in memory costs nothing, where
+# an ssh into this box costs an sshd fork and a page-cache eviction during exactly the
+# window capture matters. Contract: docs/pod-bus.md.
+[Unit]
+Description=campod bus link
+PartOf=campod-stack.target
+
+[Container]
+Image=ghcr.io/symmatree/coordinator-pod-link:main
+ContainerName=campod_pod_link
+Pull=never
+Network=host
+
+# The container inits of the OTHER containers have to be visible for `desired/stack:
+# stopped` to mean anything. Without this pod-link is in its own PID namespace and
+# /proc shows only itself -- the sibling inits are not merely unreachable, they are
+# invisible, so the stack would read `stopped` while it was running.
+#
+# NOT privileged. Root in the host PID namespace is enough to signal the root-owned
+# inits, and the D-Bus socket below is enough for the radio, the reboot and per-unit
+# control. The isolation that matters here is fault isolation -- a broken handler must
+# not take capture down with it -- not privilege separation; the radio is off in flight
+# and the only network is the gadget link.
+PodmanArgs=--pid=host --stop-timeout=20
+
+# /tmp is tmpfs here, so the capture flag never touches the card. The two capture
+# processes write their status documents here for the same reason.
+Volume=/tmp:/tmp
+Volume=/etc/hostname:/etc/host-hostname:ro
+Volume=/etc/fleet-image:/etc/fleet-image:ro
+# The system bus: NetworkManager's WirelessEnabled for the radio, systemd for an
+# ordered reboot, and systemd again for per-unit start and stop. The SOCKET, not the
+# directory. Absent, those verbs fail and say so in the pod's status while capture
+# intent keeps working.
+Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+# Read-only, and only so statfs can report free space. A card that fills does not
+# present as a disk error -- it presents as a pod that cannot capture and stops
+# answering -- and it fills in about 4.2 hours with nothing capping it.
+Volume=/var/lib/campod/captures:/captures:ro
+
+Environment=POD_LINK_ROLE=subscriber
+# The coordinator's gadget-net address, which is the only way to it in flight. Static,
+# and the same value host/ansible/vars/gadget-net.yml pins.
+Environment=POD_LINK_BROKER=tcp://10.55.0.1:1883
+Environment=POD_LINK_FLAG_FILE=/tmp/campod_capture
+Environment=POD_LINK_CAMERA_STATUS_FILE=/tmp/campod_camera_status
+Environment=POD_LINK_ACCEL_STATUS_FILE=/tmp/campod_accel_status
+Environment=POD_LINK_DATA_DIR=/captures
+# How often this pod reconciles and republishes. Slow by default: in flight nothing
+# reads it, and every wake-up is a chance to fault pages back in on a board where the
+# camera's residency is what is being protected. A bench operator who is watching
+# raises it through `desired/status_period`.
+Environment=POD_LINK_STATUS_PERIOD_S=60
+
+[Service]
+TimeoutStopSec=40
+Restart=no
+
+[Install]
+WantedBy=campod-stack.target

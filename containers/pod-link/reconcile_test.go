@@ -97,13 +97,13 @@ func TestStackReadsStoppedOnlyWhenTheInitsAreActuallyGone(t *testing.T) {
 	want.set("stack", stackRunning) // a desire, so the observation is taken at all
 
 	withProc(t, fakeProc(t, map[int]string{1: initComm, 2: "sshd"}))
-	doc := reconcile(c, &host{}, nil, want)
+	doc := reconcile(c, &host{}, want)
 	if doc.Stack != stackRunning || doc.StackInits == nil || *doc.StackInits != 1 {
 		t.Errorf("stack=%q inits=%v, want running/1 while an init is alive", doc.Stack, doc.StackInits)
 	}
 
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
-	doc = reconcile(c, &host{}, nil, want)
+	doc = reconcile(c, &host{}, want)
 	if doc.Stack != stackStopped || doc.StackInits == nil || *doc.StackInits != 0 {
 		t.Errorf("stack=%q inits=%v, want stopped/0 once they are gone", doc.Stack, doc.StackInits)
 	}
@@ -119,7 +119,7 @@ func TestNoStackDesireMeansNoProcWalk(t *testing.T) {
 	// A /proc that would fail loudly if it were read at all.
 	withProc(t, filepath.Join(dir, "no-such-proc"))
 
-	doc := reconcile(c, &host{}, nil, newWanted())
+	doc := reconcile(c, &host{}, newWanted())
 	if doc.Stack != unknown {
 		t.Errorf("stack=%q, want %q when nobody asked", doc.Stack, unknown)
 	}
@@ -142,7 +142,7 @@ func TestUnknownDesiredValueIsReportedNotGuessed(t *testing.T) {
 	want.set("stack", "off")
 	want.set("radio", "on")
 
-	doc := reconcile(c, &host{}, nil, want)
+	doc := reconcile(c, &host{}, want)
 	joined := strings.Join(doc.Errors, " | ")
 	if !strings.Contains(joined, `"off"`) {
 		t.Errorf("no error naming the bad stack value: %s", joined)
@@ -160,7 +160,7 @@ func TestStatusCarriesDesiredBesideObserved(t *testing.T) {
 
 	want := newWanted()
 	want.set("stack", stackStopped)
-	doc := reconcile(c, &host{}, nil, want)
+	doc := reconcile(c, &host{}, want)
 
 	if doc.Desired["stack"] != stackStopped {
 		t.Errorf("desired stack missing from the document: %+v", doc.Desired)
@@ -181,7 +181,7 @@ func TestCaptureIsReassertedWhenObservationDisagrees(t *testing.T) {
 	want := newWanted()
 	want.set("capture", "true") // as if the handler recorded it and the write failed
 
-	doc := reconcile(c, &host{}, nil, want)
+	doc := reconcile(c, &host{}, want)
 	if !doc.Capture {
 		t.Error("reconcile did not re-assert capture")
 	}
@@ -202,7 +202,7 @@ func TestAMissingBusDoesNotStopTheRestOfThePass(t *testing.T) {
 	want := newWanted()
 	want.set("radio", radioOpen) // asked for, so the failure is worth reporting
 
-	doc := reconcile(c, &host{}, nil, want)
+	doc := reconcile(c, &host{}, want)
 	if doc.Radio != unknown {
 		t.Errorf("radio=%q, want %q with no bus", doc.Radio, unknown)
 	}
@@ -225,7 +225,7 @@ func TestAnUnreachableBusIsNotAnErrorIfNobodyAskedForTheRadio(t *testing.T) {
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path="+filepath.Join(dir, "no-such-socket"))
 
-	doc := reconcile(c, &host{}, nil, newWanted())
+	doc := reconcile(c, &host{}, newWanted())
 	if doc.Radio != unknown {
 		t.Errorf("radio=%q, want %q", doc.Radio, unknown)
 	}
@@ -242,7 +242,7 @@ func TestPublishedStatusCarriesNoWallClock(t *testing.T) {
 	c := config{role: "subscriber", node: "campod-sw", flagFile: filepath.Join(dir, "flag"), dataDir: dir}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 
-	body, err := json.Marshal(reconcile(c, &host{}, nil, newWanted()))
+	body, err := json.Marshal(reconcile(c, &host{}, newWanted()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestCaptureDocumentsArePassedThroughUntouched(t *testing.T) {
 		dataDir: dir, cameraStatusFile: cam}
 	withProc(t, fakeProc(t, map[int]string{2: "sshd"}))
 
-	doc := reconcile(c, &host{}, nil, newWanted())
+	doc := reconcile(c, &host{}, newWanted())
 	if strings.TrimSpace(string(doc.Camera)) != body {
 		t.Errorf("camera document altered:\n got %s\nwant %s", doc.Camera, body)
 	}

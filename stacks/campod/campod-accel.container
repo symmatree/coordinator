@@ -1,0 +1,42 @@
+# Both ADXL345s into JSONL. Same image as the camera, one process each; they agree on
+# an output path via the kernel boot_id. See containers/campod-camera/README.md.
+[Unit]
+Description=campod accelerometer capture
+PartOf=campod-stack.target
+
+[Container]
+Image=ghcr.io/symmatree/coordinator-campod-camera:main
+ContainerName=campod_accel
+Exec=/opt/campod/campod-accel
+Pull=never
+
+# privileged for /dev/spidev0.0 and 0.1. The host still needs dtparam=spi=on for those
+# nodes to exist at all. No /run/udev and no /config: SPI has no enumeration, so there
+# is nothing to discover and a DEVID read is the only presence test there is.
+PodmanArgs=--privileged --stop-timeout=90
+
+Volume=/var/lib/campod/captures:/captures
+# The host's /tmp, which this service did NOT have under compose: its status document
+# goes here for pod-link to read, and without the mount it writes into a private /tmp
+# where nothing can see it -- indistinguishable from a reader that is not running.
+Volume=/tmp:/tmp
+Volume=/etc/hostname:/etc/host-hostname:ro
+Volume=/etc/fleet-image:/etc/fleet-image:ro
+
+# Camera-to-arm-end baseline in metres, MEASURED per vehicle. Differential
+# acceleration over a known separation is the rotational signature, and it is
+# meaningless without this number -- 1 g across 150 mm at 120 Hz is 0.41 px of image
+# shift. Empty until it is measured on the airframe.
+Environment=CAMPOD_ACCEL_SEPARATION_M=
+Environment=CAMPOD_ACCEL_SYNC_KIB=0
+# Per-sensor presence, self-test verdict and counters, for pod-link to publish. A chip
+# select that answered nothing appears here as absent WITH the DEVID it read, which is
+# the pre-flight question these parts actually fail.
+Environment=CAMPOD_ACCEL_STATUS_FILE=/tmp/campod_accel_status
+
+[Service]
+TimeoutStopSec=120
+Restart=no
+
+[Install]
+WantedBy=campod-stack.target
