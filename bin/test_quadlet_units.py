@@ -1,19 +1,11 @@
 #!/usr/bin/env python3
-"""Run podman's own quadlet generator over the stack files and check what it produces.
+"""Run podman's quadlet generator over the stack files and check what it produces.
 
-These units are the whole deployment: a wrong key is a device that does not capture,
-and quadlet fails SOFTLY -- an unrecognised key in the wrong section is passed through
-to systemd, which ignores it, so the container starts without the setting and nothing
-says so. That is exactly what happened while writing them: `PodmanArgs=--stop-timeout`
-sat in [Service], where quadlet does not look, and the generated ExecStart carried no
-stop timeout at all. It generated cleanly and would have shipped.
+Asserts on the GENERATED ExecStart, not on the unit files: quadlet ignores a key it
+does not recognise in a section it does not read, so a unit with a setting in the wrong
+place generates cleanly and runs without it. Checking the input cannot see that.
 
-So this asserts on the GENERATED ExecStart rather than on the input, because the input
-looking right is what that failure mode gives you.
-
-SKIPS when podman's generator is absent, which it is on the notebook image CI runs.
-That is deliberate -- the check is worth having where it can run, and a skip is honest
-where it cannot. On a machine with podman:
+Skips where podman is absent, which includes the image CI runs on.
 
     python3 bin/test_quadlet_units.py
 """
@@ -51,8 +43,7 @@ def generate(stack_dir: Path) -> dict[str, str]:
         if p.returncode != 0:
             check(f"{stack_dir.name}: generator exited 0", False, p.stderr.strip()[:300])
             return {}
-        # A warning is how quadlet reports a key it could not use. Nothing should be
-        # warning about units we ship.
+        # A warning is how quadlet reports a key it could not use.
         noise = [ln for ln in p.stderr.splitlines() if ln.strip()]
         check(f"{stack_dir.name}: generator emitted no warnings", not noise,
               " | ".join(noise)[:300])
@@ -81,22 +72,18 @@ for stack in sorted((REPO / "stacks").iterdir()):
                            if ln.startswith("ExecStart=")), "")
         src = (stack / f"{name}.container").read_text()
 
-        # Group membership both ways: WantedBy is what makes the stack come up at boot,
-        # PartOf is what makes one `systemctl stop` take the whole stack down.
+        # WantedBy brings the stack up at boot; PartOf makes one stop take it down.
         check(f"{name}: WantedBy the stack target", f"WantedBy={target}" in text)
         check(f"{name}: PartOf the stack target", f"PartOf={target}" in text)
 
-        # A power-up must need no network (deployment-model.md), so no unit may fetch.
+        # A power-up must need no network: docs/deployment-model.md.
         check(f"{name}: never fetches at start", "--pull never" in exec_start,
               exec_start[-200:])
 
-        # No restart policy anywhere: a container that dies mid-run stays dead until
-        # the next boot, and a restart policy once fought the boot path during a
-        # shutdown.
+        # A container that dies mid-run stays dead until the next boot.
         check(f"{name}: no restart policy", "Restart=no" in text)
 
-        # Every stop timeout declared in the source has to reach podman. This is the
-        # assertion that would have caught the [Service]-versus-[Container] mistake.
+        # Every stop timeout declared in the source has to reach podman.
         declared_timeouts = re.findall(r"--stop-timeout=(\d+)", src)
         for secs in declared_timeouts:
             check(f"{name}: --stop-timeout={secs} reaches the ExecStart",
@@ -111,21 +98,17 @@ for stack in sorted((REPO / "stacks").iterdir()):
                   int(m.group(1)) > int(declared_timeouts[0]),
                   f"TimeoutStopSec={m.group(1)} vs --stop-timeout={declared_timeouts[0]}")
 
-        # Device passthrough, which is the payload itself. AddDevice becomes --device=
-        # with an equals sign; searching for "--device " finds nothing and looks like a
-        # pass.
+        # AddDevice becomes --device= with an equals sign.
         for dev in re.findall(r"^AddDevice=(\S+)", src, re.M):
             check(f"{name}: {dev} passed through",
                   f"--device={dev}" in exec_start, exec_start[-300:])
 
-        # Every bind mount declared reaches the run. The camera's /run/udev and the
-        # tracker's /dev/bus/usb are both load-bearing and both easy to lose silently.
+        # Every declared bind mount reaches the run.
         for vol in re.findall(r"^Volume=(\S+)", src, re.M):
             check(f"{name}: mounts {vol.split(':')[0]}",
                   f"-v {vol}" in exec_start, exec_start[-300:])
 
-        # Privileged and host-pid are how the camera and the bus link reach hardware
-        # and sibling containers respectively.
+
         if "--privileged" in src:
             check(f"{name}: privileged", "--privileged" in exec_start)
         if "--pid=host" in src:

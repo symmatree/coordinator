@@ -1,9 +1,6 @@
-# The broker the pods reach the coordinator through. SAME IMPLEMENTATION AS THE
-# CLUSTER (tales/tanka/environments/mochi-mqtt, mochimqtt/server:2.7), so federating
-# this on-device bus up to the central node later is two instances of one thing rather
-# than a translation. Config differences are in mochi-config.yaml, each with its
-# reason; the short version is no persistence hook, because retained state here would
-# be card writes on a box that loses power without warning.
+# The broker the pods reach the coordinator through. Same implementation the cluster
+# runs, so federating this bus upward later is two instances of one thing. Config and
+# its differences from the cluster's: mochi-config.yaml.
 [Unit]
 Description=Coordinator MQTT broker
 PartOf=coordinator-stack.target
@@ -14,8 +11,6 @@ ContainerName=coordinator_mochi_mqtt
 Pull=never
 Network=host
 PodmanArgs=--stop-timeout=10
-# The stack directory is symlinked into the checkout, so this resolves to the repo's
-# copy and `git pull` is the deploy (#48).
 Volume=/opt/stacks/coordinator/mochi-config.yaml:/config.yaml:ro
 
 [Service]

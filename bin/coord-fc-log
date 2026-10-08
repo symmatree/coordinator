@@ -75,15 +75,9 @@ SRC_COMPONENT = 1
 def resolve_image() -> str:
     """Ask the stack which image the mavlink service uses, rather than repeating it.
 
-    FROM THE UNIT FILE, not from the container. Under quadlet the container is run with
-    --rm and removed again in ExecStop, so once the stack is stopped there is no
-    container to inspect -- and this script only ever runs with the stack stopped,
-    because coordinator-mavlink holds /dev/ttyAMA0 while it is up. Inspecting the
-    container used to work here because docker left stopped containers lying around;
-    relying on that now would fail exactly when this is called (#449).
-
-    The unit file is the better source anyway: it is what will run, it is in git, and
-    it is readable with the stack down and with podman absent.
+    From the unit file, not the container: the units run with --rm, and this only ever
+    runs with the stack stopped because coordinator-mavlink holds /dev/ttyAMA0 while it
+    is up. The unit is readable with the stack down and with podman absent.
     """
     if IMAGE_ENV:
         return IMAGE_ENV

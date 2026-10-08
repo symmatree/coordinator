@@ -1,3 +1,4 @@
+# VINS-Fusion. Reads VINS_CONFIG, which defaults to the mounted /config/oak_d.yaml.
 [Unit]
 Description=VINS-Fusion estimator
 PartOf=coordinator-stack.target
@@ -9,8 +10,6 @@ Pull=never
 PodmanArgs=--stop-timeout=30
 Volume=/var/lib/coordinator/ipc:/tmp
 Volume=/var/lib/coordinator/config:/config:ro
-# No environment: the entrypoint reads only VINS_CONFIG, which defaults to
-# /config/oak_d.yaml (mounted above).
 
 [Service]
 TimeoutStopSec=60

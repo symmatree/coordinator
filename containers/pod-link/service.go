@@ -1,26 +1,11 @@
 package main
 
-// Starting and stopping one service by name.
+// Starting and stopping one systemd unit, over the same system bus connection the
+// radio and the reboot use.
 //
-// The case this exists for: pulling an FC log needs `coordinator-mavlink` to let go of
-// /dev/ttyAMA0, and bringing it back afterwards should not need a reboot. Whole-stack
-// control cannot express that -- on the coordinator it would take the broker down with
-// the instruction that asked for it.
-//
-// SYSTEMD, over the system bus (#449). The containers are quadlet units now, so a
-// service IS a systemd unit and `StopUnit` is the operation -- which means this reuses
-// the D-Bus connection already open for the radio and the reboot, and needs no
-// container socket mounted at all.
-//
-// What this replaced: four HTTP calls over the Docker API socket. That was already
-// chosen to avoid the CLI's page faults, but it is the wrong layer now. Stopping a
-// container behind systemd's back leaves the unit and the container disagreeing about
-// what is running, and systemd owns the stop timeout and the ordering either way.
-//
-// Names come from the quadlet units, which are pinned in the stack directory, so a
-// desire names exactly one unit. A name systemd does not know comes back as
-// `not-found` rather than an error, which is reported as what it is -- there is no list
-// of permitted names here.
+// The case it exists for: pulling an FC log needs coordinator-mavlink to release
+// /dev/ttyAMA0, and whole-stack control on the coordinator would stop the broker that
+// carried the instruction. Contract: docs/pod-bus.md.
 
 import (
 	"fmt"
@@ -38,12 +23,8 @@ const (
 	methodListNames = systemdManager + ".ListUnitsByNames"
 )
 
-// unitName normalises what somebody published into a systemd unit name.
-//
-// A bare name, a `.service` name and a `.container` name are all things a reader of
-// the stack directory might reasonably type, and the quadlet file for
-// `coordinator-mavlink.container` generates `coordinator-mavlink.service`. Accepting
-// all three costs two lines and removes the only sharp edge in the topic.
+// unitName turns a published name into a systemd unit name. A bare name, `.service`
+// and `.container` all resolve, since the quadlet file and the unit differ by suffix.
 func unitName(name string) string {
 	name = strings.TrimSuffix(strings.TrimSpace(name), ".container")
 	if !strings.HasSuffix(name, ".service") {
@@ -52,21 +33,18 @@ func unitName(name string) string {
 	return name
 }
 
-// unitState is systemd's ActiveState for one unit: "active", "inactive", "failed",
-// "activating", "deactivating", or "not-found" for a unit systemd does not know.
+// unitState is systemd's ActiveState: active, inactive, failed, activating,
+// deactivating, or not-found.
 //
-// ListUnitsByNames rather than GetUnit, because GetUnit errors on a unit that is not
-// loaded and a stopped quadlet unit may well not be. This returns a row either way,
-// which is what lets "stopped" and "no such unit" be different answers rather than
-// the same error.
+// ListUnitsByNames rather than GetUnit, which errors on a unit that is not loaded --
+// so "stopped" and "no such unit" stay different answers.
 func (h *host) unitState(name string) (string, error) {
 	conn, err := h.bus()
 	if err != nil {
 		return unknown, err
 	}
-	// UnitStatus is a 10-field struct; index 3 is active_state. Decoded into a slice
-	// of dbus.Variant rather than a typed struct so a systemd that adds a field does
-	// not break the decode.
+	// UnitStatus is a 10-field struct; index 3 is active_state. Decoded loosely so an
+	// added field does not break it.
 	var out [][]dbus.Variant
 	call := conn.Object(systemdService, systemdPath).Call(methodListNames, 0, []string{name})
 	if call.Err != nil {
@@ -89,15 +67,9 @@ func (h *host) unitState(name string) (string, error) {
 	return state, nil
 }
 
-// setUnit starts or stops one unit and does NOT wait for the job.
-//
-// "replace" is systemd's standard job mode: supersede any conflicting job rather than
-// failing or queueing behind it. The next reconcile pass observes the result, which is
-// the same reason nothing else here waits -- `stack` reads `running` until the inits
-// are actually gone, and a unit reads `activating` until it is up.
-//
-// systemd owns the stop timeout, from TimeoutStopSec in the quadlet unit, next to the
-// measurement that justifies it. Nothing is reimplemented here.
+// setUnit starts or stops one unit. Does not wait for the job: the next reconcile pass
+// observes the result. "replace" supersedes a conflicting job rather than queueing.
+// systemd owns the stop timeout, from the unit's TimeoutStopSec.
 func (h *host) setUnit(name string, want bool) error {
 	conn, err := h.bus()
 	if err != nil {
@@ -120,12 +92,8 @@ func (h *host) setUnit(name string, want bool) error {
 	return nil
 }
 
-// activeFromState maps systemd's vocabulary onto the two words this bus uses.
-//
-// "activating" and "deactivating" are transitional and deliberately report as their
-// destination's opposite -- a unit that is still coming up is not yet running, so a
-// consumer comparing desired against actual sees them still disagreeing, which is
-// true, rather than seeing success early.
+// activeFromState maps systemd's vocabulary onto the two words this bus uses. Only
+// "active" counts as running, so a transitional state reads as not-yet-there.
 func activeFromState(state string) string {
 	if state == "active" {
 		return stackRunning
