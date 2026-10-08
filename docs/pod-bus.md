@@ -40,27 +40,46 @@ back to paused-but-ready after a converge.
 There is no evidence that anything fits in a campod's margin, and that includes this. So
 the process reports its own cost and the numbers below are measurements, not assurances.
 
-**pod-link alone, x86-64, connected and reconciling at a 2 s period:**
+**campod-se, boot `93af8de7`, 2026-10-08, n=1, read off its own status topic with nothing
+logged in:**
 
 | | |
 |---|---|
-| RSS | **6620 kB (6.5 MiB)**, `VmHWM` identical -- no peak above steady state |
-| major faults | **0** |
-| threads | 6 |
+| RSS, idle-paused | 5.7 MiB |
+| RSS, capturing | 6.5 MiB |
+| RSS, the coordinator's instance | 7.6 MiB |
+| major faults | **31 rising to 36 over ~17 min** -- see below |
 | stripped arm64 binary | 6.0 MB |
 
-Against the board's 417 MiB `MemTotal`, and against the camera's 99.6 MiB of CMA buffers
-and the 71 MiB the docker CLI faults in. **Unconfirmed on arm64 on a real Zero** -- the
-status document publishes `self_rss_bytes` and `self_major_faults`, so the first converge
-answers it from the device rather than from this table.
+Against the campod's 414.8 MiB `MemTotal`, of which about 300 MiB cannot be reclaimed under
+any pressure, leaving ~162 MiB of page cache and ~29 MiB free as the only slack there is.
 
-`self_major_faults` is the load-bearing one. It counts pages this process had to read
-back off the card. A count that is non-zero and growing is pod-link being paged out
-between wake-ups and faulting back in -- which is the mechanism by which *delivering*
-"start capturing" could cost the camera its residency, rather than this process merely
-sitting there. Zero and staying zero is the evidence that is not happening.
+**There was an x86-64 column here and it has been removed, because it could not answer
+either question.** RSS is a function of memory pressure, and on a notebook with gigabytes
+free nothing was reclaiming, so the figure it produced was not a prediction of the figure
+on a 414 MiB board -- the two landing close together is not the x86 number having held.
+Worse, it reported **0 major faults** as evidence of the property this section says it cares
+about most, from a measurement where nothing was evicting anything and a non-zero result was
+structurally impossible. Hardware returned 31. What the x86 run was legitimately good for
+was checking that `selfCost()` reads the right `/proc` fields and that the status document
+carries them, which is a test of the code and belongs with the tests.
 
-What is done to keep it there, in rough order of how much it matters:
+`self_major_faults` is the load-bearing one. It counts pages this process had to read back
+off the card. A count that is non-zero and growing is pod-link being paged out between
+wake-ups and faulting back in -- which is the mechanism by which *delivering* "start
+capturing" could cost the camera its residency, rather than this process merely sitting
+there.
+
+**It is not zero on hardware.** campod-se read **31 rising to 36 across about seventeen
+minutes**, and the coordinator 7. Five faults in seventeen minutes is slow growth rather
+than a startup cost that has settled -- an earlier reading of the same window was reported
+as stable and that was wrong. What this does NOT yet have is an hour of a box doing real
+work, which is the window that would say whether the rate holds, decays, or climbs under
+capture load. Until then: non-zero, slowly growing, unexplained.
+
+What is done to keep it there. **The order is reasoning, not measurement** -- nothing here
+was measured with and without, so read it as the list of what was done rather than as a
+ranking that has been tested:
 
 1. **Few wake-ups.** The status period defaults to **60 s** and is itself a desired state
    (`desired/status_period`, in seconds) -- fast while somebody is watching at a bench,
@@ -87,7 +106,7 @@ and a retained one is refused.
 
 | topic | retained | payload | direction |
 |---|---|---|---|
-| `rekon/capture/intent` | yes | `{"capture":true,"reason":"armed"}` | coordinator -> all pods |
+| `rekon/capture/intent` | yes | JSON with a boolean `capture`, or a bare `true`/`false` | coordinator -> all pods |
 | `rekon/pod/<node>/desired/stack` | yes | `running` \| `stopped` | anyone -> one pod |
 | `rekon/pod/<node>/desired/radio` | yes | `open` \| `closed` | anyone -> one pod |
 | `rekon/pod/<node>/desired/status_period` | yes | seconds, e.g. `5` | anyone -> one device |
@@ -100,6 +119,19 @@ host's `/etc/hostname` rather than the container's, which is an ephemeral docker
 
 Desired-state payloads are **bare words, not JSON**. One enum value does not need a
 wrapper, and `mosquitto_sub -t 'rekon/#' -v` at a bench stays readable.
+
+**Capture intent is the exception and takes either form.** Our publisher emits
+`{"capture":true,"reason":"armed"}`; a hand publish of `true` works too, and so does any
+JSON carrying a boolean `capture` whatever its whitespace or key order. It is parsed, not
+pattern-matched -- it used to be matched as the substring `"capture":true`, so a payload
+written with the ordinary space after the colon read as **false**, closed the gate, and
+said nothing. Diagnosed on campod-se 2026-10-07 only by comparing it against a topic that
+worked.
+
+A payload that cannot be parsed means **paused**, and says so: in the log, and as
+`last_intent_error` in the status. The gate failing closed is deliberate
+([#439](https://github.com/symmatree/coordinator/pull/439)); the gate failing *silently*
+is what that bug cost.
 
 **Capture intent is fleet-wide; everything else is per device.** Capture intent is a
 property of the *vehicle* -- it armed, so every pod should be collecting -- while
@@ -162,6 +194,12 @@ failed.
 take" a single read: no cross-referencing two topics, no inferring success from the
 absence of an error. If they disagree the pod is either mid-transition or `errors`
 says why it cannot get there.
+
+**`last_intent` is the payload AS RECEIVED, verbatim**, with `last_intent_at_boot_s` and
+`last_intent_error`. Verbatim because the failure worth catching is a payload the pod read
+differently than its publisher meant, and a pod reporting only its own interpretation
+cannot show you that. It is also the answer to "did my publish arrive", off the bus,
+without reading a container log over ssh.
 
 **`state` is liveness.** `"gone"` is published by the broker as the pod's last will
 when its connection drops, because otherwise absence and silence look identical.

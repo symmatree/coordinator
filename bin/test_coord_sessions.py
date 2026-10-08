@@ -146,7 +146,7 @@ try:
 
     real_run, cs.subprocess.run = cs.subprocess.run, fake_run
     try:
-        body = cs.journal_for("22222222-bbbb-4444-8888-aaaaaaaaaaaa")
+        body, err = cs.journal_for("22222222-bbbb-4444-8888-aaaaaaaaaaaa")
     finally:
         cs.subprocess.run = real_run
     check("journal_for asks journalctl for the undashed boot id",
@@ -154,6 +154,44 @@ try:
     check("and no dashed form is passed",
           "22222222-bbbb-4444-8888-aaaaaaaaaaaa" not in seen["cmd"])
     check("and returns the journal body", body == b"journal body\n")
+    check("with no error alongside a body", err == "")
+
+    # 2d. Every failing path RETURNS a reason, so the bundle can carry it. A bundle came
+    #     off campod-se (2026-10-07) with no journal and no recoverable reason, because
+    #     the only account went to stderr and the caller discards stderr on a successful
+    #     run.
+    def failing_run(code, out=b"", errtext=b""):
+        def run(cmd, **kw):
+            class R:
+                returncode = code
+                stdout = out
+                stderr = errtext
+            return R()
+        return run
+
+    for label, fake, want in (
+        ("exit 0 with no output", failing_run(0, b""), "exited 0"),
+        ("non-zero with stderr", failing_run(1, b"", b"No journal files were found."),
+         "No journal files were found."),
+        ("non-zero with no stderr", failing_run(1, b"", b""), "no stderr"),
+    ):
+        real_run, cs.subprocess.run = cs.subprocess.run, fake
+        try:
+            body, err = cs.journal_for("22222222-bbbb-4444-8888-aaaaaaaaaaaa")
+        finally:
+            cs.subprocess.run = real_run
+        check(f"{label}: no body", body == b"")
+        check(f"{label}: a reason is returned", want in err, err)
+
+    def missing_journalctl(cmd, **kw):
+        raise FileNotFoundError(cmd[0])
+
+    real_run, cs.subprocess.run = cs.subprocess.run, missing_journalctl
+    try:
+        body, err = cs.journal_for("22222222-bbbb-4444-8888-aaaaaaaaaaaa")
+    finally:
+        cs.subprocess.run = real_run
+    check("absent journalctl: a reason is returned", "not installed" in err, err)
 
     # 3. package the closed one, for real
     buf = io.StringIO()

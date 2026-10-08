@@ -65,6 +65,14 @@ type podStatus struct {
 	// actually published a desire for.
 	Desired map[string]string `json:"desired,omitempty"`
 
+	// The last capture intent AS RECEIVED, verbatim, with the time it arrived and
+	// what went wrong if anything. Verbatim because the failure worth catching is a
+	// payload the pod read differently than its publisher meant -- which is not
+	// visible if the pod only reports its own interpretation.
+	LastIntent        string  `json:"last_intent,omitempty"`
+	LastIntentAtBootS float64 `json:"last_intent_at_boot_s,omitempty"`
+	LastIntentError   string  `json:"last_intent_error,omitempty"`
+
 	DataFreeBytes int64 `json:"data_free_bytes,omitempty"`
 
 	// WHAT THIS PROCESS ITSELF COSTS, reported by the process in question.

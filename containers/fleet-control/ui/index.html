@@ -160,6 +160,57 @@
     return r.json();
   }
 
+  /**
+   * What the pod bus says, by node. Refreshed with the page, not polled.
+   *
+   * Separate from `state`, which is the probe's. These answer different questions and one of them
+   * is free -- conflating them is how loading a status screen came to stop the fleet capturing.
+   */
+  const pods = new Map();
+
+  async function refreshPods() {
+    pods.clear();
+    try {
+      const r = await j('/pods');
+      for (const p of r.pods) pods.set(p.node, p);
+    } catch (e) {
+      // Reported in the log, not swallowed: "we could not look" is not "nothing is there".
+      log(`pod bus: ${e.message}`);
+    }
+  }
+
+  /** One device's live state. Nothing here is a judgement -- it is what the device published. */
+  function renderPod(p) {
+    const row = $({ className: 'units' });
+    // `badge` is the existing vocabulary for a one-word verdict on a card, so this reads the
+    // same as the unit rows below it rather than inventing a second look.
+    const cell = (label, value, badge) => {
+      const d = $({ className: 'unit' });
+      d.append($({ className: 'kind', textContent: label }));
+      d.append($({ className: badge === undefined ? 'id' : `badge ${badge}`, textContent: value }));
+      return d;
+    };
+    if (p.state === 'gone') {
+      // The broker's last will. Absence and silence look identical without it, which is why it
+      // is published rather than inferred.
+      row.append(cell('bus', 'gone -- connection dropped', 'stale'));
+      return row;
+    }
+    if (p.state === 'unreadable') {
+      row.append(cell('bus', 'status did not parse', 'stale'));
+      return row;
+    }
+    row.append(cell('camera', p.ready === true ? (p.phase ?? 'ready') : (p.phase ?? 'not ready'),
+                    p.ready === true ? 'ok' : 'stale'));
+    if (p.frames !== undefined) row.append(cell('frames', String(p.frames)));
+    row.append(cell('capture', p.capture === true ? 'on' : 'off'));
+    if (p.stack !== undefined && p.stack !== 'unknown') row.append(cell('stack', p.stack));
+    if (p.radio !== undefined && p.radio !== 'unknown') row.append(cell('radio', p.radio));
+    if (p.dataFreeBytes !== undefined) row.append(cell('card free', MB(p.dataFreeBytes)));
+    if (p.build !== undefined) row.append(cell('pod-link', p.build));
+    return row;
+  }
+
   function render(nodes) {
     const root = document.getElementById('fleet');
     // Read scroll state BEFORE the rebuild, while the elements still have layout boxes.
@@ -199,6 +250,11 @@
         mk('Reboot', 'reboot', false),
       );
       card.append(btns);
+
+      // What the device says it is DOING, off the bus. Free: the status documents are retained
+      // and already published, so this costs the device nothing -- unlike the probe below, which
+      // pays a quiesce to ask what is INSTALLED (#434, docs/pod-bus.md).
+      if (pods.has(n.name)) card.append(renderPod(pods.get(n.name)));
 
       if (st.probing) card.append($({ className: 'meta', textContent: 'asking...' }));
       else if (st.status) card.append(renderUnits(st.status, n.name));
@@ -332,7 +388,7 @@
 
     btn.disabled = false;
   }
-  document.getElementById('refresh').onclick = async () => { await showBuild(); await adoptRuns(); await refreshStatus(); };
+  document.getElementById('refresh').onclick = async () => { await showBuild(); await refreshPods(); await adoptRuns(); await refreshStatus(); };
 
   /** Every action confirms first, so a bump on a phone screen cannot start anything. */
   async function confirmThen(name, action, busyWith) {
@@ -662,11 +718,30 @@
     return row;
   }
 
+  /**
+   * Stop collecting, over the bus where there is one.
+   *
+   * `desired/stack: stopped` makes the SAME selection the ssh quiesce makes -- SIGTERM to every
+   * container init by `dumb-init` name -- for a publish instead of an sshd fork and a docker CLI
+   * that faults in ~71 MiB of mapped text on a 417 MiB board (docs/pod-bus.md).
+   *
+   * Falls back to the ssh route per node, because a pod that is not on the bus still has to be
+   * stoppable: the pods reach the broker over the gadget link only, and that link is not always
+   * up. Which path was taken is said in the log rather than hidden, since the two cost the device
+   * very different amounts.
+   */
   document.getElementById('pfStop').onclick = async () => {
     const nodes = await j('/nodes');
+    const onBus = new Set();
+    try { for (const p of (await j('/pods')).pods) onBus.add(p.node); } catch { /* no bus; ssh it is */ }
     for (const n of nodes) {
-      try { await j(`/nodes/${n.name}/stop-capture`, { method: 'POST' }); log(`${n.name}: capture stopped`); }
-      catch (e) { log(`${n.name}: ${e.message}`); }
+      const viaBus = onBus.has(n.name);
+      try {
+        await (viaBus
+          ? j(`/nodes/${n.name}/stack?desired=stopped`, { method: 'POST' })
+          : j(`/nodes/${n.name}/stop-capture`, { method: 'POST' }));
+        log(`${n.name}: stopping${viaBus ? ' (bus)' : ' (ssh, not on the bus)'}`);
+      } catch (e) { log(`${n.name}: ${e.message}`); }
     }
   };
 
@@ -846,6 +921,9 @@
   }
 
   // Before anything else: say what the service is already doing, or just finished doing.
+  // Before the roster renders, so the cards come up carrying live state. This is the cheap read;
+  // the probe stays behind its button.
+  await refreshPods();
   await adoptRuns();
   await showBuild();
 </script>
