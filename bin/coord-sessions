@@ -183,7 +183,7 @@ def add_bytes(tar: tarfile.TarFile, blob: bytes, arcname: str, mtime: int) -> st
     return hashlib.sha256(blob).hexdigest()
 
 
-def journal_for(session: str) -> bytes:
+def journal_for(session: str) -> "tuple[bytes, str]":
     """This boot's journal. Exact, because A SESSION IS A BOOT and journald indexes by
     boot id -- so the session id IS the selector, with no time window and no wall clock.
 
@@ -196,26 +196,36 @@ def journal_for(session: str) -> bytes:
     Persistent journald is on both device kinds (roles/power-resilience, #100), so a
     past boot's journal is still here unless it has aged out of the bounded store.
 
-    Failure is not fatal -- a session is worth collecting without its journal -- but it
-    says so on stderr. An empty journal is indistinguishable from a broken selector
-    otherwise, which is how the dash bug survived being written and reviewed.
+    Failure is not fatal -- a session is worth collecting without its journal -- but the
+    reason is RETURNED as well as printed, and cmd_package puts it in the manifest.
+    Stderr alone was not enough: a bundle came off campod-se with no journal and no
+    recoverable reason, because the only account of it went to a stream the caller
+    discards on a successful run. The bundle has to carry its own explanation.
+
+    An empty journal is indistinguishable from a broken selector otherwise, which is
+    how the dash bug survived being written and reviewed.
     """
     boot = session.replace("-", "")
     try:
         p = subprocess.run(["journalctl", "-b", boot, "-o", "short-iso-precise",
                             "--no-pager"], capture_output=True, timeout=120)
+        if p.returncode == 0 and p.stdout:
+            return p.stdout, ""
         if p.returncode == 0:
-            return p.stdout
-        err = p.stderr.decode(errors="replace").strip().splitlines()
-        print(f"coord-sessions: no journal for boot {boot}: "
-              f"{err[-1] if err else 'journalctl exited %d' % p.returncode}",
-              file=sys.stderr)
+            # Exit 0 and nothing on stdout. This path printed NOTHING before, so the
+            # member vanished with no account of itself anywhere -- the worst of the
+            # three outcomes and the easiest to miss, since it is the success path.
+            reason = f"journalctl exited 0 for boot {boot} with no output"
+        else:
+            err = p.stderr.decode(errors="replace").strip().splitlines()
+            reason = (f"journalctl exited {p.returncode} for boot {boot}: "
+                      f"{err[-1] if err else 'no stderr'}")
     except FileNotFoundError:
-        print("coord-sessions: journalctl not installed; no journal in the bundle",
-              file=sys.stderr)
+        reason = "journalctl is not installed"
     except subprocess.TimeoutExpired:
-        print("coord-sessions: journalctl did not finish within 120s", file=sys.stderr)
-    return b""
+        reason = "journalctl did not finish within 120s"
+    print(f"coord-sessions: no journal in the bundle: {reason}", file=sys.stderr)
+    return b"", reason
 
 
 def collectd_for(session: str) -> list[Path]:
@@ -290,7 +300,7 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
                     "bytes": path.stat().st_size,
                     "sha256": add_hashed(tar, path, f"{node}/{session}/{rel}"),
                 }
-            jrn = journal_for(session)
+            jrn, jrn_error = journal_for(session)
             if jrn:
                 entries["journal.log"] = {
                     "bytes": len(jrn),
@@ -307,6 +317,13 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
                 "packaged_by_boot": current,
                 "source_bytes": raw,
                 "files": entries,
+                # STATED EITHER WAY, because absence has to be distinguishable from
+                # never-having-been-attempted. A bundle came off campod-se with no
+                # journal, and the reason was gone: journal_for printed it to stderr
+                # and the caller discards stderr for a successful run. An absent
+                # member says nothing about whether it was wanted.
+                "journal": ({"collected": True, "bytes": len(jrn)} if jrn
+                            else {"collected": False, "error": jrn_error}),
             }
             blob = json.dumps(manifest, indent=2, sort_keys=True).encode()
             info = tarfile.TarInfo(f"{node}/{session}/manifest.json")
