@@ -2,6 +2,11 @@
 # collectd's software and its fixed plumbing. Provision: none of this changes when the
 # repo changes.
 #
+# No handler notifies here. provision.yaml ends in an unconditional reboot, which
+# applies the drop-in and starts collectd; a restart notified from this play would run
+# after that reboot anyway, since handlers flush after post_tasks. The live restart that
+# a config change needs is roles/metrics'.
+#
 # The DataDir helper is here rather than with the config because it writes under /usr,
 # which is a read-only subvolume -- keeping it on the provision side is what lets the
 # deploy play leave /usr alone and therefore skip its reboot. Its content is inline and
@@ -37,7 +42,6 @@
       install -d -m 0755 "$dir"
       ln -sfn "$dir" /run/collectd-datadir
     mode: "0755"
-  notify: Restart collectd
 
 # `copy` does not create a dest's parent, and this directory does not exist by default
 # -- the same gotcha roles/power-resilience records for journald.conf.d.
@@ -56,7 +60,6 @@
       [Service]
       ExecStartPre=/usr/local/bin/collectd-per-boot-datadir
     mode: "0644"
-  notify: Restart collectd
 
 - name: Create collectd data directory
   ansible.builtin.file:
