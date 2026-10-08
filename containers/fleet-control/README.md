@@ -165,7 +165,6 @@ starts after the pre-arm window where the RTK problems are.
 | | |
 |---|---|
 | `<start>-armed-<a>-disarmed-<d>.tlog` | each tlog named, copied off the share tlog-split writes to (tiles#794) |
-| `<date>_*.ubx` + `.ubx.tag` | the base station's raw observations for every UTC day the range touches -- the PPK inputs |
 | `backpack-metrics-<date>.json` | every `backpack_*` series over the range, from Mimir |
 
 **The listing is a listing.** It stats the files and reads the stamps out of their names; it never
@@ -178,7 +177,7 @@ run**, because the screen unticks on success and an unticked file reads as colle
 then what "Delete the rest" spares. The metrics are the other way round: a flight missing its
 backpack series is still worth its tlog, so that is recorded as "not collected, and why".
 
-**No range and no tlog means no observations and no backpack series**, which is right -- if the radio was never
+**No range and no tlog means no backpack series**, which is right -- if the radio was never
 connected there is nothing on the ground worth having.
 
 An open `.tlog.part` can be collected and **keeps its name**, because that name is the true thing to
@@ -194,22 +193,80 @@ reported, so a coarse answer is visible as one.
 have pods get/list, `pods/log` and `pods/exec` in `mavproxy` and `ntrip` for four reads. One moved
 and two were dropped:
 
-- **`<date>_*.ubx`** -- moved, not dropped. rtkbase's `[local_storage] datadir` is now
-  `datasets/gps-logs/attic-rtk-base/raw/`, mounted at that path in the `ntrip` environment, so
-  these are a directory read here. Before that they were `kubectl exec ... cat` into a 64 MB
-  buffer against a few hundred MB of file, which could never have worked and never had
-  ([#416](https://github.com/symmatree/coordinator/issues/416)).
+- **`<date>_*.ubx`**, the base station's raw observations. **Nothing logs them any more.** In two
+  months the only use was one 24 h session for the base's own survey-in, pulled by hand, and
+  nothing in `analysis/` parses a `.ubx` at all -- so a one-off capture for a PPP solve is a
+  `str2str` against the receiver when it is wanted, not something collected every flight. The
+  curated session and its `rinex/` package stay where they are on the share.
 
-  That directory is where the base's logs already lived -- its top level holds the session curated
-  for a PPP re-solve of the base position, and `raw/` is continuous capture.
+  It also never collected anything here: the original path was `kubectl exec ... cat` into a 64 MB
+  buffer against a few hundred MB of file
+  ([#416](https://github.com/symmatree/coordinator/issues/416)), and the share mount meant to
+  replace it was refused by the NAS export.
 
-Dropped:
+Also dropped:
 
 - **`mavproxy-console.log`** -- cluster debugging output, not flight data. Everything it said about
   the vehicle is derived from heartbeats that are in the tlog; what is only there is mavproxy's own
   link and NTRIP state, and Alloy already ships pod logs to Loki.
 - **`rtkbase-settings.conf`** -- `tiles/tanka/environments/ntrip/settings.conf` is in git and seeded
   into the pod, so the base position already has a history mechanism.
+
+## The pod bus: what the devices are doing, for free
+
+```sh
+curl -s  https://fleet.tiles.symmatree.com/pods
+curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/stack?desired=stopped"
+```
+
+Every campod and the coordinator publish a **retained** status document to
+`rekon/pod/<node>/status` on the broker the coordinator runs
+([docs/pod-bus.md](../../docs/pod-bus.md)). Readiness, camera phase, frame count, capture state,
+free bytes on the card, the sensors and their self-tests. Reading it is a subscribe, so **it costs
+the devices nothing** -- they were publishing anyway.
+
+**That is why readiness is here and not on the probe.** `GET /status` runs
+`quiesced('coord version')` against every node, so loading it SIGTERMs every container on the fleet
+and nothing restarts them until a reboot -- asking whether the pods were ready was what made them
+not ready ([#434](https://github.com/symmatree/coordinator/issues/434)). The two questions are
+genuinely different and only one of them is expensive:
+
+| question | answered by | costs |
+|---|---|---|
+| what is it **doing** -- ready, capturing, frames, card space | `GET /pods`, off the bus | nothing |
+| what is **installed** -- image digests, revisions, currency | `GET /status`, `coord version` over ssh | a quiesce |
+
+So the probe stays what it always was: a deliberate, expensive, definitive question you asked for
+on purpose. It is just no longer the price of looking at the screen.
+
+**`POST /nodes/:name/stack?desired=running|stopped`** publishes a desired state, retained, as the
+bare word the contract specifies. `stopped` makes **the same selection the ssh quiesce makes** --
+SIGTERM to every container init by `dumb-init` name -- for a publish instead of an sshd fork and a
+docker CLI that faults in ~71 MiB of mapped text on a 417 MiB board.
+
+`running` is **not reconciled device-side**, by the contract's design: it clears the desire to be
+stopped, and a power cycle is what actually brings the stack back. So this is the honest verb for
+"stop collecting" rather than a start button pretending to be one.
+
+**Stop capture on all** now uses the bus for any node publishing a status, and falls back to the
+ssh route for one that is not -- the pods reach the broker over the gadget link only, and that link
+is not always up. Which path a node took is said in the log, because the two cost it very different
+amounts.
+
+**A broker that cannot be reached is a 502, not an empty fleet.** "Nothing is publishing" and "we
+could not look" are different answers and an empty list must not be able to mean either. A document
+that will not parse is reported against its node rather than skipped: this bus has already been
+bitten once by a payload read differently than its publisher meant, and a reader that silently
+drops what it cannot read hides that same class of bug.
+
+| env | default | |
+|---|---|---|
+| `FLEET_MQTT_URL` | *(empty)* | the coordinator's broker, e.g. `mqtt://10.0.99.75:1883`. **Empty disables the bus** |
+| `FLEET_MQTT_SETTLE_MS` | `1500` | how long to listen after subscribing. Retained messages arrive unprompted with no count to expect, so the read ends by stopping rather than by being satisfied |
+
+No persistent subscription and no poll loop: connect, subscribe, read, disconnect. Retained means
+one subscribe gets the whole current picture, which keeps the rule that nothing here touches the
+fleet unless somebody asked.
 
 ## Progress comes from events, not scraped text
 
@@ -332,6 +389,8 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /healthz` | liveness |
 | `GET /build` | which build is answering, how long it has been up, and the PR it came from |
 | `GET /nodes` | the roster |
+| `GET /pods` | what the devices say they are doing, off the bus. Costs them nothing |
+| `POST /nodes/:name/stack?desired=` | `running` or `stopped`, published retained to the bus |
 | `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
 | `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
 | `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first, and abandons this node's in-flight runs |
@@ -366,9 +425,9 @@ which is the way out of a stuck box and so cannot be the thing a stuck box refus
 | `FLEET_IMAGE_REF` | `main` | the ref the fleet tracks |
 | `FLEET_GITHUB_TOKEN` | *(unset)* | needed **only** to download an artifact; see below |
 | `FLEET_IMAGE_CACHE` | `/images` | where fetched images are kept |
+| `FLEET_MQTT_URL` / `FLEET_MQTT_SETTLE_MS` | *(empty)* / `1500` | the pod bus; see above. Empty disables it |
 | `FLEET_FLIGHTS_DIR` | `/mnt/flights` | where flight directories are assembled |
 | `FLEET_GROUND_TLOGS` | `/mnt/ground-tlogs` | tlog-split's output, read-only (tiles#794) |
-| `FLEET_BASE_OBS` | `/mnt/base-observations` | rtkbase's raw observations, read-only. `gps-logs/attic-rtk-base/raw/` on the share |
 | `FLEET_MIMIR_URL` / `FLEET_MIMIR_TENANT` | `http://mimir-gateway.mimir.svc` / `tiles` | for the backpack series. The tenant is the cluster name, and there is more than one cluster |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | |
 

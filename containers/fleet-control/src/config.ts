@@ -2,6 +2,7 @@
 import { loadInventory, type Inventory } from './inventory.js';
 import type { ActionContext } from './actions.js';
 import type { GithubOptions } from './github.js';
+import type { BusConfig } from './bus.js';
 
 export interface Config {
   inventory: Inventory;
@@ -12,14 +13,14 @@ export interface Config {
   flightsDir: string;
   /** Where notifications go. An empty url disables them. See notify.ts. */
   notify: { url: string; tag: string };
+  /** The pod bus. An empty url disables it. See bus.ts and docs/pod-bus.md. */
+  bus: BusConfig;
   /** Where the ground station's own record of a flight lives. See cluster.ts. */
   cluster: {
     mimirUrl: string;
     mimirTenant: string;
     /** Where tlog-split writes its per-flight tlogs (tiles#794), mounted read-only. */
     groundTlogs: string;
-    /** The base station's raw observations, on a mount shared with whatever writes them. */
-    baseObs: string;
   };
   port: number;
   host: string;
@@ -72,13 +73,20 @@ export function loadConfig(): Config {
       // cluster name the way Alloy's notifier does rather than to empty.
       tag: env('FLEET_NOTIFY_TAG', 'tiles'),
     },
+    bus: {
+      // The broker is mochi-mqtt on the coordinator, listening on every interface, so this is
+      // the coordinator's own address -- not a cluster service.
+      url: env('FLEET_MQTT_URL', ''),
+      // Retained messages arrive right after SUBACK with no count to expect, so the read ends by
+      // stopping rather than by being satisfied. Long enough for four pods on a 2.4 GHz hop.
+      settleMs: Number(env('FLEET_MQTT_SETTLE_MS', '1500')),
+    },
     cluster: {
       mimirUrl: env('FLEET_MIMIR_URL', 'http://mimir-gateway.mimir.svc'),
       // The Mimir tenant is the cluster name (charts/.../alloy-application.yaml), so it is
       // configured rather than assumed -- there is more than one cluster.
       mimirTenant: env('FLEET_MIMIR_TENANT', 'tiles'),
       groundTlogs: env('FLEET_GROUND_TLOGS', '/mnt/ground-tlogs'),
-      baseObs: env('FLEET_BASE_OBS', '/mnt/base-observations'),
     },
     port: Number(env('PORT', '8080')),
     host: env('HOST', '0.0.0.0'),

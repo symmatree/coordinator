@@ -40,20 +40,29 @@ back to paused-but-ready after a converge.
 There is no evidence that anything fits in a campod's margin, and that includes this. So
 the process reports its own cost and the numbers below are measurements, not assurances.
 
-**pod-link alone, x86-64, connected and reconciling at a 2 s period:**
+**campod-se, boot `93af8de7`, 2026-10-08, n=1, read off its own status topic with nothing
+logged in:**
 
 | | |
 |---|---|
-| RSS | **6620 kB (6.5 MiB)**, `VmHWM` identical -- no peak above steady state |
-| major faults | 0 |
-| threads | 6 |
+| RSS, idle-paused | 5.7 MiB |
+| RSS, capturing | 6.5 MiB |
+| RSS, the coordinator's instance | 7.6 MiB |
+| major faults | **31 rising to 36 over ~17 min** -- see below |
 | stripped arm64 binary | 6.0 MB |
 
-**And measured on the hardware, campod-se, boot `93af8de7`, n=1:** RSS **5.7 MiB**
-idle-paused rising to **6.5 MiB** capturing, so the x86 figure held; the coordinator's
-instance **7.6 MiB**. Against the campod's 414.8 MiB `MemTotal` -- of which about 300 MiB
-cannot be reclaimed under any pressure, leaving ~162 MiB of page cache and ~29 MiB free as
-the only slack there is.
+Against the campod's 414.8 MiB `MemTotal`, of which about 300 MiB cannot be reclaimed under
+any pressure, leaving ~162 MiB of page cache and ~29 MiB free as the only slack there is.
+
+**There was an x86-64 column here and it has been removed, because it could not answer
+either question.** RSS is a function of memory pressure, and on a notebook with gigabytes
+free nothing was reclaiming, so the figure it produced was not a prediction of the figure
+on a 414 MiB board -- the two landing close together is not the x86 number having held.
+Worse, it reported **0 major faults** as evidence of the property this section says it cares
+about most, from a measurement where nothing was evicting anything and a non-zero result was
+structurally impossible. Hardware returned 31. What the x86 run was legitimately good for
+was checking that `selfCost()` reads the right `/proc` fields and that the status document
+carries them, which is a test of the code and belongs with the tests.
 
 `self_major_faults` is the load-bearing one. It counts pages this process had to read back
 off the card. A count that is non-zero and growing is pod-link being paged out between
@@ -68,7 +77,9 @@ as stable and that was wrong. What this does NOT yet have is an hour of a box do
 work, which is the window that would say whether the rate holds, decays, or climbs under
 capture load. Until then: non-zero, slowly growing, unexplained.
 
-What is done to keep it there, in rough order of how much it matters:
+What is done to keep it there. **The order is reasoning, not measurement** -- nothing here
+was measured with and without, so read it as the list of what was done rather than as a
+ranking that has been tested:
 
 1. **Few wake-ups.** The status period defaults to **60 s** and is itself a desired state
    (`desired/status_period`, in seconds) -- fast while somebody is watching at a bench,
