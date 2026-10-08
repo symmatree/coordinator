@@ -1,0 +1,38 @@
+---
+# The host tools in /usr/local/bin, as SYMLINKS into the checkout.
+#
+# /usr is its own btrfs subvolume mounted ro (pi-image/assemble-btrfs.sh), and
+# /usr/local lives inside it. Copying these nine files therefore needs the read-write
+# hatch, and opening the hatch is what forces a reboot at the end of every run -- so
+# copying them is what kept the routine deploy expensive.
+#
+# Symlinked once here, in provision, while the hatch is open anyway. After that
+# `git pull` updates what they point at and deploy never writes under /usr at all.
+# Same argument as /opt/stacks (#48): the deployed thing IS the repo's by construction.
+#
+# The links dangle until the first deploy clones the checkout. A provisioned card with
+# no checkout has no stack either, so that is a coherent state rather than a broken one.
+
+- name: Ensure /usr/local/bin exists
+  ansible.builtin.file:
+    path: /usr/local/bin
+    state: directory
+    mode: "0755"
+
+- name: Symlink the host tools from the checkout
+  ansible.builtin.file:
+    path: "/usr/local/bin/{{ item }}"
+    src: "{{ coord_checkout }}/bin/{{ item }}"
+    state: link
+    # The target is absent until the first deploy, which is expected.
+    force: true
+    follow: false
+  loop:
+    - coord
+    - coord-fc-log
+    - coord-radio
+    - coord-sessions
+    - coord-throttle-log
+    - coord-version
+    - vio-ipc-record
+    - vio-pose-tap

@@ -25,7 +25,7 @@ owner, so there is never a question of where the source of truth is.
 |------|----------|----------------|-----------------|
 | **Immutable image** ([#96](https://github.com/symmatree/coordinator/issues/96)) | OS + btrfs layout + Pi kernel/firmware, device tree, the initramfs, and the fleet-wide system facts (no swap, no scheduled maintenance, passwordless sudo). **Not** the container images ([#90](https://github.com/symmatree/coordinator/issues/90), not built) and **not** the checkout, which ansible creates. [What goes in and why](https://github.com/symmatree/dotfiles-symm/blob/main/pi-image/PIPELINE.md) | **rebuild + reflash** (versioned, per-role, CI) | git / CI |
 | **Persisted data** (`@home`, `@data`) | captures, journald, operator scratch | written at runtime; survives reflash | the box |
-| **Convergence** (ansible) | app/config reconcile on boot; `remount,rw /usr` wrapper for maintenance | re-runnable; `git pull` == deploy | git |
+| **Convergence** (ansible) | **two plays.** `provision.yaml` installs software and wires hardware, once per card; `deploy.yaml` is config + stack definition + image pulls and runs routinely | re-runnable; `git pull` == deploy | git |
 
 The test, from a prior session, is: **reflash a role image and the box is fully defined by
 git + the image** -- clean box == git, the snowflake gone. The only thing on top is
@@ -76,6 +76,30 @@ two channels below.
      fixed, "the image is the deploy": an app update is a few MB, and baking images into the
      reflash image ([#90](https://github.com/symmatree/coordinator/issues/90)) is cheap and
      incremental.
+
+## Provision and deploy are separate plays
+
+`provision.yaml` runs once per card; `deploy.yaml` runs every time. The seam is whether
+a thing is a property of the **device** or of a **commit**.
+
+| | provision.yaml | deploy.yaml |
+|---|---|---|
+| apt | every package, one index refresh | **nothing** |
+| `/usr` (a read-only subvolume) | opens the hatch, so it reboots to close it | **never opened, so it does not reboot** |
+| capture quiesce | none -- nothing is running yet | first, before anything else |
+| hardware | udev, gadget link, bridge, I2C, masked gettys | -- |
+| config | -- | collectd, VIO calibration, stack units, image pulls |
+
+Two consequences worth stating, because they are the point rather than side effects:
+
+- **A routine deploy does not reboot the device.** The old combined converge opened the
+  `/usr` read-write hatch on every run, and closing it again needs a boot, so every
+  converge bounced the hardware. Nothing in `deploy.yaml` writes under `/usr`.
+- **The nine host tools in `/usr/local/bin` are symlinks into the checkout**, made once
+  during provision while the hatch is open. `git pull` then updates what they point at.
+  Same argument as `/opt/stacks`: the deployed thing IS the repo's by construction.
+
+`site.yaml` is both, in order, for a fresh card.
 
 ## Deploy mechanics (built -- #48)
 
