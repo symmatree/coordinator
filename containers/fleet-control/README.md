@@ -8,40 +8,27 @@ Live at `https://fleet.{cluster}.symmatree.com`; deployment lives in `tiles`.
 
 ## Converge
 
-The service runs `host/ansible/site.yaml` against the node, here on the control
-node, and reports the exit code. **0 means converged.**
+The service runs the fleet playbook against the node, here on the control node, and reports the
+exit code. **0 means converged.**
 
 ```
 ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
   -e device_role=<coordinator|campod>
 ```
 
-There used to be two of these, `bootstrap` and `update`.
-[#263](https://github.com/symmatree/coordinator/pull/263) made the playbook handle a virgin
-unit and a converged one the same way, so two buttons issuing identical commands would
-misdescribe what the service does. The other actions below are not smaller converges -- they
-are things a converge does on its way past, offered alone because the operator wants them
-alone.
+> **Scope of this file.** It documents the *service*. **What the playbook does, which playbook
+> runs when, and what state a device is left in are documented with the playbook** --
+> [`host/ansible/`](../../host/ansible/) and
+> [docs/deployment-model.md](../../docs/deployment-model.md). This file used to paraphrase them
+> and the paraphrase went stale: it claimed every converge reboots the device and that the play
+> starts the stack on its way out, both of which stopped being true at
+> [#453](https://github.com/symmatree/coordinator/pull/453) with nothing here to notice.
+>
+> A device's actual state comes off the pod bus (see below), not from anything this service
+> believes about the play.
 
-The playbook owns the whole sequence. This service adds nothing to it except a button and a log.
-
-> **Scope of this file.** It documents the *service*. What the playbook does, and what happens
-> on a device while it runs, is documented with the playbook (`host/ansible/`) and the device
-> (`docs/campod.md`, `docs/host-setup.md`). Causal claims about device behaviour do not belong
-> here: nobody debugging a device reaches for the ground station's README, and a copy this far
-> from the thing it describes goes stale without anyone noticing.
-
-**Every converge reboots the device**, whether or not anything changed. Worth knowing before
-you press the button; the reason is the playbook's and is recorded there.
-
-**Budget twenty minutes or more on a campod**, against a few minutes for a Pi 4B. That is
-measured from this side -- wall time for a single converge driven from here -- and it is an
-expectation to set, not an explanation of anything.
-
-**This service carries no git logic and needs none:** the playbook updates the on-device
-checkout before installing from it. It used to be gated on a `manage_checkout` flag this
-service passed as `true`; [#295](https://github.com/symmatree/coordinator/pull/295) deleted
-the flag.
+**Budget twenty minutes or more on a campod**, against a few minutes for a Pi 4B. Measured from
+this side -- wall time for one converge driven from here -- so it is this service's to state.
 
 ### Reflashed cards
 

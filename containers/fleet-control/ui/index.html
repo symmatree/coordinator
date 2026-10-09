@@ -130,9 +130,9 @@
 
   const WHAT = {
     converge:
-      'Runs the Ansible playbook against the node: stops capture, converges packages and ' +
-      'config, pulls images, reboots if anything changed, starts the stack. Same for a fresh ' +
-      'card or a running one. Minutes on a Pi 4B, longer on a Zero.',
+      'Runs the fleet playbook against this node and reports how it ended. Minutes on a Pi 4B, ' +
+      'longer on a Zero. What the play does to the device is documented with the playbook; the ' +
+      'row above shows what the device says it is.',
     'converge?reflashed=true':
       'As above, and clears the recorded SSH host key first -- for a card that has just been ' +
       'reflashed and therefore presents a new key.',
