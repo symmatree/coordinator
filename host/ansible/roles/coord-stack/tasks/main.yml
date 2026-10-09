@@ -112,18 +112,13 @@
   # nothing to key "changed" on. Nothing downstream reads it.
   changed_when: false
 
-# Deliberately NOT followed by a start. The converge ends by rebooting -- bootstrap
-# remounts /usr read-write to do its work and that task is changed_when: true, so
-# site.yaml's reboot condition is met on every run -- and the boot unit starts the
-# stack on the way back up. The reboot is what restarts collection.
+# Not followed by a start. The play ends by rebooting and the boot unit brings the
+# stack up.
 #
 # Starting it here restarted capture in the MIDDLE of maintenance, with eighteen
 # further tasks then competing with a pod writing full-resolution JPEGs to the same
-# card. Starting the stack has itself been measured at 3m33s and 3m54s with a
-# sustained ~20 MiB/s read storm (analysis/pi-zero-unresponsiveness-experiments.md),
-# which is the last thing to introduce before the rest of the play runs. It also
-# meant a converge left the device capturing, so the next converge began against a
-# busy box instead of a quiet one.
+# card -- and a start has itself been measured at 3m33s and 3m54s with a sustained
+# ~20 MiB/s read storm (analysis/pi-zero-unresponsiveness-experiments.md).
 #
 # "Stop is not a sticky off" means the reboot brings it back, not that the play
 # restarts it in place.

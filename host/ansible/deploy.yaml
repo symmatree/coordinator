@@ -5,13 +5,13 @@
 #   ansible-playbook host/ansible/deploy.yaml -i '10.0.2.49,' -u pi \
 #     -e device_role=campod
 #
-# INSTALLS NOTHING AND TOUCHES NO PACKAGES. Everything here writes to /etc, /opt, /var
-# or the checkout in /home -- all writable subvolumes. /usr is a read-only subvolume
-# and nothing in this play opens it, which is why this play does not reboot: the hatch
-# is what used to force one on every run.
+# Installs nothing and touches no packages: everything here writes to /etc, /opt, /var
+# or the checkout in /home.
 #
 # `git pull` is the deploy (#48). The stack definition, the quadlet units and the
 # /usr/local/bin tools are all symlinks into the checkout, so updating it updates them.
+#
+# Ends by rebooting, which is how the stack comes back up.
 
 - name: Rekon config deploy
   hosts: all
@@ -73,32 +73,21 @@
       when: device_role == 'campod'
 
   post_tasks:
-    # Only when a package asked for one, which in this play means a kernel or firmware
-    # change arriving some other way. Nothing here opens the /usr hatch, so unlike the
-    # old combined converge there is no reboot-every-run.
-    #
-    # The stack is left STOPPED by the quiesce above. The target is enabled, so a power
-    # cycle brings it back, and there is a power cycle between bench and flight by
-    # construction. To start it now without rebooting: `coord start`.
-    - name: Check whether a reboot is pending
-      ansible.builtin.stat:
-        path: /var/run/reboot-required
-      register: deploy_reboot_required
-
     - name: Reboot and wait for the device to come back
       ansible.builtin.reboot:
-        msg: Rekon deploy -- a package asked for a reboot
+        msg: Rekon deploy -- applying the converged configuration
       when:
         - allow_reboot | bool
+        # ansible.builtin.reboot refuses under connection=local rather than rebooting
+        # its own control node, and it would refuse at the LAST task. Skip and say so.
         - ansible_connection | default('ssh') != 'local'
-        - deploy_reboot_required.stat.exists
 
     - name: Report what the device ended up in
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }} deployed (device_role={{ device_role }}).
-          {% if deploy_reboot_required.stat.exists %}
+          {% if allow_reboot | bool and ansible_connection | default('ssh') != 'local' %}
           Rebooted, so the stack is back up.
           {% else %}
-          Not rebooted. The stack is stopped -- power-cycle it, or `coord start`.
+          NOT rebooted -- the stack is stopped. Power-cycle it, or `coord start`.
           {% endif %}
