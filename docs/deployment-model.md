@@ -85,16 +85,15 @@ a thing is a property of the **device** or of a **commit**.
 | | provision.yaml | deploy.yaml |
 |---|---|---|
 | apt | every package, one index refresh | **nothing** |
-| `/usr` (a read-only subvolume) | opens the hatch, so it reboots to close it | **never opened, so it does not reboot** |
+| `/usr` (a read-only subvolume) | opens the hatch | never opened |
 | capture quiesce | none -- nothing is running yet | first, before anything else |
 | hardware | udev, gadget link, bridge, I2C, masked gettys | -- |
 | config | -- | collectd, VIO calibration, stack units, image pulls |
 
 Two consequences worth stating, because they are the point rather than side effects:
 
-- **A routine deploy does not reboot the device.** The old combined converge opened the
-  `/usr` read-write hatch on every run, and closing it again needs a boot, so every
-  converge bounced the hardware. Nothing in `deploy.yaml` writes under `/usr`.
+- **Both plays end by rebooting**, which is what brings the stack back up: the quiesce
+  stops it and nothing else starts it.
 - **The nine host tools in `/usr/local/bin` are symlinks into the checkout**, made once
   during provision while the hatch is open. `git pull` then updates what they point at.
   Same argument as `/opt/stacks`: the deployed thing IS the repo's by construction.
