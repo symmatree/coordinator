@@ -11,8 +11,9 @@
 // running one, and presenting two buttons that run identical commands would be a lie about
 // what the service does.
 //
-// The playbook stops data collection before it starts, reboots and waits when something
-// actually changed, and starts the stack again on the way out. Exit 0 means converged.
+// What the playbook does is documented with the playbook -- `host/ansible/` and
+// docs/deployment-model.md. Here, exit 0 means converged; the device's own state comes off the
+// pod bus, not from anything this file believes about the play.
 
 import { hostOf, type FleetNode, type Inventory } from './inventory.js';
 import { converge as runPlaybook, type EventSink } from './ansible.js';
