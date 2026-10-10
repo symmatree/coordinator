@@ -9,9 +9,8 @@
 # on it first -- python3, sudo with passwordless and sshd are all in the image.
 #
 # What is here: packages, the /usr read-write hatch they need, udev rules, masked
-# getty and maintenance timers, the USB gadget link, the campod bridge, and the
-# /usr/local/bin symlinks. All of it is a property of the device rather than of a
-# commit, so none of it belongs in a converge that runs between flights.
+# getty and maintenance timers, the USB gadget link and the campod bridge. All of it
+# is a property of the device rather than of a commit.
 #
 # In-place OS upgrade is off unless asked for:
 #     ansible-playbook host/ansible/provision.yaml ... -e dist_upgrade=true
@@ -53,6 +52,8 @@
           - platform
 
   roles:
+    # /usr writable for the package installs below; the reboot at the end closes it.
+    - role: usr-rw
     - role: bootstrap
     - role: podman-host
     # Unconditional, both roles: they sit on the same power rail and the same SD
@@ -60,7 +61,6 @@
     - role: collectd-install
     # Appliance: nothing updates or maintains itself on a timer.
     - role: no-scheduled-maintenance
-    - role: host-cli
     - role: coordinator-hardware
       when: device_role == 'coordinator'
     - role: campod-hardware

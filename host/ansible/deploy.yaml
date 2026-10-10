@@ -5,13 +5,10 @@
 #   ansible-playbook host/ansible/deploy.yaml -i '10.0.2.49,' -u pi \
 #     -e device_role=campod
 #
-# Installs nothing and touches no packages: everything here writes to /etc, /opt, /var
-# or the checkout in /home.
+# Installs no packages. `git pull` is the deploy (#48): the quadlet units, the stack
+# target and the /usr/local/bin tools are all copied out of the checkout afterwards.
 #
-# `git pull` is the deploy (#48). The stack definition, the quadlet units and the
-# /usr/local/bin tools are all symlinks into the checkout, so updating it updates them.
-#
-# Ends by rebooting, which is how the stack comes back up.
+# Ends by rebooting, which closes the /usr hatch and brings the stack back up.
 
 - name: Rekon config deploy
   hosts: all
@@ -64,8 +61,11 @@
           - platform
 
   roles:
-    # First: everything below reads from the checkout.
+    # /usr writable so host-cli can install the tools; the reboot at the end closes it.
+    - role: usr-rw
+    # Then the checkout: everything below reads from it.
     - role: checkout
+    - role: host-cli
     - role: metrics
     - role: coordinator
       when: device_role == 'coordinator'
