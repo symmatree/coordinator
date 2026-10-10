@@ -90,8 +90,10 @@ a thing is a property of the **device** or of a **commit**.
 | hardware | udev, gadget link, bridge, I2C, masked gettys | -- |
 | config | -- | collectd, VIO calibration, stack units, image pulls |
 
-**Both plays end by rebooting**, which is what brings the stack back up: the quiesce
-stops it and nothing else starts it, and it is also what closes the `/usr` hatch.
+**Neither play starts the stack, and only provision reboots.** Deploy's quiesce stops the
+stack and nothing in the play brings it back: `coord start`, or a power cycle, is the
+operator's. Provision's reboot is for the udev rules, module loads and gadget link a fresh
+card needs.
 
 `site.yaml` is both, in order, for a fresh card.
 
@@ -114,10 +116,10 @@ Two measured facts, both from the coordinator during bring-up:
 - `mount -o remount,ro /usr` **cannot succeed on a running system** -- "mount point is busy",
   exit 32.
 
-So after a converge, `/usr` stays writable until the next boot. Both plays do end by
-rebooting, which restores `ro` as a side effect, but the reboot is there for its own reasons
-([#457](https://github.com/symmatree/coordinator/pull/457)) -- it is not a constraint the
-hatch imposes, and a box left running with a writable `/usr` is working as designed.
+So after a converge, `/usr` stays writable until the next boot. That is not a problem to
+solve: a box running with a writable `/usr` is working as designed, and the next boot --
+whenever the operator wants one -- restores `ro`. Provision happens to reboot for its own
+reasons, which closes the hatch as a side effect; deploy does not reboot at all.
 
 Who writes under `/usr`: `roles/podman-host` and `roles/collectd-install` (packages,
 provision), and `roles/host-cli` (the eight tools in `/usr/local/bin`, deploy).
