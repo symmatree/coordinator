@@ -6,12 +6,8 @@
 #
 # Reads coord_checkout -- the DEVICE's own checkout -- and fails loudly without it.
 # Which of these are copies and which are symlinks, and why: docs/deployment-model.md.
-#
-# Tags: `stack` for the units and the target, `images` for the pull. /opt/stacks carries
-# both, because the pull reads the image names through it.
 
 - name: Create {{ coord_stack_name }} state directories
-  tags: stack
   ansible.builtin.file:
     path: "{{ coord_state_root }}/{{ item }}"
     state: directory
@@ -19,7 +15,6 @@
   loop: "{{ coord_state_subdirs }}"
 
 - name: Ensure the /opt/stacks root exists
-  tags: [stack, images]
   ansible.builtin.file:
     path: /opt/stacks
     state: directory
@@ -28,13 +23,11 @@
 # `file: state=link` will not replace a non-empty directory, so a stale copied dir from an
 # older deploy is removed first.
 - name: Stat the stack path ({{ coord_stack_name }})
-  tags: [stack, images]
   ansible.builtin.stat:
     path: "/opt/stacks/{{ coord_stack_name }}"
   register: coord_stack_path
 
 - name: Remove a stale copied stack directory ({{ coord_stack_name }})
-  tags: [stack, images]
   ansible.builtin.file:
     path: "/opt/stacks/{{ coord_stack_name }}"
     state: absent
@@ -44,7 +37,6 @@
     - not (coord_stack_path.stat.islnk | default(false))
 
 - name: Symlink /opt/stacks/{{ coord_stack_name }} to the checkout
-  tags: [stack, images]
   ansible.builtin.file:
     path: "/opt/stacks/{{ coord_stack_name }}"
     src: "{{ coord_checkout }}/stacks/{{ coord_stack_name }}"
@@ -55,14 +47,12 @@
 # each is WantedBy the stack target, so enabling the target is what makes the stack come
 # up.
 - name: Find this stack's quadlet units
-  tags: stack
   ansible.builtin.find:
     paths: "{{ coord_checkout }}/stacks/{{ coord_stack_name }}"
     patterns: "*.container"
   register: coord_stack_units
 
 - name: Fail if the stack carries no quadlet units
-  tags: stack
   ansible.builtin.assert:
     that: coord_stack_units.files | length > 0
     fail_msg: >-
@@ -78,7 +68,6 @@
 # follow: false so an existing symlink from an earlier converge is replaced rather
 # than written through.
 - name: Install the quadlet units into /etc/containers/systemd
-  tags: stack
   ansible.builtin.copy:
     remote_src: true
     src: "{{ item.path }}"
@@ -91,7 +80,6 @@
 
 # A real file for the same reason as the units above: systemd has to load it at boot.
 - name: Install the {{ coord_stack_name }} stack target
-  tags: stack
   ansible.builtin.copy:
     remote_src: true
     src: "{{ coord_checkout }}/stacks/{{ coord_stack_name }}/{{ coord_stack_name }}-stack.target"
@@ -102,14 +90,12 @@
 # daemon_reload rather than a handler: coord-stack is reached through include_role from
 # both device roles. The reload is also what runs the quadlet generator.
 - name: Enable {{ coord_stack_name }}-stack.target on boot
-  tags: stack
   ansible.builtin.systemd:
     name: "{{ coord_stack_name }}-stack.target"
     enabled: true
     daemon_reload: true
 
 - name: Pull the stack images
-  tags: images
   ansible.builtin.shell:
     cmd: >-
       set -o pipefail;

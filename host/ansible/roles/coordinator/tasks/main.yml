@@ -4,10 +4,8 @@
 # Coordinator (Pi 4B) specifics: the host devices the stack binds, then the stack.
 # Behavior matches the former install-coordinator.yaml.
 
-# import_role, not include_role: a static import lets coord-stack's own task tags do the
-# filtering. A dynamic include's tags are inherited by everything inside it.
 - name: Install coordinator stack and state dirs
-  ansible.builtin.import_role:
+  ansible.builtin.include_role:
     name: coord-stack
   vars:
     coord_stack_name: coordinator
@@ -23,7 +21,6 @@
 # on the Pi survives re-provisioning (it is a starting calibration -- see the
 # file header and docs/bench-estimator.md).
 - name: Seed OAK-D VINS calibration (does not overwrite local refinement)
-  tags: stack
   ansible.builtin.copy:
     src: oak_d.yaml
     dest: /var/lib/coordinator/config/oak_d.yaml
