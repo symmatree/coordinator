@@ -9,7 +9,21 @@
 # checkout and what is symlinked into it: docs/deployment-model.md.
 #
 # Does not reboot and does not start the stack: the quiesce at the top leaves it
-# stopped, and `coord start` or a power cycle is the operator's call.
+# stopped, and `coord start`, the fleet-control Reboot button or a power cycle is the
+# operator's call.
+#
+# Tagged, so one playbook serves the different things a converge is for. Each tag pulls
+# in what it needs, so any single one is a complete run:
+#
+#   --tags images        the checkout and the image pull -- a flight-line update
+#   --tags tools         just /usr/local/bin (leaves /usr writable; see the hatch doc)
+#   --tags stack         the state dirs, the quadlet units and the stack target
+#   --tags metrics       just the collectd config
+#   --tags checkout      just `git pull`
+#   --skip-tags quiesce  converge against a device you want left running
+#
+# Verified by listing each selection; `--tags images` really is the pull and what it
+# reads, because the device roles import coord-stack statically. See the roles list.
 
 - name: Rekon config deploy
   hosts: all
@@ -48,12 +62,14 @@
     # has been provisioned but never deployed: the target is a symlink this play has
     # not made yet. Nothing to stop is success.
     - name: Stop data collection for the duration of the deploy
+      tags: quiesce
       ansible.builtin.raw: systemctl stop {{ device_role }}-stack.target
       register: coord_stack_quiesced
       changed_when: coord_stack_quiesced.rc == 0
       failed_when: coord_stack_quiesced.rc not in [0, 1, 5]
 
     - name: Gather only the facts this playbook reads
+      tags: always
       ansible.builtin.setup:
         gather_subset:
           - '!all'
@@ -64,12 +80,20 @@
 
   roles:
     # /usr writable so host-cli can install the tools. It stays writable until the
-    # next boot -- docs/deployment-model.md, "The /usr hatch".
+    # next boot -- docs/deployment-model.md, "The /usr hatch". Tagged with its only
+    # consumer, so a run that installs no tools does not open the hatch.
     - role: usr-rw
-    # Then the checkout: everything below reads from it.
+      tags: tools
+    # Everything below reads from the checkout, so it carries their tags too.
     - role: checkout
+      tags: [checkout, tools, stack, images]
     - role: host-cli
+      tags: tools
     - role: metrics
+      tags: metrics
+    # Untagged on purpose: the device roles import coord-stack statically, so its tasks
+    # are filtered by their own `stack` / `images` tags. A tag here would be inherited
+    # by all of them and --tags images would pull the whole stack install with it.
     - role: coordinator
       when: device_role == 'coordinator'
     - role: campod
@@ -77,6 +101,7 @@
 
   post_tasks:
     - name: Report what the device ended up in
+      tags: always
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }} deployed (device_role={{ device_role }}).

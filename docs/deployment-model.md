@@ -97,6 +97,10 @@ card needs.
 
 `site.yaml` is both, in order, for a fresh card.
 
+`deploy.yaml` is tagged, so one playbook covers a flight-line image update, a bench run
+against a device you want left running, and pushing a new CLI. The play's own header lists
+the tags; they are not repeated here.
+
 ## The `/usr` hatch
 
 **This section is the only description of the hatch.** Playbooks, roles and the other docs
