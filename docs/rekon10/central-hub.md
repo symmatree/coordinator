@@ -6,35 +6,35 @@ Central power and data distribution, built around the **Coordinator** (Raspberry
 
 ## Components
 
-### USB 2.0 hub
+### USB 2.0 hub (as built)
 
-* Data to/from Pi Zeros (camera logical sync, NTP, telemetry)
-* Power to Pi Zeros (from barrel jack, doesn't load down the Coordinator)
+A **passive 4-port USB 2.0 hub**. Its upstream port goes to the Coordinator; each Pi Zero's
+**data** micro-USB goes to a hub port. Every Zero then takes a **separate 5 V pigtail from
+the UBEC** into its **power** micro-USB.
 
-Currently I only have one unit but we need to plan for 2x just for the horizontal ring of 8 cameras, plus the upward pair from the vertical ring (see [campod.md](../campod.md)).
+**Why both, when the hub alone would enumerate them.** The Zeros do back-power through the
+hub -- the Coordinator feeds it -- but not with enough current to run reliably. The direct
+pigtail is what actually powers them; the hub carries data and whatever trickle it can.
+That also keeps the Zeros' draw off the Coordinator's downstream port budget, which a
+passive hub has no way to supply.
 
-Powered USB 3.0 4-port hub: Amazon Basics B00DQFGH80.
+This is the "data-only hub links + 5 V injected at each Zero" shape described as an option
+in earlier revisions of this doc, arrived at by using a passive hub rather than by
+modifying a powered one. The per-pod 5 V pigtails exist anyway (the OAK-D needs a barrel
+jack, so the distribution wiring is there regardless), and running them to each Zero turned
+out simpler than making one hub carry both.
 
-* Input: 5 V from BEC.
-* Barrel jack, original supply is 5V @ 2.5A; tip-positive, ring-negative.
-* Outputs: power + data to each Pi Zero; upstream data port to central bridge Pi (4B).
+The **PPS + signal-ground** pair from the buffer board ([PPS distribution board](#pps-distribution-board))
+is a third connection per pod, independent of both.
 
-#### Alternative: data-only hub links + 5 V injected at each Zero
+Scaling: one hub covers the current 4-camera ring. The horizontal ring of 8 plus the upward
+pair from the vertical ring ([campod.md](../campod.md)) needs more -- four logical USB 2.0
+trees for 16 Zeros, or two for the 8-camera ring, each tree's upstream on its own
+Coordinator port.
 
-**Idea:** Use small bare-PCB 4-port USB 2.0 hub boards (DIY / AliExpress class), remove the Type-A sockets, and run **D+, D-, and GND** only to each Pi Zero's USB data path. Deliver **5 V + power GND** separately (GPIO 5 V pins on the Zero, or a short parallel harness), fed from the same **stripboard / UBEC** budget you already plan. The hub still needs **one** 5 V feed at its own input for the hub IC and terminations; that can be soldered to the stripboard rail instead of a barrel jack if you want to drop barrel pigtails.
-
-**Why it can fit this design:** You are **not** on a single-cable-per-Zero model today. Each pod already needs a **PPS + signal-ground** pair from the hub area ([campod.md](../campod.md)), so adding explicit **5 V + power GND** (or reusing a careful common ground strategy at the pod) does not explode connector count the way it would for a "USB only" airframe.
-
-**What you might actually save:** Mostly **mass and volume** of retail USB cables and hub output connectors, and **one failure mode** (floppy micro-USB plugs in vibration) if you replace them with soldered pigtails or board-to-board links. You might also delete **barrel-to-hub** adapters by wiring hub VIN straight to the distribution board. You do **not** remove the need for **four** logical USB 2.0 trees if you stay with one Coordinator host (four 4-port hubs for 16 Zeros, or two for the current 8-camera ring).
-
-**Costs / risks:**
-
-* **Labor and reliability:** Hand-wiring D+/D- from hub PCB to 16 Zeros is fussy; strain relief and conformal coat matter more than with molded cables. A bad stub length or GND reference can cause **enumerate / drop-out** under EMI.
-* **Hub quality:** Anonymous 2.0 hub silicon varies; retail hubs are sometimes better shielded. Budget bench time (vibration + motors running) before committing.
-* **USB gadget without VBUS:** Zeros in **g**adget mode normally get **5 V from the cable**. Powering from the header while using the micro-USB port **only** for data is standard enough, but **verify** on the bench that `dwc2` peripheral / gadget mode enumerates reliably with your exact hub and wiring (some stacks care about VBUS sense; fix with known device-tree / `config.txt` patterns if needed).
-* **Current path:** The UBEC and wiring must still deliver the **sum** of Zero + camera + SD + WiFi peaks; splitting power off USB does not reduce that total. It can **reduce** concern about **back-powering** the Coordinator or weird interactions between hub port power and the Pi 4B upstream port, if you prefer the hub to be "data plus local hub rail only" with Zeros fed from a single avionics 5 V bus you control.
-
-**Summary:** Reasonable **optional** refinement, not a slam-dunk simplification: you trade **retail cable + connector** bulk for **custom harnessing** and **bench risk**. Keep the **Amazon Basics** path as the conservative baseline until a bare-hub prototype proves stable next to ESC noise and prop vibration.
+**Open, from when this was a plan rather than a build:** whether `dwc2` peripheral/gadget
+mode is sensitive to VBUS state on this exact hub and wiring. The link works, so it is not
+a problem in the current configuration; it is worth knowing if the power topology changes.
 
 ### Central Raspberry Pi (currently a 4B)
 
@@ -88,14 +88,18 @@ Board reference: ElectroCookie snappable stripboard from Amazon.
 
 * 5V in from UBEC
 * Barrel jack to OAK-D (dimensions in datasheet, pigtails acquired)
-* Barrel jack to USB-hub (unknown dimensions) for initial set of 4 cameras
-* Protect for barrel jack to second USB-hub (unknown dimensions)
+* One 5 V pigtail per Pi Zero, into the Zero's **power** micro-USB (the hub is passive and
+  carries data only -- see [USB 2.0 hub](#usb-20-hub-as-built))
 * Power to rpi 4b (usb-c pigtail, 20 AWG)
 * UBEC-output-sensing voltage to FC 2nd-voltage pin
 
 ## Stripboard PPS distribution
 
-One per macro-pod of 4 Zeros/cameras. Could be a single board if it's not inconveniently large, but my instinct is that we'll put this next to the usb hub for the same macro-pod.
+**One board, at the front.** The earlier plan was one per macro-pod of 4 Zeros, sited next
+to that pod's USB hub; that was to keep the fan-out near its consumers. It is unnecessary
+after the buffer: each output is a point-to-point run with its own push-pull driver, so
+nothing is shared between consumers and distance stops being a shared-node problem -- see
+[PPS signal buffering](#pps-signal-buffering).
 
 * **PPS-in** from **DS3234 SQW** (one RTC breakout, mounted on this board -- see [PPS signal buffering](#pps-signal-buffering) for why it cannot sit at the end of a cable; SPI to Coordinator for discipline from GNSS when available)
 * 2-wire PPS (after buffer) and signal ground to each pi zero
@@ -295,8 +299,10 @@ board reads as "no pulses" rather than a floating line inventing edges.
 
 ### USB hub
 
-* 5V from BEC/stripboard via barrel jack (dimensions to be discovered)
+* Passive -- **no** rail of its own; it draws from the Coordinator's port
 * Upstream port to central bridge Pi's USB 2.0
+* Downstream ports to each Zero's **data** micro-USB; the Zeros' power comes from the
+  5 V rail directly ([USB 2.0 hub](#usb-20-hub-as-built))
 
 ### UBEC
 
