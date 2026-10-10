@@ -5,10 +5,10 @@
 #   ansible-playbook host/ansible/deploy.yaml -i '10.0.2.49,' -u pi \
 #     -e device_role=campod
 #
-# Installs no packages. `git pull` is the deploy (#48): the quadlet units, the stack
-# target and the /usr/local/bin tools are all copied out of the checkout afterwards.
+# Installs no packages. `git pull` is the deploy (#48); what is copied out of the
+# checkout and what is symlinked into it: docs/deployment-model.md.
 #
-# Ends by rebooting, which closes the /usr hatch and brings the stack back up.
+# Ends by rebooting (#457), which also restores read-only /usr.
 
 - name: Rekon config deploy
   hosts: all

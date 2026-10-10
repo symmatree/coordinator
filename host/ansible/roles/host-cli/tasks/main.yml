@@ -2,8 +2,7 @@
 # The host tools in /usr/local/bin. Copied from the checkout, which is why this runs
 # in deploy rather than provision: provision has no checkout yet.
 #
-# /usr is a read-only subvolume, so roles/usr-rw has to run first and the play has to
-# reboot afterwards to close it again.
+# Needs roles/usr-rw ahead of it: docs/deployment-model.md, "The /usr hatch".
 
 - name: Ensure /usr/local/bin exists
   ansible.builtin.file:
