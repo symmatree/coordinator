@@ -3,6 +3,9 @@
 # in deploy rather than provision: provision has no checkout yet.
 #
 # Needs roles/usr-rw ahead of it: docs/deployment-model.md, "The /usr hatch".
+#
+# The list is vars/payload.yml, shared with the payload tarball (#341) so the converge
+# and the tarball cannot install different sets.
 
 - name: Ensure /usr/local/bin exists
   ansible.builtin.file:
@@ -18,12 +21,4 @@
     mode: "0755"
     # Replaces a symlink left by an earlier converge rather than writing through it.
     follow: false
-  loop:
-    - coord
-    - coord-fc-log
-    - coord-radio
-    - coord-sessions
-    - coord-throttle-log
-    - coord-version
-    - vio-ipc-record
-    - vio-pose-tap
+  loop: "{{ host_tools }}"

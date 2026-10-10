@@ -20,6 +20,7 @@
   gather_facts: false
   vars_files:
     - vars/gadget-net.yml
+    - vars/payload.yml
 
   pre_tasks:
     - name: Refuse check mode
