@@ -9,15 +9,6 @@
 # installed on it first, and the bootstrap ordering problem stops existing rather
 # than being worked around.
 
-# --- /usr read-write ---------------------------------------------------------
-# /usr ships read-only and every apt task in this playbook writes to it. That is
-# correct for almost the whole life of a card: the device runs off the avionics
-# 5 V rail where every shutdown is a yank, and an unwritable /usr cannot be
-# corrupted mid-cut. Installing packages is the rare exception.
-#
-# Ordering is why this belongs here rather than in a shell script. In bash these
-# steps had to be survived in sequence; declared as tasks, the hatch simply comes
-# before the things that need it.
 # --- prerequisites -----------------------------------------------------------
 # git is the only one of these missing from the image, and it is needed because
 # /opt/stacks/<role> symlinks into a git checkout -- `git pull` IS the config
@@ -165,18 +156,13 @@
 
 # In-place OS upgrade, off by default. Was a separate playbook
 # (host/ansible/os-upgrade.yaml); folded in here because keeping it separate meant
-# duplicating the /usr hatch, the reboot-and-wait and its connection=local caveat
-# -- and it silently missed two things site.yaml has: the capture quiesce and the
-# --check refusal. A dist-upgrade is the heaviest thing we run, so running it
-# against a live capture was the worst case of exactly the contention we spend
+# duplicating the hatch and the reboot-and-wait, and it silently missed the capture
+# quiesce and the --check refusal. A dist-upgrade is the heaviest thing we run, so
+# running it against a live capture was the worst case of the contention we spend
 # effort avoiding.
 #
-# Here rather than in site.yaml's `tasks:` for two reasons: `tasks:` runs AFTER
-# all roles, so the rest would converge on the old packages and then upgrade them;
-# and the /usr hatch above is already open at this point.
-#
-# The reboot in site.yaml's post_tasks needs no change -- it already fires
-# whenever the hatch was opened, which is every run.
+# A role rather than provision.yaml's `tasks:`, which runs AFTER all roles -- the rest
+# would converge on the old packages and then upgrade them.
 - name: Upgrade all packages (dist_upgrade)
   # A dist-upgrade is far more likely than a fresh install to hit a debconf prompt
   # (maintainer scripts asking about changed conffiles), and there is no tty on a

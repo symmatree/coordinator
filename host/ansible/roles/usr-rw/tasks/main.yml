@@ -1,10 +1,8 @@
 ---
-# Make /usr writable for the rest of the play. /usr is its own btrfs subvolume
-# mounted ro, and both plays install files under /usr/local/bin.
+# Make /usr writable for the rest of the play. It stays writable until the next boot.
 #
-# Its own role because provision and deploy both need it and handlers and tasks do
-# not cross playbooks. Whichever play includes it must reboot at the end -- see the
-# last task.
+# Why the subvolume is ro, why only a boot restores it, and why this is a role:
+# docs/deployment-model.md, "The /usr hatch".
 
 - name: Read the /usr mount options
   ansible.builtin.command: findmnt -n -o OPTIONS /usr
@@ -17,19 +15,12 @@
   check_mode: false
 
 - name: Remount /usr read-write
-  # A dpkg unpack against a read-only /usr fails PARTWAY THROUGH and leaves
-  # packages half-installed (iHR), so this is not a clean refusal to recover from.
-  # Measured on the coordinator during bring-up.
   ansible.builtin.command: mount -o remount,rw /usr
   when: bootstrap_usr_opts.stdout is search('(^|,)ro(,|$)')
   changed_when: true
   register: bootstrap_usr_remount
 
 - name: Note that /usr is left writable until a reboot
-  # `remount,ro` cannot succeed on a running system -- "mount point is busy",
-  # exit 32, measured on the coordinator. A reboot is the only thing that closes
-  # it, and the reboot at the end of this play is what does so. Said out loud
-  # because a silently-writable /usr is exactly the kind of drift nobody notices.
   ansible.builtin.debug:
     msg: >-
       /usr was remounted read-write for this run and cannot be set back while the

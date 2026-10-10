@@ -5,8 +5,8 @@
 #     -e device_role=campod
 #
 # For a device that is already provisioned -- which is every device, after its first
-# run -- use deploy.yaml instead. It installs nothing, opens no /usr hatch and does not
-# reboot, so it is the one that is cheap to run between flights.
+# run -- use deploy.yaml instead. It installs no packages, which is the expensive part.
+# What each play does and does not do: docs/deployment-model.md.
 
 - import_playbook: provision.yaml
 - import_playbook: deploy.yaml

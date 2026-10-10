@@ -8,9 +8,9 @@
 # DRIVEN FROM ANOTHER MACHINE, over SSH. A freshly flashed card needs nothing installed
 # on it first -- python3, sudo with passwordless and sshd are all in the image.
 #
-# What is here: packages, the /usr read-write hatch they need, udev rules, masked
-# getty and maintenance timers, the USB gadget link and the campod bridge. All of it
-# is a property of the device rather than of a commit.
+# What is here: packages, the /usr read-write hatch they need (roles/usr-rw), udev
+# rules, masked getty and maintenance timers, the USB gadget link and the campod
+# bridge. All of it is a property of the device rather than of a commit.
 #
 # In-place OS upgrade is off unless asked for:
 #     ansible-playbook host/ansible/provision.yaml ... -e dist_upgrade=true
@@ -67,9 +67,8 @@
       when: device_role == 'campod'
 
   post_tasks:
-    # Always, because bootstrap opens the /usr read-write hatch and only a boot closes
-    # it again. A first run is a bench operation, so a reboot is free here in a way it
-    # is not in deploy.yaml.
+    # Unconditional (#457). It also restores read-only /usr -- see
+    # docs/deployment-model.md, "The /usr hatch".
     - name: Reboot and wait for the device to come back
       ansible.builtin.reboot:
         msg: Rekon provisioning -- applying kernel/firmware/module changes and restoring read-only /usr
