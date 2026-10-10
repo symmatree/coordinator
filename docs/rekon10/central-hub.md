@@ -248,6 +248,99 @@ be on it. Machine-generated from the same source as
 
 `J1.6` (header pin 22, BCM GPIO25) is the deliberate spare and carries a no-connect.
 
+#### Protoboard layout
+
+Recording intended connections for soldering.
+
+5x7cm protoboard, columns A-S, numbered bottom to top, 01 to 24.
+
+```
+Components:
+
+U1: pin 1 at C-07, pin 8 at F-01
+U2 (FRONT): pin1 at C-15, pin 8 at F-09
+0.1 uF: H-07 /  H-05
+0.1 uF: H-15 / H-13
+
+
+N/C:
+
+F-01 (U1.8)
+F-04 (U1.11)
+
+bridges:
+
+C-07 (U1.1) / B-07  | GND
+C-04 (U1.4) / B-04 | GND
+F-03 (U1.10) / G-03 | GND
+F-06 (U1.13) / G-06 | GND
+C-01 (U1.7) / B-01 / A-01 | GND
+
+F-07 (U1.14) / G-07 / H-07 | 3V3
+
+H-05 / H-04 | GND (cap)
+
+C-06 (U1.2) / B-06 / A-06  | SQW
+C-03 (U1.5) / B-03 / A-03 | SQW
+F-02 (U1.9) / G-02 | SQW
+F-05 (U1.12) / G-05 | SQW
+
+C-05 (U1.3) / B-05 | T2_FRONT
+C-11 (U2.5) / B-11 / A-11 | T2_FRONT
+C-14 (U2.2) / B-14 / A-14 | T2_FRONT
+F-10 (U2.9) / G-10 | T2_FRONT
+F-13 (U2.12) / G-13 / H-13 | T2_FRONT
+
+C-15 (U2.1) / B-15 | GND
+C-12 (U2.4) / B-12 | GND
+F-11 (U2.10) / G-11 | GND
+F-14 (U2.13) / G-14 | GND
+
+C-09 (U2.7) / B-09 / A-09 | GND
+
+F-15 (U2.14) / G-15 / H-15 | 3V3
+
+H-13 / H-12 | GND (cap)
+
+C-02 (U1.6) / B-02 | T2_REAR
+
+
+
+
+
+jumpers:
+
+B-07 / GND | GND
+B-04 / GND
+G-03 / GND
+G-06 / GND
+B-01 / GND
+
+G-07 / 3V3
+H-04 / A-01 | GND (cap)
+
+
+B-06 / B-03 | SQW
+A-03 / G-02 | SQW
+H-02 / G-05 | SQW
+
+B-05 / B-11 | T2_FRONT
+A-11 / B-14 | T2_FRONT
+A-14 / G-13 | T2_FRONT
+H-13 / G-10 | T2_FRONT
+
+B-15 / GND
+B-12 / GND
+G-11 / GND
+G-14 / GND
+B-09 / GND
+
+G-15 / 3V3
+
+H-12 / C-09 | GND (cap)
+
+```
+
 #### Schematic
 
 [`pps-board.kicad_sch`](pps-board.kicad_sch) is the same circuit as a KiCad sheet.
