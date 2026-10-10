@@ -247,7 +247,8 @@ be on it. Machine-generated from the same source as
 #### Schematic
 
 [`pps-board.kicad_sch`](pps-board.kicad_sch) is the same circuit as a KiCad sheet
-(format 20251024, KiCad 10). Connectivity is by **net label** rather than routed wires, so
+(format 20251024, KiCad 10). Open [`pps-board.kicad_pro`](pps-board.kicad_pro) beside it --
+KiCad 10 will not edit a schematic without a project. Connectivity is by **net label** rather than routed wires, so
 every net name is legible as text and nothing depends on a wire endpoint landing within a
 hair of a pin.
 
