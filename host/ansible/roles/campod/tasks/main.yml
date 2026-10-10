@@ -41,7 +41,6 @@
 # correctly mounted from /dev/mmcblk0p2[/@data]. Reading a mount table is a pure
 # read, so running it in check mode is also the honest thing to do.
 - name: Check whether @data is still mounted at the pre-rename path
-  tags: stack
   ansible.builtin.command: findmnt -n -o TARGET /var/lib/pod
   register: campod_stale_data_mount
   changed_when: false
@@ -49,7 +48,6 @@
   check_mode: false
 
 - name: Fail if the image and this checkout disagree about the state path
-  tags: stack
   ansible.builtin.fail:
     msg: >-
       /var/lib/pod is a mountpoint, but this checkout puts campod state at
@@ -60,10 +58,8 @@
       check out a commit from before the rename. Do not mix the two.
   when: campod_stale_data_mount.rc == 0
 
-# import_role, not include_role: a static import lets coord-stack's own task tags do the
-# filtering. A dynamic include's tags are inherited by everything inside it.
 - name: Install campod stack and state dirs
-  ansible.builtin.import_role:
+  ansible.builtin.include_role:
     name: coord-stack
   vars:
     coord_stack_name: campod
