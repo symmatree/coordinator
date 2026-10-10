@@ -51,7 +51,7 @@ status -- so they share one operator model rather than maintaining two parallel 
 
 | Shared asset | How it serves both |
 |--------------|--------------------|
-| `bin/coord` | One stack-aware CLI. Each device runs only its own stack under `/opt/stacks/*`; `coord` defaults to the sole installed stack. |
+| `device-sw/cli/coord` | One stack-aware CLI. Each device runs only its own stack under `/opt/stacks/*`; `coord` defaults to the sole installed stack. |
 | `host/ansible/roles/docker-host` | Docker engine, group, state dirs -- identical on Pi 4B and Pi Zero. |
 | `host/ansible/site.yaml` | One playbook, driven over SSH; `-e device_role=` selects the device. |
 | `/opt/stacks/<name>` | Both devices lay their one stack there. |

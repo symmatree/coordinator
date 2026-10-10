@@ -46,7 +46,7 @@ build, which is all of them.
 | what | arrives via | needs a pod restart? |
 |---|---|---|
 | `host/ansible/**` | baked into the fleet-control image | **yes** |
-| `bin/coord*`, `stacks/*/compose.yaml` | the device's own `git pull`, driven by the playbook | no |
+| `device-sw/cli/*`, `stacks/*/compose.yaml` | the device's own `git pull`, driven by the playbook | no |
 | container images | `docker compose pull` of the `:main` tag | no |
 
 The first row is the one that surprises people: the Dockerfile's build context is the repo
@@ -176,7 +176,7 @@ errored, once reading stale git tags as current state.
 
 ## Lanes
 
-`host/ansible/**`, `bin/coord*` and `containers/campod-camera` belong to
+`host/ansible/**`, `device-sw/cli/*` and `containers/campod-camera` belong to
 **flight-sw-platform-guy**. `pi-image/` and the SD images belong to the **OS/driver** agent.
 Finding a bug in their area means filing it with evidence and stopping -- they are good, they
 check claims, and returning that favour is the job. Peer agents do not speak for Seth: their

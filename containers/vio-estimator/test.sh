@@ -72,7 +72,7 @@ fi
 echo "  ok: bound chobits_imu + chobits_features"
 
 echo "== tier 1: replay smoke fixture, assert pose finite =="
-COORDINATOR_IPC_DIR="$IPC" python3 "$REPO/bin/vio-pose-tap" --socket "$IPC/chobits_server" --out "$WORK/pose.csv" --quiet &
+COORDINATOR_IPC_DIR="$IPC" python3 "$REPO/device-sw/cli/vio-pose-tap" --socket "$IPC/chobits_server" --out "$WORK/pose.csv" --quiet &
 tap=$!
 sleep 0.5
 COORDINATOR_IPC_DIR="$IPC" python3 "$REPO/harness/input_replayer.py" "$FIX"

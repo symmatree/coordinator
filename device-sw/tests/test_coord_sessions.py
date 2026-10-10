@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Checks for bin/coord-sessions. Run by hand: python3 bin/test_coord_sessions.py
+"""Checks for device-sw/cli/coord-sessions. Run by test.sh, or by hand:
 
-No CI job runs python tests under bin/ today, so this is a hand-run check like its
-neighbours. It builds a real session tree in a temp dir and packages it for real --
+    python3 device-sw/tests/test_coord_sessions.py
+
+It builds a real session tree in a temp dir and packages it for real --
 the point is that the bundle round-trips, not that the code was called.
 """
 
@@ -19,10 +20,10 @@ import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+CLI = Path(__file__).resolve().parent.parent / "cli"
 spec = importlib.util.spec_from_loader(
     "coord_sessions",
-    importlib.machinery.SourceFileLoader("coord_sessions", str(HERE / "coord-sessions")),
+    importlib.machinery.SourceFileLoader("coord_sessions", str(CLI / "coord-sessions")),
 )
 cs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cs)
@@ -301,11 +302,11 @@ try:
 
     # 8b. end to end through the CLI, including the missing-session path
     p = subprocess.run(
-        [sys.executable, str(HERE / "coord-sessions"), "--captures-root", str(captures), "list"],
+        [sys.executable, str(CLI / "coord-sessions"), "--captures-root", str(captures), "list"],
         capture_output=True, text=True)
     check("CLI list exits 0 and emits JSON", p.returncode == 0 and json.loads(p.stdout))
     p = subprocess.run(
-        [sys.executable, str(HERE / "coord-sessions"), "--captures-root", str(captures),
+        [sys.executable, str(CLI / "coord-sessions"), "--captures-root", str(captures),
          "package", "does-not-exist"], capture_output=True, text=True)
     check("CLI names an unknown session on stderr",
           p.returncode == 1 and "no session" in p.stderr, p.stderr.strip()[:60])

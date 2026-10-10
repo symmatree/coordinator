@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Checks for bin/coord-version. Run by hand: python3 bin/test_coord_version.py
+"""Checks for device-sw/cli/coord-version. Run by test.sh, or by hand:
 
-No CI job runs python tests under bin/, harness/ or analysis/ today, so this is
-a hand-run check like its neighbours.
+    python3 device-sw/tests/test_coord_version.py
 
 What it protects: the probe must ANSWER on a machine that is missing things,
 because the caller has to tell "nothing installed" apart from "could not ask"
@@ -10,6 +9,7 @@ because the caller has to tell "nothing installed" apart from "could not ask"
 """
 
 import importlib.machinery
+import tempfile
 import importlib.util
 import io
 import subprocess
@@ -18,10 +18,10 @@ import tomllib
 from contextlib import redirect_stdout
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+CLI = Path(__file__).resolve().parent.parent / "cli"
 spec = importlib.util.spec_from_loader(
     "coord_version",
-    importlib.machinery.SourceFileLoader("coord_version", str(HERE / "coord-version")),
+    importlib.machinery.SourceFileLoader("coord_version", str(CLI / "coord-version")),
 )
 cv = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cv)
@@ -73,7 +73,7 @@ check(
 check("table name is sanitised", "[unit_x]" in out)
 
 # 3. The manifest format from #326 round-trips.
-man = HERE.parent / ".probe-fixture"
+man = Path(tempfile.mkdtemp()) / "probe-fixture"
 man.write_text(
     '# comment\n'
     'ORG_OPENCONTAINERS_IMAGE_REVISION="0c8b713f9a"\n'
@@ -107,7 +107,7 @@ import subprocess as _sp
 def probe_env(**env):
     import os
     e = dict(os.environ, **env)
-    p = _sp.run([sys.executable, str(HERE / "coord-version")], capture_output=True, text=True, env=e)
+    p = _sp.run([sys.executable, str(CLI / "coord-version")], capture_output=True, text=True, env=e)
     return tomllib.loads(p.stdout)
 
 doc = probe_env(PATH="/nonexistent")  # no container runtime on PATH at all
@@ -140,7 +140,7 @@ check("unit ids are unique within the machine", len(ids) == len(set(ids)), str(i
 
 # 7. End to end: exit 0 and valid TOML even on this machine, which has no
 #    /etc/fleet-image and no reachable podman.
-p = subprocess.run([sys.executable, str(HERE / "coord-version")], capture_output=True, text=True)
+p = subprocess.run([sys.executable, str(CLI / "coord-version")], capture_output=True, text=True)
 check("probe exits 0 with things missing", p.returncode == 0, f"rc={p.returncode}")
 try:
     doc = tomllib.loads(p.stdout)
@@ -264,7 +264,7 @@ check("and records why", any("FLEET_PROBE_ERROR" in p for _, p in tables))
 cv.run, cv.shutil.which = real_run, real_which
 
 # 12. The dirty check is gone, and with it the working-tree walk.
-src = (HERE / "coord-version").read_text()
+src = (CLI / "coord-version").read_text()
 check("no git status tree walk", "status" not in src or "--porcelain" not in src)
 check("FLEET_CHECKOUT_DIRTY retired", "FLEET_CHECKOUT_DIRTY" not in src)
 

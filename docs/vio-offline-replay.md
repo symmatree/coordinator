@@ -26,7 +26,7 @@ FC's EKF/GPS ground truth (`analysis/vio-ekf-comparison.ipynb`).
 
 ```
 wave-<ts>.feat (+ .json)  --[harness/input_replayer.py]-->  chobits_imu / chobits_features
-    --> [REAL vins_fusion]  -->  chobits_server  --[bin/vio-pose-tap]-->  pose CSV
+    --> [REAL vins_fusion]  -->  chobits_server  --[device-sw/cli/vio-pose-tap]-->  pose CSV
 ```
 
 The estimator image is **multi-arch** (CI builds amd64 + arm64 into one manifest), so on an
@@ -49,14 +49,14 @@ All are documented below.
 ## What you need
 
 - The fixture: a `.feat` + `.feat.json` pair, from either source (same format, consumed
-  identically): a **bench** `wave-<ts>.feat` (estimator off, `bin/vio-ipc-record`; see
+  identically): a **bench** `wave-<ts>.feat` (estimator off, `device-sw/cli/vio-ipc-record`; see
   [bench-capture.md](bench-capture.md)), or an **in-flight** `<node>_<sess>.feat` teed by the
   `vio-tracker` overlay with the estimator running (#78). The `.feat` extension keeps these raw
   estimator-input streams from colliding with ArduPilot FC `.bin` logs (#45).
 - The estimator image `ghcr.io/symmatree/coordinator-vio-estimator` (public on GHCR).
 - A `vins_fusion` config. Start from the seed `host/ansible/roles/coordinator/files/oak_d.yaml`,
   **with one change: `multiple_thread: 0`** (see "Determinism" below).
-- `harness/input_replayer.py` and `bin/vio-pose-tap` from this repo (plain Python 3,
+- `harness/input_replayer.py` and `device-sw/cli/vio-pose-tap` from this repo (plain Python 3,
   no deps). **Options A/B only** — the in-cluster path (C) uses the socket-free offline binary
   and needs no replayer.
 

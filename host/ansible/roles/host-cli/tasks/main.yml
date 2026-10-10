@@ -1,11 +1,12 @@
 ---
-# The host tools in /usr/local/bin. Copied from the checkout, which is why this runs
-# in deploy rather than provision: provision has no checkout yet.
+# The device CLIs in /usr/local/bin. Copied from the checkout, which is why this runs in
+# deploy rather than provision: provision has no checkout yet.
 #
 # Needs roles/usr-rw ahead of it: docs/deployment-model.md, "The /usr hatch".
 #
-# The list is vars/payload.yml, shared with the payload tarball (#341) so the converge
-# and the tarball cannot install different sets.
+# Everything in device-sw/cli, with no list of names anywhere. That is what device-sw/cli
+# is for -- the repo keeps the tests and the README outside it so the directory itself
+# says what a device installs.
 
 - name: Ensure /usr/local/bin exists
   ansible.builtin.file:
@@ -13,12 +14,28 @@
     state: directory
     mode: "0755"
 
-- name: Install the host tools
+- name: Find the device CLIs
+  ansible.builtin.find:
+    paths: "{{ coord_checkout }}/device-sw/cli"
+    file_type: file
+  register: host_cli_tools
+
+- name: Fail if there are no CLIs to install
+  ansible.builtin.assert:
+    that: host_cli_tools.files | length > 0
+    fail_msg: >-
+      No files under {{ coord_checkout }}/device-sw/cli. A converge that installs no
+      CLIs leaves a device with no way to drive its own stack, which is worse than
+      failing here.
+
+- name: Install the device CLIs
   ansible.builtin.copy:
     remote_src: true
-    src: "{{ coord_checkout }}/bin/{{ item }}"
-    dest: "/usr/local/bin/{{ item }}"
+    src: "{{ item.path }}"
+    dest: "/usr/local/bin/{{ item.path | basename }}"
     mode: "0755"
     # Replaces a symlink left by an earlier converge rather than writing through it.
     follow: false
-  loop: "{{ host_tools }}"
+  loop: "{{ host_cli_tools.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"

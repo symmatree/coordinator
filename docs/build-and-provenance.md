@@ -107,5 +107,5 @@ OCI key outside its meaning, we declare our own under our own prefix.
 
 - [#326](https://github.com/symmatree/coordinator/issues/326) -- the vocabulary and what reads it
 - [deployment-model.md](deployment-model.md) -- why devices track a moving tag
-- `bin/coord-version` -- the probe that reports these on a device
+- `device-sw/cli/coord-version` -- the probe that reports these on a device
 - `containers/fleet-control` -- what compares them against the ref

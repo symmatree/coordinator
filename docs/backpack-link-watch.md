@@ -1,6 +1,6 @@
 # backpack-link-watch -- record the ELRS backpack's WiFi link health during a flight session
 
-[`bin/backpack-link-watch`](../bin/backpack-link-watch) polls the ELRS TX backpack's
+[`analysis/tools/backpack-link-watch`](../analysis/tools/backpack-link-watch) polls the ELRS TX backpack's
 `GET /mavlink` endpoint and records it, so a flight session has ground-link data on the same
 timeline as the FC log and the coordinator capture.
 
@@ -36,7 +36,7 @@ before they mean anything.
 
 ```sh
 # from anywhere with network reach to the backpack -- it does not need to run on the radio
-OUT=~/datasets/flights/rekon10/260814-hover/ground/backpack-link.jsonl bin/backpack-link-watch
+OUT=~/datasets/flights/rekon10/260814-hover/ground/backpack-link.jsonl analysis/tools/backpack-link-watch
 ```
 
 | env | default | |

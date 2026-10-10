@@ -7,7 +7,7 @@ place generates cleanly and runs without it. Checking the input cannot see that.
 
 Skips where podman is absent, which includes the image CI runs on.
 
-    python3 bin/test_quadlet_units.py
+    python3 device-sw/tests/test_quadlet_units.py
 """
 import re
 import shutil
@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 
 GENERATOR = Path("/usr/libexec/podman/quadlet")
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 
 failures = []
 
