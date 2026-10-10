@@ -269,13 +269,16 @@ the output pigtails and the LED sit beyond the 3V3 bus and are not placed yet, w
 **Decoupling geometry.** The loop is pin 14 -> cap -> pin 7, and both halves count: a cap
 grounded to the bus is only as good as the bus path back to pin 7. So each cap sits hard
 against pin 14 at `H-nn`, with its lower leg stepping one column out to `I` to clear the row
-below, and its ground jumper runs to a channel hole bridged from pin 7. That is about 22 mm
-of loop against roughly 28 mm routing around the package.
+below, and its ground jumper runs straight to pin 7's own tap. About 29 mm of loop, which
+leaves the series-damped response comfortably overdamped -- the AHC output's own ~50 ohm
+impedance, not this inductance, is what sets the edge.
 
-**The channel is reachable from below only.** With the chips soldered flat, the package body
-covers the `E` and `F` holes, so a component lead cannot enter the channel from the top --
-but a jumper soldered on the underside can, which is what `D-nn / E-nn` on each pin 7 is
-for. Caps therefore stay outside the footprint.
+**Nothing is routed through the DIP channel, deliberately.** Running the cap ground through
+`E-nn` under the package would save about 4 mm of loop, which the margin above says is not
+needed. This board is plated on one side, so a channel hole cannot take a lead from the top
+once the chip is down -- it would be a surface joint under the package with no mechanical
+anchor. Every hole here is entered from the component side; a bare leg can still be run on
+the underside to shorten a path or add mechanical hold where it helps.
 
 ```
 Components:
@@ -303,7 +306,7 @@ bridges:
 
 D-07 (U1.1 1OE) / C-07 | GND
 D-04 (U1.4 2OE) / C-04 | GND
-D-01 (U1.7 GND) / C-01 / E-01 | GND
+D-01 (U1.7 GND) / C-01 / B-01 | GND
 G-03 (U1.10 3OE) / H-03 | GND
 G-06 (U1.13 4OE) / H-06 | GND
 
@@ -311,7 +314,7 @@ G-07 (U1.14 VCC) / H-07 / I-07 | 3V3
 
 D-15 (U2.1 1OE) / C-15 | GND
 D-12 (U2.4 2OE) / C-12 | GND
-D-09 (U2.7 GND) / C-09 / E-09 | GND
+D-09 (U2.7 GND) / C-09 / B-09 | GND
 G-11 (U2.10 3OE) / H-11 | GND
 G-14 (U2.13 4OE) / H-14 | GND
 
@@ -319,7 +322,7 @@ G-15 (U2.14 VCC) / H-15 / I-15 | 3V3
 
 D-23 (U3.1 1OE) / C-23 | GND
 D-20 (U3.4 2OE) / C-20 | GND
-D-17 (U3.7 GND) / C-17 / E-17 | GND
+D-17 (U3.7 GND) / C-17 / B-17 | GND
 G-19 (U3.10 3OE) / H-19 | GND
 G-22 (U3.13 4OE) / H-22 | GND
 
@@ -352,7 +355,7 @@ H-06 / A-06 | GND
 
 I-07 / M-07 | 3V3
 
-I-05 / E-01 | GND (cap)
+I-05 / B-01 | GND (cap)
 
 C-15 / A-15 | GND
 C-12 / A-12 | GND
@@ -362,7 +365,7 @@ H-14 / A-14 | GND
 
 I-15 / M-15 | 3V3
 
-I-13 / E-09 | GND (cap)
+I-13 / B-09 | GND (cap)
 
 C-23 / A-23 | GND
 C-20 / A-20 | GND
@@ -372,7 +375,7 @@ H-22 / A-22 | GND
 
 I-23 / M-23 | 3V3
 
-I-21 / E-17 | GND (cap)
+I-21 / B-17 | GND (cap)
 
 B-06 / C-03 | SQW
 B-03 / H-02 | SQW
