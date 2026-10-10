@@ -74,22 +74,32 @@
       A converge that installs no containers leaves a device that cannot do its job,
       which is worse than failing here.
 
-- name: Symlink the quadlet units into /etc/containers/systemd
-  ansible.builtin.file:
-    path: "/etc/containers/systemd/{{ item.path | basename }}"
+# COPIED, not symlinked. podman's generator reads this directory before
+# local-fs.target, and the checkout is on the @home subvolume, so a symlink into it
+# dangles at generator time -- which produces no units at all, exit 0, no output.
+# Anything read during boot has to be a real file on /.
+#
+# follow: false so an existing symlink from an earlier converge is replaced rather
+# than written through.
+- name: Install the quadlet units into /etc/containers/systemd
+  ansible.builtin.copy:
+    remote_src: true
     src: "{{ item.path }}"
-    state: link
-    force: true
+    dest: "/etc/containers/systemd/{{ item.path | basename }}"
+    mode: "0644"
+    follow: false
   loop: "{{ coord_stack_units.files }}"
   loop_control:
     label: "{{ item.path | basename }}"
 
-- name: Symlink the {{ coord_stack_name }} stack target
-  ansible.builtin.file:
-    path: "/etc/systemd/system/{{ coord_stack_name }}-stack.target"
+# A real file for the same reason as the units above: systemd has to load it at boot.
+- name: Install the {{ coord_stack_name }} stack target
+  ansible.builtin.copy:
+    remote_src: true
     src: "{{ coord_checkout }}/stacks/{{ coord_stack_name }}/{{ coord_stack_name }}-stack.target"
-    state: link
-    force: true
+    dest: "/etc/systemd/system/{{ coord_stack_name }}-stack.target"
+    mode: "0644"
+    follow: false
 
 # daemon_reload rather than a handler: coord-stack is reached through include_role from
 # both device roles. The reload is also what runs the quadlet generator.
