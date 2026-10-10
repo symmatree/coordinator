@@ -248,6 +248,150 @@ be on it. Machine-generated from the same source as
 
 `J1.6` (header pin 22, BCM GPIO25) is the deliberate spare and carries a no-connect.
 
+#### Protoboard layout
+
+Hole-by-hole plan for the buffer tree, generated from the same netlist as the schematic and
+checked against it: every placed net connected, no hole carrying two nets, no orphaned pin.
+
+**5x7cm protoboard, columns A-S (no J), rows numbered bottom to top 01 to 24.** Reading the
+notation: a **bridge** fans one chip pin out to adjacent free holes, one per jumper end that
+has to land on it, so a chain can pass through a pin. A **jumper** is a wire between two
+such holes. The trailing value is the net; `GND (cap)` marks a decoupling return
+specifically, which is not interchangeable with a general ground run.
+
+**Column plan.** `A` is the GND bus and `M` the 3V3 bus, both bare solid-core wire threaded
+through and tacked at each hole they cross -- the joints are then parallel taps off a
+continuous conductor rather than a series chain, so a cracked tack loses one pin and not the
+rail below it. `K` and `L` are free for test points and changes. The DS3234 breakout, `J1`,
+the output pigtails and the LED sit beyond the 3V3 bus and are not placed yet, which is why
+`PPS_*` and `LED_DRV` have no holes here.
+
+**Decoupling geometry.** The loop is pin 14 -> cap -> pin 7, and both halves count: a cap
+grounded to the bus is only as good as the bus path back to pin 7. So each cap sits hard
+against pin 14 at `H-nn`, with its lower leg stepping one column out to `I` to clear the row
+below, and its ground jumper runs straight to pin 7's own tap. About 29 mm of loop, which
+leaves the series-damped response comfortably overdamped -- the AHC output's own ~50 ohm
+impedance, not this inductance, is what sets the edge.
+
+**Nothing is routed through the DIP channel, deliberately.** Running the cap ground through
+`E-nn` under the package would save about 4 mm of loop, which the margin above says is not
+needed. This board is plated on one side, so a channel hole cannot take a lead from the top
+once the chip is down -- it would be a surface joint under the package with no mechanical
+anchor. Every hole here is entered from the component side; a bare leg can still be run on
+the underside to shorten a path or add mechanical hold where it helps.
+
+```
+Components:
+
+U1: pin 1 at D-07, pin 8 at G-01
+U2 (FRONT): pin 1 at D-15, pin 8 at G-09
+U3 (REAR): pin 1 at D-23, pin 8 at G-17
+0.1 uF (U1): H-07 / I-05
+0.1 uF (U2): H-15 / I-13
+0.1 uF (U3): H-23 / I-21
+
+Busses:
+
+GND: column A, bare solid-core wire, rows 01-24
+3V3: column M, bare solid-core wire, rows 01-24
+K, L: free -- test points / changes
+
+N/C:
+
+G-01 (U1.8 3Y)
+G-04 (U1.11 4Y)
+G-20 (U3.11 4Y)
+
+bridges:
+
+D-07 (U1.1 1OE) / C-07 | GND
+D-04 (U1.4 2OE) / C-04 | GND
+D-01 (U1.7 GND) / C-01 / B-01 | GND
+G-03 (U1.10 3OE) / H-03 | GND
+G-06 (U1.13 4OE) / H-06 | GND
+
+G-07 (U1.14 VCC) / H-07 / I-07 | 3V3
+
+D-15 (U2.1 1OE) / C-15 | GND
+D-12 (U2.4 2OE) / C-12 | GND
+D-09 (U2.7 GND) / C-09 / B-09 | GND
+G-11 (U2.10 3OE) / H-11 | GND
+G-14 (U2.13 4OE) / H-14 | GND
+
+G-15 (U2.14 VCC) / H-15 / I-15 | 3V3
+
+D-23 (U3.1 1OE) / C-23 | GND
+D-20 (U3.4 2OE) / C-20 | GND
+D-17 (U3.7 GND) / C-17 / B-17 | GND
+G-19 (U3.10 3OE) / H-19 | GND
+G-22 (U3.13 4OE) / H-22 | GND
+
+G-23 (U3.14 VCC) / H-23 / I-23 | 3V3
+
+D-06 (U1.2 1A) / C-06 / B-06 | SQW
+D-03 (U1.5 2A) / C-03 / B-03 | SQW
+G-02 (U1.9 3A) / H-02 / I-02 | SQW
+G-05 (U1.12 4A) / H-05 | SQW
+
+D-05 (U1.3 1Y) / C-05 | T2_FRONT
+D-11 (U2.5 2A) / C-11 / B-11 | T2_FRONT
+D-14 (U2.2 1A) / C-14 / B-14 | T2_FRONT
+G-10 (U2.9 3A) / H-10 / I-10 | T2_FRONT
+G-13 (U2.12 4A) / H-13 | T2_FRONT
+
+D-02 (U1.6 2Y) / C-02 | T2_REAR
+D-19 (U3.5 2A) / C-19 / B-19 | T2_REAR
+D-22 (U3.2 1A) / C-22 / B-22 | T2_REAR
+G-18 (U3.9 3A) / H-18 / I-18 | T2_REAR
+G-21 (U3.12 4A) / H-21 | T2_REAR
+
+jumpers:
+
+C-07 / A-07 | GND
+C-04 / A-04 | GND
+C-01 / A-01 | GND
+H-03 / A-03 | GND
+H-06 / A-06 | GND
+
+I-07 / M-07 | 3V3
+
+I-05 / B-01 | GND (cap)
+
+C-15 / A-15 | GND
+C-12 / A-12 | GND
+C-09 / A-09 | GND
+H-11 / A-11 | GND
+H-14 / A-14 | GND
+
+I-15 / M-15 | 3V3
+
+I-13 / B-09 | GND (cap)
+
+C-23 / A-23 | GND
+C-20 / A-20 | GND
+C-17 / A-17 | GND
+H-19 / A-19 | GND
+H-22 / A-22 | GND
+
+I-23 / M-23 | 3V3
+
+I-21 / B-17 | GND (cap)
+
+B-06 / C-03 | SQW
+B-03 / H-02 | SQW
+I-02 / H-05 | SQW
+
+C-05 / C-11 | T2_FRONT
+B-11 / C-14 | T2_FRONT
+B-14 / H-10 | T2_FRONT
+I-10 / H-13 | T2_FRONT
+
+C-02 / C-19 | T2_REAR
+B-19 / C-22 | T2_REAR
+B-22 / H-18 | T2_REAR
+I-18 / H-21 | T2_REAR
+```
+
 #### Schematic
 
 [`pps-board.kicad_sch`](pps-board.kicad_sch) is the same circuit as a KiCad sheet.
