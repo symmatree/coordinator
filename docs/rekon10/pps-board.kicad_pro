@@ -1,10 +1,10 @@
 {
   "board": {},
   "boards": [],
-  "libraries": {
-    "pinned_footprint_libs": [],
-    "pinned_symbol_libs": []
-  },
+  "cvpcb": {},
+  "erc": {},
+  "legacy": {},
+  "libraries": {},
   "meta": {
     "filename": "pps-board.kicad_pro",
     "version": 3

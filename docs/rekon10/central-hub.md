@@ -246,9 +246,11 @@ be on it. Machine-generated from the same source as
 
 #### Schematic
 
-[`pps-board.kicad_sch`](pps-board.kicad_sch) is the same circuit as a KiCad sheet
-(format 20251024, KiCad 10). Open [`pps-board.kicad_pro`](pps-board.kicad_pro) beside it --
-KiCad 10 will not edit a schematic without a project. Connectivity is by **net label** rather than routed wires, so
+[`pps-board.kicad_sch`](pps-board.kicad_sch) is the same circuit as a KiCad sheet.
+Open [`pps-board.kicad_pro`](pps-board.kicad_pro) beside it -- KiCad 10 will not edit a
+schematic without a project. The sheet is written in the **KiCad 6 file format** by
+`kiutils`, which is the dialect that library emits; KiCad migrates it on open and will
+offer to save it in the current format. Connectivity is by **net label** rather than routed wires, so
 every net name is legible as text and nothing depends on a wire endpoint landing within a
 hair of a pin.
 
@@ -257,11 +259,10 @@ order -- rather than KiCad's stock four-gates-plus-a-power-unit, so it reads dir
 a perfboard layout: pin 7 is where pin 7 is. It is embedded in the sheet, so the file needs
 no library beyond KiCad's stock `Device`, `Connector_Generic` and `Package_DIP`.
 
-It has been checked structurally -- parses and round-trips, every `lib_id` resolves, no
-duplicate designators, every wire begins exactly on a pin, every label sits on a wire end
-and names that pin's net, and the one unconnected pin (`J1.6`) carries a no-connect. **It
-has not been opened in KiCad**, so expect to nudge placement; the connectivity is what was
-verified, not the aesthetics.
+It is checked structurally after generation: read back through `kiutils`, every `lib_id`
+resolves, no duplicate designators, every wire begins exactly on a pin, every label sits on
+a wire end and names that pin's net, and the one unconnected pin (`J1.6`) carries a
+no-connect. Expect to nudge placement -- connectivity is what is verified, not layout.
 
 #### Coordinator SPI block -> RTC breakout
 
