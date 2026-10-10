@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the Python tests whose environment is the JupyterHub notebook image:
-# analysis/ and harness/ tooling, and the bin/ host CLI. CI runs this script in
+# analysis/ and harness/ tooling, and the device CLIs in device-sw/. CI runs this script in
 # that image, which is where that code runs.
 #
 # They were written as standalone scripts run by hand, each exiting non-zero on
@@ -14,12 +14,17 @@
 set -uo pipefail
 cd "$(dirname "$0")" || exit 2
 
+# The CLI tests import their subject out of device-sw/cli with SourceFileLoader, which
+# writes a __pycache__ there -- and device-sw/cli is the install set, so nothing
+# generated belongs in it.
+export PYTHONDONTWRITEBYTECODE=1
+
 TESTS=(
 	analysis/test_analysis_modules.py
-	bin/test_coord_version.py
-	bin/test_coord_sessions.py
-	bin/test_coord_fc_log.py
-	bin/test_quadlet_units.py
+	device-sw/tests/test_coord_version.py
+	device-sw/tests/test_coord_sessions.py
+	device-sw/tests/test_coord_fc_log.py
+	device-sw/tests/test_quadlet_units.py
 	host/ansible/test_notifies.py
 	harness/test_input_replayer.py
 	harness/test_router_stack.py

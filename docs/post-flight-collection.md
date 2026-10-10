@@ -127,7 +127,7 @@ explanation. If a bundle has no journal, read that key before anything else.
 
 ## 4. Ground side: backpack link health
 
-The live backpack data is metrics, not a log file. `bin/backpack-link-watch` is a hand-run
+The live backpack data is metrics, not a log file. `analysis/tools/backpack-link-watch` is a hand-run
 tool that nothing installs or starts, so unless a person ran it there is no jsonl and the
 window cannot be reconstructed. The always-on path is the Alloy `Probe` CR `backpack-mavlink`
 -> `json-exporter` -> Mimir ([#190](https://github.com/symmatree/coordinator/issues/190)); see

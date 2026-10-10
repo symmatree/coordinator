@@ -1,22 +1,11 @@
 ---
 # Shared stack installer used by both device roles. Creates the device state dirs,
-# **symlinks** /opt/stacks/<name> to the checkout so `git pull` is the deploy (no copy,
-# no drift -- #48), and installs the shared coord CLI. Caller sets coord_stack_name,
-# coord_state_root, coord_state_subdirs.
+# points /opt/stacks/<name> at the stack definition, installs the quadlet units and the
+# stack target, and pulls the images. Caller sets coord_stack_name, coord_state_root,
+# coord_state_subdirs.
 #
-# None of this is optional. It used to hang off a sync_repo flag, from when these were
-# copies out of the CONTROL NODE's repo and a box without that repo needed them off.
-# Everything here now reads the DEVICE's own checkout with remote_src, so the flag's
-# reason went away with repo_src and only the footgun was left: it defaulted to false,
-# nothing set it once one_time.sh was deleted, and a converge that forgot it installed
-# the runtime and collectd and then silently skipped the CLI, the symlink, the unit
-# install and the image pull. A half-converged device is not a state worth having a
-# flag for. If
-# coord_checkout is missing these fail loudly, which is the correct outcome.
-#
-# coord_checkout is the DEVICE's checkout. Both the /opt/stacks symlink and the
-# coord CLI come from it, so the CLI can never drift from the stack config it
-# manages -- they are the same tree, at the same commit, by construction.
+# Reads coord_checkout -- the DEVICE's own checkout -- and fails loudly without it.
+# Which of these are copies and which are symlinks, and why: docs/deployment-model.md.
 
 - name: Create {{ coord_stack_name }} state directories
   ansible.builtin.file:
@@ -31,11 +20,8 @@
     state: directory
     mode: "0755"
 
-# Deploy = symlink, not copy. The old copy silently reverted on-box edits and let deployed
-# state diverge from the repo (#48). A symlink makes `git pull` the deploy: the deployed
-# compose.yaml IS the repo's, by construction, and coord's /opt/stacks/*/compose.yaml glob
-# resolves through it. `file: state=link` will not replace a non-empty directory, so a stale
-# copied dir from a pre-symlink deploy is removed first.
+# `file: state=link` will not replace a non-empty directory, so a stale copied dir from an
+# older deploy is removed first.
 - name: Stat the stack path ({{ coord_stack_name }})
   ansible.builtin.stat:
     path: "/opt/stacks/{{ coord_stack_name }}"
@@ -57,9 +43,9 @@
     state: link
     force: true
 
-# The quadlet units, symlinked so `git pull` is the deploy (#48). podman's generator
-# turns each into a .service at boot and on daemon-reload; each is WantedBy the stack
-# target, so enabling the target is what makes the stack come up.
+# podman's generator turns each .container into a .service at boot and on daemon-reload;
+# each is WantedBy the stack target, so enabling the target is what makes the stack come
+# up.
 - name: Find this stack's quadlet units
   ansible.builtin.find:
     paths: "{{ coord_checkout }}/stacks/{{ coord_stack_name }}"

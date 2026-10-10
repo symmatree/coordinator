@@ -1,0 +1,28 @@
+---
+# Make /usr writable for the rest of the play. It stays writable until the next boot.
+#
+# Why the subvolume is ro, why only a boot restores it, and why this is a role:
+# docs/deployment-model.md, "The /usr hatch".
+
+- name: Read the /usr mount options
+  ansible.builtin.command: findmnt -n -o OPTIONS /usr
+  register: bootstrap_usr_opts
+  changed_when: false
+  failed_when: false
+  # Runs in --check too: it is a read-only probe, and without this the register is
+  # unset under --check and every task keyed on it errors -- which would make a dry
+  # run impossible for the one thing most worth dry-running (#236's service).
+  check_mode: false
+
+- name: Remount /usr read-write
+  ansible.builtin.command: mount -o remount,rw /usr
+  when: bootstrap_usr_opts.stdout is search('(^|,)ro(,|$)')
+  changed_when: true
+  register: bootstrap_usr_remount
+
+- name: Note that /usr is left writable until a reboot
+  ansible.builtin.debug:
+    msg: >-
+      /usr was remounted read-write for this run and cannot be set back while the
+      system runs. The reboot at the end of this play restores it.
+  when: bootstrap_usr_remount is changed

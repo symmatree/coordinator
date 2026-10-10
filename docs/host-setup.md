@@ -112,7 +112,7 @@ coord start
 |---|---|
 | `stacks/coordinator/compose.yaml` (config lives in it -- there is no `.env`) | `git pull && coord start` |
 | A container image (new build on `main`) | `coord pull` |
-| An Ansible role, `bin/coord`, udev, or the boot unit | re-run `site.yaml` against the device; it reboots and waits if anything needs it |
+| An Ansible role, `device-sw/cli/coord`, udev, or the boot unit | re-run `site.yaml` against the device; it reboots and waits if anything needs it |
 | Anything in `config.txt` / `cmdline.txt` | **reflash** -- the image owns it |
 | OS packages | `site.yaml -e dist_upgrade=true` -- deliberate, off by default, never part of a config deploy |
 

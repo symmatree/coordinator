@@ -1,0 +1,39 @@
+name: device-sw
+# Pack the device software into one tarball per commit, so a device fetches a published
+# output instead of cloning the repo (#341). The work is in packaging/build-device-sw,
+# which also runs by hand; this is the trigger and the upload.
+#
+# No `paths:` filter: a workflow skipped by path filtering never reports a check, so it
+# could not be required. See docs/ci.md.
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: device-sw-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  device-sw:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build the archive
+        env:
+          PAYLOAD_COMMIT: ${{ github.sha }}
+          PAYLOAD_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          packaging/build-device-sw out
+          tar -tvzf out/device-sw-*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: device-sw-${{ github.sha }}
+          path: out/device-sw-*.tar.gz
+          if-no-files-found: error

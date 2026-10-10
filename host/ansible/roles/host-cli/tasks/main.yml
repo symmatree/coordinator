@@ -1,17 +1,12 @@
 ---
-# The host tools in /usr/local/bin, as SYMLINKS into the checkout.
+# The device CLIs in /usr/local/bin. Copied from the checkout, which is why this runs in
+# deploy rather than provision: provision has no checkout yet.
 #
-# /usr is its own btrfs subvolume mounted ro (pi-image/assemble-btrfs.sh), and
-# /usr/local lives inside it. Copying these nine files therefore needs the read-write
-# hatch, and opening the hatch is what forces a reboot at the end of every run -- so
-# copying them is what kept the routine deploy expensive.
+# Needs roles/usr-rw ahead of it: docs/deployment-model.md, "The /usr hatch".
 #
-# Symlinked once here, in provision, while the hatch is open anyway. After that
-# `git pull` updates what they point at and deploy never writes under /usr at all.
-# Same argument as /opt/stacks (#48): the deployed thing IS the repo's by construction.
-#
-# The links dangle until the first deploy clones the checkout. A provisioned card with
-# no checkout has no stack either, so that is a coherent state rather than a broken one.
+# Everything in device-sw/cli, with no list of names anywhere. That is what device-sw/cli
+# is for -- the repo keeps the tests and the README outside it so the directory itself
+# says what a device installs.
 
 - name: Ensure /usr/local/bin exists
   ansible.builtin.file:
@@ -19,20 +14,28 @@
     state: directory
     mode: "0755"
 
-- name: Symlink the host tools from the checkout
-  ansible.builtin.file:
-    path: "/usr/local/bin/{{ item }}"
-    src: "{{ coord_checkout }}/bin/{{ item }}"
-    state: link
-    # The target is absent until the first deploy, which is expected.
-    force: true
+- name: Find the device CLIs
+  ansible.builtin.find:
+    paths: "{{ coord_checkout }}/device-sw/cli"
+    file_type: file
+  register: host_cli_tools
+
+- name: Fail if there are no CLIs to install
+  ansible.builtin.assert:
+    that: host_cli_tools.files | length > 0
+    fail_msg: >-
+      No files under {{ coord_checkout }}/device-sw/cli. A converge that installs no
+      CLIs leaves a device with no way to drive its own stack, which is worse than
+      failing here.
+
+- name: Install the device CLIs
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ item.path }}"
+    dest: "/usr/local/bin/{{ item.path | basename }}"
+    mode: "0755"
+    # Replaces a symlink left by an earlier converge rather than writing through it.
     follow: false
-  loop:
-    - coord
-    - coord-fc-log
-    - coord-radio
-    - coord-sessions
-    - coord-throttle-log
-    - coord-version
-    - vio-ipc-record
-    - vio-pose-tap
+  loop: "{{ host_cli_tools.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Pack the device software into one tarball, so a device fetches a published output
+# instead of cloning the repo (#341).
+#
+#   packaging/build-device-sw <output-dir>
+#
+# Two directories go in whole: device-sw/cli (installed into /usr/local/bin) and stacks
+# (the quadlet units and stack targets). Nothing selects within them -- whatever is in
+# device-sw/cli is what a device installs, which is why the repo keeps the tests and the
+# README outside it.
+set -euo pipefail
+
+out_dir=${1:?usage: packaging/build-device-sw <output-dir>}
+repo=$(cd "$(dirname "$0")/.." && pwd)
+
+# Set by the workflow from github.sha / github.ref. Falls back to git for a hand run.
+version=${PAYLOAD_COMMIT:-$(git -C "$repo" rev-parse HEAD)}
+ref=${PAYLOAD_REF:-$(git -C "$repo" rev-parse --abbrev-ref HEAD)}
+
+mkdir -p "$out_dir"
+out_dir=$(cd "$out_dir" && pwd)
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+root=$stage/device-sw
+
+mkdir -p "$root/cli"
+# Files only. cli/ is the install set, so a generated __pycache__ left by a test run is
+# in the directory but is not device software.
+find "$repo/device-sw/cli" -maxdepth 1 -type f -exec cp {} "$root/cli/" \;
+cp -r "$repo/stacks" "$root/stacks"
+
+# The archive has no .git, so this is the only thing that can answer "what is this box
+# running". device-sw/cli/coord-version does not read it yet -- it still probes for a git
+# checkout (#341).
+cat >"$root/VERSION" <<VER
+commit=$version
+ref=$ref
+VER
+
+tarball=$out_dir/device-sw-$version.tar.gz
+# Fixed ownership and mtime so the same commit packs to the same bytes.
+tar -C "$stage" --numeric-owner --owner=0 --group=0 --sort=name \
+	--mtime="@$(git -C "$repo" show -s --format=%ct "$version" 2>/dev/null || echo 0)" \
+	-czf "$tarball" device-sw
+echo "$tarball"

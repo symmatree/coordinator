@@ -85,29 +85,61 @@ a thing is a property of the **device** or of a **commit**.
 | | provision.yaml | deploy.yaml |
 |---|---|---|
 | apt | every package, one index refresh | **nothing** |
-| `/usr` (a read-only subvolume) | opens the hatch | never opened |
+| `/usr` (a read-only subvolume) | opens the hatch (`roles/usr-rw`) | opens it too, for `roles/host-cli` |
 | capture quiesce | none -- nothing is running yet | first, before anything else |
 | hardware | udev, gadget link, bridge, I2C, masked gettys | -- |
 | config | -- | collectd, VIO calibration, stack units, image pulls |
 
-Two consequences worth stating, because they are the point rather than side effects:
-
-- **Both plays end by rebooting**, which is what brings the stack back up: the quiesce
-  stops it and nothing else starts it.
-- **The nine host tools in `/usr/local/bin` are symlinks into the checkout**, made once
-  during provision while the hatch is open. `git pull` then updates what they point at.
-  Same argument as `/opt/stacks`: the deployed thing IS the repo's by construction.
+**Neither play starts the stack, and only provision reboots.** Deploy's quiesce stops the
+stack and nothing in the play brings it back: `coord start`, or a power cycle, is the
+operator's. Provision's reboot is for the udev rules, module loads and gadget link a fresh
+card needs.
 
 `site.yaml` is both, in order, for a fresh card.
 
+## The `/usr` hatch
+
+**This section is the only description of the hatch.** Playbooks, roles and the other docs
+point here rather than restating it, because every change to the mechanics used to mean
+editing seven files and leaving some of them wrong.
+
+`/usr` is its own btrfs subvolume, mounted `ro`. That suits a device that runs off the
+avionics 5 V rail, where every shutdown is a yank: an unwritable `/usr` cannot be corrupted
+mid-cut. Installing files is the exception, so `roles/usr-rw` remounts it `rw` for the rest
+of the play. It is its own role because provision and deploy both need it, and ansible tasks
+do not cross playbooks.
+
+Two measured facts, both from the coordinator during bring-up:
+
+- A `dpkg` unpack against a read-only `/usr` fails **partway through**, leaving packages
+  half-installed (`iHR`). Not a clean refusal to recover from, so the remount comes first.
+- `mount -o remount,ro /usr` **cannot succeed on a running system** -- "mount point is busy",
+  exit 32.
+
+So after a converge, `/usr` stays writable until the next boot. That is not a problem to
+solve: a box running with a writable `/usr` is working as designed, and the next boot --
+whenever the operator wants one -- restores `ro`. Provision happens to reboot for its own
+reasons, which closes the hatch as a side effect; deploy does not reboot at all.
+
+Who writes under `/usr`: `roles/podman-host` and `roles/collectd-install` (packages,
+provision), and `roles/host-cli` (the device CLIs in `/usr/local/bin`, deploy).
+
 ## Deploy mechanics (built -- #48)
 
-- **Copy -> symlink.** `host/ansible/roles/coord-stack` used to `ansible.builtin.copy` the whole
-  `stacks/<name>/` dir into `/opt/stacks/<name>/` -- two copies of the same bytes, a sync
-  ceremony between them, and hand-edits silently reverted. It now **symlinks**
-  `/opt/stacks/<name> -> <checkout>/stacks/<name>`, so `git pull` is the deploy and deployed
-  `compose.yaml` == repo `compose.yaml` by construction. `coord`'s `/opt/stacks/*/compose.yaml`
-  glob resolves through it. (A stale copied dir from a pre-symlink deploy is removed once, on the next run.)
+- **What is a symlink and what is a copy.** `/opt/stacks/<name>` is a **symlink** to
+  `<checkout>/stacks/<name>`, so the stack definition the device reads is the repo's by
+  construction and `coord`'s `/opt/stacks/*` glob resolves through it. Everything read before
+  `/home` is mounted, or needed when the checkout is gone, is a **copy**: the quadlet units and
+  the stack target in `/etc/containers/systemd` ([#462](https://github.com/symmatree/coordinator/pull/462)
+  -- a symlink there made the generator silently produce nothing on a cold boot) and the tools in
+  `/usr/local/bin` ([#463](https://github.com/symmatree/coordinator/pull/463)). The direction of
+  travel is no checkout at all ([#341](https://github.com/symmatree/coordinator/issues/341)),
+  which ends the question.
+- **What a device installs is a directory, not a list.** `device-sw/cli/` holds exactly that
+  and nothing else; `roles/host-cli` copies every file in it and `packaging/build-device-sw`
+  puts the same directory in the archive. Neither names a tool, so neither can disagree with
+  the other or go stale. Tests, the README and ground-side tools live outside it -- see
+  `device-sw/README.md`.
 - **`dist-upgrade` split out of the config deploy.** It used to drag a full
   `apt-get dist-upgrade` (network + possible reboot) in front of the playbook. `site.yaml` is
   **config-only**; the OS upgrade is off unless asked for, with **`-e dist_upgrade=true`**. In the

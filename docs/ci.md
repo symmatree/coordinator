@@ -72,7 +72,7 @@ the test is a build gate: the build failing is the test failing.
 | `containers/campod-camera/test_capture_wait.py` | `Dockerfile:123` |
 | `containers/campod-camera/accel` (`go vet`, `go test`) | `Dockerfile:36` |
 
-For `analysis/`, `harness/` and `bin/`, the environment is the **JupyterHub
+For `analysis/`, `harness/` and `device-sw/`, the environment is the **JupyterHub
 notebook image**. That tooling is run on a workstation and a bench rather than
 on a device, and the notebook image is what a person has in front of them when
 they run it. `tests.yaml` runs `test.sh` in that image, so its pillow, scipy,

@@ -8,10 +8,9 @@
 # DRIVEN FROM ANOTHER MACHINE, over SSH. A freshly flashed card needs nothing installed
 # on it first -- python3, sudo with passwordless and sshd are all in the image.
 #
-# What is here: packages, the /usr read-write hatch they need, udev rules, masked
-# getty and maintenance timers, the USB gadget link, the campod bridge, and the
-# /usr/local/bin symlinks. All of it is a property of the device rather than of a
-# commit, so none of it belongs in a converge that runs between flights.
+# What is here: packages, the /usr read-write hatch they need (roles/usr-rw), udev
+# rules, masked getty and maintenance timers, the USB gadget link and the campod
+# bridge. All of it is a property of the device rather than of a commit.
 #
 # In-place OS upgrade is off unless asked for:
 #     ansible-playbook host/ansible/provision.yaml ... -e dist_upgrade=true
@@ -53,6 +52,8 @@
           - platform
 
   roles:
+    # /usr writable for the package installs below; the reboot at the end closes it.
+    - role: usr-rw
     - role: bootstrap
     - role: podman-host
     # Unconditional, both roles: they sit on the same power rail and the same SD
@@ -60,16 +61,14 @@
     - role: collectd-install
     # Appliance: nothing updates or maintains itself on a timer.
     - role: no-scheduled-maintenance
-    - role: host-cli
     - role: coordinator-hardware
       when: device_role == 'coordinator'
     - role: campod-hardware
       when: device_role == 'campod'
 
   post_tasks:
-    # Always, because bootstrap opens the /usr read-write hatch and only a boot closes
-    # it again. A first run is a bench operation, so a reboot is free here in a way it
-    # is not in deploy.yaml.
+    # Unconditional (#457). It also restores read-only /usr -- see
+    # docs/deployment-model.md, "The /usr hatch".
     - name: Reboot and wait for the device to come back
       ansible.builtin.reboot:
         msg: Rekon provisioning -- applying kernel/firmware/module changes and restoring read-only /usr

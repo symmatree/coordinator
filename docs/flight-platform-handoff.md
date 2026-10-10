@@ -3,7 +3,7 @@
 For whoever is the flight-software / flight-platform agent next. This is the software that
 runs **on the vehicle** -- `host/ansible` (how a device is converged and reimaged), the
 campod and coordinator payload containers in `containers/`, the stack definitions in
-`stacks/`, and the device-side CLI in `bin/`. Not the cluster-hosted control surface; that
+`stacks/`, and the device-side CLIs in `device-sw/cli/`. Not the cluster-hosted control surface; that
 is [ground-platform-handoff.md](ground-platform-handoff.md).
 
 The boundary is not the directory. `fleet-control` reaches devices over ssh, so when the
@@ -63,8 +63,8 @@ Two properties rank above features:
   the stills are not usable, as open topics rather than conclusions. Newer than this file's
   other entries, and the imagery side is the deliverable.
 
-In code: **`bin/coord`** is the device CLI and is short; **`containers/campod-camera/capture.py`**
-and **`accel/main.go`** are the two things that actually collect; **`bin/coord-version`** is
+In code: **`device-sw/cli/coord`** is the device CLI and is short; **`containers/campod-camera/capture.py`**
+and **`accel/main.go`** are the two things that actually collect; **`device-sw/cli/coord-version`** is
 the probe the ground platform reads. Read **`containers/fleet-control/src/quiesce.ts`** and
 **`probe.ts`** too, short as they are -- they decide what every remote operation costs, and one
 of them stops the whole fleet.

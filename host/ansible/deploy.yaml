@@ -5,13 +5,11 @@
 #   ansible-playbook host/ansible/deploy.yaml -i '10.0.2.49,' -u pi \
 #     -e device_role=campod
 #
-# Installs nothing and touches no packages: everything here writes to /etc, /opt, /var
-# or the checkout in /home.
+# Installs no packages. `git pull` is the deploy (#48); what is copied out of the
+# checkout and what is symlinked into it: docs/deployment-model.md.
 #
-# `git pull` is the deploy (#48). The stack definition, the quadlet units and the
-# /usr/local/bin tools are all symlinks into the checkout, so updating it updates them.
-#
-# Ends by rebooting, which is how the stack comes back up.
+# Does not reboot and does not start the stack: the quiesce at the top leaves it
+# stopped, and `coord start` or a power cycle is the operator's call.
 
 - name: Rekon config deploy
   hosts: all
@@ -64,8 +62,12 @@
           - platform
 
   roles:
-    # First: everything below reads from the checkout.
+    # /usr writable so host-cli can install the tools. It stays writable until the
+    # next boot -- docs/deployment-model.md, "The /usr hatch".
+    - role: usr-rw
+    # Then the checkout: everything below reads from it.
     - role: checkout
+    - role: host-cli
     - role: metrics
     - role: coordinator
       when: device_role == 'coordinator'
@@ -73,21 +75,8 @@
       when: device_role == 'campod'
 
   post_tasks:
-    - name: Reboot and wait for the device to come back
-      ansible.builtin.reboot:
-        msg: Rekon deploy -- applying the converged configuration
-      when:
-        - allow_reboot | bool
-        # ansible.builtin.reboot refuses under connection=local rather than rebooting
-        # its own control node, and it would refuse at the LAST task. Skip and say so.
-        - ansible_connection | default('ssh') != 'local'
-
     - name: Report what the device ended up in
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }} deployed (device_role={{ device_role }}).
-          {% if allow_reboot | bool and ansible_connection | default('ssh') != 'local' %}
-          Rebooted, so the stack is back up.
-          {% else %}
-          NOT rebooted -- the stack is stopped. Power-cycle it, or `coord start`.
-          {% endif %}
+          The stack is stopped and /usr is writable until the next boot.

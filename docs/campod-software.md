@@ -51,7 +51,7 @@ status -- so they share one operator model rather than maintaining two parallel 
 
 | Shared asset | How it serves both |
 |--------------|--------------------|
-| `bin/coord` | One stack-aware CLI. Each device runs only its own stack under `/opt/stacks/*`; `coord` defaults to the sole installed stack. |
+| `device-sw/cli/coord` | One stack-aware CLI. Each device runs only its own stack under `/opt/stacks/*`; `coord` defaults to the sole installed stack. |
 | `host/ansible/roles/docker-host` | Docker engine, group, state dirs -- identical on Pi 4B and Pi Zero. |
 | `host/ansible/site.yaml` | One playbook, driven over SSH; `-e device_role=` selects the device. |
 | `/opt/stacks/<name>` | Both devices lay their one stack there. |
@@ -294,7 +294,7 @@ across reboots, disable the unit (`systemctl disable --now campod-stack.service`
 |---------|-------|
 | `exec format error` | wrong artifact flashed -- confirm it is the campod image, not a stock card. (The campod image is always arm64, so this cannot come from picking a 32-bit variant; there isn't one.) |
 | `permission denied` on `docker ps` | `newgrp docker` or re-login (not a reboot) |
-| Play reports it rebooted the device | expected on a fresh card -- the `/usr` hatch and any kernel change both need one, and the play waits for the device to return |
+| Play reports it rebooted the device | `provision.yaml` only, and expected: udev rules, module loads and the gadget link all want a boot, and the play waits for the device to return. `deploy.yaml` never reboots. |
 | `accel: ... does not exist -- is dtparam=spi=on set?` | `ls /dev/spidev*`; if empty the card predates that image line -- reflash |
 | `accel: DEVID 0x00, expected 0xE5` | wiring, chip select, or SPI mode -- the bus is reaching nothing |
 | `accel: self-test FAIL` | sensor is talking but not moving: cold joint on a supply pin, or a dead part |
