@@ -10,7 +10,7 @@ On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and 
 | `stacks/campod/` | Campod compose stack (installed to `/opt/stacks/campod/` on each Pi Zero) |
 | `containers/vio-tracker/` | OAK-D `feature_tracker` image (arm64) |
 | `containers/campod-camera/` | Campod capture image (arm64; Phase 2, placeholder) |
-| `bin/coord` | Shared operator CLI; auto-detects the device's stack under `/opt/stacks/*` |
+| `device-sw/cli/coord` | Shared operator CLI; auto-detects the device's stack under `/opt/stacks/*` |
 | `host/ansible/` | Shared bootstrap: `site.yaml` + roles (`docker-host`, `coord-stack`, `coordinator`, `campod`) |
 | `host/ansible/site.yaml` | Host bootstrap + config convergence, driven over SSH from any machine; `-e device_role=coordinator\|campod` |
 | `docs/` | Architecture, bench runbooks, campod bringup, references |
@@ -28,11 +28,11 @@ Processes share Unix sockets via `${COORDINATOR_IPC_DIR}` mounted at `/tmp`. Det
 
 ## Operator CLI
 
-Install `bin/coord` to `/usr/local/bin/coord` on the Pi, or run from a checkout:
+Install `device-sw/cli/coord` to `/usr/local/device-sw/cli/coord` on the Pi, or run from a checkout:
 
 ```bash
 export COORD_COMPOSE_FILE=/path/to/coordinator/stacks/coordinator/compose.yaml
-./bin/coord status
+coord status
 ```
 
 Commands: `pull`, `start`, `stop`, `restart`, `status`, `logs [service]`, `shell [service]`.

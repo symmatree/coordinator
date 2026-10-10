@@ -149,7 +149,7 @@ Two rules make this navigable:
 | Producer | Trigger | Reads | Writes (path) |
 |----------|---------|-------|---------------|
 | **vio-tracker** tee (#78) | in-flight, on the vehicle | live OAK-D | `captures/<MxId>/<session>/<MxId>_<session>.feat` (+ `.feat.json`, `features/*.json`) |
-| `bin/vio-ipc-record` (bench) | manual bench | estimator sockets | a capture session (same `captures/...` shape) |
+| `device-sw/cli/vio-ipc-record` (bench) | manual bench | estimator sockets | a capture session (same `captures/...` shape) |
 | **coordinator-mavlink** (#208, #220) | in-flight, on the vehicle | FC MAVLink (MAV2) | `captures/<node>/<boot-id>/timesync.jsonl`, `.../vehicle.tlog` -- inside the session, which is where the tree above has always placed them. They were written to the captures root until #386, which put them outside everything `coord sessions package` collects |
 | **tlog-split** (tiles `mavproxy` env) | continuously, in the cluster | a mavproxy `--out` fan-out | one tlog per flight to `datasets/ground-tlogs`, cut at disarm ([#192](https://github.com/symmatree/coordinator/issues/192) rotation + durability; retention still open) |
 | **fleet-control** `POST /flights/:flight/ground` | post-flight, on request | `ground-tlogs`, Mimir | `ground/*` -- the tlogs named and the backpack series |

@@ -122,7 +122,7 @@ whenever the operator wants one -- restores `ro`. Provision happens to reboot fo
 reasons, which closes the hatch as a side effect; deploy does not reboot at all.
 
 Who writes under `/usr`: `roles/podman-host` and `roles/collectd-install` (packages,
-provision), and `roles/host-cli` (the eight tools in `/usr/local/bin`, deploy).
+provision), and `roles/host-cli` (the device CLIs in `/usr/local/bin`, deploy).
 
 ## Deploy mechanics (built -- #48)
 
@@ -135,6 +135,11 @@ provision), and `roles/host-cli` (the eight tools in `/usr/local/bin`, deploy).
   `/usr/local/bin` ([#463](https://github.com/symmatree/coordinator/pull/463)). The direction of
   travel is no checkout at all ([#341](https://github.com/symmatree/coordinator/issues/341)),
   which ends the question.
+- **What a device installs is a directory, not a list.** `device-sw/cli/` holds exactly that
+  and nothing else; `roles/host-cli` copies every file in it and `packaging/build-device-sw`
+  puts the same directory in the archive. Neither names a tool, so neither can disagree with
+  the other or go stale. Tests, the README and ground-side tools live outside it -- see
+  `device-sw/README.md`.
 - **`dist-upgrade` split out of the config deploy.** It used to drag a full
   `apt-get dist-upgrade` (network + possible reboot) in front of the playbook. `site.yaml` is
   **config-only**; the OS upgrade is off unless asked for, with **`-e dist_upgrade=true`**. In the

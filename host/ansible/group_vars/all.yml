@@ -4,8 +4,8 @@
 
 device_role: coordinator
 
-# Only the PLAYBOOK comes from the control node. Everything else -- bin/coord,
-# the VIO tools, coord-throttle-log -- is copied from the TARGET's own checkout
+# Only the PLAYBOOK comes from the control node. Everything else -- device-sw/cli and
+# the stack definitions -- is copied from the TARGET's own checkout
 # with remote_src, so it can never be shipped independently of the stack config
 # it manages.
 #

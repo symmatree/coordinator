@@ -8,7 +8,7 @@ that stops reading as soon as it has the entries it wants leaves the FC listing,
 every subsequent LOG_REQUEST_DATA is discarded in silence. That is a download that
 reports 0 bytes with no error, which is what happened on 2026-09-27.
 
-    python3 test_coord_fc_log.py
+    python3 device-sw/tests/test_coord_fc_log.py
 """
 import importlib.machinery
 import importlib.util
@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 # An explicit loader: the script has no .py extension, so importlib cannot infer one.
-_path = Path(__file__).with_name("coord-fc-log")
+_path = Path(__file__).resolve().parent.parent / "cli" / "coord-fc-log"
 spec = importlib.util.spec_from_loader(
     "coord_fc_log", importlib.machinery.SourceFileLoader("coord_fc_log", str(_path)))
 fc = importlib.util.module_from_spec(spec)

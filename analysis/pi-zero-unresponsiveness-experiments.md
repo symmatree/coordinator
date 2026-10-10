@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **The teardown half is resolved (#355, closed 2026-10-02).** `coord stop` no longer
-> goes through docker -- it signals `dumb-init` directly (`pgrep`/`pkill`), and `bin/coord`
+> goes through docker -- it signals `dumb-init` directly (`pgrep`/`pkill`), and `device-sw/cli/coord`
 > carries the reasoning citing the measurements below. A campod now takes roughly 20 s to
 > answer when probed after a boot, on the bench at a transition into maintenance. That is
 > acceptable and not a problem to work.

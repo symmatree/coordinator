@@ -1,4 +1,4 @@
-# bin/ -- the device-side CLI
+# device-sw -- the software a device installs
 
 What runs **on** a coordinator or a campod. `coord` is the operator entry point and
 dispatches to the rest; the others are also callable directly, which is how the platform
@@ -6,16 +6,25 @@ drives them over plain ssh.
 
 | | |
 |---|---|
-| `coord` | stack lifecycle: pull, start, stop, status, logs, shell, exec |
+| `coord` | stack lifecycle: pull, start, stop, restart, status, logs, version, radio, sessions, fc-log |
 | `coord-version` | what this machine is running, one TOML table per unit (#326) |
 | `coord-sessions` | list capture sessions, package one into a verified bundle, delete (#302) |
 | `coord-throttle-log` | record the Pi's power/throttle state to the journal |
-| `backpack-link-watch` | poll the ELRS backpack's WiFi health. Hand-run; nothing starts it |
+| `coord-radio`, `coord-fc-log` | ELRS radio state; FC log listing and download |
 | `vio-pose-tap`, `vio-ipc-record` | bench taps on the VIO IPC sockets |
 
-`host/ansible/roles/coord-stack` installs them to `/usr/local/bin`. That is the only thing
-ansible does in this path: **collection has to work on a device nobody has converged**, which
-is why the platform reaches these over plain ssh rather than through a playbook (#362).
+## cli/ is the install set
+
+`cli/` holds exactly what goes to a device and nothing else. `roles/host-cli` copies every
+file in it to `/usr/local/bin`, and `packaging/build-device-sw` puts the same directory in
+the archive -- neither carries a list of names, so neither can disagree with the other or go
+stale when a tool is added.
+
+That is why `tests/` and this README sit outside `cli/`, and why a ground-side tool like
+`analysis/tools/backpack-link-watch` lives elsewhere entirely: anything in `cli/` ships.
+
+Collection has to work on a device nobody has converged, which is why the platform reaches
+these over plain ssh rather than through a playbook (#362).
 
 ## Things true of all of them, so they are not repeated in each file
 

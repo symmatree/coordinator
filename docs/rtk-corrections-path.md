@@ -152,7 +152,7 @@ which firmware is on the unit.
 - `link.uptime_ms` distinguishes a power-cycle from a link drop across a gap in sampling
   -- compare its delta against wall-clock, not just whether it went backwards.
 
-Record it per flight rather than curling by hand; `bin/backpack-link-watch` (coordinator
+Record it per flight rather than curling by hand; `analysis/tools/backpack-link-watch` (coordinator
 [#201](https://github.com/symmatree/coordinator/pull/201)) does that and documents the
 traps above in more detail.
 
