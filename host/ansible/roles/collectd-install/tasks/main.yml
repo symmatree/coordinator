@@ -2,15 +2,13 @@
 # collectd's software and its fixed plumbing. Provision: none of this changes when the
 # repo changes.
 #
-# No handler notifies here. provision.yaml ends in an unconditional reboot, which
-# applies the drop-in and starts collectd; a restart notified from this play would run
-# after that reboot anyway, since handlers flush after post_tasks. The live restart that
-# a config change needs is roles/metrics'.
+# No handler notifies here. provision.yaml ends in a reboot, which applies the drop-in
+# and starts collectd; a restart notified from this play would run after that reboot
+# anyway, since handlers flush after post_tasks. The live restart that a config change
+# needs is roles/metrics'.
 #
-# The DataDir helper is here rather than with the config because it writes under /usr,
-# which is a read-only subvolume -- keeping it on the provision side is what lets the
-# deploy play leave /usr alone and therefore skip its reboot. Its content is inline and
-# static, so there is nothing for a deploy to update.
+# The DataDir helper is here rather than with the config because its content is inline
+# and static, so there is nothing for a deploy to update.
 
 - name: Install collectd
   ansible.builtin.apt:

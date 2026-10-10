@@ -8,7 +8,8 @@
 # Installs no packages. `git pull` is the deploy (#48); what is copied out of the
 # checkout and what is symlinked into it: docs/deployment-model.md.
 #
-# Ends by rebooting (#457), which also restores read-only /usr.
+# Does not reboot and does not start the stack: the quiesce at the top leaves it
+# stopped, and `coord start` or a power cycle is the operator's call.
 
 - name: Rekon config deploy
   hosts: all
@@ -62,7 +63,8 @@
           - platform
 
   roles:
-    # /usr writable so host-cli can install the tools; the reboot at the end closes it.
+    # /usr writable so host-cli can install the tools. It stays writable until the
+    # next boot -- docs/deployment-model.md, "The /usr hatch".
     - role: usr-rw
     # Then the checkout: everything below reads from it.
     - role: checkout
@@ -74,21 +76,8 @@
       when: device_role == 'campod'
 
   post_tasks:
-    - name: Reboot and wait for the device to come back
-      ansible.builtin.reboot:
-        msg: Rekon deploy -- applying the converged configuration
-      when:
-        - allow_reboot | bool
-        # ansible.builtin.reboot refuses under connection=local rather than rebooting
-        # its own control node, and it would refuse at the LAST task. Skip and say so.
-        - ansible_connection | default('ssh') != 'local'
-
     - name: Report what the device ended up in
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }} deployed (device_role={{ device_role }}).
-          {% if allow_reboot | bool and ansible_connection | default('ssh') != 'local' %}
-          Rebooted, so the stack is back up.
-          {% else %}
-          NOT rebooted -- the stack is stopped. Power-cycle it, or `coord start`.
-          {% endif %}
+          The stack is stopped and /usr is writable until the next boot.
