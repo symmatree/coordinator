@@ -20,6 +20,7 @@ TESTS=(
 	bin/test_coord_sessions.py
 	bin/test_coord_fc_log.py
 	bin/test_quadlet_units.py
+	bin/test_payload.py
 	host/ansible/test_notifies.py
 	harness/test_input_replayer.py
 	harness/test_router_stack.py
