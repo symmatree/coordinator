@@ -1,0 +1,46 @@
+---
+# chrony on the coordinator: the DS3234 as a source, the 1 Hz as phase, and NTP for
+# the campods. The contract and why the kernel RTC driver is not used: coordinator#11.
+#
+# Deploy rather than provision, because the config changes with the repo and because
+# it depends on coord-rtc, which roles/host-cli installs in this play. The package is
+# the one thing here that is a property of the device, and it is small enough that
+# splitting it across two plays costs more than it saves.
+
+- name: Install chrony
+  ansible.builtin.apt:
+    name: chrony
+    install_recommends: false
+    cache_valid_time: "{{ apt_cache_max_age }}"
+
+# The drop-in only does anything if the vendor config includes conf.d. If a future
+# package drops that, a silently-ignored config is the worst outcome -- the PPS line
+# would be configured and unused, which looks identical to working.
+- name: Check that the vendor config reads conf.d
+  ansible.builtin.command: grep -qE '^\s*confdir\s+.*conf\.d' /etc/chrony/chrony.conf
+  register: chrony_confdir
+  changed_when: false
+  check_mode: false
+  failed_when: chrony_confdir.rc != 0
+
+- name: Install the Rekon chrony drop-in
+  ansible.builtin.template:
+    src: 10-rekon.conf.j2
+    dest: /etc/chrony/conf.d/10-rekon.conf
+    mode: "0644"
+  notify: Restart chronyd
+
+- name: Install the DS3234 feed unit
+  ansible.builtin.copy:
+    src: coord-rtc-feed.service
+    dest: /etc/systemd/system/coord-rtc-feed.service
+    mode: "0644"
+
+- name: Enable chronyd and the DS3234 feed
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    daemon_reload: true
+  loop:
+    - chronyd.service
+    - coord-rtc-feed.service

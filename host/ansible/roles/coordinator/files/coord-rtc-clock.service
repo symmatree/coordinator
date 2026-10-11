@@ -1,0 +1,15 @@
+[Unit]
+Description=Set the system clock from the DS3234 (coordinator#11)
+Documentation=https://github.com/symmatree/coordinator/issues/11
+# Before anything that wants a plausible clock. The Pi has no built-in RTC, so
+# without this the clock starts at whatever systemd last saved.
+Before=time-sync.target chronyd.service
+Wants=time-sync.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/coord-rtc hctosys
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

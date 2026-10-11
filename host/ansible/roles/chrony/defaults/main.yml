@@ -1,0 +1,4 @@
+---
+# Where coord-rtc-feed sends samples and where chrony listens for them. One
+# definition, read by the drop-in; the unit takes the same default from the CLI.
+coord_rtc_chrony_sock: /run/chrony.ds3234.sock

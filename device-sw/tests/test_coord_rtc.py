@@ -11,6 +11,7 @@ layer, and that is why `enable-pps` reads the register back on the real chip.
 
 import importlib.machinery
 import importlib.util
+import calendar
 import io
 import sys
 from contextlib import redirect_stdout
@@ -54,7 +55,10 @@ class FakeBus:
             reg = addr & 0x7F
             self.writes.append((addr, tx[1]))
             if self.writable:
-                self.regs[reg] = tx[1]
+                # The chip auto-increments the address across a burst, so a
+                # seven-register time write is one transfer.
+                for i, b in enumerate(tx[1:]):
+                    self.regs[reg + i] = b
             return bytes(len(tx))
         # A read echoes nothing useful in the first byte; the data follows.
         n = len(tx) - 1
@@ -137,13 +141,140 @@ check("SPI_IOC_MESSAGE(1) matches the working Go reader",
 check("clock is at or under the 4 MHz ceiling", cr.SPI_HZ <= 4_000_000, str(cr.SPI_HZ))
 check("mode is 1 or 3", cr.SPI_MODE in (1, 3), str(cr.SPI_MODE))
 
-# 10. No argument soup: two verbs, and anything else is usage.
-check("two verbs", sorted(cr.COMMANDS) == ["enable-pps", "status"], str(sorted(cr.COMMANDS)))
+# 10. No argument soup: a fixed verb set, and anything else is usage.
+check("the verb set", sorted(cr.COMMANDS) == ["enable-pps", "feed", "hctosys", "status", "systohc"],
+      str(sorted(cr.COMMANDS)))
 err = io.StringIO()
 _stderr, sys.stderr = sys.stderr, err
 rc = cr.main(["coord-rtc", "frobnicate"])
 sys.stderr = _stderr
 check("an unknown verb is usage, not a traceback", rc == 2, f"rc={rc}")
+
+# 11. systohc: all seven time registers in ONE transfer, addressed at 0x80, and the
+# BCD it writes is the BCD the decoder reads back. One transfer because the datasheet
+# wants the time registers written together, and because the write instant is what
+# sets the 1 Hz phase.
+import time as _time
+
+
+class RecordingBus(FakeBus):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.transfers = []
+
+    def transfer(self, tx):
+        self.transfers.append(bytes(tx))
+        return super().transfer(tx)
+
+
+bus = RecordingBus()
+out = io.StringIO()
+with redirect_stdout(out):
+    rc = cr.cmd_systohc(cr.Ds3234(bus))
+text = out.getvalue()
+check("systohc exits 0", rc == 0, f"rc={rc}")
+timewrites = [x for x in bus.transfers if x[0] == cr.REG_SECONDS | cr.WRITE]
+check("the time registers go in one transfer of seven", len(timewrites) == 1
+      and len(timewrites[0]) == 8, str([len(x) for x in timewrites]))
+check("it reports how far from the boundary the write landed", "landed" in text
+      and "ms from the second it claims" in text, text)
+check("osf is cleared by systohc", not bus.regs[cr.REG_STATUS] & cr.SR_OSF,
+      hex(bus.regs[cr.REG_STATUS]))
+# 0xc8 is the real POR-ish value seen on the hardware: OSF plus the two 32 kHz
+# enables. Clearing OSF must not disturb them.
+bus = RecordingBus(regs={cr.REG_STATUS: 0xC8})
+with redirect_stdout(io.StringIO()):
+    cr.cmd_systohc(cr.Ds3234(bus))
+check("clearing osf preserves the other status bits",
+      bus.regs[cr.REG_STATUS] == 0x48, hex(bus.regs[cr.REG_STATUS]))
+
+# What it wrote decodes back to exactly the second it said it wrote. This is the
+# check that caught the fake dropping six of the seven bytes.
+bus2 = RecordingBus()
+out2 = io.StringIO()
+with redirect_stdout(out2):
+    cr.cmd_systohc(cr.Ds3234(bus2))
+claimed = [l for l in out2.getvalue().splitlines()
+           if l.startswith("wrote")][0].split()[1].rstrip("Z")
+written = cr.decode_time(bytes(bus2.regs[0:7]))
+check("the written registers decode back to the claimed second",
+      written == claimed, f"wrote {claimed}, registers say {written}")
+check("and that second is now, not an epoch",
+      abs(calendar.timegm(_time.strptime(written, "%Y-%m-%dT%H:%M:%S"))
+          - _time.time()) < 10, written)
+
+# 12. hctosys refuses a chip that says its own time is untrustworthy. A Pi 4B has no
+# other RTC, so believing OSF-set time replaces a wrong clock with a confident one.
+moved = []
+_real_set, cr.set_system = cr.set_system, lambda ts: moved.append(ts)
+bus = FakeBus()  # OSF set by default
+err = io.StringIO()
+_stderr, sys.stderr = sys.stderr, err
+rc = cr.cmd_hctosys(cr.Ds3234(bus))
+sys.stderr = _stderr
+check("hctosys refuses while osf is set", rc == 1 and not moved, f"rc={rc} moved={moved}")
+check("and says why", "osf set" in err.getvalue(), err.getvalue())
+
+# With OSF clear it sets the clock from the chip, and nothing in the test touches the
+# real clock -- cr.set_system is the seam.
+regs = cr.time_regs(_time.gmtime(1791742065))
+bus = FakeBus({cr.REG_STATUS: 0x00, **{i: regs[i] for i in range(7)}})
+out = io.StringIO()
+with redirect_stdout(out):
+    rc = cr.cmd_hctosys(cr.Ds3234(bus))
+sys.stderr = _stderr
+check("hctosys sets the clock from the chip", rc == 0 and len(moved) == 1, f"rc={rc}")
+check("to the chip's own time, read as UTC",
+      moved and abs(moved[0] - 1791742065) < 1, str(moved))
+cr.set_system = _real_set
+
+# 13. The SOCK sample chrony will read. Size and magic are the two things that make
+# chrony either accept it or log "unexpected length" and drop it forever.
+msg = cr.sock_sample(1791742065, 1791742065.25)
+check("the sample is 40 bytes", len(msg) == 40, str(len(msg)))
+tv_s, tv_us, offset, pulse, leap, _pad, magic = _struct.unpack(cr.SOCK_SAMPLE, msg)
+check("magic is chrony's", magic == 0x534F434B, hex(magic))
+check("pulse is 0, because we supply whole seconds", pulse == 0)
+check("leap is 0", leap == 0)
+check("the measurement time is the system time of the reading",
+      tv_s == 1791742065 and abs(tv_us - 250000) < 2, f"{tv_s}.{tv_us}")
+check("offset is true minus system", abs(offset - (-0.25)) < 1e-6, str(offset))
+
+
+# 14. chip_boundary exists because the chip has no sub-second register. It must catch
+# the rollover, and it must give up rather than hang on a chip whose clock is stopped.
+class TickingBus(FakeBus):
+    """Seconds register advances after a set number of reads."""
+
+    def __init__(self, flip_after=3, **kw):
+        regs = cr.time_regs(_time.gmtime(1791742065))
+        super().__init__(regs={i: regs[i] for i in range(7)}, **kw)
+        self.reads = 0
+        self.flip_after = flip_after
+
+    def transfer(self, tx):
+        if not tx[0] & cr.WRITE:
+            self.reads += 1
+            if self.reads > self.flip_after:
+                nxt = cr.time_regs(_time.gmtime(1791742066))
+                for i in range(7):
+                    self.regs[i] = nxt[i]
+        return super().transfer(tx)
+
+
+bus = TickingBus()
+t0 = _time.time()
+edge = cr.chip_boundary(cr.Ds3234(bus))
+check("chip_boundary catches the rollover", edge is not None)
+check("and reports the second it rolled INTO, not out of",
+      edge and edge[0] == 1791742066, str(edge))
+check("and the instant it saw it", edge and t0 <= edge[1] <= _time.time(), str(edge))
+
+static = FakeBus(regs={i: cr.time_regs(_time.gmtime(1791742065))[i] for i in range(7)})
+t0 = _time.time()
+edge = cr.chip_boundary(cr.Ds3234(static), deadline_s=0.2)
+check("a stopped chip gives up rather than hanging",
+      edge is None and _time.time() - t0 < 1.0, f"{edge} after {_time.time()-t0:.2f}s")
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

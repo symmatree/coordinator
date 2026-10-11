@@ -3,6 +3,9 @@
 
     coord-rtc status        what the chip holds and whether the 1 Hz output is on
     coord-rtc enable-pps    turn the 1 Hz square wave on, and verify it took
+    coord-rtc systohc       set the chip from the system clock, on a second boundary
+    coord-rtc hctosys       set the system clock from the chip
+    coord-rtc feed          serve the chip to chrony as a SOCK refclock, forever
 
 The chip is on /dev/spidev0.0 because the kernel driver is deliberately not bound
 to it: rtc-ds3232 sets INTCN on every probe, which switches INT/SQW from square
@@ -15,10 +18,15 @@ answer, and the exit code says whether the probe ran.
 
 from __future__ import annotations
 
+import calendar
 import ctypes
+import os
+import socket
 import fcntl
+import math
 import struct
 import sys
+import time
 
 SPIDEV = "/dev/spidev0.0"
 
@@ -53,6 +61,24 @@ SQW_RATES = {0x00: "1Hz", 0x08: "1.024kHz", 0x10: "4.096kHz", 0x18: "8.192kHz"}
 CR_PPS = 0x00
 
 SR_OSF = 0x80  # oscillator has stopped since it was last cleared
+
+# Sleep to this long before the target second, then spin. sleep() resolution is
+# milliseconds and the write has to land ON the boundary, not near it: the write
+# instant is what sets the 1 Hz phase. One spin of a few ms, once, at the operator's
+# request -- the achieved error is measured and printed rather than assumed.
+SPIN_LEAD_S = 0.003
+
+# chrony's SOCK refclock. struct sock_sample from chrony's refclock_sock.c:
+# struct timeval tv; double offset; int pulse; int leap; int _pad; int magic.
+# 40 bytes on a 64-bit target, which is what the "=" format gives.
+SOCK_MAGIC = 0x534F434B
+SOCK_SAMPLE = "=qqdiiii"
+CHRONY_SOCK = os.environ.get("COORD_RTC_CHRONY_SOCK", "/run/chrony.ds3234.sock")
+FEED_PERIOD_S = float(os.environ.get("COORD_RTC_FEED_PERIOD_S", "64"))
+# How often to look while waiting for the chip's seconds register to change. The
+# chip has no sub-second register, so the rollover instant IS the only way to know
+# where inside a second we are; this bounds that error.
+ROLLOVER_POLL_S = 0.02
 
 # struct spi_ioc_transfer, 32 bytes. Field order and widths are the kernel's.
 XFER = "=QQIIHBBBBBB"
@@ -105,10 +131,56 @@ class Ds3234:
         self.write(REG_CONTROL, CR_PPS)
         return self.read(REG_CONTROL)[0]
 
+    def write_time(self, regs: bytes) -> None:
+        """All seven time registers in ONE transfer.
+
+        One transfer because the datasheet wants the time registers written within a
+        second of each other, and because writing the seconds register resets the
+        chip's countdown chain -- so the instant this lands sets the phase of the
+        1 Hz output, not just the labels.
+        """
+        self.bus.transfer(bytes([REG_SECONDS | WRITE]) + regs)
+
+    def clear_osf(self) -> int:
+        """Clear the oscillator-stop flag, preserving the rest of the register.
+
+        Only meaningful once the time has been set: OSF is the chip saying its time
+        cannot be trusted, so clearing it is the claim that it now can.
+        """
+        sr = self.read(REG_STATUS)[0]
+        self.write(REG_STATUS, sr & ~SR_OSF)
+        return self.read(REG_STATUS)[0]
+
 
 def bcd(b: int, mask: int = 0x7F) -> int:
     b &= mask
     return (b >> 4) * 10 + (b & 0x0F)
+
+
+def to_bcd(v: int) -> int:
+    return ((v // 10) << 4) | (v % 10)
+
+
+def time_regs(tm: time.struct_time) -> bytes:
+    """The seven time registers for a UTC struct_time.
+
+    UTC, because the chip has no timezone and whatever writes it and whatever reads
+    it have to agree. 24-hour mode: bit 6 of the hours register clear.
+
+    Century bit is in the month register. tm_wday is Monday=0 in Python and the chip
+    wants 1-7, which nothing reads -- it is written for completeness.
+    """
+    year = tm.tm_year - 2000
+    century = 0x80 if year >= 100 else 0x00
+    return bytes([
+        to_bcd(tm.tm_sec),
+        to_bcd(tm.tm_min),
+        to_bcd(tm.tm_hour),
+        tm.tm_wday + 1,
+        to_bcd(tm.tm_mday),
+        to_bcd(tm.tm_mon) | century,
+        to_bcd(year % 100),
+    ])
 
 
 def decode_control(cr: int) -> str:
@@ -163,7 +235,141 @@ def cmd_enable_pps(rtc: Ds3234) -> int:
     return 0
 
 
-COMMANDS = {"status": cmd_status, "enable-pps": cmd_enable_pps}
+def chip_boundary(rtc: Ds3234, deadline_s: float = 1.5) -> tuple[int, float] | None:
+    """Watch the seconds register until it changes, and return (chip time, instant).
+
+    This exists because the chip has no sub-second register. A plain read says "it is
+    second N" and leaves a whole second of ambiguity, which is the same order as
+    chrony's 0.5 s fold limit -- so the sample would have no margin against the RTC's
+    own drift. Catching the rollover removes the ambiguity: at that instant the chip's
+    time IS the value just read, to within one polling interval.
+    """
+    first = rtc.read(REG_SECONDS, 7)
+    give_up = time.time() + deadline_s
+    while time.time() < give_up:
+        time.sleep(ROLLOVER_POLL_S)
+        regs = rtc.read(REG_SECONDS, 7)
+        if regs[0] != first[0]:
+            at = time.time()
+            stamp = decode_time(regs)
+            return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S")), at
+    return None
+
+
+def sock_sample(chip_s: int, at: float) -> bytes:
+    """One struct sock_sample. offset is true minus system, per chrony's comment."""
+    return struct.pack(
+        SOCK_SAMPLE, int(at), int((at % 1) * 1e6),
+        chip_s - at, 0, 0, 0, SOCK_MAGIC,
+    )
+
+
+def cmd_feed(rtc: Ds3234) -> int:
+    """Serve the chip to chrony as a SOCK refclock until killed.
+
+    The reason this exists rather than the kernel's rtc-ds3232: that driver would have
+    been chrony's source, and it also turns off the 1 Hz output (#11). So the source
+    half is ours too. Setting the system clock is NOT this -- chrony only knows about
+    sources, so a clock someone else set leaves it unsynchronised and discarding PPS.
+
+    pulse=0: we supply whole seconds, which is exactly what the PPS refclock cannot.
+    `lock=` on the PPS refclock pairs them -- this says which second, PPS says where
+    the second starts.
+    """
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    sent = refused = 0
+    while True:
+        edge = chip_boundary(rtc)
+        if edge is None:
+            print("chip's seconds register did not change within 1.5 s", file=sys.stderr)
+        else:
+            chip_s, at = edge
+            msg = sock_sample(chip_s, at)
+            try:
+                sock.sendto(msg, CHRONY_SOCK)
+                sent += 1
+            except (FileNotFoundError, ConnectionRefusedError):
+                # chrony not up yet, or not configured with this refclock. Not fatal:
+                # the chip is still right and the next sample will land.
+                refused += 1
+                if refused in (1, 10) or refused % 100 == 0:
+                    print(f"{CHRONY_SOCK} not accepting samples ({refused} so far)",
+                          file=sys.stderr)
+        time.sleep(FEED_PERIOD_S)
+
+
+def set_system(ts: float) -> None:
+    """The seam the tests replace, so no test can move this machine's clock."""
+    time.clock_settime(time.CLOCK_REALTIME, ts)
+
+
+def cmd_systohc(rtc: Ds3234) -> int:
+    """Set the chip from the system clock, landing the write on a second boundary.
+
+    The chip has no sub-second register, so the fraction cannot be written as a
+    value -- it is carried by WHEN the write lands, because writing the seconds
+    register resets the countdown chain. Hence the wait: the second comes from the
+    registers, the phase comes from the timing.
+
+    Reports the achieved error rather than assuming it. The write is microseconds of
+    SPI; everything else is Python and scheduler jitter, and that is what this
+    measures.
+    """
+    target = math.floor(time.time()) + 2
+    regs = time_regs(time.gmtime(target))
+    delay = target - time.time() - SPIN_LEAD_S
+    if delay > 0:
+        time.sleep(delay)
+    while time.time() < target:
+        pass
+    rtc.write_time(regs)
+    landed = time.time()
+    sr = rtc.clear_osf()
+    err_ms = (landed - target) * 1000
+    print(f"wrote    {time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(target))}Z")
+    print(f"landed   {err_ms:+.1f} ms from the second it claims")
+    print(f"status   0x{sr:02x}  osf={'set' if sr & SR_OSF else 'clear'}")
+    if sr & SR_OSF:
+        print("osf did not clear, so the chip still reports its time as unreliable",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_hctosys(rtc: Ds3234) -> int:
+    """Set the system clock from the chip.
+
+    Refuses while OSF is set. That flag is the chip saying its time cannot be
+    trusted, and a Pi 4B has no other RTC -- so believing it would replace a clock
+    that is merely wrong with one that is wrong and looks deliberate.
+    """
+    sr = rtc.read(REG_STATUS)[0]
+    if sr & SR_OSF:
+        print(f"status 0x{sr:02x} has osf set: the chip's time is not trustworthy, so "
+              "the system clock is left alone. `coord-rtc systohc` sets the chip.",
+              file=sys.stderr)
+        return 1
+    regs = rtc.read(REG_SECONDS, 7)
+    stamp = decode_time(regs)
+    ts = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S"))
+    before = time.time()
+    try:
+        set_system(float(ts))
+    except PermissionError:
+        print("setting the system clock needs root.", file=sys.stderr)
+        return 1
+    print(f"chip     {stamp}Z")
+    print(f"system   moved {ts - before:+.1f} s")
+    return 0
+
+
+COMMANDS = {
+    "status": cmd_status,
+    "enable-pps": cmd_enable_pps,
+    "systohc": cmd_systohc,
+    "hctosys": cmd_hctosys,
+    "feed": cmd_feed,
+}
 
 
 def main(argv: list[str]) -> int:
