@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Append this node's PPS edge arrivals to its session, then get out of the way.
+
+Why the raw arrivals are worth recording when chrony is already disciplined to them:
+the discipline makes a pulse's time *implied* -- it is an integer second of the
+disciplined clock -- but that implication assumes the discipline worked, and the
+assumption is exactly what you want to check. Recorded arrivals are an independent,
+retroactive measurement of how the clocks related, comparable against the FC's own
+record of the same edges (its CAM records) and against TIMESYNC.
+
+What falls out of having both ends:
+
+  - A cross-check on TIMESYNC's latency correction, from a route with no link in it.
+  - The FC's clock rate per flight, fitted over a whole flight's 1 Hz baseline.
+  - A capture's position in FC time by interpolation, after the fact, even if the live
+    discipline misbehaved.
+  - The step is visible. The fractional part of the assert timestamps is constant while
+    nothing disturbs the tick, so re-phasing the chip shows up as a shift in it. The
+    correction documents itself, and an UNANNOUNCED phase disturbance looks the same --
+    which is the failure that would otherwise quietly break alignment.
+
+Sequence numbers come along, so missed edges are visible too.
+
+This execs ppstest rather than reading /dev/pps0 itself. ppstest is a few hundred KB of
+C that already does exactly this, it is installed for bring-up anyway, and on a 512 MB
+Zero the difference between it and a resident Python process is worth having. Nothing
+of ours stays in memory: this resolves the path and is replaced.
+"""
+
+import os
+import socket
+import sys
+
+DEVICE = os.environ.get("COORD_PPS_DEVICE", "/dev/pps0")
+CAPTURES = os.environ.get("COORD_PPS_CAPTURES_DIR", "")
+
+
+def read_line(path):
+    try:
+        with open(path) as f:
+            return f.readline().strip()
+    except OSError:
+        return ""
+
+
+def session_dir(root):
+    """<root>/<node>/<boot-id>, the same session the other writers use.
+
+    Deliberately the same derivation as coordinator-mavlink's session_dir and
+    campod-camera's: each writer reads the boot id and the host name and they agree
+    without any of them handing it to the others. No fallback on the boot id -- a
+    made-up session name is one nothing else agrees on.
+    """
+    node = socket.gethostname()
+    boot = read_line("/proc/sys/kernel/random/boot_id")
+    if not boot:
+        raise SystemExit("cannot read /proc/sys/kernel/random/boot_id")
+    d = os.path.join(root, node, boot)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def main():
+    if not CAPTURES:
+        raise SystemExit("COORD_PPS_CAPTURES_DIR is not set; nowhere to write")
+    if not os.path.exists(DEVICE):
+        raise SystemExit(f"{DEVICE} does not exist: the image needs a pps-gpio overlay")
+
+    out = os.path.join(session_dir(CAPTURES), "pps.log")
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    os.dup2(fd, 1)
+    os.close(fd)
+
+    # stdbuf because ppstest's stdout is block-buffered to a file, which on a fleet
+    # where every shutdown is a yank would lose a minute of edges per power cut.
+    os.execvp("stdbuf", ["stdbuf", "-oL", "ppstest", DEVICE])
+
+
+if __name__ == "__main__":
+    main()

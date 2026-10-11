@@ -41,6 +41,35 @@
 # no error, no samples. Hence config before enable, never the other way round.
 # (Read out of collectd-core_5.12.0-14_arm64.deb; ExecStartPre runs ,
 # so a malformed config does fail loudly rather than running on defaults.)
+# Whether to collect chrony stats is decided by whether chronyd is here, not by role:
+# the coordinator has it now and the pods get it with #370/#24, and this way that
+# needs no edit. A stat, so it runs under --check too.
+- name: Look for chronyd
+  ansible.builtin.stat:
+    path: /usr/sbin/chronyd
+  register: metrics_chronyd
+  check_mode: false
+
+- name: Look for collectd's chrony plugin
+  ansible.builtin.stat:
+    path: /usr/lib/collectd/chrony.so
+  register: metrics_chrony_plugin
+  check_mode: false
+
+# Loud rather than quiet. The whole question was whether chrony stats are available
+# without spawning shell commands every interval; if Debian did not build the plugin,
+# the answer is no and that is worth knowing at converge rather than discovering an
+# empty graph later.
+- name: Fail if chronyd is installed but collectd cannot read it
+  ansible.builtin.assert:
+    that: metrics_chrony_plugin.stat.exists
+    fail_msg: >-
+      chronyd is installed but /usr/lib/collectd/chrony.so is not, so collectd cannot
+      read chrony over its native protocol. The alternative is shelling out to chronyc
+      on every interval, which is not worth it on these boxes -- decide before adding
+      it rather than letting the config silently collect nothing.
+  when: metrics_chronyd.stat.exists
+
 - name: Configure collectd
   ansible.builtin.template:
     src: collectd.conf.j2

@@ -118,3 +118,22 @@
 #
 # "Stop is not a sticky off" means the reboot brings it back, not that the play
 # restarts it in place.
+
+# The PPS arrival record. Here rather than in its own role because this is the one
+# place that knows coord_state_root for BOTH device roles -- the coordinator and the
+# campods import this with their own value, and the session directory has to be the
+# same one the capture writers use.
+#
+# Why record arrivals that chrony's discipline already implies: the implication assumes
+# the discipline worked, and that is the thing worth checking. See the tool.
+- name: Install the PPS arrival recorder
+  ansible.builtin.template:
+    src: coord-pps-log.service.j2
+    dest: /etc/systemd/system/coord-pps-log.service
+    mode: "0644"
+
+- name: Enable the PPS arrival recorder
+  ansible.builtin.systemd:
+    name: coord-pps-log.service
+    enabled: true
+    daemon_reload: true
