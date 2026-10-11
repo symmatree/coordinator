@@ -13,9 +13,10 @@ twice: its **data** micro-USB to a hub port, and its **power** micro-USB to a 5 
 from the UBEC. The **PPS + signal-ground** pair from the
 [PPS distribution board](#pps-distribution-board) is a third connection.
 
-The hub is passive, so what reaches the Zeros through it is whatever the Coordinator's
-downstream port supplies -- enough to back-power them, not enough to run them. The pigtail
-is what powers them; the hub carries data.
+The hub is passive -- no supply of its own -- so anything it passes to a Zero comes from
+the Coordinator. The pigtail is there so that budget does not have to be enough. **Whether
+a Zero would run on back-power alone is untested**: they do draw through the hub, and the
+pigtail means it has never mattered.
 
 ### Central Raspberry Pi (currently a 4B)
 
