@@ -259,8 +259,15 @@ def write_arm_file(path, armed):
     os.replace(tmp, path)
 
 
-def write_fc_time(path, offset_us, rtt_us, boot_us, unix_us, local_us):
-    """Publish this box's offset from UTC, as measured through the FC (#11).
+def log_fc_time(fh, offset_us, rtt_us, boot_us, unix_us, local_us):
+    """Record this box's offset from UTC, as measured through the FC (#11).
+
+    A LOG, NOT A CURRENT VALUE, and nothing on the device reads it. UTC is a label on
+    the vehicle's time base rather than the base itself: the base is the DS3234's 1 Hz,
+    which every pod and the FC record directly, and chrony's reference is the chip --
+    so absolute UTC never enters the alignment. What it is good for is afterwards,
+    putting a date on a flight and relating it to things like sun angle, which wants
+    "good to tens of milliseconds" and not better.
 
     WHY TWO MESSAGES AND NOT SYSTEM_TIME ALONE. From ArduPilot's GCS_Common.cpp:
 
@@ -278,19 +285,19 @@ def write_fc_time(path, offset_us, rtt_us, boot_us, unix_us, local_us):
     obvious one-liner -- eats the whole one-way delay, which is buffering and
     scheduling rather than the ~100 us of wire time at 1.5 Mbaud.
 
-    rtt_us is carried so the consumer can weigh the sample rather than trust it; it is
-    the quantity that is otherwise not measured at all.
-
-    The consumer is host-side: coord-rtc, which talks to chrony. The router corrects
-    nothing itself -- it has no access to the DS3234, and a container that did would be
-    the only thing here needing one.
-
-    Atomic, same as the arm file, so a reader never sees half a line.
+    rtt_us is carried because a reader should weigh the sample rather than trust it,
+    and it is otherwise not measured at all. flight-analysis measured the FC's RTC
+    agreeing with its own GPS to ~19 ms rms when healthy, so that is the floor on this
+    route regardless of the round trip.
     """
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(f"{offset_us} {rtt_us} {boot_us} {unix_us} {local_us}\n")
-    os.replace(tmp, path)
+    fh.write(json.dumps({
+        "offset_us": offset_us,
+        "rtt_us": rtt_us,
+        "fc_boot_us": boot_us,
+        "fc_unix_us": unix_us,
+        "local_us": local_us,
+    }) + "\n")
+    fh.flush()
 
 
 def read_line(path):
@@ -404,7 +411,6 @@ def main():
     # GPS-derived UTC for the host's clock discipline (#11). Written at a low rate:
     # SYSTEM_TIME arrives at 2 Hz and nothing needs it that often, and this is a file
     # on the SD card rather than tmpfs.
-    fc_time_file = os.environ.get("MAVLINK_FC_TIME_FILE", "/tmp/fc_time")
     fc_time_period_s = float(os.environ.get("MAVLINK_FC_TIME_PERIOD_S", "16"))
     fc_time_written = 0.0
     # Our clock against the FC's monotonic, from TIMESYNC. mono_offset_us is
@@ -434,10 +440,13 @@ def main():
     if captures_root:
         sess = session_dir(captures_root)
         ts_log = open_timesync_log(os.path.join(sess, "timesync.jsonl"))
+        # The UTC label for this session. Same shape and lifetime as timesync.jsonl.
+        fc_time_log = open_timesync_log(os.path.join(sess, "fc_time.jsonl"))
         tlog = open_tlog(os.path.join(sess, "vehicle.tlog"))
         print(f"coordinator-mavlink: session {sess}", file=sys.stderr, flush=True)
     else:
         ts_log = open_timesync_log("/dev/null")
+        fc_time_log = None
         tlog = None
 
     last_hb = 0.0  # monotonic ts of the last HEARTBEAT we sent
@@ -565,10 +574,11 @@ def main():
                             and time.time() - fc_time_written >= fc_time_period_s):
                         local_us = time.time_ns() // 1000
                         boot_us = local_us + mono_offset_us
-                        write_fc_time(fc_time_file,
-                                      utc_minus_boot_us + mono_offset_us,
-                                      mono_rtt_us, boot_us,
-                                      boot_us + utc_minus_boot_us, local_us)
+                        if fc_time_log is not None:
+                            log_fc_time(fc_time_log,
+                                        utc_minus_boot_us + mono_offset_us,
+                                        mono_rtt_us, boot_us,
+                                        boot_us + utc_minus_boot_us, local_us)
                         fc_time_written = time.time()
                 elif (msg.get_type() == "HEARTBEAT"
                       and msg.type != mavutil.mavlink.MAV_TYPE_GCS):

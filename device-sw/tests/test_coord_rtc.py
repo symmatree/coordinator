@@ -276,52 +276,30 @@ edge = cr.chip_boundary(cr.Ds3234(static), deadline_s=0.2)
 check("a stopped chip gives up rather than hanging",
       edge is None and _time.time() - t0 < 1.0, f"{edge} after {_time.time()-t0:.2f}s")
 
-# 15. fc_offset: the FC-measured offset, and the staleness rule that keeps a previous
-# flight's sample -- the file is on disk and survives a reboot -- from being applied as
-# if it were current.
-import tempfile as _tf2
+src = (CLI / "coord-rtc").read_text()
 
-d = _tf2.mkdtemp()
-fresh = f"{d}/fc_time_fresh"
-now_us = int(_time.time() * 1e6)
-with open(fresh, "w") as f:
-    f.write(f"{-250000} {4200} {12345678} {now_us - 250000} {now_us}\n")
-got = cr.fc_offset(fresh)
-check("fc_offset reads the offset and the rtt",
-      got is not None and abs(got[0] - (-0.25)) < 1e-6 and abs(got[1] - 0.0042) < 1e-6,
-      str(got))
-
-stale = f"{d}/fc_time_stale"
-with open(stale, "w") as f:
-    f.write(f"{-250000} {4200} {12345678} {now_us} {now_us - 600_000_000}\n")
-check("a stale sample is rejected", cr.fc_offset(stale) is None, str(cr.fc_offset(stale)))
-check("a missing file is not an error", cr.fc_offset(f"{d}/nope") is None)
-with open(f"{d}/junk", "w") as f:
-    f.write("not numbers at all\n")
-check("a malformed file is not an error", cr.fc_offset(f"{d}/junk") is None)
-
-# 16. The sample carries whatever offset it is given, so the FC path and the chip path
-# produce the same wire shape and only the number differs.
-m_fc = cr.sock_sample_offset(-0.25, 1791742065.5)
+# 15. The sample reports the CHIP, always. Reporting UTC here would make chrony's
+# reference a different clock from the pulse it is locked to, and the difference would
+# drift at the chip's 2 ppm until it crossed the 0.4 s tolerance and every pulse was
+# discarded. This is the property the whole design turns on, so it is asserted.
 m_chip = cr.sock_sample(1791742065, 1791742065.75)
-for name, m in (("fc", m_fc), ("chip", m_chip)):
-    _tvs, _tvus, off, pulse, leap, _p, magic = _struct.unpack(cr.SOCK_SAMPLE, m)
-    check(f"{name} sample is a valid sock_sample",
-          len(m) == 40 and magic == 0x534F434B and pulse == 0 and leap == 0)
-_, _, off, _, _, _, _ = _struct.unpack(cr.SOCK_SAMPLE, m_chip)
-check("the chip path still reports chip-minus-system", abs(off - (-0.75)) < 1e-6, str(off))
+_tvs, _tvus, off, pulse, leap, _p, magic = _struct.unpack(cr.SOCK_SAMPLE, m_chip)
+check("the sample is a valid sock_sample",
+      len(m_chip) == 40 and magic == 0x534F434B and pulse == 0 and leap == 0)
+check("offset is the chip's reading minus system time", abs(off - (-0.75)) < 1e-6, str(off))
+check("nothing in the CLI reads a UTC source",
+      "fc_offset" not in src and "FC_TIME" not in src,
+      "coord-rtc still has an FC/UTC path")
 
-# 17a. The fallback path must not feed chrony a chip that admits its time is garbage.
-# With the chip never written it reads 2000-01-01, so the offset would be ~-26 years.
-feed_src = src_feed = (CLI / "coord-rtc").read_text()
-_body = feed_src[feed_src.index("def cmd_feed"):feed_src.index("def set_system")]
-check("the fallback checks osf before using the chip's label",
-      "SR_OSF" in _body and "continue" in _body, "osf guard missing from cmd_feed")
+# 17a. A chip with no epoch must not be fed to chrony: it reads 2000-01-01, so the
+# offset would be about -26 years.
+_body = src[src.index("def cmd_feed"):src.index("def set_system")]
+check("the feed checks osf before using the chip's label",
+      "SR_OSF" in _body, "osf guard missing from cmd_feed")
 
 # 17. Nothing in the feed path writes the chip. A divider reset would step the 1 Hz
 # phase and make one second the wrong length, which the campods' blanking alignment
 # does not survive -- so this is a property worth asserting, not just intending.
-src = (CLI / "coord-rtc").read_text()
 feed_body = src[src.index("def cmd_feed"):src.index("def set_system")]
 for forbidden in ("write_time", "clear_osf", "set_chip", "rtc.write("):
     check(f"cmd_feed does not call {forbidden}", forbidden not in feed_body)

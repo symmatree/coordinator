@@ -3,24 +3,33 @@
 # A drop-in rather than a replacement chrony.conf, so the vendor's upstream sources
 # stay as they are and work whenever the bench network is up.
 
-# The one seconds-source, served by coord-rtc-feed over a SOCK datagram. ONE, because
-# the PPS refclock below can lock= to exactly one refid -- a second seconds-source
-# could disagree with the one the pulse is paired to and be marked a falseticker.
+# The seconds source: the DS3234's own time, served by coord-rtc-feed over a SOCK
+# datagram. THE CHIP, NOT UTC, and that is what makes this work. coord-rtc takes the
+# sample at the chip's seconds rollover, which is the same instant as the falling edge
+# of the 1 Hz below -- so this reference and the pulse it is locked to are the same
+# clock and agree by construction.
 #
-# Its offset is whatever the best truth available is: real UTC measured through the
-# FC's TIMESYNC and SYSTEM_TIME when the FC is up with a fix, and the DS3234's own
-# registers when it is not. The chip is never written, because that resets its
-# countdown chain and makes one second the wrong length.
+# Reporting UTC here instead would make the reference a different clock from the pulse,
+# and their difference -- the chip's arbitrary phase against the UTC second -- would
+# drift at 2 ppm until it crossed chrony's 0.4 s locked-PPS tolerance and every pulse
+# was silently discarded. UTC is a label on this time base, not the base itself;
+# coordinator-mavlink logs the FC's GPS-derived offset per session for that.
 #
-# precision 2e-3 is the chip path's error: coord-rtc finds the second boundary by
-# polling the seconds register, so the poll interval bounds it. The FC path is better
-# and is not distinguished here; doing that wants two refids and a lock= decision
-# rather than a tighter number.
+# precision 2e-3 is this path's error: the second boundary is found by polling the
+# seconds register, so the poll interval bounds it.
 refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 2e-3 poll 4
 
-# The buffered 1 Hz on GPIO24. lock=DS32 pairs each edge with an RTC sample: the RTC
-# says which second, the edge says where the second starts. Without a lock chrony
-# discards every pulse until it is already synchronised to something.
+# The buffered 1 Hz on GPIO24, and the reason the circuit exists. lock=DS32 pairs each
+# edge with a chip sample: the chip says which second, the edge says where the second
+# starts. Without a lock chrony discards every pulse until it is already synchronised
+# to something.
+#
+# This is what conditions the clock the cameras align against. libcamera's rpi.SyncMode
+# converges the pods' shutters by advertising when the next frame is due, so its
+# accuracy is bounded by how well their clocks agree -- and every pod takes a buffered
+# copy of THIS edge, so the part of the edge's absolute position that is wrong is
+# common-mode and cancels between them. NTP over the gadget link cannot do that: its
+# error is per-pod and adds.
 refclock PPS /dev/pps0 refid PPS lock=DS32 precision 1e-7 poll 2
 
 # Serve the campods over the USB gadget network. They have no connection to the
