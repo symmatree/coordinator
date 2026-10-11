@@ -155,7 +155,8 @@ therefore cannot grow.
 | C1 | **0.1 uF** | `JP1.6` - `JP1.7` | the DS3234 bypass the datasheet asks for; the board ships with only 22 pF |
 | C2, C3, C4 | **0.1 uF** each | pin 14 - pin 7 of each package | four channels slewing together pull 160-260 mA for a few ns, through whatever inductance lies between the package and the next capacitor out |
 | ~~C5~~ | **not fitted** | -- | nothing on this board asks for a reservoir. The buffers' worst moment is four channels slewing together, 160-260 mA for a few ns, which the local 0.1 uF covers with 3.3 mV of droop and then has a second to recharge; the DS3234 draws 400 uA. There is no band between what the 0.1 uF parts cover and DC |
-| R2 | **1k** | `H-17` - `K-17`, with D1 from `K-17` to `L-17` and its cathode jumpered to the GND bus | ~1.4 mA, inside the 4 mA output rating. `INTCN` defaults to interrupt mode, so without the LED a board that nobody has configured presents as every line sitting steady at 3.3 V |
+| R2 | **1k** | `H-17` - `K-17` | sets the LED at ~1.4 mA, inside the AHC output's 4 mA rating |
+| D1 | **LED**, proof of life | `K-17` anode - `L-17` cathode, cathode jumpered to the GND bus | `INTCN` defaults to interrupt mode, so without a 1 Hz blink a board nobody has configured presents as every line sitting steady at 3.3 V |
 
 **Not on this board, fitted at the destination end:**
 
@@ -175,7 +176,7 @@ The same wiring by net rather than by component, generated from the same source 
 | net | pins | note |
 |-----|------|------|
 | **+3V3** | `J1.1 (hdr17)`, `J2.6 (VCC)`, `R1.2`, `C1.1`, `U1.14 (VCC)`, `C2.1`, `U2.14 (VCC)`, `C3.1`, `U3.14 (VCC)`, `C4.1` | from Coordinator header pin 17; RTC and all buffers share this rail |
-| **GND** | `J1.4 (hdr20)`, `J2.7 (GND)`, `C1.2`, `U1.7 (GND)`, `U1.1 (1OE)`, `U1.4 (2OE)`, `U1.10 (3OE)`, `U1.13 (4OE)`, `C2.2`, `U2.7 (GND)`, `U2.1 (1OE)`, `U2.4 (2OE)`, `U2.10 (3OE)`, `U2.13 (4OE)`, `C3.2`, `U3.7 (GND)`, `U3.1 (1OE)`, `U3.4 (2OE)`, `U3.10 (3OE)`, `U3.13 (4OE)`, `C4.2`, `D1.1`, `J3.2`, `J4.2`, `J5.2`, `J6.2`, `J7.2` | all OE pins tied low so every channel is enabled |
+| **GND** | `J1.4 (hdr20)`, `J2.7 (GND)`, `C1.2`, `U1.7 (GND)`, `U1.1 (1OE)`, `U1.4 (2OE)`, `U1.10 (3OE)`, `U1.13 (4OE)`, `C2.2`, `U2.7 (GND)`, `U2.1 (1OE)`, `U2.4 (2OE)`, `U2.10 (3OE)`, `U2.13 (4OE)`, `C3.2`, `U3.7 (GND)`, `U3.1 (1OE)`, `U3.4 (2OE)`, `U3.10 (3OE)`, `U3.13 (4OE)`, `C4.2`, `D1.1 (cathode)`, `J3.2`, `J4.2`, `J5.2`, `J6.2`, `J7.2` | all OE pins tied low so every channel is enabled |
 | **SQW** | `J2.5 (SQW)`, `R1.1`, `U1.2 (1A)`, `U1.5 (2A)`, `U1.9 (3A)`, `U1.12 (4A)` | open-drain; R1 parallels the breakout's own 10k. Rising edge is RC, falling is driven |
 | **SPI_CS** | `J1.8 (hdr24)`, `J2.1 (SS)` |  |
 | **SPI_MOSI** | `J1.3 (hdr19)`, `J2.2 (MOSI)` |  |
@@ -189,8 +190,8 @@ The same wiring by net rather than by component, generated from the same source 
 | **PPS_NW** | `U2.11 (4Y)`, `J5.1` |  |
 | **PPS_SE** | `U3.3 (1Y)`, `J6.1` |  |
 | **PPS_SW** | `U3.6 (2Y)`, `J7.1` |  |
-| **LED_DRV** | `U3.8 (3Y)`, `R2.1` |  |
-| **LED_A** | `R2.2`, `D1.2` |  |
+| **LED_DRV** | `U3.8 (3Y)`, `R2.1` | U3's third output to the resistor |
+| **LED_A** | `R2.2`, `D1.2 (anode)` | resistor to LED anode -- both land in K-17, so this net is one junction |
 | **T1_SPARE1** | `U1.8 (3Y)` | first-tier spare output, live, for a future second-tier package |
 | **T1_SPARE2** | `U1.11 (4Y)` | first-tier spare output, live, for a future second-tier package |
 | **U3_SPARE** | `U3.11 (4Y)` | rear distributor spare output |
