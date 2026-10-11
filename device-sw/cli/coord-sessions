@@ -183,7 +183,7 @@ def add_bytes(tar: tarfile.TarFile, blob: bytes, arcname: str, mtime: int) -> st
     return hashlib.sha256(blob).hexdigest()
 
 
-def journal_for(session: str) -> "tuple[bytes, str]":
+def journal_for(session: str, namespace: str = "") -> "tuple[bytes, str]":
     """This boot's journal. Exact, because A SESSION IS A BOOT and journald indexes by
     boot id -- so the session id IS the selector, with no time window and no wall clock.
 
@@ -206,25 +206,33 @@ def journal_for(session: str) -> "tuple[bytes, str]":
     how the dash bug survived being written and reviewed.
     """
     boot = session.replace("-", "")
+    # The pps namespace is its own store, so `journalctl -b` does not see it and it has
+    # to be asked for by name -- see roles/coord-stack's coord-pps-log unit for why the
+    # PPS stream is kept out of the main journal.
+    cmd = ["journalctl", "-b", boot, "-o", "short-iso-precise", "--no-pager"]
+    if namespace:
+        cmd += [f"--namespace={namespace}"]
     try:
-        p = subprocess.run(["journalctl", "-b", boot, "-o", "short-iso-precise",
-                            "--no-pager"], capture_output=True, timeout=120)
+        p = subprocess.run(cmd, capture_output=True, timeout=120)
         if p.returncode == 0 and p.stdout:
             return p.stdout, ""
         if p.returncode == 0:
             # Exit 0 and nothing on stdout. This path printed NOTHING before, so the
             # member vanished with no account of itself anywhere -- the worst of the
             # three outcomes and the easiest to miss, since it is the success path.
-            reason = f"journalctl exited 0 for boot {boot} with no output"
+            reason = (f"journalctl exited 0 for boot {boot}"
+                      f"{' namespace ' + namespace if namespace else ''} with no output")
         else:
             err = p.stderr.decode(errors="replace").strip().splitlines()
-            reason = (f"journalctl exited {p.returncode} for boot {boot}: "
+            reason = (f"journalctl exited {p.returncode} for boot {boot}"
+                      f"{' namespace ' + namespace if namespace else ''}: "
                       f"{err[-1] if err else 'no stderr'}")
     except FileNotFoundError:
         reason = "journalctl is not installed"
     except subprocess.TimeoutExpired:
         reason = "journalctl did not finish within 120s"
-    print(f"coord-sessions: no journal in the bundle: {reason}", file=sys.stderr)
+    what = f"{namespace} journal" if namespace else "journal"
+    print(f"coord-sessions: no {what} in the bundle: {reason}", file=sys.stderr)
     return b"", reason
 
 
@@ -307,6 +315,16 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
                     "sha256": add_bytes(tar, jrn, f"{node}/{session}/journal.log",
                                         int(started)),
                 }
+            # The PPS edge arrivals live in their own journal namespace, so they need
+            # asking for separately. Absent on a node with no buffer leg soldered,
+            # which is most of them -- recorded either way, same as the main journal.
+            pps, pps_error = journal_for(session, namespace="pps")
+            if pps:
+                entries["pps.log"] = {
+                    "bytes": len(pps),
+                    "sha256": add_bytes(tar, pps, f"{node}/{session}/pps.log",
+                                        int(started)),
+                }
             # Inside the bundle, so an extracted directory can be checked on its own
             # without the file that carried it.
             manifest = {
@@ -324,6 +342,8 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
                 # member says nothing about whether it was wanted.
                 "journal": ({"collected": True, "bytes": len(jrn)} if jrn
                             else {"collected": False, "error": jrn_error}),
+                "pps_journal": ({"collected": True, "bytes": len(pps)} if pps
+                                else {"collected": False, "error": pps_error}),
             }
             blob = json.dumps(manifest, indent=2, sort_keys=True).encode()
             info = tarfile.TarInfo(f"{node}/{session}/manifest.json")

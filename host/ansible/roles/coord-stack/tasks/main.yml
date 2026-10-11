@@ -131,6 +131,15 @@
 # leave ppstest resident on a Zero waiting for edges that never come. Which pods are
 # wired is inventory, not something the box can answer, so it is a variable; the tree
 # beyond the first tier is not built, so today that is the coordinator alone.
+# The namespace's own journald config, so its budget is deliberate rather than
+# journald's default of 10% of the filesystem.
+- name: Configure the pps journal namespace
+  ansible.builtin.copy:
+    src: journald-pps.conf
+    dest: /etc/systemd/journald@pps.conf
+    mode: "0644"
+  when: coord_pps_wired | bool
+
 - name: Install the PPS arrival recorder
   ansible.builtin.template:
     src: coord-pps-log.service.j2
