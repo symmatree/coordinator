@@ -462,6 +462,28 @@ def set_chip(rtc: Ds3234, offset: float = 0.0) -> tuple[int, float, int]:
     `offset` is how far the true time is from this box's clock, which is zero for
     `systohc` and the GPS correction when one is being applied. Returns the second
     claimed, the error in seconds, and the status register after clearing OSF.
+
+    WHAT THE CONSUMERS SEE AROUND THIS WRITE IS NOT A CLEAN STEP. The datasheet says
+    the output "transitions high 500ms after the seconds data transfer" and says
+    nothing about its state in between, so depending on where in its cycle the write
+    lands (flight-hardware, from p11):
+
+      - a runt pulse, a high or low period much shorter than 500 ms, if the output was
+        mid-cycle when the chain reset
+      - a missing edge, if the output was already high and simply stays high until the
+        +500 ms transition, so there is no transition to see
+      - or nothing unusual, if the write landed near a natural boundary
+
+    All three are electrically ordinary and the buffer passes any of them faithfully.
+    The consequences are at the consumers and are benign, but they look like faults:
+    pps-gpio timestamps a runt edge as an ordinary assert, so chrony sees an interval
+    that is neither 1 s nor a clean step; the FC's feedback ISR counts edges, so a runt
+    is an extra CAM record and a missing edge is a gap. Written down rather than
+    designed around, so that a 0.3 s interval in the journal next to a correction is
+    recognised instead of chased.
+
+    Not worth optimising: the disturbance is the size of the phase correction, which is
+    the error being fixed, so there is no landing instant that avoids it.
     """
     target = math.floor(time.time() + offset) + 2
     regs = time_regs(time.gmtime(target))
