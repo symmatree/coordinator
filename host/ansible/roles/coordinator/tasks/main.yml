@@ -36,14 +36,22 @@
 #
 # Here rather than in provision because it runs the CLI, which roles/host-cli
 # installs in this play.
-- name: Install the DS3234 PPS unit
+- name: Install the DS3234 units
   ansible.builtin.copy:
-    src: coord-rtc-pps.service
-    dest: /etc/systemd/system/coord-rtc-pps.service
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
     mode: "0644"
+  loop:
+    - coord-rtc-pps.service
+    # Sets the system clock from the chip before chronyd starts, so the box has a
+    # plausible time from boot rather than from whatever systemd last saved.
+    - coord-rtc-clock.service
 
-- name: Enable the DS3234 PPS unit
+- name: Enable the DS3234 units
   ansible.builtin.systemd:
-    name: coord-rtc-pps.service
+    name: "{{ item }}"
     enabled: true
     daemon_reload: true
+  loop:
+    - coord-rtc-pps.service
+    - coord-rtc-clock.service

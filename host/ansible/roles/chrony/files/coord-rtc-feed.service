@@ -1,0 +1,17 @@
+[Unit]
+Description=Serve the DS3234 to chrony as a SOCK refclock (coordinator#11)
+Documentation=https://github.com/symmatree/coordinator/issues/11
+# chrony creates the socket, so this has nothing to wait for -- it retries, and says
+# so, until the socket appears.
+After=chronyd.service
+Wants=chronyd.service
+
+[Service]
+# Not oneshot: chrony ages a source out if samples stop arriving, so this runs for as
+# long as chrony does.
+ExecStart=/usr/local/bin/coord-rtc feed
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

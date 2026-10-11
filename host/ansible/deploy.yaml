@@ -71,6 +71,10 @@
     - role: metrics
     - role: coordinator
       when: device_role == 'coordinator'
+    # Coordinator-only: it is the device wired to the DS3234, and the NTP server for
+    # the pods. Their half is #370/#24.
+    - role: chrony
+      when: device_role == 'coordinator'
     - role: campod
       when: device_role == 'campod'
     # Last: it records what the roles above installed.

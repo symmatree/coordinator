@@ -1,0 +1,29 @@
+# Managed by host/ansible/roles/chrony. The time contract is coordinator#11.
+#
+# A drop-in rather than a replacement chrony.conf, so the vendor's upstream sources
+# stay as they are and work whenever the bench network is up.
+
+# The DS3234, served by coord-rtc-feed over a SOCK datagram. This is what the kernel
+# rtc-ds3232 driver would have been, minus the part where it turns off the 1 Hz
+# output. It supplies whole seconds -- which is what PPS cannot -- so it is what
+# makes chrony synchronised at all on a box with no network.
+#
+# A worse precision than the PPS line below, and worse than any GPS source added
+# later, so chrony prefers them when they exist and falls back to this when they do
+# not. That is the whole design: best time available, no operator step.
+refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 1e-3 poll 4
+
+# The buffered 1 Hz on GPIO24. lock=DS32 pairs each edge with an RTC sample: the RTC
+# says which second, the edge says where the second starts. Without a lock chrony
+# discards every pulse until it is already synchronised to something.
+refclock PPS /dev/pps0 refid PPS lock=DS32 precision 1e-7 poll 2
+
+# Serve the campods over the USB gadget network. They have no connection to the
+# DS3234 and no FC link, so this plus their own buffered PPS leg is their whole time
+# source.
+#
+# The coordinator's own address with the prefix, rather than a separate subnet
+# variable: chrony's set_subnet() walks only subnet_bits of the address and never
+# reads the rest, so 10.55.0.1/24 is exactly 10.55.0.0/24. vars/gadget-net.yml says
+# the subnet must not be defined twice, and this way it is not.
+allow {{ campod_gadget_coordinator_ip }}/{{ campod_gadget_prefix }}
