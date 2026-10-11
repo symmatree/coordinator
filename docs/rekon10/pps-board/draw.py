@@ -109,6 +109,17 @@ for i, (net, a, b) in enumerate(P.jumpers):
     for x,y in ((xa,ya),(xb,yb)):
         o.append(f'<circle cx="{x}" cy="{y}" r="3.4" fill="{col}"/>')
 
+# discrete R and C bodies
+for _ref, _val, _a, _b in P.discretes:
+    _xa, _ya = px(_a); _xb, _yb = px(_b)
+    o.append(f'<line x1="{_xa}" y1="{_ya}" x2="{_xb}" y2="{_yb}" stroke="#8c6d3f" stroke-width="2.5"/>')
+    _mx, _my = (_xa+_xb)/2, (_ya+_yb)/2
+    if _ref.startswith("R"):
+        o.append(f'<rect x="{_mx-7}" y="{_my-13}" width="14" height="26" rx="3" fill="#d6c7a1" stroke="#8c6d3f" stroke-width="1.5"/>')
+    else:
+        o.append(f'<ellipse cx="{_mx}" cy="{_my}" rx="11" ry="9" fill="#d9a441" stroke="#8c6d3f" stroke-width="1.5"/>')
+    o.append(f'<text x="{_mx+15}" y="{_my+4}" font-size="10" fill="#6b5223">{_ref} {_val}</text>')
+
 # DS3234 breakout -- header in column P, board hanging off to the right
 _x7, _y7 = px(P.pin[("J2",7)]); _x1, _y1 = px(P.pin[("J2",1)])
 o.append(f'<rect x="{_x7-11}" y="{_y1-13}" width="{W-MX-_x7+40}" height="{_y7-_y1+26}" rx="4" fill="#3c6e71" opacity="0.18" stroke="#3c6e71" stroke-width="1.5"/>')
