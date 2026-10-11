@@ -54,9 +54,9 @@ for ref,(r1,r8) in P.CHIPS.items():
     x1, y1 = px(f"D-{r1:02d}"); x2, y2 = px(f"G-{r8:02d}")
     bx, by = min(x1,x2)-S*0.18, min(y1,y2)-S*0.42
     bw, bh = abs(x2-x1)+S*0.36, abs(y2-y1)+S*0.84
-    o.append(f'<rect x="{bx}" y="{by}" width="{bw}" height="{bh}" rx="5" fill="#2b2b2b" opacity="0.88"/>')
-    o.append(f'<circle cx="{x1}" cy="{y1}" r="5" fill="none" stroke="#f2f2f2" stroke-width="1.6"/>')
-    o.append(f'<text x="{bx+bw/2}" y="{by+bh/2+5}" font-size="14" font-weight="bold" fill="#f6f1e6" text-anchor="middle" transform="rotate(-90 {bx+bw/2} {by+bh/2})">{ref}  SN74AHC125N</text>')
+    o.append(f'<rect x="{bx}" y="{by}" width="{bw}" height="{bh}" rx="5" fill="#9a968d" opacity="0.95"/>')
+    o.append(f'<circle cx="{x1}" cy="{y1}" r="5" fill="none" stroke="#2e2b26" stroke-width="1.6"/>')
+    o.append(f'<text x="{bx+bw/2}" y="{by+bh/2+5}" font-size="14" font-weight="bold" fill="#1f1d19" text-anchor="middle" transform="rotate(-90 {bx+bw/2} {by+bh/2})">{ref}  SN74AHC125N</text>')
 
 # caps
 for ref, p, n in P.caps:
@@ -108,6 +108,16 @@ for i, (net, a, b) in enumerate(P.jumpers):
     o.append(f'<path d="{path}" fill="none" stroke="{col}" stroke-width="2.4" opacity="0.9"{dash}/>')
     for x,y in ((xa,ya),(xb,yb)):
         o.append(f'<circle cx="{x}" cy="{y}" r="3.4" fill="{col}"/>')
+
+# DS3234 breakout -- header in column P, board hanging off to the right
+_x7, _y7 = px(P.pin[("J2",7)]); _x1, _y1 = px(P.pin[("J2",1)])
+o.append(f'<rect x="{_x7-11}" y="{_y1-13}" width="{W-MX-_x7+40}" height="{_y7-_y1+26}" rx="4" fill="#3c6e71" opacity="0.18" stroke="#3c6e71" stroke-width="1.5"/>')
+o.append(f'<rect x="{_x7-9}" y="{_y1-11}" width="18" height="{_y7-_y1+22}" rx="3" fill="#ffffff" stroke="#3c6e71" stroke-width="1.6"/>')
+for _n in range(1, 8):
+    _px, _py = px(P.pin[("J2",_n)])
+    o.append(f'<rect x="{_px-4}" y="{_py-4}" width="8" height="8" fill="#3c6e71"/>')
+    o.append(f'<text x="{_px+13}" y="{_py+4}" font-size="9" fill="#2a4e50">{P.JP1[_n]}</text>')
+o.append(f'<text x="{_x7+46}" y="{_y1-18}" font-size="11" font-weight="bold" fill="#2a4e50">J2  DS3234 (overhangs right)</text>')
 
 # offboard pigtail footprints
 for ref, net, sig, gnd in P.pigtails:

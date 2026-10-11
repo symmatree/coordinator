@@ -286,6 +286,8 @@ Components:
 U1: pin 1 at D-07, pin 8 at G-01
 U2 (FRONT): pin 1 at D-15, pin 8 at G-09
 U3 (REAR): pin 1 at D-23, pin 8 at G-17
+J2 (DS3234 breakout JP1): pin 7 GND at P-01 up to pin 1 SS at P-07
+    board overhangs right of column P
 0.1 uF (U1): H-07 / I-05
 0.1 uF (U2): H-15 / I-13
 0.1 uF (U3): H-23 / I-21
@@ -336,7 +338,12 @@ G-22 (U3.13 4OE) / H-22 | GND
 
 G-23 (U3.14 VCC) / H-23 / I-23 | 3V3
 
-D-03 (U1.5 2A) / C-03 / B-03 | SQW
+P-01 (J2.7 GND) / O-01 | GND
+
+P-02 (J2.6 2Y) / O-02 | 3V3
+
+P-03 (J2.5 2A) / O-03 | SQW
+D-03 (U1.5 2A) / C-03 | SQW
 D-06 (U1.2 1A) / C-06 / B-06 | SQW
 G-02 (U1.9 3A) / H-02 / I-02 | SQW
 G-05 (U1.12 4A) / H-05 | SQW
@@ -395,9 +402,14 @@ I-23 / M-23 | 3V3
 
 I-21 / B-17 | GND (cap)
 
-B-03 / C-06 | SQW
+O-01 / A-01 | GND
+
+O-02 / M-02 | 3V3
+
+C-03 / C-06 | SQW
 B-06 / H-02 | SQW
 I-02 / H-05 | SQW
+O-03 / C-03 | SQW
 
 C-05 / C-11 | T2_FRONT
 B-11 / C-14 | T2_FRONT
