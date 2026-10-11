@@ -72,8 +72,16 @@ B("SQW", pin[("J2",5)], hole("O", 3))
 pin[("R1",1)], pin[("R1",2)] = hole("O", 3), hole("O", 6)      # 3 holes, 7.62 mm
 pin[("C1",1)], pin[("C1",2)] = pin[("J2",6)], pin[("J2",7)]    # straight across JP1.6/7
 J("3V3", hole("O", 6), hole(V33BUS, 6))
+# --- LED chain off U3.8: R2 across row 17, LED beside it, cathode to the GND bus
+B("LED_DRV", pin[("U3",8)], hole("H", 17))
+pin[("R2",1)], pin[("R2",2)] = hole("H", 17), hole("K", 17)    # 2 holes, 5.08 mm
+pin[("D1",2)], pin[("D1",1)] = hole("K", 17), hole("L", 17)    # anode, cathode
+J("GND", hole("L", 17), hole(GNDBUS, 17))
+
 discretes = [("R1", "2.2k", hole("O", 3), hole("O", 6)),
-             ("C1", "0.1 uF", pin[("J2",6)], pin[("J2",7)])]
+             ("C1", "0.1 uF", pin[("J2",6)], pin[("J2",7)]),
+             ("R2", "1k", hole("H", 17), hole("K", 17)),
+             ("D1", "LED", hole("K", 17), hole("L", 17))]
 
 chain("SQW",      [("U1",5), ("U1",2), ("U1",9), ("U1",12)])
 J("SQW", hole("O", 3), hole("C", 3))
@@ -105,7 +113,7 @@ for ref,p in (("U1",8), ("U1",11), ("U3",11)): ncs.append((ref,p))
 
 # ---------------- verification ----------------
 declared, parent = {h: 'GND' for h in EXTRA_GND}, {}
-declared.update({hole('O',6): '3V3'})
+declared.update({hole('O',6): '3V3', hole('L',17): 'GND', hole('K',17): 'LED_A'})
 def find(x):
     parent.setdefault(x,x)
     while parent[x]!=x: parent[x]=parent[parent[x]]; x=parent[x]
@@ -135,10 +143,13 @@ for col in (GNDBUS, V33BUS):
     for h in hs[1:]: union(hs[0], h)
     for h in hs: declared.setdefault(h, "GND" if col == GNDBUS else "3V3")
 
-PENDING = {"PPS_COORD","LED_DRV","SPI_CS","SPI_MOSI","SPI_MISO","SPI_SCLK",
+PENDING = {"PPS_COORD","SPI_CS","SPI_MOSI","SPI_MISO","SPI_SCLK",
            # C5 is not fitted -- see the passives table
            "C5_UNUSED",
            "T1_SPARE1","T1_SPARE2","U3_SPARE"}
+# a hole shared by two parts is its own node, and is a connected net already
+for h in list(declared): find(h)
+
 want = collections.defaultdict(set)
 for net, conns in NL.NETS.items():
     base = "3V3" if net == "+3V3" else net
