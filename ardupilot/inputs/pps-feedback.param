@@ -1,0 +1,46 @@
+# PPS into the FC, logged as a camera feedback edge (coordinator#11)
+#
+# The 1 Hz from the DS3234 on the hub board is buffered and fanned out; one leg goes to
+# an FC GPIO. AP_Camera_Backend's feedback ISR stamps each edge with a
+# hardware-captured AP_HAL::micros64() and check_feedback() writes a CAM record,
+# back-correcting the ISR-to-log delay. So every edge lands in the dataflash in the
+# same clock the log stamps TimeUS with, beside the EKF state at that instant -- which
+# is what ties a capture to a pose.
+#
+# No camera is involved and none is fitted.
+#
+# --- the pin ---
+# Pad S11 = PE5 = GPIO(60). A real exposed pad; S5-S12 are all open on this board.
+# TBS silkscreens servo pads "S" where ArduPilot's board page says "M", which is why
+# earlier analysis read these as absent. S11/S12 are the TIM15 NODMA pair, so they are
+# the least likely of the eight to be wanted for PWM later. PE5 is 5 V tolerant (FT)
+# per the STM32H743xI pin table, which is moot while the buffer runs from 3.3 V.
+#   provenance: flight-hardware, pads read off the board 2026-10-11
+SERVO11_FUNCTION,-1
+CAM1_FEEDBAK_PIN,60
+#
+# --- the edge ---
+# 0 = TriggerLow = INTERRUPT_FALLING. The DEFAULT IS 1, which is the rising edge, and
+# on a DS3234 that is the half second and the undriven RC edge: the datasheet says the
+# output "transitions high 500ms after the seconds data transfer", and INT/SQW is
+# open-drain so only the falling edge is driven. Falling is both the sharp edge and
+# the top of the second.
+#
+# POL=0 also makes setup_feedback_callback() enable a pull-up, so the pin idles high.
+# That is the wanted failure mode: with the coordinator off and the FC on battery the
+# buffer output is unpowered, and a defined idle beats a floating pin inventing edges
+# into an ISR.
+CAM1_FEEDBAK_POL,0
+#
+# --- why a camera type at all ---
+# AP_Camera::init() switches on the type and CameraType::NONE creates no backend, so
+# there is no init(), no attach_interrupt and no ISR. Any non-zero type installs one.
+# 5 = MAVLINK is the cheapest from source: it binds no pin, no relay and no servo
+# output, and its trigger_pic() only broadcasts MAV_CMD_DO_DIGICAM_CONTROL, which with
+# no camera present goes nowhere.
+#
+# This is NOT leftover config from a camera nobody can find. It exists to bring a
+# backend into existence so the feedback ISR is installed.
+#
+# Cost: a CAM record every second, forever, in the dataflash.
+CAM1_TYPE,5
