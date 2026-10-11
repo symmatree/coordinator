@@ -82,6 +82,41 @@ against the 12 planned (10 Zeros + Coordinator + FC). The Coordinator takes a bu
 every other consumer rather than the raw SQW line, so it sees the same electrical and timing path
 as the pods.
 
+#### Which edge is the second
+
+**The falling edge is the top of the second, and it is also the driven one.** Both halves of
+that come from the DS3234 datasheet, page 11
+([`attachments/DS3234.pdf`](attachments/DS3234.pdf) in fables):
+
+> The countdown chain is reset whenever the seconds register is written. [...] The 1Hz
+> square-wave output, if enabled, transitions high 500ms after the seconds data transfer.
+
+The seconds register increments at write+*n* and the output goes high at write+0.5+*n*, so the
+rising edge sits on the **half** second. And because `INT/SQW` is open-drain, the falling edge
+is actively driven while the rising one is the pull-up's RC curve. The same edge is both the
+sharp one and the meaningful one.
+
+Consumers must therefore be told to timestamp the falling edge. On Linux that is
+`assert_falling_edge=1` on the `pps-gpio` overlay; `pps-gpio` defaults to the rising edge, and
+a device configured without it reports clean 1 Hz pulses that are half a second from the
+second the chip thinks it is, timed off the slow edge. Measured on the coordinator 2026-10-11:
+`ppstest` reported every event as an `assert` with `clear 0.000000000`, which is the default
+taking the rising edge.
+
+This does not change the pull-up arithmetic below. The 100 ns/V input-transition spec still
+governs the rising edge, because the part has to behave on both -- it is just that the edge
+anyone times is the other one.
+
+**And writing the chip moves that edge.** The first sentence of the same passage: the countdown
+chain resets on a seconds-register write, so correcting the chip's time both steps the phase
+and makes one second the wrong length. The campods align capture by adjusting the camera
+blanking interval against this signal, so a second of the wrong length disturbs exactly what
+that alignment holds. The software consequence -- the chip is not written outside a battery
+change, and clock corrections go to chrony rather than to the chip -- is on
+[coordinator#11](https://github.com/symmatree/coordinator/issues/11). Rate trimming without a
+discontinuity is possible through the aging-offset register (`10h`, datasheet page 16) if the
+chip ever has to track UTC itself.
+
 **The tier exists because SQW drives four inputs far more easily than twelve.** SQW is the DS3234's
 open-drain `INT/SQW` pin, so its rising edge is not driven -- it is the RC of the pull-up against
 whatever input capacitance hangs on the node, and AHC125 specifies a maximum input transition rate
@@ -408,7 +443,7 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 | header pin | BCM | signal | to |
 |------------|-----|--------|-----|
 | 17 | -- | 3V3 | board +3V3 bus (RTC + all buffers) |
-| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW. Overlay line is `dtoverlay=pps-gpio,gpiopin=24` |
+| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW. Overlay line is `dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1` |
 | 19 | GPIO10 | MOSI | `JP1.2` |
 | 20 | -- | GND | board GND bus |
 | 21 | GPIO9 | MISO | `JP1.3` |
@@ -416,7 +451,9 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 | 23 | GPIO11 | SCLK | `JP1.4` |
 | 24 | GPIO8 | CE0 | `JP1.1` (SS) |
 
-`dtparam=spi=on` is not currently set by the coordinator Ansible role; only the campod role sets it.
+`dtparam=spi=on` and the `pps-gpio` overlay are in the coordinator image as of
+`coordinator-pi-20261011.img`; `assert_falling_edge=1` is not yet, and the reason is in
+"Which edge is the second" above.
 
 On the campod end, PPS lands on **header 13/14 (GPIO27 + GND)** as its own 2x1 rather than in the
 accelerometer shell, so the two cables can be disconnected independently. BCM 9-27 come up pulled down, so an absent or unpowered distribution

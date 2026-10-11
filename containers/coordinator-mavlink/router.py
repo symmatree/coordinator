@@ -259,6 +259,40 @@ def write_arm_file(path, armed):
     os.replace(tmp, path)
 
 
+def write_fc_time(path, offset_us, rtt_us, boot_us, unix_us, local_us):
+    """Publish this box's offset from UTC, as measured through the FC (#11).
+
+    WHY TWO MESSAGES AND NOT SYSTEM_TIME ALONE. From ArduPilot's GCS_Common.cpp:
+
+      send_system_time() sends AP::rtc().get_utc_usec() alongside AP_HAL::millis().
+      Both are the FC's own clocks, read together, so UTC-minus-FC-monotonic carries
+      NO link latency.
+
+      timesync_receive_timestamp_ns() returns _port->receive_time_constraint_us(),
+      which is corrected for serial transmission at the UART, on the same monotonic
+      clock -- and that clock is what the dataflash log stamps TimeUS with.
+
+    So TIMESYNC measures our clock against the FC's monotonic, and SYSTEM_TIME maps
+    that monotonic to UTC for free. Composing them puts only the TIMESYNC residual in
+    the answer. Comparing SYSTEM_TIME's UTC against our own receive time instead -- the
+    obvious one-liner -- eats the whole one-way delay, which is buffering and
+    scheduling rather than the ~100 us of wire time at 1.5 Mbaud.
+
+    rtt_us is carried so the consumer can weigh the sample rather than trust it; it is
+    the quantity that is otherwise not measured at all.
+
+    The consumer is host-side: coord-rtc, which talks to chrony. The router corrects
+    nothing itself -- it has no access to the DS3234, and a container that did would be
+    the only thing here needing one.
+
+    Atomic, same as the arm file, so a reader never sees half a line.
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(f"{offset_us} {rtt_us} {boot_us} {unix_us} {local_us}\n")
+    os.replace(tmp, path)
+
+
 def read_line(path):
     """First line of a file, stripped, or "" -- for /etc/host-hostname and boot_id."""
     try:
@@ -367,6 +401,27 @@ def main():
     # sync() the filesystem at disarm so the flight's captures are durable through the
     # power cut that usually follows. Path shared via OAK_ARM_FILE (both containers read it).
     arm_file = os.environ.get("OAK_ARM_FILE", "/tmp/fc_armed")
+    # GPS-derived UTC for the host's clock discipline (#11). Written at a low rate:
+    # SYSTEM_TIME arrives at 2 Hz and nothing needs it that often, and this is a file
+    # on the SD card rather than tmpfs.
+    fc_time_file = os.environ.get("MAVLINK_FC_TIME_FILE", "/tmp/fc_time")
+    fc_time_period_s = float(os.environ.get("MAVLINK_FC_TIME_PERIOD_S", "16"))
+    fc_time_written = 0.0
+    # Our clock against the FC's monotonic, from TIMESYNC. mono_offset_us is
+    # fc_monotonic - ours; rtt_us is how well we know it.
+    mono_offset_us = None
+    mono_rtt_us = None
+    # Monotonic, not time.time(): chrony steps the wall clock, which would make an age
+    # computed from it meaningless at exactly the moment it matters.
+    mono_at = -1e9
+    mono_max_age_s = float(os.environ.get("MAVLINK_TIMESYNC_MAX_AGE_S", "60"))
+    # The FC's own monotonic-to-UTC mapping, from SYSTEM_TIME. Latency-free: both
+    # fields are read inside the FC at the same instant.
+    utc_minus_boot_us = None
+    # Outstanding TIMESYNC request we sent, so a reply can be matched and timed.
+    ts_req_ts1 = None
+    ts_req_at = -1e9  # so the first request goes out immediately
+    ts_req_period_s = float(os.environ.get("MAVLINK_TIMESYNC_PERIOD_S", "8"))
     armed = False
     write_arm_file(arm_file, armed)
 
@@ -397,6 +452,16 @@ def main():
                 mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0,
                 mavutil.mavlink.MAV_STATE_ACTIVE)
             last_hb = now_mono
+
+        # Our own TIMESYNC request. The FC sends its own, but those only give a one-way
+        # FC-to-us measurement; a request of ours comes back with both our send time and
+        # the FC's, so the round trip cancels the one-way delay -- buffers and scheduling,
+        # not just the ~100 us of wire time. The FC replies to any tc1 == 0 (ArduPilot's
+        # handle_timesync), and echoes ts1 unchanged so the reply can be matched.
+        if now_mono - ts_req_at >= ts_req_period_s:
+            ts_req_ts1 = time.time_ns()
+            mav.mav.timesync_send(0, ts_req_ts1)
+            ts_req_at = now_mono
 
         if usock in readable:
             data = usock.recv(256)
@@ -459,7 +524,19 @@ def main():
                     break
                 if tlog is not None:
                     log_frame(tlog, msg, time.time_ns() // 1000)
-                if msg.get_type() == "TIMESYNC" and msg.tc1 == 0:
+                if msg.get_type() == "TIMESYNC" and msg.tc1 != 0:
+                    # A reply to a request WE sent. tc1 is the FC's monotonic clock at
+                    # its UART, ts1 is our own send timestamp echoed back, so the round
+                    # trip cancels the one-way delay we cannot otherwise measure:
+                    #   offset = fc - (sent + received)/2
+                    if ts_req_ts1 is not None and msg.ts1 == ts_req_ts1:
+                        recv_ns = time.time_ns()
+                        rtt_ns = recv_ns - ts_req_ts1
+                        mono_offset_us = (msg.tc1 - (ts_req_ts1 + recv_ns) // 2) // 1000
+                        mono_rtt_us = rtt_ns // 1000
+                        mono_at = time.monotonic()
+                        ts_req_ts1 = None
+                elif msg.get_type() == "TIMESYNC" and msg.tc1 == 0:
                     # Read both clocks as close to the reply as possible: tc1 is what
                     # the FC sees, mono is what the capture sidecars are stamped in.
                     mono_ns = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
@@ -470,6 +547,29 @@ def main():
                         "tc1_realtime_ns": tc1,
                         "monotonic_ns": mono_ns,
                     }) + "\n")
+                elif msg.get_type() == "SYSTEM_TIME":
+                    # time_unix_usec is 0 until the FC has a GPS fix -- measured at
+                    # 1036 of 2124 messages in the 260923 flight, with the first real
+                    # value 53 s after FC boot. Zero is not a time.
+                    #
+                    # Both fields come from inside the FC, so their difference is the
+                    # FC's own monotonic-to-UTC mapping with no link latency in it.
+                    if msg.time_unix_usec:
+                        utc_minus_boot_us = (msg.time_unix_usec
+                                             - msg.time_boot_ms * 1000)
+                    # Publish only with both halves: UTC from the FC's own pairing and
+                    # our offset to the FC's monotonic from TIMESYNC. Either alone is
+                    # not an answer.
+                    if (utc_minus_boot_us is not None and mono_offset_us is not None
+                            and time.monotonic() - mono_at < mono_max_age_s
+                            and time.time() - fc_time_written >= fc_time_period_s):
+                        local_us = time.time_ns() // 1000
+                        boot_us = local_us + mono_offset_us
+                        write_fc_time(fc_time_file,
+                                      utc_minus_boot_us + mono_offset_us,
+                                      mono_rtt_us, boot_us,
+                                      boot_us + utc_minus_boot_us, local_us)
+                        fc_time_written = time.time()
                 elif (msg.get_type() == "HEARTBEAT"
                       and msg.type != mavutil.mavlink.MAV_TYPE_GCS):
                     # #88: FC arm/disarm -> shared file; sync() the FS at disarm so the

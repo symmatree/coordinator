@@ -10,6 +10,8 @@ Wants=chronyd.service
 # One definition of the socket path, shared with the drop-in that tells chrony to
 # listen on it.
 Environment=COORD_RTC_CHRONY_SOCK={{ coord_rtc_chrony_sock }}
+# Written by coordinator-mavlink inside its container, where this path is /tmp/fc_time.
+Environment=COORD_RTC_FC_TIME_FILE={{ coord_rtc_fc_time_file }}
 # Not oneshot: chrony ages a source out if samples stop arriving, so this runs for as
 # long as chrony does.
 ExecStart=/usr/local/bin/coord-rtc feed
