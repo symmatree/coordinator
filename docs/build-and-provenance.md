@@ -49,7 +49,10 @@ Two consequences worth knowing:
   `containers/fleet-control` needs `FLEET_GITHUB_TOKEN` for image fetches and nothing else.
 
 The build writes `/etc/fleet-image` into the rootfs, which is the disk image's equivalent of a
-container's labels.
+container's labels. The device software has the same arrangement in `/etc/fleet-device-sw`,
+written by `roles/device-sw-manifest` -- and once a device installs an archive rather than a
+checkout, that file is a copy of the archive's own `VERSION`, which
+`packaging/build-device-sw` writes in this vocabulary for exactly that reason.
 
 ## Load-bearing labels
 

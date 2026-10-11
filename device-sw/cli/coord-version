@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 FLEET_IMAGE = Path("/etc/fleet-image")
+FLEET_DEVICE_SW = Path("/etc/fleet-device-sw")
 STACKS_ROOT = Path("/opt/stacks")
 
 # Labels worth naming as identity. Everything else an image carries is emitted
@@ -103,17 +104,38 @@ def run(*cmd: str, timeout: int = 20) -> tuple[int, str]:
         return 124, ""
 
 
-def disk_image() -> dict[str, str]:
-    """The card image, from the manifest baked in at image build time."""
-    base = {"FLEET_UNIT_KIND": "disk_image", "FLEET_UNIT_ID": "disk_image"}
+def written_manifest(path: Path, kind: str) -> dict[str, str]:
+    """Identity from a key=value file, for a thing with no repository to ask.
+
+    Both users write the same three OCI keys: the image build bakes /etc/fleet-image,
+    and the device software install writes /etc/fleet-device-sw from the archive's own
+    VERSION file (#341). A missing file is an answer, so it stays a unit-level error.
+    """
+    base = {"FLEET_UNIT_KIND": kind, "FLEET_UNIT_ID": kind}
     try:
-        body = FLEET_IMAGE.read_text()
+        body = path.read_text()
     except OSError as exc:
-        return base | {"FLEET_PROBE_ERROR": f"cannot read {FLEET_IMAGE}: {exc.strerror}"}
+        return base | {"FLEET_PROBE_ERROR": f"cannot read {path}: {exc.strerror}"}
     pairs = dict(re.findall(r'^([A-Za-z0-9_]+)="?([^"\n]*)"?$', body, re.M))
     if not pairs:
-        return base | {"FLEET_PROBE_ERROR": f"{FLEET_IMAGE} has no key=value lines"}
+        return base | {"FLEET_PROBE_ERROR": f"{path} has no key=value lines"}
     return base | pairs
+
+
+def disk_image() -> dict[str, str]:
+    """The card image, from the manifest baked in at image build time."""
+    return written_manifest(FLEET_IMAGE, "disk_image")
+
+
+def device_sw() -> dict[str, str]:
+    """The CLIs and stack definitions this device installed.
+
+    The reason this exists rather than reading the checkout: the checkout is going away
+    in favour of a published archive (#341), and a device holding only an archive has no
+    git to ask. This answers for both, so the device keeps reporting a version across
+    that change.
+    """
+    return written_manifest(FLEET_DEVICE_SW, "device_sw")
 
 
 def checkout(path: Path) -> dict[str, str]:
@@ -215,6 +237,11 @@ def main() -> int:
     emit("disk_image", disk_image())
     status["DISK_IMAGE"] = ""
     status["DISK_IMAGE_COUNT"] = "1"
+
+    # One device-software install per device, so enumeration is trivially ok here too.
+    emit("device_sw", device_sw())
+    status["DEVICE_SW"] = ""
+    status["DEVICE_SW_COUNT"] = "1"
 
     # Every checkout under a home directory, rather than one hardcoded path: the
     # user the playbook runs as is configurable, so the path is not knowable here.
