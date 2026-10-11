@@ -97,6 +97,21 @@ The RTC breakout sits on this board rather than at the end of a cable: hookup wi
 1 pF/cm, so six inches between SQW and the first tier would add ~15 pF to a ~50 pF budget and put
 the edge back out of spec.
 
+**The falling edge is the top of the second, and it is also the driven one.** The DS3234
+datasheet (p. 11): "The countdown chain is reset whenever the seconds register is written
+[...] The 1Hz square-wave output, if enabled, transitions high 500ms after the seconds data
+transfer." So the output goes high at the half second and low on the second. Open-drain
+means that falling edge is actively pulled down while the rising edge is the pull-up's RC
+curve -- the edge worth timestamping and the fast edge are the same one, which the design
+did not arrange and got anyway.
+
+The pull-up is still sized for the **rising** edge, because that is the one the '125 has to
+accept without dwelling in its linear region. It sets no timing.
+
+Writing the seconds register resets the countdown chain, which moves the edge and makes one
+second the wrong length. With the coin cell fitted the oscillator free-runs and the chip
+need never be written, so the edge never moves.
+
 #### Package pinout (SN74AHC125N, PDIP-14)
 
 Channels 1 and 2 run OE-A-Y down the left side; channels 3 and 4 run Y-A-OE up the right.
