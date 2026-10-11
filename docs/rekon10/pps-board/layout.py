@@ -60,7 +60,7 @@ def chain(net, nodes, head_taps=1):
         J(net, a, b)
 
 # --- breakout: ground down to the bus, VCC across to the 3V3 bus, SQW to U1's input
-B("GND", pin[("J2",7)], hole("O", 1), hole("N", 1))
+B("GND", pin[("J2",7)], hole("O", 1))
 J("GND", hole("O", 1), hole(GNDBUS, 1))
 B("3V3", pin[("J2",6)], hole("O", 2))
 J("3V3", hole("O", 2), hole(V33BUS, 2))
@@ -70,11 +70,12 @@ B("SQW", pin[("J2",5)], hole("O", 3))
 #     SQW and VCC are adjacent header pins, so neither part can span its two nets
 #     directly; each reaches the 3V3 bus instead, at its own lead pitch.
 pin[("R1",1)], pin[("R1",2)] = hole("O", 3), hole("O", 6)      # 3 holes, 7.62 mm
-pin[("C1",1)], pin[("C1",2)] = hole("N", 3), hole("N", 1)      # 2 holes, 5.08 mm
+pin[("C1",1)], pin[("C1",2)] = pin[("J2",6)], pin[("J2",7)]    # straight across JP1.6/7
+pin[("C5",1)], pin[("C5",2)] = hole("O", 2), hole("O", 1)      # one column out, same rails
 J("3V3", hole("O", 6), hole(V33BUS, 6))
-J("3V3", hole("N", 3), hole(V33BUS, 3))
 discretes = [("R1", "2.2k", hole("O", 3), hole("O", 6)),
-             ("C1", "0.1 uF", hole("N", 3), hole("N", 1))]
+             ("C1", "0.1 uF", pin[("J2",6)], pin[("J2",7)]),
+             ("C5", "10 uF", hole("O", 2), hole("O", 1))]
 
 chain("SQW",      [("U1",5), ("U1",2), ("U1",9), ("U1",12)])
 J("SQW", hole("O", 3), hole("C", 3))
@@ -106,7 +107,7 @@ for ref,p in (("U1",8), ("U1",11), ("U3",11)): ncs.append((ref,p))
 
 # ---------------- verification ----------------
 declared, parent = {h: 'GND' for h in EXTRA_GND}, {}
-declared.update({hole('O',6): '3V3', hole('N',3): '3V3'})
+declared.update({hole('O',6): '3V3'})
 def find(x):
     parent.setdefault(x,x)
     while parent[x]!=x: parent[x]=parent[parent[x]]; x=parent[x]

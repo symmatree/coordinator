@@ -154,7 +154,7 @@ therefore cannot grow.
 | R_pu | **2.2k** | `JP1.5` - `JP1.6` | in parallel with the breakout's own 10k; sets the SQW rise to ~90 ns/V at 1.6 mA of a 3 mA sink budget |
 | C_rtc | **0.1 uF** | `JP1.6` - `JP1.7` | the DS3234 bypass the datasheet asks for; the board ships with only 22 pF |
 | C_U1..U3 | **0.1 uF** each | pin 14 - pin 7 of each package | four channels slewing together pull 160-260 mA for a few ns, through whatever inductance lies between the package and the next capacitor out |
-| C_bulk | **10 uF** | +3V3 - GND at the board entry | |
+| C_bulk | **10 uF** | `O-02` - `O-01`, one column out from the breakout's rails | anywhere across the rails does; at 3 mA average and 330 pC per edge there is no droop for it to catch, and the 0.1 uF parts drop 3.3 mV doing the whole job |
 | R_led | **1k** | U3 pin 8 - LED anode | ~1.4 mA, inside the 4 mA output rating. `INTCN` defaults to interrupt mode, so without the LED a board that nobody has configured presents as every line sitting steady at 3.3 V |
 
 **Not on this board, fitted at the destination end:**
@@ -210,10 +210,10 @@ specifically, which is not interchangeable with a general ground run.
 
 **Column plan.** `A` is the GND bus and `M` the 3V3 bus, both bare solid-core wire threaded
 through and tacked at each hole they cross, so the joints are parallel taps off a continuous
-conductor rather than a series chain. `K` and `L` are free for test points. `R1` and `C1` sit at the breakout
-header in columns `O` and `N`; SQW and VCC are adjacent header pins, so neither part can
-span its two nets directly and each reaches the 3V3 bus instead, at its own lead pitch.
-Still unplaced: `J1` (the Coordinator's 2x4), `R2` and the LED, and the `C5` bulk -- so
+conductor rather than a series chain. `K` and `L` are free for test points. `C1` goes straight across `JP1.6`/`JP1.7` and `C5` one column
+out on the same rails at `O-02`/`O-01`. `R1` cannot span SQW to VCC the same way -- they are
+adjacent header pins, one row apart -- so it runs up column `O` to the 3V3 bus at its own
+lead pitch. Still unplaced: `J1` (the Coordinator's 2x4), `R2` and the LED -- so
 `PPS_COORD`, `LED_DRV` and the four SPI lines have no landings yet.
 
 **Decoupling.** Each cap sits against pin 14 at `H-nn`, its lower leg stepping one column
@@ -237,7 +237,8 @@ J2 (DS3234 breakout JP1): pin 7 GND at P-01 up to pin 1 SS at P-07
 0.1 uF (U2): H-15 / I-13
 0.1 uF (U3): H-23 / I-21
 R1 (2.2k): O-03 / O-06
-C1 (0.1 uF): N-03 / N-01
+C1 (0.1 uF): P-02 / P-01
+C5 (10 uF): O-02 / O-01
 
 Offboard pigtails (2-pin, signal / ground):
 
@@ -285,7 +286,7 @@ G-22 (U3.13 4OE) / H-22 | GND
 
 G-23 (U3.14 VCC) / H-23 / I-23 | 3V3
 
-P-01 (J2.7 GND) / O-01 / N-01 | GND
+P-01 (J2.7 GND) / O-01 | GND
 
 P-02 (J2.6 VCC) / O-02 | 3V3
 
@@ -353,7 +354,6 @@ O-01 / A-01 | GND
 
 O-02 / M-02 | 3V3
 O-06 / M-06 | 3V3
-N-03 / M-03 | 3V3
 
 C-03 / C-06 | SQW
 B-06 / H-02 | SQW
