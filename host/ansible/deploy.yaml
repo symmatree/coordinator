@@ -73,6 +73,8 @@
       when: device_role == 'coordinator'
     - role: campod
       when: device_role == 'campod'
+    # Last: it records what the roles above installed.
+    - role: device-sw-manifest
 
   post_tasks:
     - name: Report what the device ended up in

@@ -1,0 +1,39 @@
+---
+# Record what device software this converge installed, so the device can report a version
+# without a repository to ask. device-sw/cli/coord-version reads this as its `device_sw`
+# unit; the format is the same three OCI keys as /etc/fleet-image.
+#
+# Last in the play. The file asserts the install happened, so writing it earlier would
+# have it claim an install that a later failure never finished.
+#
+# When the checkout goes away (#341) this becomes a copy of the archive's own VERSION
+# file, which packaging/build-device-sw already writes in exactly this shape.
+
+# Both reads, so they run under --check too; without that the write below has nothing
+# to template from and a dry run fails on the last thing in the play.
+- name: Read the commit the checkout is at
+  ansible.builtin.command: git -C {{ coord_checkout }} rev-parse HEAD
+  register: device_sw_commit
+  changed_when: false
+  check_mode: false
+
+# Fully qualified -- refs/heads/main, not main. FLEET_SOURCE_REF is defined that way and
+# the consumer looks it up verbatim; docs/build-and-provenance.md has the reason. Returns
+# the literal "HEAD" on a detached checkout, which is not a ref, so that is left out
+# rather than written as one.
+- name: Read the ref the checkout is on
+  ansible.builtin.command: git -C {{ coord_checkout }} rev-parse --symbolic-full-name HEAD
+  register: device_sw_ref
+  changed_when: false
+  check_mode: false
+
+- name: Write /etc/fleet-device-sw
+  ansible.builtin.copy:
+    dest: /etc/fleet-device-sw
+    mode: "0644"
+    content: |
+      ORG_OPENCONTAINERS_IMAGE_SOURCE="{{ coord_repo_url }}"
+      ORG_OPENCONTAINERS_IMAGE_REVISION="{{ device_sw_commit.stdout }}"
+      {% if device_sw_ref.stdout != "HEAD" %}
+      FLEET_SOURCE_REF="{{ device_sw_ref.stdout }}"
+      {% endif %}

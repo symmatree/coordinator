@@ -13,9 +13,13 @@ set -euo pipefail
 out_dir=${1:?usage: packaging/build-device-sw <output-dir>}
 repo=$(cd "$(dirname "$0")/.." && pwd)
 
-# Set by the workflow from github.sha / github.ref. Falls back to git for a hand run.
+# Set by the workflow from github.sha / github.ref / the repo URL. Falls back to git for a
+# hand run.
 version=${PAYLOAD_COMMIT:-$(git -C "$repo" rev-parse HEAD)}
-ref=${PAYLOAD_REF:-$(git -C "$repo" rev-parse --abbrev-ref HEAD)}
+# FLEET_SOURCE_REF is fully qualified -- refs/heads/main, not main. github.ref already is;
+# see docs/build-and-provenance.md for why the abbreviated spelling cannot be used.
+ref=${PAYLOAD_REF:-$(git -C "$repo" rev-parse --symbolic-full-name HEAD)}
+source=${PAYLOAD_SOURCE:-$(git -C "$repo" config --get remote.origin.url)}
 
 mkdir -p "$out_dir"
 out_dir=$(cd "$out_dir" && pwd)
@@ -30,11 +34,12 @@ find "$repo/device-sw/cli" -maxdepth 1 -type f -exec cp {} "$root/cli/" \;
 cp -r "$repo/stacks" "$root/stacks"
 
 # The archive has no .git, so this is the only thing that can answer "what is this box
-# running". device-sw/cli/coord-version does not read it yet -- it still probes for a git
-# checkout (#341).
+# running". Written in coord-version's vocabulary, so installing the archive means copying
+# this file to /etc/fleet-device-sw -- no reformatting, one identity format on the device.
 cat >"$root/VERSION" <<VER
-commit=$version
-ref=$ref
+ORG_OPENCONTAINERS_IMAGE_SOURCE="$source"
+ORG_OPENCONTAINERS_IMAGE_REVISION="$version"
+FLEET_SOURCE_REF="$ref"
 VER
 
 tarball=$out_dir/device-sw-$version.tar.gz

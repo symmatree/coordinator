@@ -263,7 +263,50 @@ check("and records why", any("FLEET_PROBE_ERROR" in p for _, p in tables))
 
 cv.run, cv.shutil.which = real_run, real_which
 
-# 12. The dirty check is gone, and with it the working-tree walk.
+# 12. The device_sw unit, which is how a device reports a version with no checkout to
+# ask (#341). Same reader as the disk image, so what is tested here is that it is wired
+# to its own path and that absence is an answer rather than a crash.
+man = Path(tempfile.mkdtemp()) / "fleet-device-sw"
+man.write_text(
+    'ORG_OPENCONTAINERS_IMAGE_SOURCE="https://github.com/symmatree/coordinator.git"\n'
+    'ORG_OPENCONTAINERS_IMAGE_REVISION="b8bf457a00"\n'
+    'FLEET_SOURCE_REF="refs/heads/main"\n'
+)
+old, cv.FLEET_DEVICE_SW = cv.FLEET_DEVICE_SW, man
+got = cv.device_sw()
+cv.FLEET_DEVICE_SW = old
+man.unlink()
+check("device_sw reports the installed revision",
+      got.get("ORG_OPENCONTAINERS_IMAGE_REVISION") == "b8bf457a00", str(got))
+check("device_sw is its own kind", got.get("FLEET_UNIT_KIND") == "device_sw", str(got))
+
+old, cv.FLEET_DEVICE_SW = cv.FLEET_DEVICE_SW, Path("/nonexistent/fleet-device-sw")
+got = cv.device_sw()
+cv.FLEET_DEVICE_SW = old
+check("a device with no manifest still answers",
+      got.get("FLEET_UNIT_KIND") == "device_sw" and "FLEET_PROBE_ERROR" in got, str(got))
+
+# What build-device-sw writes IS this file, so the two cannot drift into different
+# formats. Reading the archive's VERSION through the probe's own parser is the check.
+import subprocess as _sub, tempfile as _tf, tarfile as _tar
+_out = _tf.mkdtemp()
+_tb = _sub.run([str(CLI.parent.parent / "packaging" / "build-device-sw"), _out],
+               capture_output=True, text=True)
+if _tb.returncode == 0:
+    with _tar.open(_tb.stdout.strip()) as tf:
+        body = tf.extractfile("device-sw/VERSION").read().decode()
+    ver = Path(_out) / "VERSION"
+    ver.write_text(body)
+    old, cv.FLEET_DEVICE_SW = cv.FLEET_DEVICE_SW, ver
+    got = cv.device_sw()
+    cv.FLEET_DEVICE_SW = old
+    check("the archive's VERSION parses as a device_sw manifest",
+          "FLEET_PROBE_ERROR" not in got
+          and len(got.get("ORG_OPENCONTAINERS_IMAGE_REVISION", "")) == 40, str(got))
+else:
+    check("build-device-sw ran", False, _tb.stderr.strip()[:200])
+
+# 13. The dirty check is gone, and with it the working-tree walk.
 src = (CLI / "coord-version").read_text()
 check("no git status tree walk", "status" not in src or "--porcelain" not in src)
 check("FLEET_CHECKOUT_DIRTY retired", "FLEET_CHECKOUT_DIRTY" not in src)

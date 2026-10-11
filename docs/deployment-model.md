@@ -135,6 +135,10 @@ provision), and `roles/host-cli` (the device CLIs in `/usr/local/bin`, deploy).
   `/usr/local/bin` ([#463](https://github.com/symmatree/coordinator/pull/463)). The direction of
   travel is no checkout at all ([#341](https://github.com/symmatree/coordinator/issues/341)),
   which ends the question.
+- **A device reports its own version without a repository to ask.** `coord-version` emits a
+  `device_sw` unit from `/etc/fleet-device-sw`, the same arrangement the disk image has in
+  `/etc/fleet-image`. Before this it read the git sha out of the checkout, so a device that
+  stopped carrying one would have gone silent about what it was running.
 - **What a device installs is a directory, not a list.** `device-sw/cli/` holds exactly that
   and nothing else; `roles/host-cli` copies every file in it and `packaging/build-device-sw`
   puts the same directory in the archive. Neither names a tool, so neither can disagree with

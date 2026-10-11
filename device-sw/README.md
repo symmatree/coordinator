@@ -23,6 +23,11 @@ stale when a tool is added.
 That is why `tests/` and this README sit outside `cli/`, and why a ground-side tool like
 `analysis/tools/backpack-link-watch` lives elsewhere entirely: anything in `cli/` ships.
 
+The archive also carries a `VERSION` file in `coord-version`'s own identity vocabulary, so
+installing it means copying that file to `/etc/fleet-device-sw` -- there is one identity
+format on a device, not one per producer. `roles/device-sw-manifest` writes the same three
+keys from the checkout today.
+
 Collection has to work on a device nobody has converged, which is why the platform reaches
 these over plain ssh rather than through a playbook (#362).
 
