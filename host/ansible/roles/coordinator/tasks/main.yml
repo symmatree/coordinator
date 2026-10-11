@@ -26,3 +26,24 @@
     dest: /var/lib/coordinator/config/oak_d.yaml
     mode: "0644"
     force: false
+
+# The DS3234's square-wave output is off until something writes its control
+# register, and with no kernel driver bound there is nothing else to do it -- see
+# coordinator#11 for why the driver is deliberately not bound. Written every boot
+# rather than once: the register is battery-backed and would hold, but then the
+# PPS line's existence rests on a coin cell nobody is watching, and a silent chip
+# looks exactly like a working one.
+#
+# Here rather than in provision because it runs the CLI, which roles/host-cli
+# installs in this play.
+- name: Install the DS3234 PPS unit
+  ansible.builtin.copy:
+    src: coord-rtc-pps.service
+    dest: /etc/systemd/system/coord-rtc-pps.service
+    mode: "0644"
+
+- name: Enable the DS3234 PPS unit
+  ansible.builtin.systemd:
+    name: coord-rtc-pps.service
+    enabled: true
+    daemon_reload: true
