@@ -22,6 +22,7 @@ export PYTHONDONTWRITEBYTECODE=1
 TESTS=(
 	analysis/test_analysis_modules.py
 	device-sw/tests/test_coord_version.py
+	device-sw/tests/test_coord_rtc.py
 	device-sw/tests/test_coord_sessions.py
 	device-sw/tests/test_coord_fc_log.py
 	device-sw/tests/test_quadlet_units.py

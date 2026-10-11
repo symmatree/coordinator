@@ -55,6 +55,15 @@
     state: present
     update_cache: false
 
+# ppstest, to see whether edges are arriving at all. chrony does not need this
+# package; it is the instrument for the PPS line (#11), the way i2cdetect is for
+# the display.
+- name: Install pps-tools (ppstest for the PPS line)
+  ansible.builtin.apt:
+    name: pps-tools
+    install_recommends: false
+    cache_valid_time: "{{ apt_cache_max_age }}"
+
 # i2c-dev is what creates /dev/i2c-N. dtparam=i2c_arm=on (from the image) only
 # enables the CONTROLLER -- it gets i2c_bcm2835 bound and an adapter registered in
 # the kernel, but no character device, because the userspace interface lives in a

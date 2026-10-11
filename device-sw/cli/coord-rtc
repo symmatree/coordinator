@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Read and configure the DS3234 that drives the PPS line (#11).
+
+    coord-rtc status        what the chip holds and whether the 1 Hz output is on
+    coord-rtc enable-pps    turn the 1 Hz square wave on, and verify it took
+
+The chip is on /dev/spidev0.0 because the kernel driver is deliberately not bound
+to it: rtc-ds3232 sets INTCN on every probe, which switches INT/SQW from square
+wave to alarm output. The reasoning and the source are on #11. The consequence
+here is that enabling the square wave is ours to do.
+
+Reports and does not judge, like coord-version: a chip with its output off is an
+answer, and the exit code says whether the probe ran.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import fcntl
+import struct
+import sys
+
+SPIDEV = "/dev/spidev0.0"
+
+# Mode 3. The DS3234 supports modes 1 and 3 only, and rtc-ds3232 picks 3
+# (`spi->mode = SPI_MODE_3` in ds3234_probe), so 3 is the tested one.
+SPI_MODE = 3
+# The datasheet ceiling is 4 MHz. Nothing here is more than a handful of bytes
+# per boot, so there is no reason to go near it.
+SPI_HZ = 1_000_000
+
+# Writes address the register with bit 7 set; reads use it bare. Same convention
+# the kernel driver encodes as `.write_flag_mask = 0x80`.
+WRITE = 0x80
+
+REG_SECONDS = 0x00
+REG_CONTROL = 0x0E
+REG_STATUS = 0x0F
+
+# Control register bits.
+CR_nEOSC = 0x80  # 1 = oscillator stopped on battery
+CR_BBSQW = 0x40  # 1 = square wave continues on battery
+CR_CONV = 0x20  # temperature conversion, write-only trigger
+CR_RS = 0x18  # RS2:RS1, the square-wave rate
+CR_INTCN = 0x04  # 1 = pin is an alarm output, 0 = pin is the square wave
+CR_A2IE = 0x02
+CR_A1IE = 0x01
+
+SQW_RATES = {0x00: "1Hz", 0x08: "1.024kHz", 0x10: "4.096kHz", 0x18: "8.192kHz"}
+
+# INTCN=0 selects the square wave, RS2:RS1=00 selects 1 Hz, the oscillator runs
+# and both alarms are off. This is the value the PPS line needs.
+CR_PPS = 0x00
+
+SR_OSF = 0x80  # oscillator has stopped since it was last cleared
+
+# struct spi_ioc_transfer, 32 bytes. Field order and widths are the kernel's.
+XFER = "=QQIIHBBBBBB"
+SPI_IOC_WR_MODE = 0x40016B01
+SPI_IOC_WR_BITS_PER_WORD = 0x40016B03
+SPI_IOC_WR_MAX_SPEED_HZ = 0x40046B04
+
+
+def spi_ioc_message(n: int) -> int:
+    """SPI_IOC_MESSAGE(n) carries the transfer count in the ioctl size field."""
+    return (1 << 30) | ((n * struct.calcsize(XFER)) << 16) | (ord("k") << 8)
+
+
+class SpidevBus:
+    """One full-duplex transfer per call. The seam the tests replace."""
+
+    def __init__(self, path: str = SPIDEV, mode: int = SPI_MODE, hz: int = SPI_HZ):
+        self.f = open(path, "r+b", buffering=0)
+        self.hz = hz
+        fcntl.ioctl(self.f, SPI_IOC_WR_MODE, struct.pack("=B", mode))
+        fcntl.ioctl(self.f, SPI_IOC_WR_BITS_PER_WORD, struct.pack("=B", 8))
+        fcntl.ioctl(self.f, SPI_IOC_WR_MAX_SPEED_HZ, struct.pack("=I", hz))
+
+    def transfer(self, tx: bytes) -> bytes:
+        txb = ctypes.create_string_buffer(tx, len(tx))
+        rxb = ctypes.create_string_buffer(len(tx))
+        msg = struct.pack(
+            XFER, ctypes.addressof(txb), ctypes.addressof(rxb),
+            len(tx), self.hz, 0, 8, 0, 0, 0, 0, 0,
+        )
+        fcntl.ioctl(self.f, spi_ioc_message(1), msg)
+        return rxb.raw
+
+    def close(self) -> None:
+        self.f.close()
+
+
+class Ds3234:
+    def __init__(self, bus):
+        self.bus = bus
+
+    def read(self, reg: int, n: int = 1) -> bytes:
+        return self.bus.transfer(bytes([reg]) + bytes(n))[1:]
+
+    def write(self, reg: int, val: int) -> None:
+        self.bus.transfer(bytes([reg | WRITE, val]))
+
+    def enable_pps(self) -> int:
+        """Write the square-wave configuration and return what reads back."""
+        self.write(REG_CONTROL, CR_PPS)
+        return self.read(REG_CONTROL)[0]
+
+
+def bcd(b: int, mask: int = 0x7F) -> int:
+    b &= mask
+    return (b >> 4) * 10 + (b & 0x0F)
+
+
+def decode_control(cr: int) -> str:
+    pin = "square-wave" if not cr & CR_INTCN else "alarm-output"
+    rate = SQW_RATES[cr & CR_RS]
+    osc = "stopped-on-battery" if cr & CR_nEOSC else "running"
+    alarms = [n for n, bit in (("A1", CR_A1IE), ("A2", CR_A2IE)) if cr & bit]
+    return (
+        f"pin={pin} rate={rate} osc={osc} "
+        f"bbsqw={'on' if cr & CR_BBSQW else 'off'} "
+        f"alarms={','.join(alarms) if alarms else 'none'}"
+    )
+
+
+def decode_time(regs: bytes) -> str:
+    """ISO-ish, from the chip's own registers. No timezone: the chip has none."""
+    sec, minute, hour_r, _day, date, month_r, year = regs[:7]
+    if hour_r & 0x40:  # 12-hour mode
+        hour = bcd(hour_r, 0x1F)
+        if hour_r & 0x20:
+            hour = (hour % 12) + 12
+    else:
+        hour = bcd(hour_r, 0x3F)
+    century = 2000 + (100 if month_r & 0x80 else 0)
+    return (
+        f"{century + bcd(year):04d}-{bcd(month_r, 0x1F):02d}-{bcd(date):02d}"
+        f"T{hour:02d}:{bcd(minute):02d}:{bcd(sec):02d}"
+    )
+
+
+def cmd_status(rtc: Ds3234) -> int:
+    cr = rtc.read(REG_CONTROL)[0]
+    sr = rtc.read(REG_STATUS)[0]
+    print(f"control  0x{cr:02x}  {decode_control(cr)}")
+    print(f"status   0x{sr:02x}  osf={'set' if sr & SR_OSF else 'clear'}")
+    print(f"time     {decode_time(rtc.read(REG_SECONDS, 7))}")
+    if sr & SR_OSF:
+        print("         osf is set: the oscillator stopped, so the time above is not")
+        print("         to be trusted until something writes it.")
+    if cr & CR_INTCN or cr & CR_RS:
+        print(f"         the pin is not producing 1 Hz; `coord-rtc enable-pps` sets 0x{CR_PPS:02x}")
+    return 0
+
+
+def cmd_enable_pps(rtc: Ds3234) -> int:
+    got = rtc.enable_pps()
+    print(f"control  0x{got:02x}  {decode_control(got)}")
+    if got != CR_PPS:
+        print(f"wrote 0x{CR_PPS:02x} to the control register and read back 0x{got:02x}",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+COMMANDS = {"status": cmd_status, "enable-pps": cmd_enable_pps}
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2 or argv[1] not in COMMANDS:
+        print(f"usage: {argv[0]} {{{' | '.join(COMMANDS)}}}", file=sys.stderr)
+        return 2
+    try:
+        bus = SpidevBus()
+    except FileNotFoundError:
+        print(f"{SPIDEV} does not exist. SPI comes from device tree, so the image "
+              "needs dtparam=spi=on (see coordinator#11).", file=sys.stderr)
+        return 1
+    except PermissionError:
+        print(f"cannot open {SPIDEV}; run this as root.", file=sys.stderr)
+        return 1
+    try:
+        return COMMANDS[argv[1]](Ds3234(bus))
+    finally:
+        bus.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

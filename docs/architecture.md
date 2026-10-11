@@ -116,11 +116,17 @@ safely) are the next conversation.
 | WiFi AP / station / off | **host** (or D-Bus-mounted utility container later) | NetworkManager integration |
 | Docker Engine | **host** | Generic runtime |
 
-**PPS status (2026-07-06): not fitted.** No PPS hardware is wired anywhere yet -- not on the
-Coordinator, not on the Pi Zeros, and no GPS PPS line. The `chrony + PPS` row above is the
-*planned* design (DS3234 SQW -> GPIO 18 distribution, [#11](https://github.com/symmatree/coordinator/issues/11));
-until it is built, host time is NTP-after-boot only (no PPS discipline) and timestamps must not
-be assumed PPS-aligned. See also the no-RTC note in [coordinator-network.md](coordinator-network.md).
+**PPS status (2026-10-11): first tier built, not yet brought up.** A DS3234 breakout and one
+SN74AHC125N buffer are wired to the coordinator, returning 1 Hz on **GPIO24** (header 18) --
+`docs/rekon10/central-hub.md` under "PPS" has the net table. The fan-out tree for the pods is
+not built, and no Pi Zero has a PPS line. Nothing is configured: the chip's square-wave output
+is off until its control register is written, and the image does not yet carry `dtparam=spi=on`
+or `dtoverlay=pps-gpio,gpiopin=24`.
+
+So host time is still NTP-after-boot only, with no PPS discipline, and timestamps must not be
+assumed PPS-aligned. [#11](https://github.com/symmatree/coordinator/issues/11) carries the
+time contract and what bring-up needs. GPIO18 appears in older notes; PPS moved off it because
+the Top pHAT's I2S audio uses GPIO18-21.
 
 ## Runtime paths (on Pi)
 

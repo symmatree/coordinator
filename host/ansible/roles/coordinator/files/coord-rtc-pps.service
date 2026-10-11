@@ -1,0 +1,14 @@
+[Unit]
+Description=Enable the DS3234 1 Hz square wave for PPS (coordinator#11)
+Documentation=https://github.com/symmatree/coordinator/issues/11
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/coord-rtc enable-pps
+# The write is to a register, not to a file, so there is nothing to keep alive --
+# but the unit staying active is how `systemctl status` answers "did the PPS line
+# get configured this boot" without talking to the chip again.
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
