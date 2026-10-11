@@ -259,6 +259,22 @@ def write_arm_file(path, armed):
     os.replace(tmp, path)
 
 
+def write_fc_time(path, offset_us, rtt_us, local_us):
+    """Publish the current FC-measured offset for coord-rtc to read (#11).
+
+    Separate from the session log below because they have different jobs: this is a
+    current value, replaced atomically, that coord-rtc uses to correct the DS3234's
+    epoch while the vehicle is disarmed. The log is the per-flight record.
+
+    NOT a chrony input. chrony's reference is the chip itself -- see coord-rtc's
+    cmd_feed for why the reference and the pulse have to be the same clock.
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(f"{offset_us} {rtt_us} {local_us}\n")
+    os.replace(tmp, path)
+
+
 def log_fc_time(fh, offset_us, rtt_us, boot_us, unix_us, local_us):
     """Record this box's offset from UTC, as measured through the FC (#11).
 
@@ -411,6 +427,7 @@ def main():
     # GPS-derived UTC for the host's clock discipline (#11). Written at a low rate:
     # SYSTEM_TIME arrives at 2 Hz and nothing needs it that often, and this is a file
     # on the SD card rather than tmpfs.
+    fc_time_file = os.environ.get("MAVLINK_FC_TIME_FILE", "/tmp/fc_time")
     fc_time_period_s = float(os.environ.get("MAVLINK_FC_TIME_PERIOD_S", "16"))
     fc_time_written = 0.0
     # Our clock against the FC's monotonic, from TIMESYNC. mono_offset_us is
@@ -574,6 +591,9 @@ def main():
                             and time.time() - fc_time_written >= fc_time_period_s):
                         local_us = time.time_ns() // 1000
                         boot_us = local_us + mono_offset_us
+                        write_fc_time(fc_time_file,
+                                      utc_minus_boot_us + mono_offset_us,
+                                      mono_rtt_us, local_us)
                         if fc_time_log is not None:
                             log_fc_time(fc_time_log,
                                         utc_minus_boot_us + mono_offset_us,

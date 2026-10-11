@@ -26,6 +26,10 @@ Environment=OAK_ARM_FILE=/tmp/fc_armed
 # The captures root, not a file: the router appends <node>/<boot-id>/ itself. Empty
 # disables timesync.jsonl and vehicle.tlog.
 Environment=COORD_CAPTURES_DIR=/captures
+# The current FC-measured UTC offset (#11). coord-rtc on the host reads it to correct
+# the DS3234's epoch while disarmed; /tmp here is /var/lib/coordinator/ipc, the same
+# volume the arm file uses. NOT a chrony input -- chrony's reference is the chip.
+Environment=MAVLINK_FC_TIME_FILE=/tmp/fc_time
 
 [Service]
 TimeoutStopSec=60

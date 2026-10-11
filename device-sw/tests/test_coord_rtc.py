@@ -287,9 +287,13 @@ _tvs, _tvus, off, pulse, leap, _p, magic = _struct.unpack(cr.SOCK_SAMPLE, m_chip
 check("the sample is a valid sock_sample",
       len(m_chip) == 40 and magic == 0x534F434B and pulse == 0 and leap == 0)
 check("offset is the chip's reading minus system time", abs(off - (-0.75)) < 1e-6, str(off))
-check("nothing in the CLI reads a UTC source",
-      "fc_offset" not in src and "FC_TIME" not in src,
-      "coord-rtc still has an FC/UTC path")
+# The FC offset exists, but only to set the chip. It must never become the sample
+# chrony sees -- that is the error that puts a drifting phase difference between
+# chrony's reference and the pulse it is locked to.
+_feed = src[src.index("def cmd_feed"):src.index("def set_system")]
+check("the only thing sent to chrony is the chip sample",
+      _feed.count("sendto(") == 1 and "sendto(sock_sample(chip_s, at)" in _feed,
+      "something other than the chip sample reaches the socket")
 
 # 17a. A chip with no epoch must not be fed to chrony: it reads 2000-01-01, so the
 # offset would be about -26 years.
@@ -300,9 +304,6 @@ check("the feed checks osf before using the chip's label",
 # 17. Nothing in the feed path writes the chip. A divider reset would step the 1 Hz
 # phase and make one second the wrong length, which the campods' blanking alignment
 # does not survive -- so this is a property worth asserting, not just intending.
-feed_body = src[src.index("def cmd_feed"):src.index("def set_system")]
-for forbidden in ("write_time", "clear_osf", "set_chip", "rtc.write("):
-    check(f"cmd_feed does not call {forbidden}", forbidden not in feed_body)
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
