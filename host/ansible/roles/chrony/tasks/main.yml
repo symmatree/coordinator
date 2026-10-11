@@ -2,10 +2,21 @@
 # chrony on the coordinator: the DS3234 as a source, the 1 Hz as phase, and NTP for
 # the campods. The contract and why the kernel RTC driver is not used: coordinator#11.
 #
+# A consequence worth stating so it does not read as a gap: with no kernel RTC bound
+# there is no /dev/rtc, so chrony's own rtcsync, rtcfile and rtcautotrim are all
+# unavailable, and a Pi 4B has no other RTC. That is why reading the chip at boot and
+# writing it are coord-rtc subcommands rather than chrony settings.
+#
 # Deploy rather than provision, because the config changes with the repo and because
 # it depends on coord-rtc, which roles/host-cli installs in this play. The package is
 # the one thing here that is a property of the device, and it is small enough that
 # splitting it across two plays costs more than it saves.
+
+- name: Ensure the chronyd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/chronyd.service.d
+    state: directory
+    mode: "0755"
 
 - name: Install chrony
   ansible.builtin.apt:
@@ -23,10 +34,30 @@
   check_mode: false
   failed_when: chrony_confdir.rc != 0
 
+# The `allow` line in the template derives the network address by replacing the last
+# octet, which is only right for a /24. Asserted rather than assumed, because the
+# failure would be a subnet that silently does not cover the pods.
+- name: Fail if the gadget network is not a /24
+  ansible.builtin.assert:
+    that: campod_gadget_prefix | int == 24
+    fail_msg: >-
+      campod_gadget_prefix is {{ campod_gadget_prefix }}, and the chrony drop-in derives
+      the network address for `allow` by zeroing the last octet of
+      campod_gadget_coordinator_ip, which only holds for a /24.
+
 - name: Install the Rekon chrony drop-in
   ansible.builtin.template:
     src: 10-rekon.conf.j2
     dest: /etc/chrony/conf.d/10-rekon.conf
+    mode: "0644"
+  notify: Restart chronyd
+
+# pps_gpio is a module in this image, so /dev/pps0 is created by udev. A refclock whose
+# device is missing when chronyd starts is a source that never appears.
+- name: Order chronyd after the PPS device
+  ansible.builtin.copy:
+    src: chronyd-pps-device.conf
+    dest: /etc/systemd/system/chronyd.service.d/10-pps-device.conf
     mode: "0644"
   notify: Restart chronyd
 

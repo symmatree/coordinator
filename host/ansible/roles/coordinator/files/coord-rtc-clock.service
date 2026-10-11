@@ -1,10 +1,30 @@
 [Unit]
 Description=Set the system clock from the DS3234 (coordinator#11)
 Documentation=https://github.com/symmatree/coordinator/issues/11
-# Before anything that wants a plausible clock. The Pi has no built-in RTC, so
-# without this the clock starts at whatever systemd last saved.
-Before=time-sync.target chronyd.service
-Wants=time-sync.target
+
+# time-SET, not time-SYNC. This reads a chip; it does not synchronise to a reference.
+# systemd splits those: systemd-timesyncd takes time-set.target, and
+# systemd-time-wait-sync -- chrony-wait.service here -- is the one that takes
+# time-sync.target because its job is to block until synchronised. Claiming
+# time-sync.target would tell anything ordered after it that the clock is accurate when
+# it is the chip's label, and on an OSF-set chip hctosys refuses and sets nothing.
+Before=time-set.target sysinit.target chronyd.service
+Wants=time-set.target
+
+# Before=sysinit.target requires this, or the implicit After=sysinit.target makes a
+# cycle that systemd breaks by dropping an edge -- leaving an ordering that is not the
+# one written here.
+DefaultDependencies=no
+# /usr/local/bin/coord-rtc is on the @usr subvolume, an fstab mount, so without this the
+# binary may not exist yet.
+After=local-fs.target
+Conflicts=shutdown.target
+
+# spidev and spi_bcm2835 are modules in this image, so /dev/spidev0.0 appears only once
+# udev has coldplugged. Without this the open is a race that presents as "the clock
+# sometimes isn't set".
+Wants=dev-spidev0.0.device
+After=dev-spidev0.0.device
 
 [Service]
 Type=oneshot
