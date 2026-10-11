@@ -140,8 +140,7 @@ the edge back out of spec.
 
 #### Package pinout (SN74AHC125N, PDIP-14)
 
-Channels 1 and 2 run OE-A-Y down the left side; channels 3 and 4 run Y-A-OE up the right. The halves
-are mirrored, which is the easiest thing to get wrong when laying out by eye.
+Channels 1 and 2 run OE-A-Y down the left side; channels 3 and 4 run Y-A-OE up the right.
 
 | pin | signal | | pin | signal |
 |-----|--------|---|-----|--------|
