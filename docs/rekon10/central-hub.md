@@ -290,6 +290,14 @@ U3 (REAR): pin 1 at D-23, pin 8 at G-17
 0.1 uF (U2): H-15 / I-13
 0.1 uF (U3): H-23 / I-21
 
+Offboard pigtails (2-pin, signal / ground):
+
+J3: B-13 (PPS_FC) / A-13 (GND) -- ground pin lands on the GND bus
+J6: B-21 (PPS_SE) / A-21 (GND) -- ground pin lands on the GND bus
+J7: B-18 (PPS_SW) / A-18 (GND) -- ground pin lands on the GND bus
+J4: I-09 (PPS_NE) / K-09 (GND)
+J5: I-12 (PPS_NW) / K-12 (GND)
+
 Busses:
 
 GND: column A, bare solid-core wire, rows 01-24
@@ -328,8 +336,8 @@ G-22 (U3.13 4OE) / H-22 | GND
 
 G-23 (U3.14 VCC) / H-23 / I-23 | 3V3
 
-D-06 (U1.2 1A) / C-06 / B-06 | SQW
 D-03 (U1.5 2A) / C-03 / B-03 | SQW
+D-06 (U1.2 1A) / C-06 / B-06 | SQW
 G-02 (U1.9 3A) / H-02 / I-02 | SQW
 G-05 (U1.12 4A) / H-05 | SQW
 
@@ -344,6 +352,16 @@ D-19 (U3.5 2A) / C-19 / B-19 | T2_REAR
 D-22 (U3.2 1A) / C-22 / B-22 | T2_REAR
 G-18 (U3.9 3A) / H-18 / I-18 | T2_REAR
 G-21 (U3.12 4A) / H-21 | T2_REAR
+
+D-13 (U2.3 1Y) / C-13 / B-13 | PPS_FC
+
+D-21 (U3.3 1Y) / C-21 / B-21 | PPS_SE
+
+D-18 (U3.6 2Y) / C-18 / B-18 | PPS_SW
+
+G-09 (U2.8 3Y) / H-09 / I-09 | PPS_NE
+
+G-12 (U2.11 4Y) / H-12 / I-12 | PPS_NW
 
 jumpers:
 
@@ -377,8 +395,8 @@ I-23 / M-23 | 3V3
 
 I-21 / B-17 | GND (cap)
 
-B-06 / C-03 | SQW
-B-03 / H-02 | SQW
+B-03 / C-06 | SQW
+B-06 / H-02 | SQW
 I-02 / H-05 | SQW
 
 C-05 / C-11 | T2_FRONT
@@ -390,6 +408,9 @@ C-02 / C-19 | T2_REAR
 B-19 / C-22 | T2_REAR
 B-22 / H-18 | T2_REAR
 I-18 / H-21 | T2_REAR
+
+K-09 / A-09 | GND
+K-12 / A-12 | GND
 ```
 
 #### Schematic
