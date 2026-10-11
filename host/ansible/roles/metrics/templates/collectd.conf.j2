@@ -19,6 +19,13 @@ LoadPlugin disk
 LoadPlugin thermal
 LoadPlugin interface
 LoadPlugin csv
+{% if metrics_chronyd.stat.exists %}
+# Native protocol on UDP 323, which is why this is here at all: chrony stats without a
+# shell command per interval. One socket, no process. The useful part is whether the
+# refclock is actually SELECTED rather than merely configured -- a PPS that chrony is
+# discarding looks identical to a working one from the outside (#11).
+LoadPlugin chrony
+{% endif %}
 
 <Plugin interface>
   # Added because a question we could not answer: a converge that should take
@@ -135,6 +142,13 @@ LoadPlugin csv
   # whether it cost us anything.
 </Plugin>
 
+{% if metrics_chronyd.stat.exists %}
+<Plugin chrony>
+	Host "localhost"
+	Port "323"
+</Plugin>
+
+{% endif %}
 <Plugin csv>
   # A symlink to /var/log/collectd/<this boot's id>, made by
   # collectd-per-boot-datadir before the service starts (roles/metrics). A SESSION IS

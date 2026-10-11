@@ -1,0 +1,25 @@
+[Unit]
+Description=Record PPS edge arrivals into this boot's session (coordinator#11)
+Documentation=https://github.com/symmatree/coordinator/issues/11
+
+# pps_gpio is a module in these images, so /dev/pps0 is created by udev.
+Wants=dev-pps0.device
+After=dev-pps0.device
+
+# No PPS leg is wired to any campod yet, so on those the device genuinely is not there
+# and a skipped unit is the honest state -- Restart=always without this would have four
+# pods retrying and logging every interval forever. On the coordinator a missing device
+# would mean PPS is not working at all, which chrony says loudly elsewhere.
+ConditionPathExists=/dev/pps0
+# The session directory lives under the state root, which is an fstab mount.
+After=local-fs.target
+
+[Service]
+# execs ppstest, so what stays resident is a few hundred KB of C rather than python.
+ExecStart=/usr/local/bin/coord-pps-log
+Environment=COORD_PPS_CAPTURES_DIR={{ coord_state_root }}/captures
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
