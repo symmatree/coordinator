@@ -151,11 +151,11 @@ therefore cannot grow.
 
 | ref | value | between | why |
 |-----|-------|---------|-----|
-| R_pu | **2.2k** | `JP1.5` - `JP1.6` | in parallel with the breakout's own 10k; sets the SQW rise to ~90 ns/V at 1.6 mA of a 3 mA sink budget |
-| C_rtc | **0.1 uF** | `JP1.6` - `JP1.7` | the DS3234 bypass the datasheet asks for; the board ships with only 22 pF |
-| C_U1..U3 | **0.1 uF** each | pin 14 - pin 7 of each package | four channels slewing together pull 160-260 mA for a few ns, through whatever inductance lies between the package and the next capacitor out |
-| ~~C_bulk~~ | **not fitted** | -- | nothing on this board asks for a reservoir. The buffers' worst moment is four channels slewing together, 160-260 mA for a few ns, which the local 0.1 uF covers with 3.3 mV of droop and then has a second to recharge; the DS3234 draws 400 uA. There is no band between what the 0.1 uF parts cover and DC |
-| R_led | **1k** | U3 pin 8 - LED anode | ~1.4 mA, inside the 4 mA output rating. `INTCN` defaults to interrupt mode, so without the LED a board that nobody has configured presents as every line sitting steady at 3.3 V |
+| R1 | **2.2k** | `JP1.5` - `JP1.6` | in parallel with the breakout's own 10k; sets the SQW rise to ~90 ns/V at 1.6 mA of a 3 mA sink budget |
+| C1 | **0.1 uF** | `JP1.6` - `JP1.7` | the DS3234 bypass the datasheet asks for; the board ships with only 22 pF |
+| C2, C3, C4 | **0.1 uF** each | pin 14 - pin 7 of each package | four channels slewing together pull 160-260 mA for a few ns, through whatever inductance lies between the package and the next capacitor out |
+| ~~C5~~ | **not fitted** | -- | nothing on this board asks for a reservoir. The buffers' worst moment is four channels slewing together, 160-260 mA for a few ns, which the local 0.1 uF covers with 3.3 mV of droop and then has a second to recharge; the DS3234 draws 400 uA. There is no band between what the 0.1 uF parts cover and DC |
+| R2 | **1k** | `H-17` - `K-17`, with D1 from `K-17` to `L-17` and its cathode jumpered to the GND bus | ~1.4 mA, inside the 4 mA output rating. `INTCN` defaults to interrupt mode, so without the LED a board that nobody has configured presents as every line sitting steady at 3.3 V |
 
 **Not on this board, fitted at the destination end:**
 
@@ -212,8 +212,8 @@ specifically, which is not interchangeable with a general ground run.
 through and tacked at each hole they cross, so the joints are parallel taps off a continuous
 conductor rather than a series chain. `K` and `L` are free for test points. `C1` goes straight across `JP1.6`/`JP1.7`. `R1` cannot span SQW to VCC the same way -- they are
 adjacent header pins, one row apart -- so it runs up column `O` to the 3V3 bus at its own
-lead pitch. Still unplaced: `J1` (the Coordinator's 2x4), `R2` and the LED -- so
-`PPS_COORD`, `LED_DRV` and the four SPI lines have no landings yet.
+lead pitch. Still unplaced: `J1`, the Coordinator's 2x4 -- so `PPS_COORD` and the
+four SPI lines have no landings yet.
 
 **Decoupling.** Each cap sits against pin 14 at `H-nn`, its lower leg stepping one column
 out to `I` to clear the row below, and its ground jumper running to pin 7's own tap. That is
@@ -237,6 +237,8 @@ J2 (DS3234 breakout JP1): pin 7 GND at P-01 up to pin 1 SS at P-07
 0.1 uF (U3): H-23 / I-21
 R1 (2.2k): O-03 / O-06
 C1 (0.1 uF): P-02 / P-01
+R2 (1k): H-17 / K-17
+D1 (LED): K-17 / L-17
 
 Offboard pigtails (2-pin, signal / ground):
 
@@ -289,6 +291,9 @@ P-01 (J2.7 GND) / O-01 | GND
 P-02 (J2.6 VCC) / O-02 | 3V3
 
 P-03 (J2.5 SQW) / O-03 | SQW
+
+G-17 (U3.8 3Y) / H-17 | LED_DRV
+
 D-03 (U1.5 2A) / C-03 | SQW
 D-06 (U1.2 1A) / C-06 / B-06 | SQW
 G-02 (U1.9 3A) / H-02 / I-02 | SQW
@@ -352,6 +357,8 @@ O-01 / A-01 | GND
 
 O-02 / M-02 | 3V3
 O-06 / M-06 | 3V3
+
+L-17 / A-17 | GND
 
 C-03 / C-06 | SQW
 B-06 / H-02 | SQW
