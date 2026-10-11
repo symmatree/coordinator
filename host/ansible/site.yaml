@@ -1,7 +1,7 @@
 ---
 # A fresh card, end to end: provision then deploy.
 #
-#   ansible-playbook host/ansible/site.yaml -i '10.0.2.49,' -u pi \
+#   ansible-playbook host/ansible/site.yaml -i 'campod-se,' -u pi \
 #     -e device_role=campod
 #
 # For a device that is already provisioned -- which is every device, after its first
