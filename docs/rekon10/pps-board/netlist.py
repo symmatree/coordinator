@@ -8,7 +8,6 @@ PARTS = {
          "Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical", 40, 110),
   "R1": ("Device:R", "2.2k", "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal", 80, 100),
   "C1": ("Device:C", "0.1uF", "Capacitor_THT:C_Disc_D5.0mm_W2.5mm_P5.00mm", 100, 110),
-  "C5": ("Device:C", "10uF", "Capacitor_THT:CP_Radial_D5.0mm_P2.50mm", 100, 140),
   "U1": ("PPS:SN74AHC125N", "SN74AHC125N", "Package_DIP:DIP-14_W7.62mm_Socket", 150, 100),
   "C2": ("Device:C", "0.1uF", "Capacitor_THT:C_Disc_D5.0mm_W2.5mm_P5.00mm", 175, 100),
   "U2": ("PPS:SN74AHC125N", "SN74AHC125N", "Package_DIP:DIP-14_W7.62mm_Socket", 240, 50),
@@ -26,9 +25,9 @@ PARTS = {
 
 # net -> [(ref, pin), ...]
 NETS = {
-  "+3V3":      [("J1","1"), ("J2","6"), ("R1","2"), ("C1","1"), ("C5","1"),
+  "+3V3":      [("J1","1"), ("J2","6"), ("R1","2"), ("C1","1"),
                 ("U1","14"), ("C2","1"), ("U2","14"), ("C3","1"), ("U3","14"), ("C4","1")],
-  "GND":       [("J1","4"), ("J2","7"), ("C1","2"), ("C5","2"),
+  "GND":       [("J1","4"), ("J2","7"), ("C1","2"),
                 ("U1","7"), ("U1","1"), ("U1","4"), ("U1","10"), ("U1","13"), ("C2","2"),
                 ("U2","7"), ("U2","1"), ("U2","4"), ("U2","10"), ("U2","13"), ("C3","2"),
                 ("U3","7"), ("U3","1"), ("U3","4"), ("U3","10"), ("U3","13"), ("C4","2"),
