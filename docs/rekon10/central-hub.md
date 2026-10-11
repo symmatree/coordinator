@@ -65,7 +65,7 @@ TODO: I'd like to get voltage off its output and current from the input. The mat
 
 ### PPS distribution board
 
-Uses a buffer IC in DIP package to remove load on the [**DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW** line (1 Hz), not the GNSS module.
+Uses a buffer IC in DIP package to remove load on the [**DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW** line (1 Hz).
 
 - **Camera pod connectors:** 2-wire JST SM (20 AWG): signal ground, 3.3 V PPS (from buffer). JST SM housings must be **zip-tied/anchored to the frame** to prevent pendulum vibration from fatiguing wires.
 - **Upward pair (NNW + NNE):** Two additional PPS outputs needed for the early vertical-ring cameras ([campod.md](../campod.md), *Upward-looking cameras*). Counting the Coordinator and the FC, the full build is **12 buffered lines**; the two-tier scheme in [PPS signal buffering](#pps-signal-buffering) reaches 16 with four quad packages, and 32 if a second-tier package is swapped for an octal.
