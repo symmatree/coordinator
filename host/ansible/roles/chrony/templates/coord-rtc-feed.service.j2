@@ -7,6 +7,9 @@ After=chronyd.service
 Wants=chronyd.service
 
 [Service]
+# One definition of the socket path, shared with the drop-in that tells chrony to
+# listen on it.
+Environment=COORD_RTC_CHRONY_SOCK={{ coord_rtc_chrony_sock }}
 # Not oneshot: chrony ages a source out if samples stop arriving, so this runs for as
 # long as chrony does.
 ExecStart=/usr/local/bin/coord-rtc feed

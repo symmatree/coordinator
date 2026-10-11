@@ -73,6 +73,9 @@ SPIN_LEAD_S = 0.003
 # 40 bytes on a 64-bit target, which is what the "=" format gives.
 SOCK_MAGIC = 0x534F434B
 SOCK_SAMPLE = "=qqdiiii"
+# The deployed path comes from the unit's Environment=, which the chrony role
+# templates from the same variable as the drop-in -- so the sender and the listener
+# cannot disagree. This default is only for a run by hand.
 CHRONY_SOCK = os.environ.get("COORD_RTC_CHRONY_SOCK", "/run/chrony.ds3234.sock")
 FEED_PERIOD_S = float(os.environ.get("COORD_RTC_FEED_PERIOD_S", "64"))
 # How often to look while waiting for the chip's seconds register to change. The
@@ -250,7 +253,11 @@ def chip_boundary(rtc: Ds3234, deadline_s: float = 1.5) -> tuple[int, float] | N
         time.sleep(ROLLOVER_POLL_S)
         regs = rtc.read(REG_SECONDS, 7)
         if regs[0] != first[0]:
-            at = time.time()
+            # The rollover happened somewhere in the poll interval just ended, so the
+            # observation instant is LATE by 0..ROLLOVER_POLL_S. Backdating by half the
+            # interval centres that: +/-10 ms of noise instead of a 0..20 ms bias,
+            # which would otherwise exceed the precision the chrony config declares.
+            at = time.time() - ROLLOVER_POLL_S / 2
             stamp = decode_time(regs)
             return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S")), at
     return None
@@ -277,7 +284,7 @@ def cmd_feed(rtc: Ds3234) -> int:
     the second starts.
     """
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    sent = refused = 0
+    refused = 0
     while True:
         edge = chip_boundary(rtc)
         if edge is None:
@@ -287,7 +294,6 @@ def cmd_feed(rtc: Ds3234) -> int:
             msg = sock_sample(chip_s, at)
             try:
                 sock.sendto(msg, CHRONY_SOCK)
-                sent += 1
             except (FileNotFoundError, ConnectionRefusedError):
                 # chrony not up yet, or not configured with this refclock. Not fatal:
                 # the chip is still right and the next sample will land.
