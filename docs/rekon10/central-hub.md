@@ -113,37 +113,30 @@ nothing is shared between consumers and distance stops being a shared-node probl
 ### PPS signal buffering
 
 **Buffer:** 3.3 V quad 3-state buffer, **SN74AHC125N** (PDIP-14), powered from the Coordinator's
-3.3 V rail. Note **AHC, not AHCT** -- the AHCT part shares the package and pinout but is specified
-for VCC 4.5-5.5 V and is out of spec on this rail.
+3.3 V rail. **AHC, not AHCT** -- the AHCT part shares the package and pinout but is specified for
+VCC 4.5-5.5 V and is out of spec on this rail.
 
-**Topology: two tiers.** One '125 is the first tier, with all four of its inputs tied to SQW; each
-first-tier output drives all four tied inputs of a second-tier '125. Four packages gives 16 outputs
-against the 12 planned (10 Zeros + Coordinator + FC).
+**Topology: two tiers.** The '125's four channels are independent, each with its own input pin, so
+a fan-out is made by tying inputs together. U1 is the first tier, its four inputs tied to SQW; each
+of its outputs drives the four tied inputs of a second-tier '125. Four packages gives 16 outputs
+against the 12 planned (10 Zeros + Coordinator + FC). The Coordinator takes a buffered output like
+every other consumer rather than the raw SQW line, so it sees the same electrical and timing path
+as the pods.
 
-The **Coordinator takes a buffered output like every other consumer**, not the raw SQW line, so it
-sees the same electrical and timing path as the pods.
+**The tier exists because SQW drives four inputs far more easily than twelve.** SQW is the DS3234's
+open-drain `INT/SQW` pin, so its rising edge is not driven -- it is the RC of the pull-up against
+whatever input capacitance hangs on the node, and AHC125 specifies a maximum input transition rate
+of **100 ns/V at VCC = 3.3 V**. At a worst-case `Ci` of 10 pF per input, twelve inputs is ~130 pF
+and needs a ~1.2k pull-up to stay in spec, drawing 2.7 mA of the DS3234's 3 mA sink budget. Four
+inputs is ~50 pF, where a 2.2k pull-up holds ~90 ns/V at 1.6 mA.
 
-> **Superseded:** an earlier version of this section said to tie every buffer input directly to SQW
-> and warned against a "preamp" gate on skew grounds. The skew reasoning was sound as far as it went
-> -- a tier does add a propagation stage -- but it is the wrong order of magnitude to decide on. AHC
-> propagation delay at 3.3 V is 4-5 ns against a PPS budget measured in microseconds, and every
-> output passes through the same number of stages, so the tier costs nothing measurable. What
-> settles it instead is the **input transition rate**, below.
+Current is not the limit at either number -- AHC inputs draw ~1 uA each, so twelve of them are 0.4%
+of what the pin can sink. The breakout's own 10k pull-up is outside the transition-rate spec even
+driving a single input, so the resistor value is set by the breakout, not by the fan-out.
 
-**Why a tier rather than a flat fan-out.** SQW is the DS3234's open-drain `INT/SQW` pin, so its
-rising edge is not driven -- it is the RC of the pull-up against whatever input capacitance hangs on
-the node. AHC125 specifies a **maximum input transition rate of 100 ns/V at VCC = 3.3 V**. With
-worst-case `Ci` of 10 pF per input, a flat fan-out of twelve inputs is ~130 pF and needs a ~1.2k
-pull-up to stay in spec, which draws 2.7 mA of the DS3234's 3 mA sink budget. Four inputs is ~50 pF
-and a 2.2k pull-up holds ~90 ns/V at 1.6 mA. The tier buys margin on the one node that has none.
-
-DC load was never the constraint: AHC inputs draw ~1 uA each, so twelve of them are 0.4% of what the
-pin can sink. Note also that the on-board 10k is outside the transition-rate spec **even driving a
-single input**, so this is a resistor value on the breakout rather than anything caused by fan-out.
-
-Keep the RTC breakout on the same board as the buffers. Hookup wire runs about 1 pF/cm, so six
-inches of cable between SQW and the first tier adds ~15 pF to a ~50 pF budget and puts the edge back
-out of spec.
+The RTC breakout sits on this board rather than at the end of a cable: hookup wire runs about
+1 pF/cm, so six inches between SQW and the first tier would add ~15 pF to a ~50 pF budget and put
+the edge back out of spec.
 
 #### Package pinout (SN74AHC125N, PDIP-14)
 
@@ -264,25 +257,19 @@ such holes. The trailing value is the net; `GND (cap)` marks a decoupling return
 specifically, which is not interchangeable with a general ground run.
 
 **Column plan.** `A` is the GND bus and `M` the 3V3 bus, both bare solid-core wire threaded
-through and tacked at each hole they cross -- the joints are then parallel taps off a
-continuous conductor rather than a series chain, so a cracked tack loses one pin and not the
-rail below it. `K` and `L` are free for test points and changes. The DS3234 breakout, `J1`,
-the output pigtails and the LED sit beyond the 3V3 bus and are not placed yet, which is why
-`PPS_*` and `LED_DRV` have no holes here.
+through and tacked at each hole they cross, so the joints are parallel taps off a continuous
+conductor rather than a series chain. `K` and `L` are free for test points. Still unplaced:
+`J1` (the Coordinator's 2x4), `R1` (the SQW pull-up), `R2` and the LED, and the `C1` / `C5`
+bypass and bulk -- so `PPS_COORD`, `LED_DRV` and the four SPI lines have no landings yet.
 
-**Decoupling geometry.** The loop is pin 14 -> cap -> pin 7, and both halves count: a cap
-grounded to the bus is only as good as the bus path back to pin 7. So each cap sits hard
-against pin 14 at `H-nn`, with its lower leg stepping one column out to `I` to clear the row
-below, and its ground jumper runs straight to pin 7's own tap. About 29 mm of loop, which
-leaves the series-damped response comfortably overdamped -- the AHC output's own ~50 ohm
-impedance, not this inductance, is what sets the edge.
+**Decoupling.** Each cap sits against pin 14 at `H-nn`, its lower leg stepping one column
+out to `I` to clear the row below, and its ground jumper running to pin 7's own tap. That is
+the whole loop -- pin 14 to cap to pin 7 -- at about 29 mm. The AHC output's ~50 ohm
+impedance sets the edge, not this inductance.
 
-**Nothing is routed through the DIP channel, deliberately.** Running the cap ground through
-`E-nn` under the package would save about 4 mm of loop, which the margin above says is not
-needed. This board is plated on one side, so a channel hole cannot take a lead from the top
-once the chip is down -- it would be a surface joint under the package with no mechanical
-anchor. Every hole here is entered from the component side; a bare leg can still be run on
-the underside to shorten a path or add mechanical hold where it helps.
+**Every hole is entered from the component side.** The board is plated on one side, so a
+hole in the DIP channel cannot take a lead once the chip is down. Routing a cap ground
+through `E-nn` would shorten the loop by about 4 mm and is not used.
 
 ```
 Components:
