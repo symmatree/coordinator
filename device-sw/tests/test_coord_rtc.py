@@ -276,6 +276,49 @@ edge = cr.chip_boundary(cr.Ds3234(static), deadline_s=0.2)
 check("a stopped chip gives up rather than hanging",
       edge is None and _time.time() - t0 < 1.0, f"{edge} after {_time.time()-t0:.2f}s")
 
+# 15. fc_offset: the FC-measured offset, and the staleness rule that keeps a previous
+# flight's sample -- the file is on disk and survives a reboot -- from being applied as
+# if it were current.
+import tempfile as _tf2
+
+d = _tf2.mkdtemp()
+fresh = f"{d}/fc_time_fresh"
+now_us = int(_time.time() * 1e6)
+with open(fresh, "w") as f:
+    f.write(f"{-250000} {4200} {12345678} {now_us - 250000} {now_us}\n")
+got = cr.fc_offset(fresh)
+check("fc_offset reads the offset and the rtt",
+      got is not None and abs(got[0] - (-0.25)) < 1e-6 and abs(got[1] - 0.0042) < 1e-6,
+      str(got))
+
+stale = f"{d}/fc_time_stale"
+with open(stale, "w") as f:
+    f.write(f"{-250000} {4200} {12345678} {now_us} {now_us - 600_000_000}\n")
+check("a stale sample is rejected", cr.fc_offset(stale) is None, str(cr.fc_offset(stale)))
+check("a missing file is not an error", cr.fc_offset(f"{d}/nope") is None)
+with open(f"{d}/junk", "w") as f:
+    f.write("not numbers at all\n")
+check("a malformed file is not an error", cr.fc_offset(f"{d}/junk") is None)
+
+# 16. The sample carries whatever offset it is given, so the FC path and the chip path
+# produce the same wire shape and only the number differs.
+m_fc = cr.sock_sample_offset(-0.25, 1791742065.5)
+m_chip = cr.sock_sample(1791742065, 1791742065.75)
+for name, m in (("fc", m_fc), ("chip", m_chip)):
+    _tvs, _tvus, off, pulse, leap, _p, magic = _struct.unpack(cr.SOCK_SAMPLE, m)
+    check(f"{name} sample is a valid sock_sample",
+          len(m) == 40 and magic == 0x534F434B and pulse == 0 and leap == 0)
+_, _, off, _, _, _, _ = _struct.unpack(cr.SOCK_SAMPLE, m_chip)
+check("the chip path still reports chip-minus-system", abs(off - (-0.75)) < 1e-6, str(off))
+
+# 17. Nothing in the feed path writes the chip. A divider reset would step the 1 Hz
+# phase and make one second the wrong length, which the campods' blanking alignment
+# does not survive -- so this is a property worth asserting, not just intending.
+src = (CLI / "coord-rtc").read_text()
+feed_body = src[src.index("def cmd_feed"):src.index("def set_system")]
+for forbidden in ("write_time", "clear_osf", "set_chip", "rtc.write("):
+    check(f"cmd_feed does not call {forbidden}", forbidden not in feed_body)
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)

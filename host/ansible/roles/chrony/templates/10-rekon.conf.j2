@@ -3,14 +3,18 @@
 # A drop-in rather than a replacement chrony.conf, so the vendor's upstream sources
 # stay as they are and work whenever the bench network is up.
 
-# The DS3234, served by coord-rtc-feed over a SOCK datagram. This is what the kernel
-# rtc-ds3232 driver would have been, minus the part where it turns off the 1 Hz
-# output. It supplies whole seconds -- which is what PPS cannot -- so it is what
-# makes chrony synchronised at all on a box with no network.
+# The one seconds-source, served by coord-rtc-feed over a SOCK datagram. ONE, because
+# the PPS refclock below can lock= to exactly one refid -- a second seconds-source
+# could disagree with the one the pulse is paired to and be marked a falseticker.
 #
-# A worse precision than the PPS line below, and worse than any GPS source added
-# later, so chrony prefers them when they exist and falls back to this when they do
-# not. That is the whole design: best time available, no operator step.
+# Its offset is whatever the best truth available is: real UTC measured through the
+# FC's TIMESYNC and SYSTEM_TIME when the FC is up with a fix, and the DS3234's own
+# registers when it is not. The chip is never written, because that resets its
+# countdown chain and makes one second the wrong length.
+#
+# precision 1e-3 covers the chip path, where the 20 ms rollover poll is the error
+# term. The FC path is better than that and is not distinguished here; if that
+# matters later it wants two refids and a lock= decision, not a tighter number.
 refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 1e-3 poll 4
 
 # The buffered 1 Hz on GPIO24. lock=DS32 pairs each edge with an RTC sample: the RTC

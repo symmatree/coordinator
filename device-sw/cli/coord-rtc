@@ -78,6 +78,16 @@ SOCK_SAMPLE = "=qqdiiii"
 # cannot disagree. This default is only for a run by hand.
 CHRONY_SOCK = os.environ.get("COORD_RTC_CHRONY_SOCK", "/run/chrony.ds3234.sock")
 FEED_PERIOD_S = float(os.environ.get("COORD_RTC_FEED_PERIOD_S", "64"))
+
+# Where coordinator-mavlink publishes this box's offset from UTC, measured through the
+# FC: "offset_us rtt_us boot_us unix_us local_us". See write_fc_time() there for why
+# it takes TIMESYNC and SYSTEM_TIME together rather than SYSTEM_TIME alone.
+FC_TIME_FILE = os.environ.get("COORD_RTC_FC_TIME_FILE",
+                              "/var/lib/coordinator/ipc/fc_time")
+# A sample whose local reading is further than this from the current clock is not
+# usable. The file is on disk and outlives a reboot, so a previous flight's sample
+# would otherwise be applied as if it were now.
+FC_MAX_AGE_S = 300.0
 # How often to look while waiting for the chip's seconds register to change. The
 # chip has no sub-second register, so the rollover instant IS the only way to know
 # where inside a second we are; this bounds that error.
@@ -238,6 +248,27 @@ def cmd_enable_pps(rtc: Ds3234) -> int:
     return 0
 
 
+def fc_offset(path: str = FC_TIME_FILE, max_age_s: float = FC_MAX_AGE_S):
+    """This box's offset from UTC as the FC measured it, or None.
+
+    Returns (offset_s, rtt_s). The file is written by coordinator-mavlink and is the
+    better source whenever the FC is up with a fix: it is real UTC, where the chip is
+    only as right as the last time anything told it.
+
+    Rejected when stale, because the file is on disk and survives a reboot -- a sample
+    from a previous flight would otherwise be applied as if it were current.
+    """
+    try:
+        with open(path) as f:
+            parts = f.readline().split()
+        offset_us, rtt_us, _boot_us, _unix_us, local_us = (int(x) for x in parts[:5])
+    except (OSError, ValueError):
+        return None
+    if abs(time.time() - local_us / 1e6) > max_age_s:
+        return None
+    return offset_us / 1e6, rtt_us / 1e6
+
+
 def chip_boundary(rtc: Ds3234, deadline_s: float = 1.5) -> tuple[int, float] | None:
     """Watch the seconds register until it changes, and return (chip time, instant).
 
@@ -263,25 +294,39 @@ def chip_boundary(rtc: Ds3234, deadline_s: float = 1.5) -> tuple[int, float] | N
     return None
 
 
-def sock_sample(chip_s: int, at: float) -> bytes:
-    """One struct sock_sample. offset is true minus system, per chrony's comment."""
+def sock_sample_offset(offset: float, at: float) -> bytes:
+    """One struct sock_sample: at system time `at`, true time was `at + offset`."""
     return struct.pack(
         SOCK_SAMPLE, int(at), int((at % 1) * 1e6),
-        chip_s - at, 0, 0, 0, SOCK_MAGIC,
+        offset, 0, 0, 0, SOCK_MAGIC,
     )
 
 
+def sock_sample(chip_s: int, at: float) -> bytes:
+    """The chip's own reading as a sample. Kept separate so it is testable alone."""
+    return sock_sample_offset(chip_s - at, at)
+
+
 def cmd_feed(rtc: Ds3234) -> int:
-    """Serve the chip to chrony as a SOCK refclock until killed.
+    """Serve one chrony refclock until killed: the edge's second, best truth available.
 
-    The reason this exists rather than the kernel's rtc-ds3232: that driver would have
-    been chrony's source, and it also turns off the 1 Hz output (#11). So the source
-    half is ours too. Setting the system clock is NOT this -- chrony only knows about
-    sources, so a clock someone else set leaves it unsynchronised and discarding PPS.
+    ONE refclock, not two. chrony's PPS refclock can `lock=` to exactly one refid, so a
+    second seconds-source could disagree with the one the pulse is paired to and get
+    marked a falseticker. Instead this is the single source, and what varies is where
+    its offset came from:
 
-    pulse=0: we supply whole seconds, which is exactly what the PPS refclock cannot.
-    `lock=` on the PPS refclock pairs them -- this says which second, PPS says where
-    the second starts.
+      FC up with a fix -> real UTC, measured through TIMESYNC and SYSTEM_TIME together.
+      Otherwise        -> the chip's own registers, as right as the last thing that set
+                          them, which is all that is needed to pick the second.
+
+    THE CHIP IS NOT WRITTEN. Writing the seconds register resets the countdown chain
+    (datasheet p11), which steps the 1 Hz phase and makes one second the wrong length --
+    and the campods align capture by adjusting blanking against that signal. So
+    corrections go here, into what chrony is told, and never into the chip. The chip is
+    a stable oscillator and a cold-boot label.
+
+    Setting the system clock is NOT this. chrony only knows about sources, so a clock
+    someone else set leaves it unsynchronised and discarding every pulse.
     """
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     refused = 0
@@ -291,12 +336,19 @@ def cmd_feed(rtc: Ds3234) -> int:
             print("chip's seconds register did not change within 1.5 s", file=sys.stderr)
         else:
             chip_s, at = edge
-            msg = sock_sample(chip_s, at)
+            fc = fc_offset()
+            if fc is not None:
+                offset, _rtt = fc
+            else:
+                # pulse=0 either way: we are supplying whole seconds, which is exactly
+                # what the PPS refclock cannot.
+                offset = chip_s - at
+            msg = sock_sample_offset(offset, at)
             try:
                 sock.sendto(msg, CHRONY_SOCK)
             except (FileNotFoundError, ConnectionRefusedError):
                 # chrony not up yet, or not configured with this refclock. Not fatal:
-                # the chip is still right and the next sample will land.
+                # the next sample will land.
                 refused += 1
                 if refused in (1, 10) or refused % 100 == 0:
                     print(f"{CHRONY_SOCK} not accepting samples ({refused} so far)",
@@ -309,29 +361,36 @@ def set_system(ts: float) -> None:
     time.clock_settime(time.CLOCK_REALTIME, ts)
 
 
-def cmd_systohc(rtc: Ds3234) -> int:
-    """Set the chip from the system clock, landing the write on a second boundary.
+def set_chip(rtc: Ds3234, offset: float = 0.0) -> tuple[int, float, int]:
+    """Write the chip, landing on a second boundary of (system clock + offset).
 
     The chip has no sub-second register, so the fraction cannot be written as a
     value -- it is carried by WHEN the write lands, because writing the seconds
-    register resets the countdown chain. Hence the wait: the second comes from the
-    registers, the phase comes from the timing.
+    register resets the countdown chain. The second comes from the registers, the
+    phase comes from the timing.
 
-    Reports the achieved error rather than assuming it. The write is microseconds of
-    SPI; everything else is Python and scheduler jitter, and that is what this
-    measures.
+    `offset` is how far the true time is from this box's clock, which is zero for
+    `systohc` and the GPS correction when one is being applied. Returns the second
+    claimed, the error in seconds, and the status register after clearing OSF.
     """
-    target = math.floor(time.time()) + 2
+    target = math.floor(time.time() + offset) + 2
     regs = time_regs(time.gmtime(target))
-    delay = target - time.time() - SPIN_LEAD_S
+    # The boundary in terms of the clock this process can actually read.
+    fire = target - offset
+    delay = fire - time.time() - SPIN_LEAD_S
     if delay > 0:
         time.sleep(delay)
-    while time.time() < target:
+    while time.time() < fire:
         pass
     rtc.write_time(regs)
     landed = time.time()
-    sr = rtc.clear_osf()
-    err_ms = (landed - target) * 1000
+    return target, landed - fire, rtc.clear_osf()
+
+
+def cmd_systohc(rtc: Ds3234) -> int:
+    """Set the chip from the system clock. Reports the achieved error."""
+    target, err, sr = set_chip(rtc)
+    err_ms = err * 1000
     print(f"wrote    {time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(target))}Z")
     print(f"landed   {err_ms:+.1f} ms from the second it claims")
     print(f"status   0x{sr:02x}  osf={'set' if sr & SR_OSF else 'clear'}")
