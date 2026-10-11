@@ -13,10 +13,17 @@ twice: its **data** micro-USB to a hub port, and its **power** micro-USB to a 5 
 from the UBEC. The **PPS + signal-ground** pair from the
 [PPS distribution board](#pps-distribution-board) is a third connection.
 
-The hub is passive -- no supply of its own -- so anything it passes to a Zero comes from
-the Coordinator. The pigtail is there so that budget does not have to be enough. **Whether
-a Zero would run on back-power alone is untested**: they do draw through the hub, and the
-pigtail means it has never mattered.
+The hub is passive -- no supply of its own -- so anything it passes to a Zero comes out of
+the Coordinator's downstream USB budget, which on a Pi 4B is **1.2 A total across all four
+ports**. That figure is fixed and does not depend on how the Pi itself is powered; the Pi 5
+is the model that cuts its downstream allocation to 600 mA unless it detects a 5 A supply
+([power supplies](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#power-supply)).
+
+Four Zeros idling would plausibly fit inside 1.2 A; four capturing would not. Published
+Zero 2 W figures run roughly 120-250 mA idle against 300-580 mA under load, before the
+camera, and the measured payload rail here goes from 1.25 A at rest to 2.0 A once
+collection starts with a single pod fitted. So back-power alone would come up on the bench
+and brown out when capture began. The pigtail is what powers them; the hub carries data.
 
 ### Central Raspberry Pi (currently a 4B)
 
