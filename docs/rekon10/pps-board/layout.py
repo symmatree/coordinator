@@ -71,11 +71,9 @@ B("SQW", pin[("J2",5)], hole("O", 3))
 #     directly; each reaches the 3V3 bus instead, at its own lead pitch.
 pin[("R1",1)], pin[("R1",2)] = hole("O", 3), hole("O", 6)      # 3 holes, 7.62 mm
 pin[("C1",1)], pin[("C1",2)] = pin[("J2",6)], pin[("J2",7)]    # straight across JP1.6/7
-pin[("C5",1)], pin[("C5",2)] = hole("O", 2), hole("O", 1)      # one column out, same rails
 J("3V3", hole("O", 6), hole(V33BUS, 6))
 discretes = [("R1", "2.2k", hole("O", 3), hole("O", 6)),
-             ("C1", "0.1 uF", pin[("J2",6)], pin[("J2",7)]),
-             ("C5", "10 uF", hole("O", 2), hole("O", 1))]
+             ("C1", "0.1 uF", pin[("J2",6)], pin[("J2",7)])]
 
 chain("SQW",      [("U1",5), ("U1",2), ("U1",9), ("U1",12)])
 J("SQW", hole("O", 3), hole("C", 3))
@@ -138,6 +136,8 @@ for col in (GNDBUS, V33BUS):
     for h in hs: declared.setdefault(h, "GND" if col == GNDBUS else "3V3")
 
 PENDING = {"PPS_COORD","LED_DRV","SPI_CS","SPI_MOSI","SPI_MISO","SPI_SCLK",
+           # C5 is not fitted -- see the passives table
+           "C5_UNUSED",
            "T1_SPARE1","T1_SPARE2","U3_SPARE"}
 want = collections.defaultdict(set)
 for net, conns in NL.NETS.items():
@@ -215,4 +215,35 @@ nxt = doc.index("####", sec + 4)
 a = doc.index("```", sec); b = doc.index("```", doc.index("\n", a)) + 3
 assert a < nxt and b < nxt, "fenced block is not inside the layout section"
 open(DOC, "w").write(doc[:a] + block.rstrip("\n") + doc[b:])
+
+# ---- the by-net table, written into the same doc -----------------------------
+HDR = {"1":"hdr17","2":"hdr18","3":"hdr19","4":"hdr20","5":"hdr21","6":"hdr22","7":"hdr23","8":"hdr24"}
+NETORDER = ["+3V3","GND","SQW","SPI_CS","SPI_MOSI","SPI_MISO","SPI_SCLK","T2_FRONT","T2_REAR",
+            "PPS_COORD","PPS_FC","PPS_NE","PPS_NW","PPS_SE","PPS_SW",
+            "LED_DRV","LED_A","T1_SPARE1","T1_SPARE2","U3_SPARE"]
+NETNOTE = {
+  "+3V3": "from Coordinator header pin 17; RTC and all buffers share this rail",
+  "GND": "all OE pins tied low so every channel is enabled",
+  "SQW": "open-drain; R1 parallels the breakout's own 10k. Rising edge is RC, falling is driven",
+  "PPS_COORD": "returns on header pin 18 = BCM GPIO24",
+  "T1_SPARE1": "first-tier spare output, live, for a future second-tier package",
+  "T1_SPARE2": "first-tier spare output, live, for a future second-tier package",
+  "U3_SPARE": "rear distributor spare output",
+}
+def _label(r, p):
+    if r == "J1": return f"{r}.{p} ({HDR[p]})"
+    if r == "J2": return f"{r}.{p} ({JP1[int(p)]})"
+    if r.startswith("U"): return f"{r}.{p} ({AHC[int(p)]})"
+    return f"{r}.{p}"
+assert set(NETORDER) == set(NL.NETS), set(NETORDER) ^ set(NL.NETS)
+tbl = ["| net | pins | note |", "|-----|------|------|"]
+for net in NETORDER:
+    pins = ", ".join(f"`{_label(r,p)}`" for r, p in NL.NETS[net])
+    tbl.append(f"| **{net}** | {pins} | {NETNOTE.get(net,'')} |")
+doc = open(DOC).read()
+h = doc.index("#### Net list")
+ta = doc.index("| net | pins | note |", h)
+tb = doc.index("\n\n", ta)
+open(DOC, "w").write(doc[:ta] + "\n".join(tbl) + doc[tb:])
+print("wrote the net table into central-hub.md")
 print(f"wrote the layout block into central-hub.md ({len(bridges)} bridges, {len(jumpers)} jumpers)")
