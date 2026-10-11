@@ -8,24 +8,14 @@ Central power and data distribution, built around the **Coordinator** (Raspberry
 
 ### USB 2.0 hub (as built)
 
-A **passive 4-port USB 2.0 hub**. Its upstream port goes to the Coordinator; each Pi Zero's
-**data** micro-USB goes to a hub port. Every Zero then takes a **separate 5 V pigtail from
-the UBEC** into its **power** micro-USB.
+A **passive 4-port USB 2.0 hub**, upstream port to the Coordinator. Each Pi Zero connects
+twice: its **data** micro-USB to a hub port, and its **power** micro-USB to a 5 V pigtail
+from the UBEC. The **PPS + signal-ground** pair from the
+[PPS distribution board](#pps-distribution-board) is a third connection.
 
-**Why both, when the hub alone would enumerate them.** The Zeros do back-power through the
-hub -- the Coordinator feeds it -- but not with enough current to run reliably. The direct
-pigtail is what actually powers them; the hub carries data and whatever trickle it can.
-That also keeps the Zeros' draw off the Coordinator's downstream port budget, which a
-passive hub has no way to supply.
-
-This is the "data-only hub links + 5 V injected at each Zero" shape described as an option
-in earlier revisions of this doc, arrived at by using a passive hub rather than by
-modifying a powered one. The per-pod 5 V pigtails exist anyway (the OAK-D needs a barrel
-jack, so the distribution wiring is there regardless), and running them to each Zero turned
-out simpler than making one hub carry both.
-
-The **PPS + signal-ground** pair from the buffer board ([PPS distribution board](#pps-distribution-board))
-is a third connection per pod, independent of both.
+The hub is passive, so what reaches the Zeros through it is whatever the Coordinator's
+downstream port supplies -- enough to back-power them, not enough to run them. The pigtail
+is what powers them; the hub carries data.
 
 ### Central Raspberry Pi (currently a 4B)
 
