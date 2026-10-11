@@ -181,7 +181,8 @@ out.append("")
 last = None
 for net, hs in bridges:
     if last and net != last: out.append("")
-    owner = next((f" ({r}.{p} {AHC[p]})" for (r,p),h in pin.items() if h == hs[0]), "")
+    def _pname(r, p): return JP1[p] if r == "J2" else AHC[p]
+    owner = next((f" ({r}.{p} {_pname(r,p)})" for (r,p),h in pin.items() if h == hs[0]), "")
     out.append(f"{hs[0]}{owner} / " + " / ".join(hs[1:]) + f" | {net}")
     last = net
 out.append("")
