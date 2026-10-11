@@ -82,76 +82,6 @@ against the 12 planned (10 Zeros + Coordinator + FC). The Coordinator takes a bu
 every other consumer rather than the raw SQW line, so it sees the same electrical and timing path
 as the pods.
 
-#### Which edge is the second
-
-**The falling edge is the top of the second, and it is also the driven one** -- the first half
-inferred, the second from the part. Datasheet page 11
-([`attachments/DS3234.pdf`](attachments/DS3234.pdf) in fables):
-
-> The countdown chain is reset whenever the seconds register is written. [...] The 1Hz
-> square-wave output, if enabled, transitions high 500ms after the seconds data transfer.
-
-The seconds register increments at write+*n* and the output goes high at write+0.5+*n*, so the
-rising edge sits on the **half** second. Concluding that the falling edge is therefore ON the
-second needs the output to be 50% duty, and **the datasheet does not state that anywhere.**
-The strong reason to believe it: the 1 Hz is a tap off the same binary divider as the seconds
-counter -- 1 Hz, 1.024 kHz, 4.096 kHz and 8.192 kHz are all taps off the 32.768 kHz crystal --
-so it is symmetric by construction, high from +0.5 to +1.0 with the falling edge on the second.
-That is an argument from how the part must work rather than a line in the datasheet, and
-**it is not yet measured.**
-
-Two ways to settle it on the bench, neither needing a scope: poll the seconds register over
-SPI and compare the increment instant against the PPS timestamps for each edge, which gives
-the answer directly; or add `capture_clear=1` to the overlay and read the assert-to-clear
-spacing, which gives the duty cycle.
-
-The second half does come from the part: `INT/SQW` is open-drain, so the falling edge is
-actively driven and the rising one is the pull-up's RC curve.
-
-Consumers must therefore be told to timestamp the falling edge. On Linux that is
-`assert_falling_edge=1` on the `pps-gpio` overlay; `pps-gpio` defaults to the rising edge, and
-a device configured without it reports clean 1 Hz pulses that are half a second from the
-second the chip thinks it is, timed off the slow edge. Measured on the coordinator 2026-10-11:
-`ppstest` reported every event as an `assert` with `clear 0.000000000`, which is the default
-taking the rising edge.
-
-**R1 does not touch the timestamped edge at all**, which closes the question rather than
-leaving it open. The '125 is non-inverting with a push-pull output: SQW falls, the '125's input
-falls, its output falls driven hard into a short cable. The slope the Pi sees is set by the
-buffer's output driver. R1 shapes only the rising edge at the '125's *input*, and exists to
-stop the buffer dwelling in its linear region on that slow edge -- which would produce
-spurious transitions and corrupt the whole waveform, falling edge included.
-
-So the two concerns separate cleanly: the 100 ns/V input-transition spec still governs the
-rising edge because the part has to behave on both, and 2.2k does not want revisiting. The
-useful consequence is that **the jitter eventually measured is the part plus the buffer, with
-no hardware term anyone can tune.**
-
-**And writing the chip moves that edge.** The first sentence of the same passage: the countdown
-chain resets on a seconds-register write, so correcting the chip's time both steps the phase
-and makes one second the wrong length. The campods align capture by adjusting the camera
-blanking interval against this signal, so a second of the wrong length disturbs exactly what
-that alignment holds.
-
-The constraint is therefore a **window, not a prohibition**: the chip may be written on the
-ground before any capture starts, where the disturbed second lands with nothing aligned to it.
-Setting the epoch on a fresh cell is one instance. Clock corrections during operation go to
-chrony instead -- [coordinator#11](https://github.com/symmatree/coordinator/issues/11).
-
-**It is deliberately a tick source, not a time source.** Written once and then left alone, the
-chip's registers go on reading whatever epoch they were given, and with no epoch at all it
-reads `2000-01-01` with the oscillator-stop flag set. That is the intended state, not a fault.
-Anyone finding OSF set and a year-2000 date and "fixing" it moves the edge and breaks the one
-thing the part is here for.
-
-Rate trimming without a phase step is possible through the aging-offset register (`10h`,
-datasheet page 16) -- but one LSB is worth **0.1 ppm at +25 C and 0.8 ppm at +85 C**, an eight
-fold spread, and the register shifts the whole frequency-vs-temperature curve. A trim derived
-on a warm bench is wrong on a cold climb. It also does not obviously solve anything here: the
-tick's rate error is common-mode across every consumer, since they all take the same wire, so
-it cancels for the inter-box agreement the part exists to provide, and what it does not cancel
-against is UTC -- which arrives from GNSS through the FC and is chrony's job.
-
 **The tier exists because SQW drives four inputs far more easily than twelve.** SQW is the DS3234's
 open-drain `INT/SQW` pin, so its rising edge is not driven -- it is the RC of the pull-up against
 whatever input capacitance hangs on the node, and AHC125 specifies a maximum input transition rate
@@ -478,7 +408,7 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 | header pin | BCM | signal | to |
 |------------|-----|--------|-----|
 | 17 | -- | 3V3 | board +3V3 bus (RTC + all buffers) |
-| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW. Overlay line should be `dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1` (**the image currently omits `assert_falling_edge`** -- see "Which edge is the second") |
+| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW. Overlay line is `dtoverlay=pps-gpio,gpiopin=24` |
 | 19 | GPIO10 | MOSI | `JP1.2` |
 | 20 | -- | GND | board GND bus |
 | 21 | GPIO9 | MISO | `JP1.3` |
@@ -486,9 +416,7 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 | 23 | GPIO11 | SCLK | `JP1.4` |
 | 24 | GPIO8 | CE0 | `JP1.1` (SS) |
 
-`dtparam=spi=on` and the `pps-gpio` overlay are in the coordinator image as of
-`coordinator-pi-20261011.img`; `assert_falling_edge=1` is not yet, and the reason is in
-"Which edge is the second" above.
+`dtparam=spi=on` is not currently set by the coordinator Ansible role; only the campod role sets it.
 
 On the campod end, PPS lands on **header 13/14 (GPIO27 + GND)** as its own 2x1 rather than in the
 accelerometer shell, so the two cables can be disconnected independently. BCM 9-27 come up pulled down, so an absent or unpowered distribution
