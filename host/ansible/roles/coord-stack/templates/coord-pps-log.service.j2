@@ -1,23 +1,24 @@
 [Unit]
-Description=Record PPS edge arrivals into this boot's session (coordinator#11)
+Description=Record PPS edge arrivals to the journal (coordinator#11)
 Documentation=https://github.com/symmatree/coordinator/issues/11
 
-# pps_gpio is a module in these images, so /dev/pps0 is created by udev.
+# pps_gpio is a module in these images, so /dev/pps0 is created by udev. A Condition
+# would be worse than this: conditions are evaluated at unit start and a unit skipped
+# by one reports SUCCESS, so losing the race would be a silent no-op for the whole boot
+# rather than something visible.
 Wants=dev-pps0.device
 After=dev-pps0.device
 
-# No PPS leg is wired to any campod yet, so on those the device genuinely is not there
-# and a skipped unit is the honest state -- Restart=always without this would have four
-# pods retrying and logging every interval forever. On the coordinator a missing device
-# would mean PPS is not working at all, which chrony says loudly elsewhere.
-ConditionPathExists=/dev/pps0
-# The session directory lives under the state root, which is an fstab mount.
-After=local-fs.target
-
 [Service]
-# execs ppstest, so what stays resident is a few hundred KB of C rather than python.
-ExecStart=/usr/local/bin/coord-pps-log
-Environment=COORD_PPS_CAPTURES_DIR={{ coord_state_root }}/captures
+# ppstest straight to the journal, with no wrapper and no file.
+#
+# The journal rather than a file in the session, for durability: a plain redirect leaves
+# the lines in dirty page cache for up to dirty_expire_centisecs (~30 s), which is the
+# mechanism behind the 0-byte images in docs/power-loss-filesystem.md. journald here is
+# bounded at SyncIntervalSec=10s by roles/power-resilience, fleet-wide, with no new
+# code -- and `coord-sessions package` already collects `journalctl -b <session>` into
+# the bundle, so the edges travel with the session they belong to anyway.
+ExecStart=/usr/bin/ppstest /dev/pps0
 Restart=always
 RestartSec=30
 

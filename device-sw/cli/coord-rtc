@@ -302,6 +302,21 @@ def should_set_chip(no_epoch: bool, offset: float | None, is_armed: bool) -> boo
       chip has no epoch-> always, there is no phase worth protecting yet
       otherwise        -> only past the debounce, so it is about once per bench
                           session during pre-arm rather than repeatedly
+
+    KNOWN GAP, raised by os-and-driver: "disarmed" does not mean "nothing is using the
+    tick". #42 is disarmed bench capture, which is exactly someone using the signal
+    with the vehicle on a bench. The gate that would cover it is the capture intent
+    pod-link reconciles, which lives on the bus rather than in anything this reads.
+    Left as FC arm state deliberately rather than half-gated against a file that may
+    not exist, because the wrong default either blocks every correction or permits one
+    mid-capture.
+
+    The debounce is a policy choice, not a constraint. chrony does not force a cadence:
+    its 0.4 s PPS_LOCK_LIMIT compares the pulse against the locked reference, and the
+    reference IS this chip, so the chip's error against UTC never enters that
+    comparison and could be a year without chrony noticing. What the cadence is sized
+    for is Seth's "the typical pre-arm period has one such reset" -- 100 ms is ~14 h of
+    2 ppm drift, so a flying day gets one correction before arming.
     """
     if is_armed or offset is None:
         return False
