@@ -18,6 +18,33 @@ def px(h):
     c, r = h.split("-")
     return MX + COLS.index(c)*S, MY + (ROWS-int(r))*S
 
+
+import math as _mm
+def _glyph(ref, a, b):
+    """Schematic symbol for a two-lead part, along the a->b lead line.
+    For a diode a is the anode and b the cathode, so the bar lands at b."""
+    xa, ya = px(a); xb, yb = px(b)
+    L = _mm.hypot(xb - xa, yb - ya) or 1
+    ux, uy = (xb - xa) / L, (yb - ya) / L
+    nx, ny = -uy, ux
+    mx, my = (xa + xb) / 2, (ya + yb) / 2
+    def pt(al, ac):
+        return (mx + ux * al + nx * ac, my + uy * al + ny * ac)
+    def line(p, q, w):
+        return f'<line x1="{p[0]:.1f}" y1="{p[1]:.1f}" x2="{q[0]:.1f}" y2="{q[1]:.1f}" stroke="#6b5223" stroke-width="{w}"/>'
+    out = [line((xa, ya), (xb, yb), 2)]
+    if ref.startswith("R"):
+        pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in (pt(-9,-5), pt(9,-5), pt(9,5), pt(-9,5)))
+        out.append(f'<polygon points="{pts}" fill="#f0e6cc" stroke="#6b5223" stroke-width="1.8"/>')
+    elif ref.startswith("C"):
+        for s in (-1, 1):
+            out.append(line(pt(s*2.4, -8), pt(s*2.4, 8), 2.8))
+    elif ref.startswith("D"):
+        tri = " ".join(f"{x:.1f},{y:.1f}" for x, y in (pt(-5,-7), pt(-5,7), pt(5,0)))
+        out.append(f'<polygon points="{tri}" fill="#d9a441" stroke="#6b5223" stroke-width="1.6"/>')
+        out.append(line(pt(5,-7), pt(5,7), 2.8))
+    return out, (mx, my)
+
 o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="ui-monospace,Menlo,monospace">']
 o.append(f'<rect width="{W}" height="{H}" fill="#fbf8f2"/>')
 o.append(f'<rect x="{MX-S/2}" y="{MY-S/2}" width="{(len(COLS)-1)*S+S}" height="{(ROWS-1)*S+S}" fill="#f3eee3" stroke="#d8cfbd"/>')
@@ -60,11 +87,9 @@ for ref,(r1,r8) in P.CHIPS.items():
 
 # caps
 for ref, p, n in P.caps:
-    xa, ya = px(p); xb, yb = px(n)
-    o.append(f'<line x1="{xa}" y1="{ya}" x2="{xb}" y2="{yb}" stroke="#8c6d3f" stroke-width="2.5"/>')
-    mx_, my_ = (xa+xb)/2, (ya+yb)/2
-    o.append(f'<ellipse cx="{mx_}" cy="{my_}" rx="11" ry="9" fill="#d9a441" stroke="#8c6d3f" stroke-width="1.5"/>')
-    o.append(f'<text x="{mx_+16}" y="{my_+4}" font-size="11" fill="#6b5223">0.1uF</text>')
+    g, (mx_, my_) = _glyph("C", p, n)
+    o.extend(g)
+    o.append(f'<text x="{mx_+14}" y="{my_+4}" font-size="10" fill="#6b5223">0.1uF</text>')
 
 # bridges: short link between adjacent holes
 for net, hs in P.bridges:
@@ -109,16 +134,12 @@ for i, (net, a, b) in enumerate(P.jumpers):
     for x,y in ((xa,ya),(xb,yb)):
         o.append(f'<circle cx="{x}" cy="{y}" r="3.4" fill="{col}"/>')
 
-# discrete R and C bodies
+
+# discrete parts, as schematic symbols
 for _ref, _val, _a, _b in P.discretes:
-    _xa, _ya = px(_a); _xb, _yb = px(_b)
-    o.append(f'<line x1="{_xa}" y1="{_ya}" x2="{_xb}" y2="{_yb}" stroke="#8c6d3f" stroke-width="2.5"/>')
-    _mx, _my = (_xa+_xb)/2, (_ya+_yb)/2
-    if _ref.startswith("R"):
-        o.append(f'<rect x="{_mx-7}" y="{_my-13}" width="14" height="26" rx="3" fill="#d6c7a1" stroke="#8c6d3f" stroke-width="1.5"/>')
-    else:
-        o.append(f'<ellipse cx="{_mx}" cy="{_my}" rx="11" ry="9" fill="#d9a441" stroke="#8c6d3f" stroke-width="1.5"/>')
-    o.append(f'<text x="{_mx+15}" y="{_my+4}" font-size="10" fill="#6b5223">{_ref} {_val}</text>')
+    _g, (_mx, _my) = _glyph(_ref, _a, _b)
+    o.extend(_g)
+    o.append(f'<text x="{_mx+14}" y="{_my-10}" font-size="10" fill="#6b5223">{_ref} {_val}</text>')
 
 # DS3234 breakout -- header in column P, board hanging off to the right
 _x7, _y7 = px(P.pin[("J2",7)]); _x1, _y1 = px(P.pin[("J2",1)])

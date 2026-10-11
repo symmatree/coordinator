@@ -19,9 +19,12 @@ prose around it in `central-hub.md` is maintained by hand and is not touched.
 
 Thick short segments are bridges, thin lines are jumpers, colour is the net. Runs that
 share a column or a row are bowed apart so they do not overprint -- the bow is drawing,
-not routing. Gold ellipses are the 0.1 uF caps, violet rectangles the offboard pigtail
-footprints, red crosses the deliberate no-connects, violet dashes the nets with no
-landing yet.
+not routing.
+
+Two-lead parts are drawn as their schematic symbols along the line between their two
+holes: a box for a resistor, two plates for a capacitor, a triangle and bar for the LED
+with the bar at the cathode. Violet rectangles are the offboard pigtail footprints, red
+crosses the no-connects, violet dashes the nets with no landing yet.
 
 ## The schematic is not generated from here
 
