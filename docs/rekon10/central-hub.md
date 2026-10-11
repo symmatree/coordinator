@@ -132,6 +132,16 @@ edge together and steps everyone at the same instant by the same amount. Common-
 divergence. The window is disarmed-on-the-ground, where nothing is aligned to the tick;
 software policy is on [coordinator#11](https://github.com/symmatree/coordinator/issues/11).
 
+**What the output does during that write is undefined.** The datasheet gives the state
+500 ms after the seconds transfer and says nothing about the interval between. So depending
+on where in its cycle the write lands, the output can produce a **runt pulse** -- a high or
+low period far shorter than 500 ms -- or **no transition at all** where one was due, or
+nothing unusual. All three are electrically ordinary and the buffer passes any of them
+faithfully; the consequence is entirely at the consumers, where a runt reads as a normal
+edge and a missing one as a gap. Not worth designing around, because the disturbance is the
+size of the phase correction being applied and no landing instant avoids it. Worth writing
+down so an odd interval in a log next to a correction is recognised rather than chased.
+
 **Rate trimming is possible without a discontinuity, with a caveat.** The aging-offset
 register (`10h/90h`, two's complement, p. 16) adds or removes oscillator capacitance at the
 next temperature conversion or on a manual `CONV` -- a rate change, no phase step. But its
@@ -209,6 +219,13 @@ therefore cannot grow.
 
 SQW and one buffer output come out to test points. Every edge-rate figure here is computed from
 worst-case datasheet capacitance, not measured.
+
+**Which legs are actually populated is not recorded here.** This section is the design --
+five buffered outputs and what each drives. Whether a given leg has a wire on it is
+deployment state, it changes when somebody solders rather than when the design does, and it
+is held in ansible as `coord_pps_wired`, which is read on every converge. Deliberately one
+answer in one place: the overlay presents `/dev/pps0` on an unconnected pin, so a populated
+leg is not detectable and a stale second copy here would be believed.
 
 #### Net list
 
