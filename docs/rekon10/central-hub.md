@@ -210,9 +210,11 @@ specifically, which is not interchangeable with a general ground run.
 
 **Column plan.** `A` is the GND bus and `M` the 3V3 bus, both bare solid-core wire threaded
 through and tacked at each hole they cross, so the joints are parallel taps off a continuous
-conductor rather than a series chain. `K` and `L` are free for test points. Still unplaced:
-`J1` (the Coordinator's 2x4), `R1` (the SQW pull-up), `R2` and the LED, and the `C1` / `C5`
-bypass and bulk -- so `PPS_COORD`, `LED_DRV` and the four SPI lines have no landings yet.
+conductor rather than a series chain. `K` and `L` are free for test points. `R1` and `C1` sit at the breakout
+header in columns `O` and `N`; SQW and VCC are adjacent header pins, so neither part can
+span its two nets directly and each reaches the 3V3 bus instead, at its own lead pitch.
+Still unplaced: `J1` (the Coordinator's 2x4), `R2` and the LED, and the `C5` bulk -- so
+`PPS_COORD`, `LED_DRV` and the four SPI lines have no landings yet.
 
 **Decoupling.** Each cap sits against pin 14 at `H-nn`, its lower leg stepping one column
 out to `I` to clear the row below, and its ground jumper running to pin 7's own tap. That is
@@ -234,6 +236,8 @@ J2 (DS3234 breakout JP1): pin 7 GND at P-01 up to pin 1 SS at P-07
 0.1 uF (U1): H-07 / I-05
 0.1 uF (U2): H-15 / I-13
 0.1 uF (U3): H-23 / I-21
+R1 (2.2k): O-03 / O-06
+C1 (0.1 uF): N-03 / N-01
 
 Offboard pigtails (2-pin, signal / ground):
 
@@ -281,7 +285,7 @@ G-22 (U3.13 4OE) / H-22 | GND
 
 G-23 (U3.14 VCC) / H-23 / I-23 | 3V3
 
-P-01 (J2.7 GND) / O-01 | GND
+P-01 (J2.7 GND) / O-01 / N-01 | GND
 
 P-02 (J2.6 VCC) / O-02 | 3V3
 
@@ -348,6 +352,8 @@ I-21 / B-17 | GND (cap)
 O-01 / A-01 | GND
 
 O-02 / M-02 | 3V3
+O-06 / M-06 | 3V3
+N-03 / M-03 | 3V3
 
 C-03 / C-06 | SQW
 B-06 / H-02 | SQW
