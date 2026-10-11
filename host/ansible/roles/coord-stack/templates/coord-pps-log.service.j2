@@ -6,7 +6,10 @@ Documentation=https://github.com/symmatree/coordinator/issues/11
 # would be worse than this: conditions are evaluated at unit start and a unit skipped
 # by one reports SUCCESS, so losing the race would be a silent no-op for the whole boot
 # rather than something visible.
-Wants=dev-pps0.device
+# BindsTo rather than Wants: this unit's entire existence is one device, so if the
+# device goes away the service should stop rather than have Restart=always cycle every
+# 30 s against something that is not coming back.
+BindsTo=dev-pps0.device
 After=dev-pps0.device
 
 [Service]
@@ -14,10 +17,16 @@ After=dev-pps0.device
 #
 # The journal rather than a file in the session, for durability: a plain redirect leaves
 # the lines in dirty page cache for up to dirty_expire_centisecs (~30 s), which is the
-# mechanism behind the 0-byte images in docs/power-loss-filesystem.md. journald here is
-# bounded at SyncIntervalSec=10s by roles/power-resilience, fleet-wide, with no new
-# code -- and `coord-sessions package` already collects `journalctl -b <session>` into
-# the bundle, so the edges travel with the session they belong to anyway.
+# mechanism behind the 0-byte images in docs/power-loss-filesystem.md. journald syncs
+# every 10 s (roles/power-resilience), with no new code.
+#
+# ITS OWN NAMESPACE, because one line per second is ~20-25 MB/day and the main journal
+# is capped at 200M. Sharing would let a signal that is not a fault crowd out the
+# post-bounce forensic trail the journal was made persistent FOR (#100) in a week or
+# so, and that is the opposite of the point. A namespace gets its own file and its own
+# cap, so it cannot. The cost is that `journalctl -b` no longer sees it, which
+# coord-sessions handles explicitly.
+LogNamespace=pps
 ExecStart=/usr/bin/ppstest /dev/pps0
 Restart=always
 RestartSec=30

@@ -313,6 +313,30 @@ try:
 finally:
     shutil.rmtree(root, ignore_errors=True)
 
+# The PPS edge journal is its own namespace, so it is fetched separately and its
+# presence is stated either way -- same reason as the main journal: an absent member
+# says nothing about whether it was wanted. Most nodes have no buffer leg soldered, so
+# absent is the common case and has to be distinguishable from a broken selector.
+_calls = []
+_real_run = cs.subprocess.run
+
+
+def _fake_run(cmd, **kw):
+    _calls.append(cmd)
+    return _real_run(["true"], **kw)
+
+
+cs.subprocess.run = _fake_run
+cs.journal_for("11111111-aaaa-bbbb-cccc-dddddddddddd")
+cs.journal_for("11111111-aaaa-bbbb-cccc-dddddddddddd", namespace="pps")
+cs.subprocess.run = _real_run
+check("the main journal is fetched without a namespace",
+      "--namespace=pps" not in _calls[0], str(_calls[0]))
+check("the pps journal asks for its namespace by name",
+      "--namespace=pps" in _calls[1], str(_calls[1]))
+check("both strip the dashes from the session id",
+      all("11111111aaaabbbbccccdddddddddddd" in c for c in _calls), str(_calls))
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)
