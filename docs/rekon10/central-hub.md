@@ -6,12 +6,39 @@ Central power and data distribution, built around the **Coordinator** (Raspberry
 
 ## Components
 
-### USB 2.0 hub (as built)
+### Coordinator Rpi
+
+Raspberry pi 4B.
+
+* Connects to FC for Mavlink.
+* Bridges pi zeros over usb gadget network.
+* Serves time, MQTT, other coordination to zeroes.
+
+Connections:
+
+* Power from payload 5V rail via usb-c pigtail
+* Data from OAK-D into USB (OAK-D supports 2.0)
+* UART to FC
+* Hub's USB-A upstream cable
+
+### 5V supply and distribution
+
+Castle Creations CC BEC 2.0
+
+* Has its own capacitor wired to its input side.
+* Peak current 14A
+* For 4.75-7.0V output: 9A continuous
+* Default setting 5.25V
+
+Via WAGO or lever-nut multi-connector busses, daisy-chained as needed. Directly feeds pigtails for micro-usb,
+usb-c, barrel jack, etc.
+
+### USB 2.0 hub
 
 A **passive 4-port USB 2.0 hub**, upstream port to the Coordinator. Each Pi Zero connects
 twice: its **data** micro-USB to a hub port, and its **power** micro-USB to a 5 V pigtail
 from the UBEC. The **PPS + signal-ground** pair from the
-[PPS distribution board](#pps-distribution-board) is a third connection.
+[PPS](#pps) is a third connection.
 
 The hub is passive -- no supply of its own -- so anything it passes to a Zero comes out of
 the Coordinator's downstream USB budget, which on a Pi 4B is **1.2 A total across all four
@@ -40,75 +67,9 @@ With the full build -- the horizontal ring of eight plus the upward pair, **ten 
 ([campod.md](../campod.md)) -- there would be three such hubs and three more supplies to
 feed, while the UBEC is already rated for the whole payload.
 
-### Central Raspberry Pi (currently a 4B)
+### PPS
 
-Call this the central or MAVLink Pi so we don't freak everybody out if we go back to a Raspberry Pi 5 at some point.
-
-* Runs VIO along with the OAK-D (has internal IMU)
-* Bridges pi zeros to each other (virtual network adapters over USB)
-* Serves NTP to pi zeros; disciplines the shared **DS3234** from GNSS/MAVLink time when available
-* Listens to MAVLink to FC for pose and time hints
-* Sends position estimates over MAVLink to FC
-* Sends depth field-based obstacle-distance messages to the FC
-
-### 10A 5V UBEC
-
-Has its own capacitor wired to its input side.
-
-Hardware source: Castle Creations CC BEC 2.0 from ReadyMadeRC.
-
-* Peak current 14A
-* For 4.75-7.0V output: 9A continuous
-* Default setting 5.25V
-
-TODO: I'd like to get voltage off its output and current from the input. The matek sensor is ridiculous since we draw maybe 2A on the upstream side, we need like a 5A sensor. Gemini says a unidirectional ACS724 with 5A or 10A should be perfect.
-
-### PPS distribution board
-
-Uses a buffer IC in DIP package to remove load on the [**DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW** line (1 Hz).
-
-- **Camera pod connectors:** 2-wire JST SM (20 AWG): signal ground, 3.3 V PPS (from buffer). JST SM housings must be **zip-tied/anchored to the frame** to prevent pendulum vibration from fatiguing wires.
-- **Upward pair (NNW + NNE):** Two additional PPS outputs needed for the early vertical-ring cameras ([campod.md](../campod.md), *Upward-looking cameras*). Counting the Coordinator and the FC, the full build is **12 buffered lines**; the two-tier scheme in [PPS signal buffering](#pps-signal-buffering) reaches 16 with four quad packages, and 32 if a second-tier package is swapped for an octal.
-- **Hub ports:** The upward pair gets the **first vertical-ring USB hub** -- a small 4-port unit with two ports used now and two spare for future vertical-ring cameras. This hub's upstream port connects to a free USB 2.0 port on the Coordinator.
-
-### 5V distribution board
-
-Sends around 5V. Hopefully the ElectroCookie traces carry power well, but we don't need a ton.
-
-Board reference: ElectroCookie snappable stripboard from Amazon.
-
----
-
-## Connections (end-to-end endpoints)
-
-### Pi 4B
-
-* Power from payload 5V rail (stripboard) via usb-c pigtail (20 AWG, Amazon)
-* Data from OAK-D into USB 3.0
-* Data from TBS Lucid FC USB port (confirm 2.0 or 3.0)
-* Data from USB hub into USB 2.0 port (hub's USB-A upstream port)
-
-## Stripboard 5V distribution
-
-* 5V in from UBEC
-* Barrel jack to OAK-D (dimensions in datasheet, pigtails acquired)
-* One 5 V pigtail per Pi Zero, into the Zero's **power** micro-USB (the hub is passive and
-  carries data only -- see [USB 2.0 hub](#usb-20-hub-as-built))
-* Power to rpi 4b (usb-c pigtail, 20 AWG)
-* UBEC-output-sensing voltage to FC 2nd-voltage pin
-
-## Stripboard PPS distribution
-
-**One board, at the front.** After the buffer each output is a point-to-point run with its
-own push-pull driver, so nothing is shared between consumers and the board does not have to
-sit near them.
-
-* **PPS-in** from **DS3234 SQW** (one RTC breakout, mounted on this board -- see [PPS signal buffering](#pps-signal-buffering) for why it cannot sit at the end of a cable; SPI to Coordinator for discipline from GNSS when available)
-* 2-wire PPS (after buffer) and signal ground to each pi zero
-* Connector reference: VISDOLL JST SM connector kits (Amazon)
-
-
-### PPS signal buffering
+Timing signal to coordinate campod and coordinator clocks precisely.
 
 **Buffer:** 3.3 V quad 3-state buffer, **SN74AHC125N** (PDIP-14), powered from the Coordinator's
 3.3 V rail. **AHC, not AHCT** -- the AHCT part shares the package and pinout but is specified for
@@ -443,24 +404,8 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 | 23 | GPIO11 | SCLK | `JP1.4` |
 | 24 | GPIO8 | CE0 | `JP1.1` (SS) |
 
-Pins 25-26 (the campod block's second ground and CE1) are not in this harness: one return and one
-chip select is all this board needs.
-
 `dtparam=spi=on` is not currently set by the coordinator Ansible role; only the campod role sets it.
 
 On the campod end, PPS lands on **header 13/14 (GPIO27 + GND)** as its own 2x1 rather than in the
 accelerometer shell, so the two cables can be disconnected independently. BCM 9-27 come up pulled down, so an absent or unpowered distribution
 board reads as "no pulses" rather than a floating line inventing edges.
-
-### USB hub
-
-* Passive -- **no** rail of its own; it draws from the Coordinator's port
-* Upstream port to central bridge Pi's USB 2.0
-* Downstream ports to each Zero's **data** micro-USB; the Zeros' power comes from the
-  5 V rail directly ([USB 2.0 hub](#usb-20-hub-as-built))
-
-### UBEC
-
-* Power input: XT60 to upstream splitter
-* Power output: 5V to stripboard rails for distribution
-* Castle Link USB Programming Kit V3 (ReadyMadeRC) is the service/programming tool for CC BEC configuration
