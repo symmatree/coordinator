@@ -23,7 +23,20 @@ Four Zeros idling would plausibly fit inside 1.2 A; four capturing would not. Pu
 Zero 2 W figures run roughly 120-250 mA idle against 300-580 mA under load, before the
 camera, and the measured payload rail here goes from 1.25 A at rest to 2.0 A once
 collection starts with a single pod fitted. So back-power alone would come up on the bench
-and brown out when capture began. The pigtail is what powers them; the hub carries data.
+and brown out when capture began.
+
+**The OAK-D sits on that same budget.** With its barrel jack unpowered it falls back to USB
+power, so the Coordinator's 1.2 A would have to cover the camera and every Zero together.
+Those pigtails are not a convenience -- without power on them the payload does not run.
+
+A powered hub would carry the load, at the cost of one more power-rated component with the
+whole payload concentrated through it. Taking each device off the UBEC spreads the same
+current across pigtails that have to exist anyway for the barrel jacks.
+
+Both of those get worse with the full build. The horizontal ring of eight plus the upward
+pair is **ten Zeros** ([campod.md](../campod.md)), which is further out of reach of 1.2 A
+and more current through whatever single component would carry it. The UBEC is rated for
+the whole payload already.
 
 ### Central Raspberry Pi (currently a 4B)
 
