@@ -51,3 +51,9 @@ coord_repo_version: main
 # remove auto-reboot precisely because it ran locally, where ansible refuses to
 # reboot its own control node.
 allow_reboot: true
+
+# Whether a PPS buffer leg is soldered to this device (coordinator#11). Not detectable:
+# the pps-gpio overlay presents /dev/pps0 on an unconnected pin, so the device exists
+# either way. Only the first tier is built, feeding the coordinator; set this true per
+# host as the fan-out reaches the pods.
+coord_pps_wired: "{{ device_role == 'coordinator' }}"
