@@ -27,7 +27,7 @@ and brown out when capture began.
 
 **The OAK-D sits on that same budget.** With its barrel jack unpowered it falls back to USB
 power, so the Coordinator's 1.2 A would have to cover the camera and every Zero together.
-Those pigtails are not a convenience -- without power on them the payload does not run.
+Without power on the pigtails the payload does not run.
 
 A powered hub would also carry the load -- its own supply is 5 V at 2.5 A, enough for four
 Zeros. It is not that the hub concentrates current where the pigtails do not: the UBEC and
@@ -99,11 +99,9 @@ Board reference: ElectroCookie snappable stripboard from Amazon.
 
 ## Stripboard PPS distribution
 
-**One board, at the front.** The earlier plan was one per macro-pod of 4 Zeros, sited next
-to that pod's USB hub; that was to keep the fan-out near its consumers. It is unnecessary
-after the buffer: each output is a point-to-point run with its own push-pull driver, so
-nothing is shared between consumers and distance stops being a shared-node problem -- see
-[PPS signal buffering](#pps-signal-buffering).
+**One board, at the front.** After the buffer each output is a point-to-point run with its
+own push-pull driver, so nothing is shared between consumers and the board does not have to
+sit near them.
 
 * **PPS-in** from **DS3234 SQW** (one RTC breakout, mounted on this board -- see [PPS signal buffering](#pps-signal-buffering) for why it cannot sit at the end of a cable; SPI to Coordinator for discipline from GNSS when available)
 * 2-wire PPS (after buffer) and signal ground to each pi zero
@@ -194,9 +192,9 @@ therefore cannot grow.
 |-----|-------|---------|-----|
 | R_pu | **2.2k** | `JP1.5` - `JP1.6` | in parallel with the breakout's own 10k; sets the SQW rise to ~90 ns/V at 1.6 mA of a 3 mA sink budget |
 | C_rtc | **0.1 uF** | `JP1.6` - `JP1.7` | the DS3234 bypass the datasheet asks for; the board ships with only 22 pF |
-| C_U1..U3 | **0.1 uF** each | pin 14 - pin 7 of each package | four channels slewing together pull 160-260 mA for a few ns; bulk cannot substitute, because the inductance between bulk and package is what is being bypassed |
+| C_U1..U3 | **0.1 uF** each | pin 14 - pin 7 of each package | four channels slewing together pull 160-260 mA for a few ns, through whatever inductance lies between the package and the next capacitor out |
 | C_bulk | **10 uF** | +3V3 - GND at the board entry | |
-| R_led | **1k** | U3 pin 8 - LED anode | ~1.4 mA, inside the 4 mA output rating. Optional, but `INTCN` defaults to interrupt mode, so "powered but nobody configured the RTC" otherwise presents as every line sitting steady at 3.3 V |
+| R_led | **1k** | U3 pin 8 - LED anode | ~1.4 mA, inside the 4 mA output rating. `INTCN` defaults to interrupt mode, so without the LED a board that nobody has configured presents as every line sitting steady at 3.3 V |
 
 **Not on this board, fitted at the destination end:**
 
@@ -205,16 +203,13 @@ therefore cannot grow.
 | 1k series in the signal line | campods and FC | limits clamp current to ~3 mA against a +/-20 mA input clamp rating if that destination is unpowered while the buffers are live. **Not** on the Coordinator line -- the buffers are powered from that Pi, so it cannot be the unpowered one |
 | 100 ohm series in the signal ground | campods | keeps the thin signal-ground wire from becoming a fault-current path (see [campod.md](../campod.md)) |
 
-Lay the +3V3 and GND rows on bare bus wire rather than solder bridges -- same inductance reasoning as
-the per-package decoupling. Bring SQW and one buffer output out to test points; every edge-rate
-figure here is computed from worst-case datasheet capacitance, not measured.
+SQW and one buffer output come out to test points. Every edge-rate figure here is computed from
+worst-case datasheet capacitance, not measured.
 
 #### Net list
 
-The same wiring by net rather than by component -- the axis you want when checking a
-half-built board, since you can put a meter on one net and tick off every pin that should
-be on it. Machine-generated from the same source as
-[`pps-board.kicad_sch`](pps-board.kicad_sch), so the two agree by construction.
+The same wiring by net rather than by component, generated from the same source as
+[`pps-board.kicad_sch`](pps-board.kicad_sch).
 
 | net | pins | note |
 |-----|------|------|
@@ -239,7 +234,7 @@ be on it. Machine-generated from the same source as
 | **T1_SPARE2** | `U1.11 (4Y)` | first-tier spare output, live, for a future second-tier package |
 | **U3_SPARE** | `U3.11 (4Y)` | rear distributor spare output |
 
-`J1.6` (header pin 22, BCM GPIO25) is the deliberate spare and carries a no-connect.
+`J1.6` (header pin 22, BCM GPIO25) is spare and carries a no-connect.
 
 #### Protoboard layout
 
@@ -430,13 +425,12 @@ no library beyond KiCad's stock `Device`, `Connector_Generic` and `Package_DIP`.
 It is checked structurally after generation: read back through `kiutils`, every `lib_id`
 resolves, no duplicate designators, every wire begins exactly on a pin, every label sits on
 a wire end and names that pin's net, and the one unconnected pin (`J1.6`) carries a
-no-connect. Expect to nudge placement -- connectivity is what is verified, not layout.
+no-connect.
 
 #### Coordinator SPI block -> RTC breakout
 
-A single **2x4** on header pins **17-24** carries power, SPI and the returning PPS. It is
-deliberately a different shape from the campod's 2x5 on the same ten positions, so the two harnesses
-cannot cross-mate.
+A single **2x4** on header pins **17-24** carries power, SPI and the returning PPS -- a different
+shape from the campod's 2x5 on the same ten positions, so the two harnesses cannot cross-mate.
 
 | header pin | BCM | signal | to |
 |------------|-----|--------|-----|
@@ -452,14 +446,10 @@ cannot cross-mate.
 Pins 25-26 (the campod block's second ground and CE1) are not in this harness: one return and one
 chip select is all this board needs.
 
-**Header position 18 and BCM 18 are different pins** -- BCM 18 is header position 12. The
-`gpiopin=18` placeholder that used to appear in this doc referred to the latter.
-
 `dtparam=spi=on` is not currently set by the coordinator Ansible role; only the campod role sets it.
 
-On the campod end, PPS lands on **header 13/14 (GPIO27 + GND)** as its own 2x1, deliberately not
-sharing the accelerometer shell -- an unrelated pair of wires in that housing could not be
-disconnected independently. BCM 9-27 come up pulled down, so an absent or unpowered distribution
+On the campod end, PPS lands on **header 13/14 (GPIO27 + GND)** as its own 2x1 rather than in the
+accelerometer shell, so the two cables can be disconnected independently. BCM 9-27 come up pulled down, so an absent or unpowered distribution
 board reads as "no pulses" rather than a floating line inventing edges.
 
 ### USB hub
