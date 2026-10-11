@@ -311,6 +311,13 @@ for name, m in (("fc", m_fc), ("chip", m_chip)):
 _, _, off, _, _, _, _ = _struct.unpack(cr.SOCK_SAMPLE, m_chip)
 check("the chip path still reports chip-minus-system", abs(off - (-0.75)) < 1e-6, str(off))
 
+# 17a. The fallback path must not feed chrony a chip that admits its time is garbage.
+# With the chip never written it reads 2000-01-01, so the offset would be ~-26 years.
+feed_src = src_feed = (CLI / "coord-rtc").read_text()
+_body = feed_src[feed_src.index("def cmd_feed"):feed_src.index("def set_system")]
+check("the fallback checks osf before using the chip's label",
+      "SR_OSF" in _body and "continue" in _body, "osf guard missing from cmd_feed")
+
 # 17. Nothing in the feed path writes the chip. A divider reset would step the 1 Hz
 # phase and make one second the wrong length, which the campods' blanking alignment
 # does not survive -- so this is a property worth asserting, not just intending.

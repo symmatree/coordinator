@@ -12,10 +12,11 @@
 # registers when it is not. The chip is never written, because that resets its
 # countdown chain and makes one second the wrong length.
 #
-# precision 1e-3 covers the chip path, where the 20 ms rollover poll is the error
-# term. The FC path is better than that and is not distinguished here; if that
-# matters later it wants two refids and a lock= decision, not a tighter number.
-refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 1e-3 poll 4
+# precision 2e-3 is the chip path's error: coord-rtc finds the second boundary by
+# polling the seconds register, so the poll interval bounds it. The FC path is better
+# and is not distinguished here; doing that wants two refids and a lock= decision
+# rather than a tighter number.
+refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 2e-3 poll 4
 
 # The buffered 1 Hz on GPIO24. lock=DS32 pairs each edge with an RTC sample: the RTC
 # says which second, the edge says where the second starts. Without a lock chrony
@@ -26,8 +27,7 @@ refclock PPS /dev/pps0 refid PPS lock=DS32 precision 1e-7 poll 2
 # DS3234 and no FC link, so this plus their own buffered PPS leg is their whole time
 # source.
 #
-# The coordinator's own address with the prefix, rather than a separate subnet
-# variable: chrony's set_subnet() walks only subnet_bits of the address and never
-# reads the rest, so 10.55.0.1/24 is exactly 10.55.0.0/24. vars/gadget-net.yml says
-# the subnet must not be defined twice, and this way it is not.
-allow {{ campod_gadget_coordinator_ip }}/{{ campod_gadget_prefix }}
+# Derived from the coordinator's address rather than a second subnet variable, which
+# vars/gadget-net.yml says not to add. The role asserts the prefix is 24 so this
+# derivation cannot quietly become wrong.
+allow {{ campod_gadget_coordinator_ip.rsplit('.', 1)[0] }}.0/{{ campod_gadget_prefix }}

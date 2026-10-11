@@ -3,7 +3,7 @@
 
     coord-rtc status        what the chip holds and whether the 1 Hz output is on
     coord-rtc enable-pps    turn the 1 Hz square wave on, and verify it took
-    coord-rtc systohc       set the chip from the system clock, on a second boundary
+    coord-rtc systohc       set the chip's time -- RE-PHASES PPS, see below
     coord-rtc hctosys       set the system clock from the chip
     coord-rtc feed          serve the chip to chrony as a SOCK refclock, forever
 
@@ -88,10 +88,12 @@ FC_TIME_FILE = os.environ.get("COORD_RTC_FC_TIME_FILE",
 # usable. The file is on disk and outlives a reboot, so a previous flight's sample
 # would otherwise be applied as if it were now.
 FC_MAX_AGE_S = 300.0
-# How often to look while waiting for the chip's seconds register to change. The
-# chip has no sub-second register, so the rollover instant IS the only way to know
-# where inside a second we are; this bounds that error.
-ROLLOVER_POLL_S = 0.02
+# How often to look while waiting for the chip's seconds register to change. The chip
+# has no sub-second register, so the rollover instant is the only way to know where
+# inside a second we are, and this interval bounds that error -- so it is also what
+# the refclock's declared precision has to be derived from. At most ~500 eight-byte
+# SPI reads per sample, once per FEED_PERIOD_S.
+ROLLOVER_POLL_S = 0.002
 
 # struct spi_ioc_transfer, 32 bytes. Field order and widths are the kernel's.
 XFER = "=QQIIHBBBBBB"
@@ -286,8 +288,10 @@ def chip_boundary(rtc: Ds3234, deadline_s: float = 1.5) -> tuple[int, float] | N
         if regs[0] != first[0]:
             # The rollover happened somewhere in the poll interval just ended, so the
             # observation instant is LATE by 0..ROLLOVER_POLL_S. Backdating by half the
-            # interval centres that: +/-10 ms of noise instead of a 0..20 ms bias,
-            # which would otherwise exceed the precision the chrony config declares.
+            # interval centres that, leaving +/-1 ms of noise rather than a 0..2 ms
+            # bias. The interval sets the chip path's precision and is what the chrony
+            # drop-in's `precision 2e-3` is derived from -- at the 20 ms it used to be,
+            # that figure was wrong by an order of magnitude.
             at = time.time() - ROLLOVER_POLL_S / 2
             stamp = decode_time(regs)
             return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S")), at
@@ -319,11 +323,14 @@ def cmd_feed(rtc: Ds3234) -> int:
       Otherwise        -> the chip's own registers, as right as the last thing that set
                           them, which is all that is needed to pick the second.
 
-    THE CHIP IS NOT WRITTEN. Writing the seconds register resets the countdown chain
-    (datasheet p11), which steps the 1 Hz phase and makes one second the wrong length --
-    and the campods align capture by adjusting blanking against that signal. So
-    corrections go here, into what chrony is told, and never into the chip. The chip is
-    a stable oscillator and a cold-boot label.
+    THE TIME REGISTERS ARE NOT WRITTEN. Writing the seconds register resets the
+    countdown chain (datasheet p11), which steps the 1 Hz phase and makes one second the
+    wrong length -- and the campods align capture by adjusting blanking against that
+    signal. So corrections go here, into what chrony is told, and never into the chip.
+    The chip is a stable oscillator and a cold-boot label.
+
+    `enable-pps` does write the chip, on every boot, but only the CONTROL register --
+    which selects the output and touches no counter.
 
     Setting the system clock is NOT this. chrony only knows about sources, so a clock
     someone else set leaves it unsynchronised and discarding every pulse.
@@ -339,6 +346,18 @@ def cmd_feed(rtc: Ds3234) -> int:
             fc = fc_offset()
             if fc is not None:
                 offset, _rtt = fc
+            elif rtc.read(REG_STATUS)[0] & SR_OSF:
+                # The chip has never been told the time, so its label is meaningless --
+                # it reads 2000-01-01 and the offset would be about -26 years. OSF is
+                # the chip saying exactly that, and a sample is better not sent than
+                # sent wrong. PPS then goes unused until the FC appears or someone runs
+                # `systohc`, which is the honest outcome.
+                if refused == 0:
+                    print("chip has osf set and no FC sample is available, so there is "
+                          "nothing to tell chrony; run `coord-rtc systohc` on the "
+                          "ground to give it an epoch", file=sys.stderr)
+                time.sleep(FEED_PERIOD_S)
+                continue
             else:
                 # pulse=0 either way: we are supplying whole seconds, which is exactly
                 # what the PPS refclock cannot.
@@ -388,7 +407,17 @@ def set_chip(rtc: Ds3234, offset: float = 0.0) -> tuple[int, float, int]:
 
 
 def cmd_systohc(rtc: Ds3234) -> int:
-    """Set the chip from the system clock. Reports the achieved error."""
+    """Set the chip from the system clock. Reports the achieved error.
+
+    THIS RE-PHASES THE PPS LINE AND MAKES ONE SECOND THE WRONG LENGTH. Writing the
+    seconds register resets the countdown chain, and every consumer of the 1 Hz sees
+    it: chrony takes a phase step, and the campods align capture by adjusting the
+    camera blanking interval against this signal. Run it on the ground, with capture
+    stopped, where the short second lands with nothing aligned to it.
+
+    It exists for a chip that has no usable time at all -- OSF set, reading 2000-01-01,
+    which is a fresh cell. In normal operation nothing calls it.
+    """
     target, err, sr = set_chip(rtc)
     err_ms = err * 1000
     print(f"wrote    {time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(target))}Z")
