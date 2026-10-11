@@ -29,14 +29,16 @@ and brown out when capture began.
 power, so the Coordinator's 1.2 A would have to cover the camera and every Zero together.
 Those pigtails are not a convenience -- without power on them the payload does not run.
 
-A powered hub would carry the load, at the cost of one more power-rated component with the
-whole payload concentrated through it. Taking each device off the UBEC spreads the same
-current across pigtails that have to exist anyway for the barrel jacks.
+A powered hub would also carry the load -- its own supply is 5 V at 2.5 A, enough for four
+Zeros. It is not that the hub concentrates current where the pigtails do not: the UBEC and
+its Wago rail are a shared bus as well, and every pigtail hangs off it. The difference is
+that the hub would be a **second** shared element in series behind the UBEC, a consumer
+part whose internal distribution is built to USB's 500 mA per port, and one whose failure
+takes out power *and* data for everything on it. A pigtail failure costs one device.
 
-Both of those get worse with the full build. The horizontal ring of eight plus the upward
-pair is **ten Zeros** ([campod.md](../campod.md)), which is further out of reach of 1.2 A
-and more current through whatever single component would carry it. The UBEC is rated for
-the whole payload already.
+With the full build -- the horizontal ring of eight plus the upward pair, **ten Zeros**
+([campod.md](../campod.md)) -- there would be three such hubs and three more supplies to
+feed, while the UBEC is already rated for the whole payload.
 
 ### Central Raspberry Pi (currently a 4B)
 
