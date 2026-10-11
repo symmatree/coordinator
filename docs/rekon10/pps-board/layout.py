@@ -15,6 +15,13 @@ for ref,(r1,r8) in CHIPS.items():
     for n in range(1,8):  pin[(ref,n)] = hole("D", r1-(n-1))
     for n in range(8,15): pin[(ref,n)] = hole("G", r8+(n-8))
 
+# DS3234 breakout (BOB-10160): 1x7 header up column P, JP1.7 (GND) at row 01, so the
+# board itself overhangs to the right. JP1 order is SS,MOSI,MISO,SCLK,SQW,VCC,GND.
+RTC_COL, RTC_BOT = "P", 1
+JP1 = {1:"SS", 2:"MOSI", 3:"MISO", 4:"SCLK", 5:"SQW", 6:"VCC", 7:"GND"}
+for n in range(1, 8):
+    pin[("J2", n)] = hole(RTC_COL, RTC_BOT + (7 - n))
+
 bridges, jumpers, caps, ncs = [], [], [], []
 def B(net, *hs): bridges.append((net, list(hs)))
 def J(net, a, b): jumpers.append((net, a, b))
@@ -52,7 +59,15 @@ def chain(net, nodes, head_taps=1):
         a = taps[i][-1]; b = taps[i+1][0]
         J(net, a, b)
 
-chain("SQW",      [("U1",5), ("U1",2), ("U1",9), ("U1",12)], head_taps=2)
+# --- breakout: ground down to the bus, VCC across to the 3V3 bus, SQW to U1's input
+B("GND", pin[("J2",7)], hole("O", 1))
+J("GND", hole("O", 1), hole(GNDBUS, 1))
+B("3V3", pin[("J2",6)], hole("O", 2))
+J("3V3", hole("O", 2), hole(V33BUS, 2))
+B("SQW", pin[("J2",5)], hole("O", 3))
+
+chain("SQW",      [("U1",5), ("U1",2), ("U1",9), ("U1",12)])
+J("SQW", hole("O", 3), hole("C", 3))
 chain("T2_FRONT", [("U1",3), ("U2",5), ("U2",2), ("U2",9), ("U2",12)])
 chain("T2_REAR",  [("U1",6), ("U3",5), ("U3",2), ("U3",9), ("U3",12)])
 
@@ -110,7 +125,7 @@ for col in (GNDBUS, V33BUS):
     for h in hs[1:]: union(hs[0], h)
     for h in hs: declared.setdefault(h, "GND" if col == GNDBUS else "3V3")
 
-PENDING = {"PPS_COORD","LED_DRV",
+PENDING = {"PPS_COORD","LED_DRV","SPI_CS","SPI_MOSI","SPI_MISO","SPI_SCLK",
            "T1_SPARE1","T1_SPARE2","U3_SPARE"}
 want = collections.defaultdict(set)
 for net, conns in NL.NETS.items():
@@ -141,6 +156,8 @@ out.append("")
 for ref,(r1,r8) in CHIPS.items():
     tag = {"U1":"", "U2":" (FRONT)", "U3":" (REAR)"}[ref]
     out.append(f"{ref}{tag}: pin 1 at {pin[(ref,1)]}, pin 8 at {pin[(ref,8)]}")
+out.append(f"J2 (DS3234 breakout JP1): pin 7 GND at {pin[('J2',7)]} up to pin 1 SS at {pin[('J2',1)]}")
+out.append("    board overhangs right of column " + RTC_COL)
 for ref,p,n in caps: out.append(f"0.1 uF ({ref}): {p} / {n}")
 out.append("")
 out.append("Offboard pigtails (2-pin, signal / ground):")
