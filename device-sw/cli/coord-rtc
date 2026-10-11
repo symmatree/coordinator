@@ -79,6 +79,25 @@ SOCK_SAMPLE = "=qqdiiii"
 CHRONY_SOCK = os.environ.get("COORD_RTC_CHRONY_SOCK", "/run/chrony.ds3234.sock")
 FEED_PERIOD_S = float(os.environ.get("COORD_RTC_FEED_PERIOD_S", "64"))
 
+# Where coordinator-mavlink publishes the current FC-measured offset from UTC:
+# "offset_us rtt_us local_us". Used ONLY to correct the chip's epoch while disarmed --
+# never as chrony's reference, which is always the chip itself.
+FC_TIME_FILE = os.environ.get("COORD_RTC_FC_TIME_FILE",
+                              "/var/lib/coordinator/ipc/fc_time")
+# A sample whose local reading is further than this from the current clock is not
+# usable. The file outlives a reboot, so a previous flight's sample would otherwise be
+# applied as if it were current.
+FC_MAX_AGE_S = 300.0
+# The arm flag the router publishes. The chip is only ever written while disarmed: the
+# write resets the countdown chain, which re-phases the 1 Hz and makes one second the
+# wrong length, and that is what the cameras are aligning against.
+ARM_FILE = os.environ.get("COORD_RTC_ARM_FILE", "/var/lib/coordinator/ipc/fc_armed")
+# Correct the epoch when it is off by more than this. Debounce, not precision: each
+# correction re-phases the pulse, so it must not happen repeatedly. At the chip's
+# 2 ppm, 100 ms accumulates in about 14 hours -- so a bench session or a flying day
+# sees roughly one correction, during pre-arm, and then nothing.
+FC_CORRECT_OVER_S = float(os.environ.get("COORD_RTC_CORRECT_OVER_S", "0.1"))
+
 # How often to look while waiting for the chip's seconds register to change. The chip
 # has no sub-second register, so the rollover instant is the only way to know where
 # inside a second we are, and this interval bounds that error -- so it is also what
@@ -241,6 +260,54 @@ def cmd_enable_pps(rtc: Ds3234) -> int:
     return 0
 
 
+def fc_offset(path: str = FC_TIME_FILE, max_age_s: float = FC_MAX_AGE_S):
+    """The FC-measured offset of this box's clock from UTC, or None.
+
+    Returns (offset_s, rtt_s). Rejected when stale: the file is on disk and survives a
+    reboot, so a previous flight's sample would otherwise be applied as if current.
+    """
+    try:
+        with open(path) as f:
+            offset_us, rtt_us, local_us = (int(x) for x in f.readline().split()[:3])
+    except (OSError, ValueError):
+        return None
+    if abs(time.time() - local_us / 1e6) > max_age_s:
+        return None
+    return offset_us / 1e6, rtt_us / 1e6
+
+
+def armed(path: str = ARM_FILE) -> bool:
+    """The router's arm flag. Unreadable counts as ARMED.
+
+    Deliberately the pessimistic default: the only thing this gates is writing the
+    chip, and doing that during capture re-phases the signal the cameras align to. Not
+    knowing is not a reason to risk it.
+    """
+    try:
+        with open(path) as f:
+            return f.readline().strip() != "0"
+    except OSError:
+        return True
+
+
+def should_set_chip(no_epoch: bool, offset: float | None, is_armed: bool) -> bool:
+    """Whether to write the chip's time registers this round.
+
+    Its own function because it is the whole safety argument in one place: a write
+    re-phases the 1 Hz and makes one second the wrong length, and that signal is what
+    libcamera's SyncMode aligns the pods' shutters against. So:
+
+      armed            -> never, whatever the error
+      no FC sample     -> never; nothing else here knows the time of day
+      chip has no epoch-> always, there is no phase worth protecting yet
+      otherwise        -> only past the debounce, so it is about once per bench
+                          session during pre-arm rather than repeatedly
+    """
+    if is_armed or offset is None:
+        return False
+    return no_epoch or abs(offset) > FC_CORRECT_OVER_S
+
+
 def chip_boundary(rtc: Ds3234, deadline_s: float = 1.5) -> tuple[int, float] | None:
     """Watch the seconds register until it changes, and return (chip time, instant).
 
@@ -283,11 +350,18 @@ def sock_sample(chip_s: int, at: float) -> bytes:
 def cmd_feed(rtc: Ds3234) -> int:
     """Serve the chip to chrony as its seconds source, until killed.
 
-    THE REFERENCE IS THE CHIP, NOT UTC, AND THAT IS THE WHOLE TRICK. The sample is
-    taken at the chip's seconds rollover, which is the same instant as the falling edge
-    of the 1 Hz. So chrony's reference and the pulse it is locked to are the SAME
-    CLOCK, and they agree by construction -- there is no phase difference between them
-    to drift, and chrony's 0.4 s locked-PPS tolerance is never approached.
+    THE REFERENCE IS THE CHIP, NOT UTC, AND THAT IS THE WHOLE TRICK. One chip generates
+    both the seconds label and the pulse, so they cannot disagree. The sample is taken
+    at the chip's seconds rollover, which is the same instant as the falling edge of the
+    1 Hz -- so chrony's reference and the pulse it is locked to are the SAME CLOCK and
+    agree by construction. There is no phase difference between them to drift, and
+    chrony's 0.4 s locked-PPS tolerance is never approached.
+
+    The same fact is why correcting the chip is coherent rather than disruptive: setting
+    the RTC moves the label and the edge together, and every consumer takes the same
+    buffered copy of that edge, so they all step at the same instant by the same amount.
+    It is a common-mode step, not a divergence. Disarmed, nothing is aligned to the tick
+    and nobody cares; armed, the cameras are mid-loop, which is why it is gated.
 
     Reporting UTC here instead would make the reference a different clock from the
     pulse, and their difference -- the chip's arbitrary phase against the UTC second --
@@ -299,6 +373,12 @@ def cmd_feed(rtc: Ds3234) -> int:
     edge, so libcamera's SyncMode converges the shutters, and any error in the edge's
     absolute position is common-mode across every consumer and cancels.
 
+    THE EPOCH IS CORRECTED FROM THE FC, WHILE DISARMED. The FC's GPS-derived time is
+    the only thing here that knows what time of day it is, so it sets the chip -- and
+    the chip then sets chrony. Writing the chip re-phases the pulse, so it happens only
+    while disarmed, and only when the error exceeds a debounce, which at 2 ppm means
+    roughly once per bench session during pre-arm rather than repeatedly.
+
     pulse=0: we supply whole seconds, which is exactly what the PPS refclock cannot.
     """
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -307,18 +387,35 @@ def cmd_feed(rtc: Ds3234) -> int:
         edge = chip_boundary(rtc)
         if edge is None:
             print("chip's seconds register did not change within 1.5 s", file=sys.stderr)
-        elif rtc.read(REG_STATUS)[0] & SR_OSF:
-            # No epoch has ever been written, so the label is meaningless -- the chip
-            # reads 2000-01-01 and the offset would be about -26 years. OSF is the chip
-            # saying exactly that. Better to send nothing: PPS then goes unused until
-            # someone runs `systohc` on the ground, which is the honest outcome.
+            time.sleep(FEED_PERIOD_S)
+            continue
+
+        chip_s, at = edge
+        no_epoch = bool(rtc.read(REG_STATUS)[0] & SR_OSF)
+
+        # Correct the chip from the FC. Unconditional when the chip has no epoch at
+        # all: nothing downstream works until it does, and there is no pulse phase
+        # worth protecting yet.
+        fc = fc_offset()
+        offset = fc[0] if fc is not None else None
+        if should_set_chip(no_epoch, offset, armed()):
+            target, err, sr = set_chip(rtc, offset)
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(target))
+            print(f"coord-rtc: set the chip to {stamp}Z from the FC "
+                  f"(was off {offset:+.3f} s, landed {err * 1000:+.1f} ms, "
+                  f"status 0x{sr:02x}); the 1 Hz is re-phased", flush=True)
+            time.sleep(FEED_PERIOD_S)
+            continue
+
+        if no_epoch:
+            # The label is meaningless -- the chip reads 2000-01-01 and the offset
+            # would be about -26 years. Send nothing rather than that; the FC will fix
+            # it when it has a fix and we are disarmed, or `systohc` will by hand.
             if refused == 0:
-                print("chip has osf set, so it has no epoch and there is nothing to "
-                      "tell chrony; run `coord-rtc systohc` on the ground once",
-                      file=sys.stderr)
+                print("coord-rtc: chip has no epoch (osf set) and no usable FC sample, "
+                      "so there is nothing to tell chrony yet", file=sys.stderr)
             refused += 1
         else:
-            chip_s, at = edge
             try:
                 sock.sendto(sock_sample(chip_s, at), CHRONY_SOCK)
             except (FileNotFoundError, ConnectionRefusedError):
