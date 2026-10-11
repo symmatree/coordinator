@@ -240,10 +240,13 @@ NETNOTE = {
   "T1_SPARE1": "first-tier spare output, live, for a future second-tier package",
   "T1_SPARE2": "first-tier spare output, live, for a future second-tier package",
   "U3_SPARE": "rear distributor spare output",
+  "LED_DRV": "U3's third output to the resistor",
+  "LED_A": "resistor to LED anode -- both land in K-17, so this net is one junction",
 }
 def _label(r, p):
     if r == "J1": return f"{r}.{p} ({HDR[p]})"
     if r == "J2": return f"{r}.{p} ({JP1[int(p)]})"
+    if r == "D1": return f"D1.{p} ({'cathode' if p == '1' else 'anode'})"
     if r.startswith("U"): return f"{r}.{p} ({AHC[int(p)]})"
     return f"{r}.{p}"
 assert set(NETORDER) == set(NL.NETS), set(NETORDER) ^ set(NL.NETS)
