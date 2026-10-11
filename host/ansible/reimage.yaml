@@ -1,7 +1,7 @@
 ---
 # Stage an image and arm the flasher (#312). One action, no intent.
 #
-#   ansible-playbook host/ansible/reimage.yaml -i '10.0.5.237,' -u pi \
+#   ansible-playbook host/ansible/reimage.yaml -i 'campod-se,' -u pi \
 #     -e device_role=campod \
 #     -e reimage_image_url=http://fleet-control/images/campod-pi-20260918.img.zip \
 #     -e reimage_image_sha256=<sha256 of that zip>

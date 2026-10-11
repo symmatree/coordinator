@@ -2,7 +2,7 @@
 # The routine converge: config, stack definition, and container images. Runs every
 # time. Pair: provision.yaml, which installs the software and runs once per card.
 #
-#   ansible-playbook host/ansible/deploy.yaml -i '10.0.2.49,' -u pi \
+#   ansible-playbook host/ansible/deploy.yaml -i 'campod-se,' -u pi \
 #     -e device_role=campod
 #
 # Installs no packages. `git pull` is the deploy (#48); what is copied out of the

@@ -2,7 +2,7 @@
 # First-run setup: the software and the hardware wiring. Runs once per card, or once in
 # a long while. Pair: deploy.yaml, which is the one that runs routinely.
 #
-#   ansible-playbook host/ansible/provision.yaml -i '10.0.2.49,' -u pi \
+#   ansible-playbook host/ansible/provision.yaml -i 'campod-se,' -u pi \
 #     -e device_role=campod
 #
 # DRIVEN FROM ANOTHER MACHINE, over SSH. A freshly flashed card needs nothing installed
