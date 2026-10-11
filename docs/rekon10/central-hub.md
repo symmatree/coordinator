@@ -188,9 +188,6 @@ therefore cannot grow.
 | 6 | VCC | +3V3 bus |
 | 7 | GND | GND bus |
 
-MOSI and MISO are **not** crossed: the breakout's silk is bus-perspective, and the v1.1 schematic
-confirms `JP1.2 = MOSI = U1.DIN` and `JP1.3 = MISO = U1.DOUT`.
-
 **Passives on the board:**
 
 | ref | value | between | why |
