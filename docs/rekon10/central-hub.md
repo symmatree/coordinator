@@ -97,20 +97,47 @@ The RTC breakout sits on this board rather than at the end of a cable: hookup wi
 1 pF/cm, so six inches between SQW and the first tier would add ~15 pF to a ~50 pF budget and put
 the edge back out of spec.
 
-**The falling edge is the top of the second, and it is also the driven one.** The DS3234
-datasheet (p. 11): "The countdown chain is reset whenever the seconds register is written
-[...] The 1Hz square-wave output, if enabled, transitions high 500ms after the seconds data
-transfer." So the output goes high at the half second and low on the second. Open-drain
-means that falling edge is actively pulled down while the rising edge is the pull-up's RC
-curve -- the edge worth timestamping and the fast edge are the same one, which the design
-did not arrange and got anyway.
+**The falling edge is the top of the second, and it is also the driven one -- inferred, not
+yet measured.** The DS3234 datasheet (p. 11): "The countdown chain is reset whenever the
+seconds register is written [...] The 1Hz square-wave output, if enabled, transitions high
+500ms after the seconds data transfer." The seconds register increments at write+*n* and the
+output goes high at write+0.5+*n*, so the rising edge sits on the half second -- **provided
+the output is 50% duty, which the datasheet does not state anywhere.** It is near-certain:
+the 1 Hz is a tap off the same binary divider chain that clocks the seconds counter, so it
+is symmetric by construction. But that is an argument from how the part must work, not a
+line to cite, and the timing design rests on it.
 
-The pull-up is still sized for the **rising** edge, because that is the one the '125 has to
-accept without dwelling in its linear region. It sets no timing.
+Two bench tests settle it, neither needing a scope. Poll the seconds register over SPI and
+compare the monotonic timestamp of the increment against the PPS timestamps for each edge --
+whichever edge the increment coincides with is the second. Or set `capture_clear=1` on the
+overlay and read the assert-to-clear spacing; 0.5 s confirms the duty.
 
-Writing the seconds register resets the countdown chain, which moves the edge and makes one
-second the wrong length. With the coin cell fitted the oscillator free-runs and the chip
-need never be written, so the edge never moves.
+If it holds, the edge worth timestamping and the fast edge are the same one, since
+`INT/SQW` is open-drain: the falling edge is actively pulled down while the rising edge is
+the pull-up's RC curve. The design did not arrange that and got it anyway.
+
+**R1 does not shape the timestamped edge at all.** The '125 is non-inverting with a
+push-pull output, so what the consumer sees on the falling edge is driven by the buffer, not
+by any pull-up. R1 shapes only the **rising** edge at the '125's *input*, where the 100 ns/V
+transition spec applies -- it stops the input dwelling in its linear region, which would
+produce spurious transitions and corrupt the whole waveform including the falling one. The
+consequence worth having: the jitter eventually measured is the part plus the buffer, with
+no hardware term anyone can tune.
+
+**Writing the seconds register moves the edge, and the design does write it.** The chain
+resets on a write, so the correction both steps the phase and makes one second the wrong
+length. That is survivable here because the pulse and the seconds label come from the same
+chip: every consumer takes a buffered copy of the same edge, so a correction moves label and
+edge together and steps everyone at the same instant by the same amount. Common-mode, not
+divergence. The window is disarmed-on-the-ground, where nothing is aligned to the tick;
+software policy is on [coordinator#11](https://github.com/symmatree/coordinator/issues/11).
+
+**Rate trimming is possible without a discontinuity, with a caveat.** The aging-offset
+register (`10h/90h`, two's complement, p. 16) adds or removes oscillator capacitance at the
+next temperature conversion or on a manual `CONV` -- a rate change, no phase step. But its
+effect is strongly temperature-dependent: the datasheet's per-LSB sensitivity is **0.1 ppm
+at +25 C against 0.8 ppm at +85 C** (0.7 at -40 C), and it shifts the whole
+frequency-vs-temperature curve. A trim derived on a warm bench is wrong in cold air.
 
 #### Package pinout (SN74AHC125N, PDIP-14)
 
@@ -423,7 +450,7 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 | header pin | BCM | signal | to |
 |------------|-----|--------|-----|
 | 17 | -- | 3V3 | board +3V3 bus (RTC + all buffers) |
-| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW. Overlay line is `dtoverlay=pps-gpio,gpiopin=24` |
+| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW. Overlay line is `dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1` -- **the `assert_falling_edge` half is not in the flashed image yet** (dotfiles-symm#81); everything else in this table is as-built |
 | 19 | GPIO10 | MOSI | `JP1.2` |
 | 20 | -- | GND | board GND bus |
 | 21 | GPIO9 | MISO | `JP1.3` |
@@ -431,7 +458,9 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 | 23 | GPIO11 | SCLK | `JP1.4` |
 | 24 | GPIO8 | CE0 | `JP1.1` (SS) |
 
-`dtparam=spi=on` is not currently set by the coordinator Ansible role; only the campod role sets it.
+`dtparam=spi=on` and the `pps-gpio` overlay are in the coordinator image as of
+`coordinator-pi-20261011.img`. Both are device tree, so they come from the image rather than
+from a converge.
 
 On the campod end, PPS lands on **header 13/14 (GPIO27 + GND)** as its own 2x1 rather than in the
 accelerometer shell, so the two cables can be disconnected independently. BCM 9-27 come up pulled down, so an absent or unpowered distribution
