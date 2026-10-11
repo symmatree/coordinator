@@ -27,15 +27,6 @@ out simpler than making one hub carry both.
 The **PPS + signal-ground** pair from the buffer board ([PPS distribution board](#pps-distribution-board))
 is a third connection per pod, independent of both.
 
-Scaling: one hub covers the current 4-camera ring. The horizontal ring of 8 plus the upward
-pair from the vertical ring ([campod.md](../campod.md)) needs more -- four logical USB 2.0
-trees for 16 Zeros, or two for the 8-camera ring, each tree's upstream on its own
-Coordinator port.
-
-**Open, from when this was a plan rather than a build:** whether `dwc2` peripheral/gadget
-mode is sensitive to VBUS state on this exact hub and wiring. The link works, so it is not
-a problem in the current configuration; it is worth knowing if the power topology changes.
-
 ### Central Raspberry Pi (currently a 4B)
 
 Call this the central or MAVLink Pi so we don't freak everybody out if we go back to a Raspberry Pi 5 at some point.
