@@ -220,7 +220,6 @@ therefore cannot grow.
 | part | where | why |
 |------|-------|-----|
 | 1k series in the signal line | campods and FC | **buffers live, destination dead.** The '125's absolute-maximum continuous output is +/-25 mA against the destination's +/-20 mA input clamp rating, so the buffer can out-drive what the pin is rated to absorb; 1k makes it ~3 mA. The reverse case -- destination live, buffers dead, which for the FC is the ordinary one since it runs on the pack while the Coordinator may be off -- needs no resistor: that destination's input pull-up is ~40k, so ~80 uA, 0.4% of the clamp rating. **Not** on the Coordinator line, which cannot differ from the buffers either way |
-| 100 ohm series in the signal ground | campods | keeps the thin signal-ground wire from becoming a fault-current path (see [campod.md](../campod.md)). Insurance against an unquantified fault rather than a calculated protection like the 1k, and it has a cost worth knowing: both ends are already tied through the power ground, so impedance in this one sends the return current down the power path instead -- the twisted pair is then a reference, not a return. Negligible at 1 Hz into a 1.65 V threshold; it would not be on a fast signal |
 
 SQW and one buffer output come out to test points. Every edge-rate figure here is computed from
 worst-case datasheet capacitance, not measured.
