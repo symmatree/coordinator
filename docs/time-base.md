@@ -90,20 +90,22 @@ flag counts as armed: the only thing it gates is a write that would disturb capt
 
 ## What a re-phase looks like
 
-Writing the seconds register resets the countdown chain. The datasheet says the output
-"transitions high 500ms after the seconds data transfer" and says nothing about its state
-in between, so depending on where in its cycle the write lands, consumers see one of:
+Writing the seconds register resets the countdown chain, so the edge moves. The datasheet
+says nothing about the output's state between the write and the transition that follows, so
+the pin can emit a runt pulse, skip a transition, or look normal --
+[central-hub.md](rekon10/central-hub.md) has that, and that none of it is visible on the
+board.
 
-- a **runt pulse**, a high or low period much shorter than 500 ms
-- a **missing edge**, if the output was already high and stays high until the transition
-- nothing unusual, if the write landed near a boundary
+What the consumers do with it is here:
 
-All three are electrically ordinary and the buffer passes any of them. `pps-gpio`
-timestamps a runt as an ordinary assert, so chrony sees an interval that is neither 1 s
-nor a clean step; the FC's ISR counts edges, so a runt is an extra `CAM` record and a
-missing edge is a gap. Benign, but they look like faults -- written down so a 0.3 s
-interval next to a correction is recognised rather than chased. Not worth optimising the
-landing instant: the disturbance is the size of the correction.
+- `pps-gpio` timestamps a runt as an ordinary assert, so chrony sees an interval that is
+  neither 1 s nor a clean step.
+- The FC's feedback ISR counts edges, so a runt is an extra `CAM` record and a skipped
+  transition is a gap.
+
+Both are benign and both look like faults. Written down so a 0.3 s interval next to a
+correction is recognised rather than chased. Not worth optimising the landing instant: the
+disturbance is the size of the correction, which is the error being fixed.
 
 ## UTC is a label, and where it comes from
 
