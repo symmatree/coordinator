@@ -86,7 +86,11 @@ These are all unproven claims about load and thermals.
 
 Run a **twisted pair** from the hub PPS buffer (driven by [**SparkFun DeadOn RTC DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW**, typically 1 Hz): signal wire + dedicated signal ground (any GND pin from the Pi header). This keeps the loop area near zero and prevents ESC EMI from corrupting the pulse.
 
-At the Pi side, connect the signal ground through a **100-ohm resistor** to prevent it from becoming a high-current shortcut during a motor failure, while still providing a clean 3.3 V reference.
+The signal ground goes straight through, with nothing in series. An earlier revision put a
+100-ohm resistor here against a "high-current shortcut during a motor failure"; there is no
+path by which a motor fault reaches this wire, and each pod already returns through the USB
+cable and the 5 V pigtail as well, neither of which is protected that way. The PPS ground is
+not special and the part bought nothing.
 
 
 ## Vibration and camera mounting rationale
