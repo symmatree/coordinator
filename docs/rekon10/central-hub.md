@@ -219,7 +219,7 @@ therefore cannot grow.
 
 | part | where | why |
 |------|-------|-----|
-| 1k series in the signal line | campods and FC | limits clamp current to ~3 mA against a +/-20 mA input clamp rating if that destination is unpowered while the buffers are live. **Not** on the Coordinator line -- the buffers are powered from that Pi, so it cannot be the unpowered one |
+| 1k series in the signal line | campods and FC | limits clamp current to ~3 mA against a +/-20 mA input clamp rating whenever one end is powered and the other is not -- **both directions**. Destination dead, buffers live: current into the destination's input clamp. Destination live, buffers dead: the destination's input pull-up pushes current into the '125's unpowered output clamp, which for the FC is the ordinary case, since it runs on the pack while the Coordinator is payload and may be off. **Not** on the Coordinator line -- the buffers are powered from that Pi, so the two cannot differ |
 | 100 ohm series in the signal ground | campods | keeps the thin signal-ground wire from becoming a fault-current path (see [campod.md](../campod.md)) |
 
 SQW and one buffer output come out to test points. Every edge-rate figure here is computed from
