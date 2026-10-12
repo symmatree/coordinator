@@ -1,16 +1,16 @@
 ---
-# chrony on the coordinator: the DS3234 as a source, the 1 Hz as phase, and NTP for
-# the campods. The contract and why the kernel RTC driver is not used: coordinator#11.
+# chrony on every device. The contract is docs/time-base.md; in short, the coordinator's
+# seconds source is the DS3234 and the pods' is the coordinator, with each device taking
+# the phase off its own leg of the one 1 Hz edge.
 #
-# A consequence worth stating so it does not read as a gap: with no kernel RTC bound
-# there is no /dev/rtc, so chrony's own rtcsync, rtcfile and rtcautotrim are all
-# unavailable, and a Pi 4B has no other RTC. That is why reading the chip at boot and
-# writing it are coord-rtc subcommands rather than chrony settings.
+# A consequence worth stating so it does not read as a gap: with no kernel RTC bound there
+# is no /dev/rtc, so chrony's rtcsync, rtcfile and rtcautotrim are all unavailable and a
+# Pi 4B has no other RTC. That is why reading and writing the chip are coord-rtc
+# subcommands rather than chrony settings.
 #
-# Deploy rather than provision, because the config changes with the repo and because
-# it depends on coord-rtc, which roles/host-cli installs in this play. The package is
-# the one thing here that is a property of the device, and it is small enough that
-# splitting it across two plays costs more than it saves.
+# Deploy rather than provision, because the config changes with the repo and because the
+# coordinator's half depends on coord-rtc, which roles/host-cli installs in this play. The
+# package comes from the image -- see group_vars/all.yml.
 
 - name: Ensure the chronyd drop-in directory exists
   ansible.builtin.file:
@@ -18,41 +18,37 @@
     state: directory
     mode: "0755"
 
-- name: Install chrony
-  ansible.builtin.apt:
-    name: chrony
-    install_recommends: false
-    cache_valid_time: "{{ apt_cache_max_age }}"
-
-# The drop-in only does anything if the vendor config includes conf.d. If a future
-# package drops that, a silently-ignored config is the worst outcome -- the PPS line
-# would be configured and unused, which looks identical to working.
-- name: Check that the vendor config reads conf.d
-  ansible.builtin.command: grep -qE '^\s*confdir\s+.*conf\.d' /etc/chrony/chrony.conf
-  register: chrony_confdir
-  changed_when: false
-  check_mode: false
-  failed_when: chrony_confdir.rc != 0
-
-# The `allow` line in the template derives the network address by replacing the last
-# octet, which is only right for a /24. Asserted rather than assumed, because the
-# failure would be a subnet that silently does not cover the pods.
+# The `allow` line derives the network address by zeroing the last octet, which is only
+# right for a /24. Asserted rather than assumed, because the failure would be a subnet
+# that silently does not cover the pods.
 - name: Fail if the gadget network is not a /24
   ansible.builtin.assert:
     that: campod_gadget_prefix | int == 24
     fail_msg: >-
-      campod_gadget_prefix is {{ campod_gadget_prefix }}, and the chrony drop-in derives
+      campod_gadget_prefix is {{ campod_gadget_prefix }}, and the chrony config derives
       the network address for `allow` by zeroing the last octet of
       campod_gadget_coordinator_ip, which only holds for a /24.
+  when: device_role == 'coordinator'
 
-- name: Install the Rekon chrony drop-in
+# THE WHOLE FILE, replacing the vendor's. Debian's chrony.conf declares an upstream pool
+# and two sourcedirs, and a conf.d drop-in can only add directives -- so a drop-in cannot
+# give this design the single seconds source it is built around. The template says more.
+- name: Install chrony.conf
   ansible.builtin.template:
-    src: 10-rekon.conf.j2
-    dest: /etc/chrony/conf.d/10-rekon.conf
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
     mode: "0644"
   notify: Restart chronyd
 
-# pps_gpio is a module in this image, so /dev/pps0 is created by udev. A refclock whose
+# Nothing should be reading conf.d now, but a file left there from an earlier converge
+# would still be read and would still add a source.
+- name: Remove the superseded conf.d drop-in
+  ansible.builtin.file:
+    path: /etc/chrony/conf.d/10-rekon.conf
+    state: absent
+  notify: Restart chronyd
+
+# pps_gpio is a module in these images, so /dev/pps0 is created by udev. A refclock whose
 # device is missing when chronyd starts is a source that never appears.
 - name: Order chronyd after the PPS device
   ansible.builtin.copy:
@@ -60,18 +56,25 @@
     dest: /etc/systemd/system/chronyd.service.d/10-pps-device.conf
     mode: "0644"
   notify: Restart chronyd
+  when: coord_pps_wired | bool
 
+# Coordinator only: it is the device with the chip on SPI.
 - name: Install the DS3234 feed unit
   ansible.builtin.template:
     src: coord-rtc-feed.service.j2
     dest: /etc/systemd/system/coord-rtc-feed.service
     mode: "0644"
+  when: device_role == 'coordinator'
 
-- name: Enable chronyd and the DS3234 feed
+- name: Enable chronyd
   ansible.builtin.systemd:
-    name: "{{ item }}"
+    name: chronyd.service
     enabled: true
     daemon_reload: true
-  loop:
-    - chronyd.service
-    - coord-rtc-feed.service
+
+- name: Enable the DS3234 feed
+  ansible.builtin.systemd:
+    name: coord-rtc-feed.service
+    enabled: true
+    daemon_reload: true
+  when: device_role == 'coordinator'
