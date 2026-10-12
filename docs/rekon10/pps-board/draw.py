@@ -147,19 +147,6 @@ for i, (net, a, b) in enumerate(P.jumpers):
         o.append(f'<circle cx="{x}" cy="{y}" r="3.4" fill="{col}"/>')
 
 
-# Labels go on the side clear of the chip bodies (D-G) and the breakout (P).
-LABEL_SIDE = {"C": "left", "O": "left", "P": "left"}
-
-# discrete parts, as schematic symbols
-for _ref, _val, _a, _b in P.discretes:
-    _g, (_mx, _my) = _glyph(_ref, _a, _b)
-    o.extend(_g)
-    _side = LABEL_SIDE.get(_a.split('-')[0], 'right')
-    if _side == 'left':
-        o += lbl(_mx-13, _my+4, f"{_ref} {_val}", "#6b5223", anchor="end")
-    else:
-        o += lbl(_mx+14, _my-10, f"{_ref} {_val}", "#6b5223")
-
 # DS3234 breakout -- header in column P, board hanging off to the right
 _x7, _y7 = px(P.pin[("J2",7)]); _x1, _y1 = px(P.pin[("J2",1)])
 o.append(f'<rect x="{_x7-11}" y="{_y1-13}" width="{W-MX-_x7+40}" height="{_y7-_y1+26}" rx="4" fill="#3c6e71" opacity="0.18" stroke="#3c6e71" stroke-width="1.5"/>')
@@ -179,6 +166,19 @@ for ref, net, sig, gnd in P.pigtails:
     for x,y in ((xs,ys),(xg,yg)):
         o.append(f'<rect x="{x-4}" y="{y-4}" width="8" height="8" fill="#6a5acd"/>')
     o.append(f'<text x="{bx+bw/2}" y="{by-4}" font-size="10" font-weight="bold" fill="#4b3f9e" text-anchor="middle">{ref} {net.replace("PPS_","")}</text>')
+
+# Labels go on the side clear of the chip bodies (D-G) and the breakout (P).
+LABEL_SIDE = {"C": "left", "O": "left", "P": "left"}
+
+# discrete parts, as schematic symbols
+for _ref, _val, _a, _b in P.discretes:
+    _g, (_mx, _my) = _glyph(_ref, _a, _b)
+    o.extend(_g)
+    _side = LABEL_SIDE.get(_a.split('-')[0], 'right')
+    if _side == 'left':
+        o += lbl(_mx-13, _my+4, f"{_ref} {_val}", "#6b5223", anchor="end")
+    else:
+        o += lbl(_mx+14, _my-10, f"{_ref} {_val}", "#6b5223")
 
 # The Coordinator's wires: individual dupont legs, each landing on its own hole.
 # Drawn as a tag at the destination, because there is no block on the board.

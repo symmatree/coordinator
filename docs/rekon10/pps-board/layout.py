@@ -68,10 +68,14 @@ B("SQW", pin[("J2",5)], hole("O", 3))
 
 # --- R1 (SQW pull-up) and C1 (DS3234 bypass), both at the breakout header.
 #     SQW and VCC are adjacent header pins, so neither part can span its two nets
-#     directly; each reaches the 3V3 bus instead, at its own lead pitch.
+#     directly. R1 reaches the 3V3 bus up column N at its own lead pitch. C1 has
+#     nowhere to go: GND and VCC arrive one row apart on JP1.7/JP1.6, the header
+#     pins themselves are not available to it, and the only holes carrying those
+#     two nets near the breakout are their escapes at O-01 and O-02. So it is
+#     built at 2.54 mm with the leads bent in, tighter than its 5 mm body wants.
 B("SQW", hole("O", 3), hole("N", 3))
 pin[("R1",1)], pin[("R1",2)] = hole("N", 3), hole("N", 6)      # 3 holes, 7.62 mm
-pin[("C1",1)], pin[("C1",2)] = pin[("J2",6)], pin[("J2",7)]    # straight across JP1.6/7
+pin[("C1",1)], pin[("C1",2)] = hole("O", 2), hole("O", 1)       # VCC/GND escapes, 1 hole apart
 B("3V3", hole("N", 6), hole(V33BUS, 6))
 # --- LED chain off U3.8: R2 across row 17, LED beside it, cathode to the GND bus
 B("LED_DRV", pin[("U3",8)], hole("H", 17))
@@ -80,7 +84,7 @@ pin[("D1",2)], pin[("D1",1)] = hole("K", 17), hole("L", 17)    # anode, cathode
 J("GND", hole("L", 17), hole(GNDBUS, 17))
 
 discretes = [("R1", "2.2k", hole("N", 3), hole("N", 6)),
-             ("C1", "0.1 uF", pin[("J2",6)], pin[("J2",7)]),
+             ("C1", "0.1 uF", hole("O", 2), hole("O", 1)),
              ("R2", "1k", hole("H", 17), hole("K", 17)),
              ("D1", "LED", hole("K", 17), hole("L", 17))]
 

@@ -209,7 +209,7 @@ therefore cannot grow.
 | ref | value | between | why |
 |-----|-------|---------|-----|
 | R1 | **2.2k** | `JP1.5` - `JP1.6` | in parallel with the breakout's own 10k; sets the SQW rise to ~90 ns/V at 1.6 mA of a 3 mA sink budget |
-| C1 | **0.1 uF** | `JP1.6` - `JP1.7` | the DS3234 bypass the datasheet asks for; the board ships with only 22 pF |
+| C1 | **0.1 uF** | `O-02` - `O-01` | the DS3234 bypass the datasheet asks for; the board ships with only 22 pF. Across the escapes, not the header pins -- those are the breakout's own. 2.54 mm, so the leads bend in under a 5 mm body |
 | C2, C3, C4 | **0.1 uF** each | pin 14 - pin 7 of each package | four channels slewing together pull 160-260 mA for a few ns, through whatever inductance lies between the package and the next capacitor out |
 | ~~C5~~ | **not fitted** | -- | nothing on this board asks for a reservoir. The buffers' worst moment is four channels slewing together, 160-260 mA for a few ns, which the local 0.1 uF covers with 3.3 mV of droop and then has a second to recharge; the DS3234 draws 400 uA. There is no band between what the 0.1 uF parts cover and DC |
 | R2 | **1k** | `H-17` - `K-17` | sets the LED at ~1.4 mA, inside the AHC output's 4 mA rating |
@@ -281,7 +281,7 @@ specifically, which is not interchangeable with a general ground run.
 
 **Column plan.** `A` is the GND bus and `M` the 3V3 bus, both bare solid-core wire threaded
 through and tacked at each hole they cross, so the joints are parallel taps off a continuous
-conductor rather than a series chain. `K` and `L` are free for test points. `C1` goes straight across `JP1.6`/`JP1.7`. `R1` cannot span SQW to VCC the same way -- they are
+conductor rather than a series chain. `K` and `L` are free for test points. `C1` sits across `O-02`/`O-01`, the escapes carrying VCC and GND -- not `JP1.6`/`JP1.7` themselves, which are header pins the breakout occupies. GND and VCC arrive one row apart, so that is a 2.54 mm span under a 5 mm body and the leads bend in. `R1` cannot span SQW to VCC the same way -- they are
 adjacent header pins, one row apart -- so it runs up column `N` to the 3V3 bus at its own
 lead pitch. It is in `N` and not `O` because all seven of the breakout's header pins are in
 column `P`, so each one needs the hole beside it in `O` to get off its own column: `O-01`
@@ -319,7 +319,7 @@ J2 (DS3234 breakout JP1): pin 7 GND at P-01 up to pin 1 SS at P-07
 0.1 uF (U2): H-15 / I-13
 0.1 uF (U3): H-23 / I-21
 R1 (2.2k): N-03 / N-06
-C1 (0.1 uF): P-02 / P-01
+C1 (0.1 uF): O-02 / O-01
 R2 (1k): H-17 / K-17
 D1 (LED): K-17 / L-17
 R3 (1k): C-13 / C-08
