@@ -6,6 +6,44 @@ Airframe and payload design notes for the **rekon10** vehicle this repo flies on
 
 System overview, mission context, and design rationale: **[rekon-design.md](rekon-design.md)**
 
+## Where a hardware fact goes
+
+The index below lists topics. This is the part that is not obvious from the headings: which
+doc answers which **question**, since the questions people actually arrive with are "what is
+on this pin" and "what can I move", not "tell me about timing".
+
+| If you are asking | Look in |
+|---|---|
+| What is on an **FC pad or port** -- what is free, what is wired, what voltage it tolerates | [flight-platform.md](flight-platform.md), *Flight controller* |
+| What **ArduPilot parameter** makes a pin behave that way | [ardupilot.md](ardupilot.md) |
+| What is on the **hub board** -- the buffer tree, the 5 V rails, the pod harness, the PPS signal | [central-hub.md](central-hub.md) |
+| What is on a **campod** -- the Zero, the camera, the accelerometers, their wiring | [campod.md](../campod.md), [campod-electrical.md](../campod-electrical.md) |
+| What the **ESC, motors, battery, radio or VTX** are and how they are wired | [flight-platform.md](flight-platform.md) |
+| **Why** a part or value was chosen, and what was tried before it | [flight-platform-build-log.md](flight-platform-build-log.md) |
+| Which **propeller set** is which, and what each one is | [props.md](props.md) |
+| How something is **mechanically mounted** -- the OAK-D, the arm pods | [oak-d-mount.md](oak-d-mount.md), [campod.md](../campod.md) |
+| What a **blink pattern** means with no link up | [led-cheatsheet.md](led-cheatsheet.md) |
+
+**The rule is by component, not by subsystem.** A fact about an FC pad belongs with the FC
+even if it exists because of the hub board, and vice versa. Grouping by the subsystem you
+happen to be working on puts facts where only you would look -- somebody with a soldering
+iron in their hand looks under the board the iron is touching.
+
+So the two seams that keep needing trimming:
+
+- `central-hub.md` describes the **signal** a buffered output carries. The moment it starts
+  explaining an FC pad or a parameter, that part belongs in `flight-platform.md` or
+  `ardupilot.md` with a pointer back.
+- `flight-platform.md` describes the **pad**. The moment it starts explaining why the
+  signal on it has the shape it does, that part belongs in `central-hub.md`.
+
+When something genuinely sits on a line, put it in one doc and point from the other. Two
+copies diverge, and the copy nobody follows back is the one that goes stale.
+
+Software consumers of any of this -- chrony, the capture stack, the router -- are outside
+this directory: [`docs/time-base.md`](../time-base.md), [`docs/campod-software.md`](../campod-software.md),
+[`docs/architecture.md`](../architecture.md).
+
 ## Topic documents
 
 | Topic | File |
@@ -19,6 +57,7 @@ System overview, mission context, and design rationale: **[rekon-design.md](reko
 | Flight platform (as-built hardware, wiring, stack recipe) | [flight-platform.md](flight-platform.md) |
 | Flight platform build log (chronicle, bench notes) | [flight-platform-build-log.md](flight-platform-build-log.md) |
 | Vibration and structural testing (chain validation, bump-test method) | [vibration-testing.md](vibration-testing.md) |
+| Propellers, by label (which sets exist and what they are) | [props.md](props.md) |
 | ArduPilot configuration (params, serial, RC, tools) | [ardupilot.md](ardupilot.md) ; [`ardupilot/rekon10-methodi.param`](../../ardupilot/rekon10-methodi.param) |
 | EdgeTX REKON10 model | [`config/MODELS/model01.yml`](config/MODELS/model01.yml) |
 | EdgeTX FIREFLY16 model | [`config/MODELS/model02.yml`](config/MODELS/model02.yml) |
