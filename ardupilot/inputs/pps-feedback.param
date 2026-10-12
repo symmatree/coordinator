@@ -1,5 +1,7 @@
-# PPS into the FC, logged as a camera feedback edge. What the leg is for, the pad survey,
-# and why each of these values: docs/time-base.md, "The FC leg".
+# PPS into the FC, logged as a camera feedback edge.
+#   what each value means      docs/rekon10/ardupilot.md, "Camera feedback pin"
+#   the pad, and what is free  docs/rekon10/flight-platform.md, "Flight controller"
+#   what the signal is for     docs/time-base.md
 #
 # Pad S11 = PE5 = GPIO(60).
 SERVO11_FUNCTION,-1
