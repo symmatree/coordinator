@@ -13,20 +13,6 @@
     fail_msg: >-
       Coordinator/campod images are linux/arm64. Install 64-bit Raspberry Pi OS.
 
-- name: Install podman
-  ansible.builtin.apt:
-    install_recommends: false
-    name:
-      # Brings the quadlet generator and crun.
-      - podman
-      # podman warns without it; unused while the payload containers are rootful.
-      - uidmap
-    state: present
-    update_cache: false
-  when: ansible_os_family == "Debian"
-  # site.yaml's reboot keys on whether this run installed anything.
-  register: podman_host_pkgs
-
 # Read by the quadlet generator at boot and on every daemon-reload.
 - name: Ensure the quadlet unit directory exists
   ansible.builtin.file:

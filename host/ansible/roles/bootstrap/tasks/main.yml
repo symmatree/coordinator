@@ -136,22 +136,18 @@
     cache_valid_time: "{{ apt_cache_max_age }}"
   when: ansible_os_family == "Debian"
 
-- name: Install prerequisites
+# THE one apt install in a run. The list is group_vars/all.yml, which says why.
+#
+# Registered so provision.yaml's reboot can key on whether anything was actually
+# installed. Registered vars are host facts for the whole play, so they are visible from
+# post_tasks even though they are set inside a role.
+- name: Install the host package set
   ansible.builtin.apt:
     install_recommends: false
-    name:
-      - ca-certificates
-      - curl
-      - git
-      # coord-sessions pipes its tar through the zstd CLI rather than a library:
-      # trixie ships Python 3.13 and stdlib zstd arrived in 3.14.
-      - zstd
+    name: "{{ host_packages + host_packages_by_role[device_role] }}"
     state: present
     update_cache: false
   when: ansible_os_family == "Debian"
-  # Registered so site.yaml's reboot can key on whether anything was actually
-  # installed. Registered vars are host facts for the whole play, so they are
-  # visible from post_tasks even though they are set inside a role.
   register: bootstrap_prereqs
 
 # In-place OS upgrade, off by default. Was a separate playbook

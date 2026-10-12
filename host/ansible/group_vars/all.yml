@@ -57,3 +57,38 @@ allow_reboot: true
 # either way. Only the first tier is built, feeding the coordinator; set this true per
 # host as the fan-out reaches the pods.
 coord_pps_wired: "{{ device_role == 'coordinator' }}"
+
+# EVERY package the host gets, in one list, because there is exactly one apt install in a
+# run. Five roles each asking for an index refresh was the per-converge apt cost #48/#451
+# removed; five roles each asking for an install is the same mistake with the same shape --
+# apt is the slowest thing we do on a Zero over WiFi, and the cost is per invocation.
+#
+# A role that needed a package used to install it, which reads as self-contained and is
+# why this drifted back. The roles still own their configuration; they do not own apt.
+#
+# Anything role-specific goes in the map below rather than a `when:` on a package.
+host_packages:
+  - ca-certificates
+  - curl
+  # git is the only one of these missing from the image, and is needed because
+  # /opt/stacks/<role> symlinks into a git checkout -- `git pull` IS the config deploy.
+  - git
+  # podman brings the quadlet generator and crun; uidmap silences a warning and is
+  # unused while the payload containers are rootful systemd units.
+  - podman
+  - uidmap
+  # collectd-core, NOT collectd: the metapackage pulls rrdtool and the full plugin
+  # dependency set for plugins this config never loads. We are not writing RRD.
+  - collectd-core
+  # chrony on every device: the coordinator serves the pods and each pod disciplines its
+  # own clock off its PPS leg. Installed in PROVISION rather than with its config, so
+  # chronyd exists before roles/metrics decides whether collectd can read it.
+  - chrony
+
+host_packages_by_role:
+  coordinator:
+    # i2cdetect for front-panel display bring-up.
+    - i2c-tools
+    # ppstest, the instrument for the PPS line. chrony does not need it.
+    - pps-tools
+  campod: []
