@@ -124,31 +124,25 @@
   # removing the source blind.
   when: "'NO_INDEX' not in bootstrap_rpi_auto_pkgs.stdout"
 
-# NO APT IN A STEADY-STATE CONVERGE. The packages come from the image --
-# pi-image/roles/<role>.env's APT_INSTALL in dotfiles-symm -- so there is nothing here to
-# install and nothing to refresh for. Six roles were each running an apt install, five of
-# them for packages the image already had: no-ops that still paid an apt invocation, which
-# on a Zero over WiFi is the slowest thing we do.
+# NO APT IN A STEADY-STATE CONVERGE, and nothing here checks the package set either.
 #
-# The image is the floor. A card flashed from one that predates a package does not get it
-# from a converge; it gets reflashed. That is the same rule as device tree, and it is why
-# this asserts rather than installs -- a missing binary should name the image, not be
-# quietly papered over at converge time with a different version than every other card.
-- name: Read the installed package list
-  ansible.builtin.package_facts:
-    manager: apt
+# The packages come from the image -- dotfiles-symm pi-image/roles/<role>.env, APT_INSTALL
+# -- so there is nothing to install and nothing to refresh for. Six roles were each running
+# an apt install and five were for packages the image already had: no-ops that still paid an
+# apt invocation, which on a Zero over WiFi is the slowest thing we do.
+#
+# The image build verifies its own claims (`preinstalled` sentinels, check-claims.py), so a
+# second check here would duplicate one that already exists a layer down, about packages
+# this play did not install. And a missing package is not a silent failure: the unit fails
+# to start, or the binary errors by name. That is unlike a silently-ignored CONFIG -- the
+# chrony conf.d check and the collectd plugin check earn their asserts because a config
+# nothing reads looks identical to one that works.
+#
+# The image is the floor. A card flashed before a package existed does not acquire it from a
+# converge; it gets reflashed.
 
-- name: Check the image provided the host package set
-  ansible.builtin.assert:
-    that: item in ansible_facts.packages
-    fail_msg: >-
-      {{ item }} is not installed, so this card's image does not carry it. Add it to
-      APT_INSTALL in dotfiles-symm pi-image/roles/{{ device_role }}.env and reflash -- a
-      converge does not install packages.
-  loop: "{{ host_requires + host_requires_by_role[device_role] }}"
-
-# Only when something is actually going to use it. A normal converge makes no apt call at
-# all; this is the one path that does, and it is opt-in.
+# Only when something is going to use it. A normal converge makes no apt call at all; this
+# is the one path that does, and it is opt-in.
 - name: Refresh the apt index for the upgrade
   ansible.builtin.apt:
     update_cache: true
