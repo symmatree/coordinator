@@ -52,6 +52,9 @@
           - platform
 
   roles:
+    # First: who can log in. A card arrives trusting only the fleet management key, and
+    # this is what grants the operator. Nothing below depends on it.
+    - role: ssh-access
     # /usr writable for the package installs below; the reboot at the end closes it.
     - role: usr-rw
     - role: bootstrap
