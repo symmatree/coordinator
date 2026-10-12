@@ -34,12 +34,12 @@ silkscreen says `S` for servo where ArduPilot's board page says `M` for motor, s
 appears nowhere in the Lucid manual and a search for it reads as "those pads do not exist".
 All eight are exposed with nothing soldered to them; this is a quad using `S1`-`S4`.
 
-| pad | STM32 | ArduPilot | | pad | STM32 | ArduPilot |
-|---|---|---|---|---|---|---|
-| S5 | PA2 | GPIO(54) | | S9 | PD14 | GPIO(58) |
-| S6 | PA3 | GPIO(55) | | S10 | PD15 | GPIO(59) |
-| S7 | PD12 | GPIO(56) | | S11 | PE5 | GPIO(60) |
-| S8 | PD13 | GPIO(57) | | S12 | PE6 | GPIO(61) |
+| pad | STM32 | ArduPilot | I/O | | pad | STM32 | ArduPilot | I/O |
+|---|---|---|---|---|---|---|---|---|
+| S5 | PA2 | GPIO(54) | FT | | S9 | PD14 | GPIO(58) | FT |
+| S6 | PA3 | GPIO(55) | FT | | S10 | PD15 | GPIO(59) | FT |
+| S7 | PD12 | GPIO(56) | FT | | S11 | PE5 | GPIO(60) | FT |
+| S8 | PD13 | GPIO(57) | FT | | S12 | PE6 | GPIO(61) | FT |
 
 `S11`/`S12` are the TIM15 `NODMA` pair, which matters for PWM output and not for a GPIO
 input, so of the eight they are the least likely to be wanted for something else later.
@@ -48,9 +48,10 @@ input, so of the eight they are the least likely to be wanted for something else
 input -- [time-base.md](../time-base.md) for what it is for, [ardupilot.md](ardupilot.md)
 for the parameters. A 1k series resistor at this end, per the hub doc's off-board parts.
 
-**All of PE5/PE6 and the rest are 5 V tolerant** (`FT` in the STM32H743xI pin table). Moot
-for a 3.3 V buffer; it matters if a signal generator or a 5 V-powered source ever reaches a
-pad.
+`FT` is 5 V tolerant, read per pin from the STM32H743xI pin table rather than generalised:
+`PA2`/`PA3` are ADC-capable, and analog-capable H7 pins are often `TTa` (3.6 V) instead, so
+"all eight" was not safe to assume. Moot for a 3.3 V buffer; it matters if a signal
+generator or a 5 V-powered source ever reaches a pad.
 
 **Interrupt capacity for them.** `_attach_interruptI` refuses a pad whose EXTI line event
 is already claimed, and on STM32 those are shared by pin *number* across every port. For
