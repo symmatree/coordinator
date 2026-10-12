@@ -71,6 +71,11 @@ feed, while the UBEC is already rated for the whole payload.
 
 Timing signal to coordinate campod and coordinator clocks precisely.
 
+This section owns the **signal**: the fan-out, which output drives which consumer, the
+pull-up arithmetic, and which edge is the second. What software does with it -- chrony's
+reference, when the chip is written, what a correction looks like where it arrives -- is in
+[time-base.md](../time-base.md).
+
 **Buffer:** 3.3 V quad 3-state buffer, **SN74AHC125N** (PDIP-14), powered from the Coordinator's
 3.3 V rail. **AHC, not AHCT** -- the AHCT part shares the package and pinout but is specified for
 VCC 4.5-5.5 V and is out of spec on this rail.
@@ -137,10 +142,10 @@ software policy is on [coordinator#11](https://github.com/symmatree/coordinator/
 on where in its cycle the write lands, the output can produce a **runt pulse** -- a high or
 low period far shorter than 500 ms -- or **no transition at all** where one was due, or
 nothing unusual. All three are electrically ordinary and the buffer passes any of them
-faithfully; the consequence is entirely at the consumers, where a runt reads as a normal
-edge and a missing one as a gap. Not worth designing around, because the disturbance is the
-size of the phase correction being applied and no landing instant avoids it. Worth writing
-down so an odd interval in a log next to a correction is recognised rather than chased.
+faithfully, so none of it is visible on this board; the consequence lands at the consumers,
+and what each of them sees is in [time-base.md](../time-base.md). Not worth designing
+around, because the disturbance is the size of the phase correction being applied and no
+landing instant avoids it.
 
 **Rate trimming is possible without a discontinuity, with a caveat.** The aging-offset
 register (`10h/90h`, two's complement, p. 16) adds or removes oscillator capacitance at the
