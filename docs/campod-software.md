@@ -321,7 +321,9 @@ Following pieces of [Microsecond accurate NTP with a Raspberry Pi and PPS GPS](h
 
 The Camera Module 3 does not have XVS hardware trigger pins. The build uses **software-based timing sync for all cameras**.
 
-All cameras use interpolated timestamping: capture timestamps (locked to the **shared RTC time base** via DS3234 SQW + PPS + chrony) are matched against ArduPilot's high-frequency pose logs (50-100 Hz) during post-processing (PPK-style interpolation). Even at 10 m/s (a worst-case for the timing math, not a planned survey speed) with 1 ms sync, positional error is only ~1 cm -- acceptable for photogrammetry. libcamera claims less than 10 microseconds.
+All cameras use interpolated timestamping: capture timestamps, in the shared time base
+([time-base.md](time-base.md)), are matched against ArduPilot's high-frequency pose logs
+(50-100 Hz) during post-processing (PPK-style interpolation). Even at 10 m/s (a worst-case for the timing math, not a planned survey speed) with 1 ms sync, positional error is only ~1 cm -- acceptable for photogrammetry. libcamera claims less than 10 microseconds.
 
 **Planned survey speed:** 3-5 m/s for overhead mapping transects, slower under canopy. At 3 m/s with the same 1 ms sync budget, positional error is ~3 mm.
 
@@ -333,11 +335,20 @@ Standard NTP over USB gadget mode has 2-10 ms of jitter due to USB polling, whic
 
 **Architecture:**
 
-1. **One DS3234** at the coordinator hub outputs **SQW** (1 Hz) into the PPS buffer tree ([central-hub.md](rekon10/central-hub.md)). Primary need: **local agreement** across Pis, not strict absolute UTC on every flight.
-2. **The Coordinator** runs NTP on the USB gadget network and can **discipline** the DS3234 from GNSS time (u-center / MAVLink / logged fixes) when sky view is good.
-3. **Each Zero** gets "rough" time from the Coordinator over USB (accurate to the correct second, but sloppy by 5-15 ms).
-4. **A physical PPS wire** (buffered SQW) runs to a GPIO pin on every Pi Zero.
-5. **Chrony** on each Zero uses both sources: network time for the second boundary, **phase-lock to the hardware PPS interrupt** for sub-microsecond alignment. USB jitter is eliminated.
+The contract is [time-base.md](time-base.md); it is not restated here. The pod's half of
+it:
+
+1. **A physical PPS wire** (a buffered copy of the DS3234's SQW) runs to a GPIO on every
+   Pi Zero. A pod has no SPI connection to the chip and gets no RTC from it.
+2. **NTP from the coordinator** over the USB gadget network supplies the integer second,
+   where being right to within half a second is enough.
+3. **chrony on each Zero uses both**: the network for which second it is, the hardware PPS
+   interrupt for where the second starts. The link's jitter and asymmetry stay out of the
+   phase, which is the point of the wire.
+
+How tightly that converges the shutters is **unmeasured** -- `rpi.SyncMode` is wired but
+its control surface is unverified and the default is `off`. Earlier revisions of this
+section claimed sub-microsecond alignment; nothing has measured it.
 
 When libcamera saves a frame, the timestamp comes from CLOCK_MONOTONIC, phase-locked to the shared RTC epoch. Post-processing interpolates against ArduPilot pose logs (GPS/VIO **TimeUS**); GNSS provides georeferencing, not the pod PPS wire.
 
