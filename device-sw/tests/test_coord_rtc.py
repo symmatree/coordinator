@@ -14,6 +14,7 @@ import importlib.util
 import calendar
 import io
 import sys
+import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -301,9 +302,50 @@ _body = src[src.index("def cmd_feed"):src.index("def set_system")]
 check("the feed checks osf before using the chip's label",
       "SR_OSF" in _body, "osf guard missing from cmd_feed")
 
-# 17. Nothing in the feed path writes the chip. A divider reset would step the 1 Hz
-# phase and make one second the wrong length, which the campods' blanking alignment
-# does not survive -- so this is a property worth asserting, not just intending.
+# 17. The gate on writing the chip. A write re-phases the 1 Hz and makes one second the
+# wrong length, and that signal is what libcamera's SyncMode aligns the pods' shutters
+# against -- so this is the safety property of the design and it is asserted rather than
+# intended. It had no test at all until now: the assertions that used to be here checked
+# that cmd_feed never wrote the chip, which stopped being true when the FC started
+# correcting the epoch, and their replacement was never added.
+check("armed: never, whatever the error",
+      cr.should_set_chip(False, 10.0, True) is False)
+check("armed with no epoch: still never",
+      cr.should_set_chip(True, 10.0, True) is False)
+check("no FC sample: never, nothing else knows the time of day",
+      cr.should_set_chip(False, None, False) is False
+      and cr.should_set_chip(True, None, False) is False)
+check("disarmed with no epoch: always, there is no phase to protect yet",
+      cr.should_set_chip(True, 0.0, False) is True)
+check("disarmed, inside the debounce: no",
+      cr.should_set_chip(False, cr.FC_CORRECT_OVER_S * 0.9, False) is False)
+check("disarmed, past the debounce: yes, either sign",
+      cr.should_set_chip(False, cr.FC_CORRECT_OVER_S * 1.1, False) is True
+      and cr.should_set_chip(False, -cr.FC_CORRECT_OVER_S * 1.1, False) is True)
+
+# The quantity compared is the CHIP's error, not our clock's offset. Our clock is only a
+# proxy for the chip while chrony is tracking the chip -- and on the bench it has the
+# vendor config's upstream pool as well, since our drop-in is additive. Which source it
+# then prefers is chrony's selection and is NOT established here. That is the point: the
+# decision is about the chip, so it should not rest on an assumption about chrony.
+check("a drifted chip is corrected even when our own clock is near truth",
+      cr.should_set_chip(False, 10.0, False) is True)
+
+# The debounce has to be loose enough that one pre-arm period sees at most one correction.
+# At 2 ppm the error grows ~0.17 s/day, so the tolerance sets the interval; a few ms would
+# re-phase the pulse repeatedly.
+check("the debounce is hours of drift, not seconds",
+      cr.FC_CORRECT_OVER_S / 2e-6 > 3600,
+      f"{cr.FC_CORRECT_OVER_S}s -> {cr.FC_CORRECT_OVER_S / 2e-6 / 3600:.1f}h")
+
+# An unreadable arm flag counts as ARMED: the only thing it gates is a write that would
+# disturb capture, so not knowing is not a reason to risk it.
+check("an unreadable arm flag reads as armed", cr.armed("/nonexistent/fc_armed") is True)
+_armfile = Path(tempfile.mkdtemp()) / "fc_armed"
+_armfile.write_text("0\n")
+check("a 0 arm flag reads as disarmed", cr.armed(str(_armfile)) is False)
+_armfile.write_text("1\n")
+check("a 1 arm flag reads as armed", cr.armed(str(_armfile)) is True)
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

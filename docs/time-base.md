@@ -61,7 +61,7 @@ already synchronised with root distance under `0.5/rate`, and the offset is fold
 ## The FC sets the chip, while disarmed
 
 The FC's GPS-derived time is the only thing on the vehicle that knows the time of day, so
-it sets the chip; the chip then sets chrony. `should_set_chip(no_epoch, offset, is_armed)`
+it sets the chip; the chip then sets chrony. `should_set_chip(no_epoch, chip_error, is_armed)`
 holds the whole rule:
 
 | | |

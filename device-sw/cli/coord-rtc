@@ -290,7 +290,7 @@ def armed(path: str = ARM_FILE) -> bool:
         return True
 
 
-def should_set_chip(no_epoch: bool, offset: float | None, is_armed: bool) -> bool:
+def should_set_chip(no_epoch: bool, chip_error: float | None, is_armed: bool) -> bool:
     """Whether to write the chip's time registers this round.
 
     Its own function because it is the whole safety argument in one place: a write
@@ -302,6 +302,10 @@ def should_set_chip(no_epoch: bool, offset: float | None, is_armed: bool) -> boo
       chip has no epoch-> always, there is no phase worth protecting yet
       otherwise        -> only past the debounce, so it is about once per bench
                           session during pre-arm rather than repeatedly
+
+    The FC is the only source. A chip that has never been set -- a new part, or a new
+    cell -- gets its first epoch from `coord-rtc systohc` by hand, once, so that the
+    first fix is a sub-second correction instead of a 26-year one.
 
     WHY THE ARM FILE IS THE RIGHT SIGNAL, not merely an available one. pod-link's
     publisher on the coordinator "watches the arm file the MAVLink router already writes
@@ -320,10 +324,17 @@ def should_set_chip(no_epoch: bool, offset: float | None, is_armed: bool) -> boo
     comparison and could be a year without chrony noticing. What the cadence is sized
     for is Seth's "the typical pre-arm period has one such reset" -- 100 ms is ~14 h of
     2 ppm drift, so a flying day gets one correction before arming.
+
+    `chip_error` is the CHIP's error against the FC, which is the quantity the decision
+    is about. An earlier version passed our clock's offset from the FC instead, which is
+    the same number only while chronyd is up and converged onto this chip. Before chrony
+    has stepped at boot, or with chronyd stopped, our clock and the chip are independently
+    wrong, the debounce reads a number about the wrong device, and whether the chip gets
+    corrected turns on the state of a daemon that has nothing to do with it.
     """
-    if is_armed or offset is None:
+    if is_armed or chip_error is None:
         return False
-    return no_epoch or abs(offset) > FC_CORRECT_OVER_S
+    return no_epoch or abs(chip_error) > FC_CORRECT_OVER_S
 
 
 def chip_boundary(rtc: Ds3234, deadline_s: float = 1.5) -> tuple[int, float] | None:
@@ -416,11 +427,14 @@ def cmd_feed(rtc: Ds3234) -> int:
         # worth protecting yet.
         fc = fc_offset()
         offset = fc[0] if fc is not None else None
-        if should_set_chip(no_epoch, offset, armed()):
+        # What the chip is wrong BY, which is what the debounce is about. offset is how
+        # far trusted time is from our clock; chip_s is what the chip read at `at`.
+        chip_error = None if offset is None else chip_s - (at + offset)
+        if should_set_chip(no_epoch, chip_error, armed()):
             target, err, sr = set_chip(rtc, offset)
             stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(target))
             print(f"coord-rtc: set the chip to {stamp}Z from the FC "
-                  f"(was off {offset:+.3f} s, landed {err * 1000:+.1f} ms, "
+                  f"(chip was off {chip_error:+.3f} s, landed {err * 1000:+.1f} ms, "
                   f"status 0x{sr:02x}); the 1 Hz is re-phased", flush=True)
             time.sleep(FEED_PERIOD_S)
             continue
