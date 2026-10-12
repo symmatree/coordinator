@@ -134,26 +134,18 @@
 # from a converge; it gets reflashed. That is the same rule as device tree, and it is why
 # this asserts rather than installs -- a missing binary should name the image, not be
 # quietly papered over at converge time with a different version than every other card.
-- name: Check the image provided the host package set
-  ansible.builtin.stat:
-    path: "{{ item.path }}"
-  register: bootstrap_provided
-  loop: "{{ host_requires + host_requires_by_role[device_role] }}"
-  loop_control:
-    label: "{{ item.package }}"
-  check_mode: false
+- name: Read the installed package list
+  ansible.builtin.package_facts:
+    manager: apt
 
-- name: Fail naming the image, if it did not
+- name: Check the image provided the host package set
   ansible.builtin.assert:
-    that: item.stat.exists
+    that: item in ansible_facts.packages
     fail_msg: >-
-      {{ item.item.path }} is missing, so this card's image does not carry
-      {{ item.item.package }}. Add it to APT_INSTALL in
-      dotfiles-symm pi-image/roles/{{ device_role }}.env and reflash -- a converge does not
-      install packages.
-  loop: "{{ bootstrap_provided.results }}"
-  loop_control:
-    label: "{{ item.item.package }}"
+      {{ item }} is not installed, so this card's image does not carry it. Add it to
+      APT_INSTALL in dotfiles-symm pi-image/roles/{{ device_role }}.env and reflash -- a
+      converge does not install packages.
+  loop: "{{ host_requires + host_requires_by_role[device_role] }}"
 
 # Only when something is actually going to use it. A normal converge makes no apt call at
 # all; this is the one path that does, and it is opt-in.
