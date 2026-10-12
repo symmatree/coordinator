@@ -1,0 +1,77 @@
+# Managed by host/ansible/roles/chrony. The contract is docs/time-base.md.
+#
+# THE WHOLE FILE, not a conf.d drop-in, and that is the point. Debian's chrony.conf
+# ships `pool 2.debian.pool.ntp.org iburst`, `sourcedir /run/chrony-dhcp` and
+# `sourcedir /etc/chrony/sources.d` -- three ways an upstream server arrives -- and a
+# drop-in can only ADD directives, never un-declare them. This design has exactly one
+# seconds source by construction; upstream NTP on the coordinator would be a second one,
+# competing with the chip the pulse is locked to.
+#
+# The cost of owning the file: a chrony package upgrade sees a modified conffile. Nothing
+# upgrades on these devices unless asked for (`-e dist_upgrade=true`), and that path
+# already passes dpkg options for exactly this.
+
+# Housekeeping, kept from the vendor file because it is useful and uncontroversial.
+driftfile /var/lib/chrony/chrony.drift
+logdir /var/log/chrony
+# Step rather than slew for the first few updates, then slew. A device that boots with a
+# cold clock should jump once and settle, not crawl.
+makestep 1 3
+# NOT rtcsync. It syncs the system clock to a KERNEL rtc, and there deliberately is none
+# -- binding rtc-ds3232 to the DS3234 would turn its 1 Hz output off. docs/time-base.md.
+{% if device_role == 'coordinator' %}
+
+# --- coordinator: the chip is the seconds source -------------------------------------
+#
+# The DS3234's own time, served by coord-rtc-feed over a SOCK datagram. THE CHIP, NOT
+# UTC, and that is what makes this work: coord-rtc samples at the chip's seconds
+# rollover, the same instant as the falling edge below, so this reference and the pulse
+# locked to it are the same clock and agree by construction.
+#
+# Reporting UTC here instead would make the reference a different clock from the pulse,
+# and their difference -- the chip's phase against the UTC second -- would drift at
+# 2 ppm until it crossed chrony's 0.4 s locked-PPS tolerance and every pulse was
+# silently discarded. UTC is a label on this base, not the base; coordinator-mavlink
+# logs the FC's GPS-derived offset per session for that.
+#
+# precision 2e-3 is this path's error: the second boundary is found by polling the
+# seconds register, so the poll interval bounds it.
+refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 2e-3 poll 4
+{% if coord_pps_wired | bool %}
+
+# The buffered 1 Hz, and the reason the circuit exists. lock=DS32 pairs each edge with a
+# chip sample: the chip says which second, the edge says where the second starts.
+refclock PPS /dev/pps0 refid PPS lock=DS32 precision 1e-7 poll 2
+{% endif %}
+
+# Serve the campods over the USB gadget network. Derived from the coordinator's own
+# address rather than a second subnet variable, which vars/gadget-net.yml says not to
+# add; the role asserts the prefix is 24 so the derivation cannot quietly become wrong.
+allow {{ campod_gadget_coordinator_ip.rsplit('.', 1)[0] }}.0/{{ campod_gadget_prefix }}
+
+# Serve time even with no source of its own. Without this a coordinator whose chip has
+# no epoch yet refuses to answer the pods at all, and they would have nothing -- where
+# what they actually need from it is which second it is, to better than half a second.
+# `local` says "I am a reference of last resort", which is honest about what it is.
+local stratum 10
+{% else %}
+
+# --- campod: the second over the network, the phase off the wire ----------------------
+#
+# NTP from the coordinator supplies the integer second. Being right to within half a
+# second is enough for that, which the gadget link clears by orders of magnitude -- its
+# asymmetry and jitter are the reason it cannot supply the phase.
+server {{ campod_gadget_coordinator_ip }} iburst
+{% if coord_pps_wired | bool %}
+
+# The pod's own buffered leg of the same edge, which is what actually aligns capture.
+# No lock=: a PPS refclock with no lock is used once chrony is already synchronised to
+# within half a second, which the server above provides. There is nothing to lock to
+# here anyway -- a pod has no SPI connection to the chip and gets no RTC from it.
+#
+# Every pod takes a copy of ONE edge, so whatever is wrong about when that edge happened
+# is identically wrong for all of them, and inter-camera alignment is a difference -- so
+# it cancels. NTP alone cannot do that: its error is per-pod and adds.
+refclock PPS /dev/pps0 refid PPS precision 1e-7 poll 2
+{% endif %}
+{% endif %}

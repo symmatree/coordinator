@@ -47,6 +47,22 @@ refclock SOCK /run/chrony.ds3234.sock refid DS32 precision 2e-3 poll 4
 refclock PPS  /dev/pps0 refid PPS lock=DS32 precision 1e-7 poll 2
 ```
 
+**That is the whole of `chrony.conf` on the coordinator, not a drop-in.** Debian's file
+declares `pool 2.debian.pool.ntp.org`, `sourcedir /run/chrony-dhcp` and
+`sourcedir /etc/chrony/sources.d` -- three ways an upstream server arrives -- and a
+`conf.d` drop-in can only add directives, never un-declare them. Upstream NTP here would
+be a second seconds source competing with the chip the pulse is locked to, which is the
+one thing this arrangement is built to avoid. It also carries `local stratum 10`, so the
+coordinator still answers the pods before the chip has an epoch: a second that is the same
+for all of them is worth more than no answer, since what they need from it is which second
+it is and their phase comes off the wire.
+
+**The pods take the second from the coordinator and the phase off their own leg** --
+`server <coordinator> iburst` plus an unlocked `refclock PPS /dev/pps0`. Unlocked because
+there is nothing to lock to: a pod has no SPI connection to the chip. A PPS refclock with
+no lock is used once chrony is synchronised to within half a second, which the server
+clears by orders of magnitude.
+
 **Reporting UTC there instead breaks it, and silently.** The reference would be a
 different clock from the pulse, and their difference -- the chip's arbitrary phase against
 the UTC second -- drifts at the chip's +/-2 ppm. From chrony's `refclock.c`, a locked PPS
@@ -75,6 +91,13 @@ holds the whole rule:
 pre-arm. The cadence is a policy choice and nothing forces it: `PPS_LOCK_LIMIT` compares
 the pulse against the reference, and the reference is the same chip, so the chip's error
 against UTC never enters that comparison.
+
+**After replacing the coin cell, or on a new RTC, set the chip once by hand** --
+`sudo coord-rtc systohc` on a bench network, where the system clock is NTP-synced. An
+unset chip reads `2000-01-01`, so the first GPS fix would write a 26-year correction into
+it, and that is a jump of unknown consequence arriving outdoors, immediately before
+flying. Setting it once makes that first fix a sub-second correction instead. Not
+automated: it is one command per cell.
 
 **Why `fc_armed` is the right gate rather than merely an available one.** pod-link's
 publisher "watches the arm file the MAVLink router already writes and publishes it as
