@@ -56,6 +56,10 @@ Two properties rank above features:
 - **[analysis/vio-quality-experiments.md](../analysis/vio-quality-experiments.md)** -- not
   because VIO is live, but because it is the best example in the repo of how to hold a
   theory. Note the DISPROVEN labels: prior work is marked superseded, not wrong.
+- **[docs/time-base.md](time-base.md)** -- how the pods and the coordinator agree on when
+  something happened. Read it before touching anything in that path: the arrangement is
+  counter-intuitive on purpose (chrony's reference is the RTC, never UTC) and the failure mode
+  of getting it wrong is silent.
 - **[docs/build-and-provenance.md](build-and-provenance.md)** -- which labels and tags are
   load-bearing, and why `org.opencontainers.image.ref.name` is not one of them.
 
@@ -69,75 +73,48 @@ the probe the ground platform reads. Read **`containers/fleet-control/src/quiesc
 **`probe.ts`** too, short as they are -- they decide what every remote operation costs, and one
 of them stops the whole fleet.
 
-## Where things stand (2026-10-06)
+## Where things stand (2026-10-12)
 
-**The live thread is the capture lifecycle, and it is most of what is open.** The shape, agreed
-with Seth over several passes: a pod boots, warms up, holds **idle-ready** -- camera started,
-buffers allocated, writing nothing -- reports that it is ready, and starts capturing when the
-coordinator tells it the vehicle armed. The session ends by power cut. Everything else in this
-section hangs off that.
+**The capture lifecycle thread is done.** #434 is closed and #439 merged, so a pod warms up,
+holds idle-ready, and starts when the coordinator tells it the vehicle armed -- `capture.py`
+gated on a flag file, `pod-link` publishing from the arm file the router writes. #442 added the
+MQTT control surface and status document on top. What is left of #25 is the topics and the
+readiness half, not the mechanism.
 
-- **#434** is the requirement: warm up, hold ready, start on command, and *say* when ready.
-  Carries the measured settle number (~95 s, three controlled runs) and the CMA arithmetic.
-- **#439** is the implementation and is **open, unmerged, unverified on hardware**. Two halves
-  that must land together: `capture.py` gated on a flag file, and `containers/pod-link` -- one
-  Go binary, publisher on the coordinator (watches the arm file the router already writes) and
-  subscriber on each campod (writes the flag). Merging the gate alone switches capture off with
-  nothing to switch it on. Broker is **mochi-mqtt**, the same implementation the cluster runs
-  (`tales/tanka/environments/mochi-mqtt`), because federating this bus upward later should be
-  two instances of one thing.
-- **#25** is where the control surface belongs. #439 consumes its open contract; the topics and
-  the status/readiness half are still to design.
+**The deployment tier changed shape underneath that.** `bin/` is now `device-sw/cli/`, holding
+only what a device installs, and `packaging/build-device-sw` packs it with `stacks/` into a
+`device-sw-<sha>.tar.gz` per commit -- 29.6 KB against the whole repo. Nothing on a device
+fetches it yet; `roles/checkout` still clones, and that is #341's surface. The install set is a
+directory rather than a list, deliberately: `roles/host-cli` copies every file in `cli/` and the
+packer packs the same directory, so neither can disagree with the other or go stale.
 
-**What a campod costs, measured, so nobody re-derives it:** settle ~95 s with a real 60 s
-spread run to run; peak read 19.2-20.6 MB/s (the card's ceiling, invariant); steady write
-~1.75 MB/s; CMA 99.6 MiB of a 128 MiB reservation at `buffer_count=2`, leaving 28 MiB and no
-room for a third buffer. **The card fills in about 4.2 hours and nothing caps it** -- it filled
-twice in one week, and a full card presents as a pod that cannot capture and stops answering,
-not as a disk error. That is the case #439 exists for.
+**Quadlet units and the CLIs are copies, not symlinks into the checkout.** A symlink under
+`/etc/containers/systemd` points into `/home`, which podman's generator reads before
+`local-fs.target` -- it dangles and the generator emits *nothing*, exit 0, no output. That broke
+first boot twice before it was understood.
+
+**`deploy.yaml` neither reboots nor starts the stack.** The quiesce at the top leaves it
+stopped and that is the intended end state -- `coord start`, fleet-control's Reboot, or a power
+cycle is the operator's call. `provision.yaml` still reboots, for udev and the gadget link on a
+fresh card. Do not add a start task: that argument has been had twice and the second time it
+was me asserting my own requirement against Seth's design.
+
+**PPS is built on the coordinator and brought up.** First tier only: a DS3234 and one
+SN74AHC125N feeding GPIO24, measured 2026-10-11. [time-base.md](time-base.md) has the numbers
+and, more usefully, what they are *not*. The fan-out for the pods is not built and no Zero has a
+leg. The software -- chrony with the chip as its source, the FC correcting the chip while
+disarmed, the edge recorded at both ends -- is merged and has never run on hardware.
 
 **The FC parameter store reset itself to defaults on 2026-09-27** and took `SERIAL4_PROTOCOL`
 with it, so the coordinator's UART went quiet and every log pull failed at `wait_heartbeat`.
-Recorded in the build log (#429) with the dating method. Params were reloaded from the
-version-controlled export; the compass calibration was the one thing the export could not
-restore on its own and is pinned in a fragment afterwards (#433). **The link works again.**
+Unexplained. `ardupilot/verify.py` compares the fragments against the export and is
+deliberately non-blocking, because a fragment legitimately leads the export between merge and
+apply.
 
-Open work:
-
-| | |
-|---|---|
-| **#439** | the lifecycle change. Needs review, then CI build, then a device run. Nothing else in the lifecycle moves until this does |
-| **#435** | `coord radio` (os-and-driver-guy). `coord radio` only reaches a device via a converge, so merging it before a campod converge saves a second one |
-| **#430** | the router writes `BAD_DATA` into `vehicle.tlog`, desyncing the tlog framing. Bites exactly when the link is noisy |
-| **#434** | parent requirement; carries the numbers |
-| **#11, #370** | time distribution. #11's wiring is specified to pin level in `central-hub.md`; nothing is built |
-| **#355, #341, #302, #313, #315, #316** | unchanged |
-
-**Not mine, but they block things here.** `eth0` is unconfigured on the coordinator -- no NM
-profile anywhere in `host/ansible`, so a direct cable gets a DHCP timeout and a link-local
-address. Until that lands, "coordinator on wired Ethernet, campods reached through it" does not
-work and the coordinator is reachable only over wifi (`wlan0`, `eth0` DOWN). Also: `coord-fc-log`
-addresses logs by **list position**, not identity (`log_num = oldest_log + list_entry - 1`), so a
-listing and a later pull can disagree and `fc-log-<id>.bin` names a position -- unfiled, and worth
-knowing before trusting an archived filename.
-
-**Ideas that are not yet issues, so they live here or nowhere.**
-
-- **Readiness belongs to the process.** `capture.py` has ground truth about whether it is warm;
-  RSS plateau and refault rates are proxies for it. The OS-level numbers are for *validating*
-  that claim once and diagnosing a bad boot, not for watching continuously. #439 already prints
-  a READY line naming the monotonic second.
-- **A one-shot boot-window sampler** beats always-on collectd plugins for the warm-up question:
-  it can read `workingset_refault_file` (collectd's `vmem` structurally cannot -- it predates
-  the counter), samples at the resolution the window needs, and costs nothing once the window
-  closes. os-and-driver-guy's proposal; his to build if it happens.
-- **Wifi is a mode, not a fixture.** Off is the operating state; first boot still provisions over
-  it and the converge takes it down afterwards; an MQTT command brings it back for bench work.
-  The off mechanism has to be userspace (`rfkill`/NM), because `dtoverlay=disable-wifi` cannot be
-  undone by a command. A physical recovery input -- jumper two pins to mean "do not bring up the
-  capture stack" -- is what makes an aggressive default safe.
-- **Stop-capture and stop-the-stack are different operations.** Only the second needs signals;
-  the first is a flag an already-running process notices, which is why the gate is a file.
+**A freshly flashed card cannot be reached by fleet-control.** dotfiles-symm#77: the cloud-init
+seed carries one key and it is the operator's, so the service gets `Permission denied
+(publickey)` until someone appends its key by hand over their own. Twice now, two different
+cards. Expect to do it on every flash until that lands.
 
 ## What must not be dropped
 
@@ -166,6 +143,21 @@ counters, ~7 boots retained, written by the device with nobody touching it. Sett
 the import storm, when a card filled, when a stack died -- all recoverable afterwards. It is the
 first place to look and it costs the device nothing.
 
+
+**chrony's reference is the RTC chip, never UTC, and getting that wrong fails silently.** One
+chip generates both the seconds label and the 1 Hz edge, so they cannot disagree; a UTC
+reference is a *different* clock from the pulse, and their difference drifts at the chip's
+2 ppm until it crosses chrony's 0.4 s `PPS_LOCK_LIMIT` and every pulse is discarded with
+nothing reporting a problem. It would work for two days. This was built the wrong way round
+once and corrected -- [time-base.md](time-base.md) has the reasoning, and
+`should_set_chip` in `device-sw/cli/coord-rtc` is where the rest of the rule lives.
+
+**Do not write the chip's time registers while anything is using the tick.** The write resets
+the countdown chain, which re-phases the 1 Hz and makes one second the wrong length -- and the
+campods govern capture timing off that signal. The gate is the arm file, which is also what
+pod-link publishes as capture intent, so it is the same value the pods act on. Whatever
+implements disarmed bench capture (#42) has to flow through that file or the gate reads the
+wrong one.
 
 **Every command to a device must quiesce first, as root.** The capture tree and the container
 inits are root-owned; `pi` cannot signal or delete them. This bit twice in one session, in
@@ -241,6 +233,41 @@ download away). Both became load-bearing excuses in artifacts before anyone corr
 **Do not propose in-flight detection.** The reflex to add a watcher, a health check, a failsafe
 is almost always wrong here: the platform cannot yet fly a sunny-day mission, nothing can safely
 watch a capturing pod anyway, and the operator is standing right there. Fix the thing.
+
+**Do not treat the operator as unreliable, in either direction.** Twice in one session, as
+mirror images. First: I told him PRs were ready, asked him to review and merge, then an hour
+later said "the only thing we are waiting on is you to merge" -- assuming he had not done the
+thing I asked. Then, told plainly that he had merged them: I asked GitHub, which agreed, and
+then went further and diffed the trees to prove it -- producing a *wrong* intermediate
+conclusion I needed a third check to undo. His read: "you are equally determined to treat me as
+unreliable when I tell you things, as you are to treat me as unreliable when you need things."
+If you need state in order to say something, look it up before speaking. If he has told you,
+it is true.
+
+**A check with no consumer is a display.** The tell that catches the above: if the result
+cannot change your next action, you are performing diligence rather than doing it. I was going
+to clean up the worktrees whichever way that diff came out.
+
+**Document in one place and point at it.** The `/usr` hatch mechanics were written out in
+seven files; moving the hatch into its own role made three of them false and one had been wrong
+for weeks. Restating a fact is not redundancy with a safety margin -- it is a guarantee that
+the copies diverge, and the one nobody edits is the one that goes stale. When two docs describe
+one thing from different sides, trim the seam rather than add a link: a link makes the
+duplication survivable.
+
+**Organise by component, not by the subsystem you are inside.** The questions people ask are
+"what is on this pin" and "what can we move". I put an FC pad survey in a doc about *time*
+because time was what I was working on, which is grouping by my own task. `docs/rekon10/README.md`
+has the map, keyed on the question. And when a fact belongs to another agent's layer, hand them
+the text and let them place it -- they know what exists and what is being rewritten; you do
+not, and a plausible-looking placement from outside is a guess nobody will check.
+
+**Do not promote a property of the system into an invariant the tooling enforces on him.**
+`/usr` is read-only and only a boot restores it became "a play that opens the hatch MUST
+reboot", written into a doc as a rule. The converge stops the stack became "so the converge
+must start it again". Each time the invariant was mine and I built it into the playbook, so the
+playbook decided instead of the operator. He can deal with a writable `/usr` and a stopped
+stack; both are states he may want. State the property, never a MUST.
 
 **Do not write "today it is a person" or anything like it.** If a mechanism does not exist, say
 it does not exist. A placeholder phrase that makes an unfinished design sound finished is worse
