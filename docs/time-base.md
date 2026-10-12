@@ -79,8 +79,9 @@ against UTC never enters that comparison.
 **Why `fc_armed` is the right gate rather than merely an available one.** pod-link's
 publisher "watches the arm file the MAVLink router already writes and publishes it as
 capture intent", so gating on that file gates on the same value the pods act on. There is
-no second signal. The constraint that follows, for #42: whatever implements disarmed bench
-capture has to flow through the same file, or two things will both mean "capture" and can
+no second signal. The constraint that follows, for
+[coordinator#42, disarmed bench capture](https://github.com/symmatree/coordinator/issues/42):
+whatever implements it has to flow through the same file, or two things will both mean "capture" and can
 disagree.
 
 **Correcting the chip is coherent, not disruptive.** The write moves the label and the
@@ -140,7 +141,7 @@ UTC.
 ## Recording the edges, at both ends
 
 The FC's clock is free-running, so its edges must be logged -- `CAM1_FEEDBAK_PIN` on pad
-S11, with a hardware-captured timestamp (#471). The coordinator and the pods record theirs
+S11, with a hardware-captured timestamp. The parameters are below. The coordinator and the pods record theirs
 too, with `ppstest` into a dedicated journal namespace.
 
 Recording arrivals that chrony's discipline already implies looks redundant, and is not:
@@ -160,7 +161,8 @@ pair of records buys:
 
 `LogNamespace=pps` because one line per second is 20-25 MB/day against a journal capped at
 200 MB: sharing would crowd out the post-bounce forensic trail the journal is persistent
-for (#100). The namespace has its own 64 MB cap, the same 10 s sync bound, and
+for (persistent journald,
+[coordinator#100](https://github.com/symmatree/coordinator/issues/100)). The namespace has its own 64 MB cap, the same 10 s sync bound, and
 `Storage=persistent` restated because a drop-in in `journald.conf.d/` reaches the main
 instance only. `coord-sessions package` asks for the namespace by name and the bundle
 carries `pps.log`.
@@ -168,6 +170,52 @@ carries `pps.log`.
 Only where a leg is soldered (`coord_pps_wired`). That is not detectable -- the `pps-gpio`
 overlay presents `/dev/pps0` on an unconnected pin -- so it is deployment state in
 ansible, while the hardware doc owns which outputs exist.
+
+## The FC leg
+
+The FC takes a buffered copy on **pad S11 = PE5 = GPIO(60)**, bound as a camera feedback
+pin so each edge lands in the dataflash with a hardware-captured timestamp beside the EKF
+state. `ardupilot/inputs/pps-feedback.param`:
+
+```
+SERVO11_FUNCTION  -1   frees the pad as a GPIO
+CAM1_FEEDBAK_PIN  60
+CAM1_FEEDBAK_POL  0
+CAM1_TYPE         5
+```
+
+**The pad.** `S5`-`S12` are all exposed with nothing soldered to them. TBS silkscreens
+servo pads `S` where ArduPilot's board page says `M`, which is why an earlier read of
+`hwdef` made them look absent -- "M11/M12" appears nowhere in the Lucid manual. `S11`/`S12`
+are the TIM15 `NODMA` pair, so of the eight they are the least likely to be wanted for PWM.
+
+```
+S5  PA2  GPIO(54)      S9   PD14  GPIO(58)
+S6  PA3  GPIO(55)      S10  PD15  GPIO(59)
+S7  PD12 GPIO(56)      S11  PE5   GPIO(60)
+S8  PD13 GPIO(57)      S12  PE6   GPIO(61)
+```
+
+EXTI is clear for it: on STM32 line events are shared by pin *number* across every port,
+the pins numbered 5 here are all peripheral users with none on EXTI, and `hwdef` declares
+no interrupt pins -- so the hardware-timestamped ISR is available rather than the 1 kHz
+polling fallback `setup_feedback_callback()` drops to on failure. Confirmable on first run:
+ISR timestamps are microsecond-grained, polled ones land on 1 ms boundaries.
+
+`PE5` and `PE6` are 5 V tolerant (`FT`, STM32H743xI pin table). Moot while the buffer runs
+from 3.3 V, and it matters only if a signal generator or a 5 V-powered buffer ever reaches
+the pin.
+
+**`CAM1_FEEDBAK_POL` is 0 and the default is wrong here.** `0` is `INTERRUPT_FALLING`; the
+default `1` is the rising edge, which on this part is the half second and the undriven one.
+`POL=0` also enables a pull-up so the pin idles high, which is the wanted failure mode: with
+the coordinator off and the FC on battery the buffer output is unpowered, and a defined idle
+beats a floating pin feeding an ISR.
+
+**`CAM1_TYPE` is a gate, not a camera.** `AP_Camera::init()` creates no backend for
+`CameraType::NONE`, so there is no `attach_interrupt` and no ISR. `5` (MAVLINK) binds no
+pin, relay or servo output. No camera is fitted. Cost: a `CAM` record every second, forever,
+in the dataflash.
 
 ## Which clock pairings are strong
 
@@ -240,7 +288,7 @@ calibration constant.
 
 ## Related
 
-- [#11](https://github.com/symmatree/coordinator/issues/11) -- what is still to do
+- [coordinator#11](https://github.com/symmatree/coordinator/issues/11) -- what is still to do
 - [rekon10/central-hub.md](rekon10/central-hub.md) -- the board, the fan-out, which edge
 - [campod-software.md](campod-software.md), [flight-data-layout.md](flight-data-layout.md)
 - `device-sw/cli/coord-rtc`, `host/ansible/roles/chrony`
