@@ -58,37 +58,24 @@ allow_reboot: true
 # host as the fan-out reaches the pods.
 coord_pps_wired: "{{ device_role == 'coordinator' }}"
 
-# EVERY package the host gets, in one list, because there is exactly one apt install in a
-# run. Five roles each asking for an index refresh was the per-converge apt cost #48/#451
-# removed; five roles each asking for an install is the same mistake with the same shape --
-# apt is the slowest thing we do on a Zero over WiFi, and the cost is per invocation.
+# What the IMAGE must have provided, checked rather than installed. A converge runs no apt
+# (see roles/bootstrap): the packages are in dotfiles-symm pi-image/roles/<role>.env under
+# APT_INSTALL, and a card flashed without one gets reflashed rather than diverging from
+# every other card by having a converge-time version.
 #
-# A role that needed a package used to install it, which reads as self-contained and is
-# why this drifted back. The roles still own their configuration; they do not own apt.
-#
-# Anything role-specific goes in the map below rather than a `when:` on a package.
-host_packages:
-  - ca-certificates
-  - curl
-  # git is the only one of these missing from the image, and is needed because
-  # /opt/stacks/<role> symlinks into a git checkout -- `git pull` IS the config deploy.
-  - git
-  # podman brings the quadlet generator and crun; uidmap silences a warning and is
-  # unused while the payload containers are rootful systemd units.
-  - podman
-  - uidmap
-  # collectd-core, NOT collectd: the metapackage pulls rrdtool and the full plugin
-  # dependency set for plugins this config never loads. We are not writing RRD.
-  - collectd-core
-  # chrony on every device: the coordinator serves the pods and each pod disciplines its
-  # own clock off its PPS leg. Installed in PROVISION rather than with its config, so
-  # chronyd exists before roles/metrics decides whether collectd can read it.
-  - chrony
+# A path per package because that is what can be tested; the package name is carried so the
+# failure can name what to add and where.
+host_requires:
+  - { package: git, path: /usr/bin/git }
+  - { package: curl, path: /usr/bin/curl }
+  - { package: podman, path: /usr/bin/podman }
+  - { package: collectd-core, path: /usr/sbin/collectd }
+  - { package: chrony, path: /usr/sbin/chronyd }
 
-host_packages_by_role:
+host_requires_by_role:
   coordinator:
-    # i2cdetect for front-panel display bring-up.
-    - i2c-tools
+    # i2cdetect, for front-panel display bring-up.
+    - { package: i2c-tools, path: /usr/sbin/i2cdetect }
     # ppstest, the instrument for the PPS line. chrony does not need it.
-    - pps-tools
+    - { package: pps-tools, path: /usr/bin/ppstest }
   campod: []
