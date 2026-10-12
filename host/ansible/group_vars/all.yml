@@ -63,19 +63,38 @@ coord_pps_wired: "{{ device_role == 'coordinator' }}"
 # APT_INSTALL, and a card flashed without one gets reflashed rather than diverging from
 # every other card by having a converge-time version.
 #
-# A path per package because that is what can be tested; the package name is carried so the
-# failure can name what to add and where.
+# Checked by PACKAGE NAME against dpkg, not by probing a path. A path is a guess about
+# where a package puts its binary, and a wrong guess fails a converge for a reason that has
+# nothing to do with the problem.
 host_requires:
-  - { package: git, path: /usr/bin/git }
-  - { package: curl, path: /usr/bin/curl }
-  - { package: podman, path: /usr/bin/podman }
-  - { package: collectd-core, path: /usr/sbin/collectd }
-  - { package: chrony, path: /usr/sbin/chronyd }
+  - ca-certificates
+  - curl
+  # git, because /opt/stacks/<role> symlinks into a checkout and `git pull` IS the deploy.
+  - git
+  # coord-sessions pipes its tar through the zstd CLI rather than a library: trixie ships
+  # Python 3.13 and stdlib zstd arrived in 3.14. So the bundle format depends on this
+  # binary existing, and its absence would show up as `coord sessions package` failing at
+  # the compress step on a device rather than at converge time -- which is what this check
+  # is for.
+  - zstd
+  # podman brings the quadlet generator and crun; uidmap silences a warning and is unused
+  # while the payload containers are rootful systemd units.
+  - podman
+  - uidmap
+  # collectd-core, NOT collectd: the metapackage pulls rrdtool and the full plugin
+  # dependency set for plugins this config never loads. We are not writing RRD.
+  - collectd-core
+  # chrony on every device: the coordinator serves the pods, each pod disciplines off its
+  # own PPS leg. Installing it also removes systemd-timesyncd, which is wanted.
+  - chrony
 
 host_requires_by_role:
   coordinator:
     # i2cdetect, for front-panel display bring-up.
-    - { package: i2c-tools, path: /usr/sbin/i2cdetect }
+    - i2c-tools
     # ppstest, the instrument for the PPS line. chrony does not need it.
-    - { package: pps-tools, path: /usr/bin/ppstest }
-  campod: []
+    - pps-tools
+  campod:
+    # /dev/pps0 is on every pod from the image, so the instrument belongs there from the
+    # moment a leg is soldered rather than costing a reflash later.
+    - pps-tools
