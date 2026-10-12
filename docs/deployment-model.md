@@ -97,6 +97,14 @@ card needs.
 
 `site.yaml` is both, in order, for a fresh card.
 
+## Who can log in
+
+A flashed card trusts one key, the fleet management key, so that the service can converge
+it from first boot (dotfiles-symm#77). Provision's `roles/ssh-access` then writes the full
+set -- operators and the fleet key -- from `device_authorized_keys` in
+`group_vars/all.yml`, which is where to change it. The file is written whole rather than
+appended to, so removing a key from the list removes it from the device.
+
 ## The `/usr` hatch
 
 **This section is the only description of the hatch.** Playbooks, roles and the other docs

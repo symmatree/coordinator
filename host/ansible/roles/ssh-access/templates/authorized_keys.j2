@@ -1,0 +1,11 @@
+# MANAGED BY ANSIBLE -- host/ansible/roles/ssh-access. Edits here are overwritten on the
+# next provision. The set is device_authorized_keys in group_vars/all.yml.
+#
+# The whole file, not an append. That is what makes "who can log in" a reviewable diff
+# rather than an accumulation: a key dropped from the list is dropped from the device, and
+# a key added by hand on the card does not survive. dotfiles-symm#77.
+{% for k in device_authorized_keys %}
+
+# {{ k.comment }}
+{{ k.key }}
+{% endfor %}

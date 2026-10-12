@@ -1,0 +1,33 @@
+---
+# Who can log in as the device's login account, as a managed file.
+#
+# Provision rather than deploy: a card needs this before anything else is true of it, and
+# it changes when the key set changes rather than when the repo does.
+#
+# THE SEED IS NOT THIS SET. A flashed card carries one key, the fleet management key, so
+# the service can converge a card from first boot (dotfiles-symm#77, #83). This role is
+# what then installs the humans -- which is what makes operator access a value in version
+# control rather than one maintained on the flashing machine. The fleet key is in the
+# managed set too, not only in the seed: that keeps rotating it a `terraform apply` plus a
+# converge, pushing the new key over the old one, instead of a reflash.
+#
+# ansible.builtin.template rather than ansible.posix.authorized_key with exclusive: this
+# repo uses no module outside ansible.builtin, and the runner that performs converges
+# installs bare ansible-core with no collections (containers/fleet-control/Dockerfile), so
+# ansible.posix is not there. Writing the file also makes the whole set the unit of review.
+
+- name: Ensure the login account's .ssh directory exists
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user | default('pi') }}/.ssh"
+    state: directory
+    owner: "{{ ansible_user | default('pi') }}"
+    group: "{{ ansible_user | default('pi') }}"
+    mode: "0700"
+
+- name: Install the managed authorized_keys
+  ansible.builtin.template:
+    src: authorized_keys.j2
+    dest: "/home/{{ ansible_user | default('pi') }}/.ssh/authorized_keys"
+    owner: "{{ ansible_user | default('pi') }}"
+    group: "{{ ansible_user | default('pi') }}"
+    mode: "0600"
