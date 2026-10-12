@@ -98,6 +98,40 @@ Notes:
 
 Telemetry keys and screens live in **`model01.yml`** (e.g. **RSNR**, **FM**, RSSI/LQ fields). [ground-station.md](ground-station.md) describes the ELRS profile and handset setup.
 
+## Camera feedback pin (the PPS leg)
+
+`ardupilot/inputs/pps-feedback.param`. The pad and why it is free:
+[flight-platform.md](flight-platform.md). What the signal is for:
+[time-base.md](../time-base.md).
+
+```
+SERVO11_FUNCTION  -1   frees S11 as a GPIO
+CAM1_FEEDBAK_PIN  60
+CAM1_FEEDBAK_POL  0
+CAM1_TYPE         5
+```
+
+**`CAM1_TYPE` is a gate, not a camera.** `AP_Camera::init()` switches on the type and
+creates no backend for `CameraType::NONE`, so there is no `init()`, no `attach_interrupt`
+and no ISR -- a feedback pin with `CAM1_TYPE=0` does nothing at all. Any non-zero type
+installs one. `5` (MAVLINK) is the cheapest: it binds no pin, no relay and no servo output,
+and `trigger_pic()` only broadcasts `MAV_CMD_DO_DIGICAM_CONTROL`. **No camera is fitted**,
+and this is not leftover config for one.
+
+Cost: a `CAM` record every second, forever, in the dataflash.
+
+**`CAM1_FEEDBAK_POL` is 0, and the default of 1 is the wrong edge here.**
+`setup_feedback_callback()` does `trigger_polarity = feedback_polarity == 0 ? 0 : 1` then
+`attach_interrupt(..., trigger_polarity ? INTERRUPT_RISING : INTERRUPT_FALLING)`, so `0`
+takes the falling edge -- which is the one that marks the second on this signal. It also
+does `hal.gpio->write(pin, !trigger_polarity)`, enabling a pull-up so the pin idles high:
+the wanted failure mode, since with the coordinator off and the FC on battery the buffer
+output is unpowered and a defined idle beats a floating pin feeding an ISR.
+
+`check_feedback()` logs on the ISR's count changing, with no gate on a preceding trigger
+command, so no photo mission or camera is needed for an edge to be recorded. It writes a
+`CAM` record and back-corrects the ISR-to-logging delay.
+
 ## Compass and GPS (Holybro F9P Rover Lite)
 
 * `GPS1_TYPE` / `GPS1_COM_PORT` / `SERIAL2_*`: match bench and FC wiring (RTK integration threads -- bench-baud thread **A**, tracker not yet written).

@@ -29,6 +29,36 @@ Default UART to SERIAL mapping is in the Lucid manual (ArduPilot column). **This
 
 **VTX power:** Lucid **RELAY4** on **GPIO 83** controls the **9/12 V BEC** rail for HD VTX. Full ArduPilot relay / RC options: [ardupilot.md](ardupilot.md).
 
+**Servo pads S5-S12 are free, and TBS numbers them differently from ArduPilot.** The
+silkscreen says `S` for servo where ArduPilot's board page says `M` for motor, so "M11/M12"
+appears nowhere in the Lucid manual and a search for it reads as "those pads do not exist".
+All eight are exposed with nothing soldered to them; this is a quad using `S1`-`S4`.
+
+| pad | STM32 | ArduPilot | | pad | STM32 | ArduPilot |
+|---|---|---|---|---|---|---|
+| S5 | PA2 | GPIO(54) | | S9 | PD14 | GPIO(58) |
+| S6 | PA3 | GPIO(55) | | S10 | PD15 | GPIO(59) |
+| S7 | PD12 | GPIO(56) | | S11 | PE5 | GPIO(60) |
+| S8 | PD13 | GPIO(57) | | S12 | PE6 | GPIO(61) |
+
+`S11`/`S12` are the TIM15 `NODMA` pair, which matters for PWM output and not for a GPIO
+input, so of the eight they are the least likely to be wanted for something else later.
+
+**`S11` is in use:** the PPS leg from the hub board's buffer tree, as a camera feedback
+input -- [time-base.md](../time-base.md) for what it is for, [ardupilot.md](ardupilot.md)
+for the parameters. A 1k series resistor at this end, per the hub doc's off-board parts.
+
+**All of PE5/PE6 and the rest are 5 V tolerant** (`FT` in the STM32H743xI pin table). Moot
+for a 3.3 V buffer; it matters if a signal generator or a 5 V-powered source ever reaches a
+pad.
+
+**Interrupt capacity for them.** `_attach_interruptI` refuses a pad whose EXTI line event
+is already claimed, and on STM32 those are shared by pin *number* across every port. For
+pin 5 the users here are `PA5` (SPI1_SCK), `PB5` (SPI3_MOSI), `PC5` (RSSI_ADC) and `PD5`
+(USART2_TX) -- all peripherals, none on EXTI -- and `hwdef` declares no interrupt pins, so
+`PE5` gets a real hardware-timestamped interrupt. Visible on first use: ISR timestamps are
+microsecond-grained where the polling fallback lands on 1 ms boundaries.
+
 FC Connections:
 
 * RADIO pigtail
