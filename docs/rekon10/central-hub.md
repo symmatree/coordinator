@@ -214,12 +214,14 @@ therefore cannot grow.
 | ~~C5~~ | **not fitted** | -- | nothing on this board asks for a reservoir. The buffers' worst moment is four channels slewing together, 160-260 mA for a few ns, which the local 0.1 uF covers with 3.3 mV of droop and then has a second to recharge; the DS3234 draws 400 uA. There is no band between what the 0.1 uF parts cover and DC |
 | R2 | **1k** | `H-17` - `K-17` | sets the LED at ~1.4 mA, inside the AHC output's 4 mA rating |
 | D1 | **LED**, proof of life | `K-17` anode - `L-17` cathode, cathode jumpered to the GND bus | `INTCN` defaults to interrupt mode, so without a 1 Hz blink a board nobody has configured presents as every line sitting steady at 3.3 V |
+| R3, R4, R5, R6, R7 | **1k** each | `C-13`-`C-10`, `I-09`-`I-11`, `I-12`-`I-14`, `C-21`-`C-24`, `C-18`-`C-16` | **buffers live, destination dead.** The '125's absolute-maximum continuous output is +/-25 mA against the destination's +/-20 mA input clamp rating, so the buffer can out-drive what the pin is rated to absorb; 1k makes it ~3 mA. The reverse case -- destination live, buffers dead, which for the FC is the ordinary one since it runs on the pack while the Coordinator may be off -- needs no resistor: that destination's input pull-up is ~40k, so ~80 uA, 0.4% of the clamp rating. **Not** on the Coordinator line, which cannot differ from the buffers either way |
 
-**Not on this board, fitted at the destination end:**
-
-| part | where | why |
-|------|-------|-----|
-| 1k series in the signal line | campods and FC | **buffers live, destination dead.** The '125's absolute-maximum continuous output is +/-25 mA against the destination's +/-20 mA input clamp rating, so the buffer can out-drive what the pin is rated to absorb; 1k makes it ~3 mA. The reverse case -- destination live, buffers dead, which for the FC is the ordinary one since it runs on the pack while the Coordinator may be off -- needs no resistor: that destination's input pull-up is ~40k, so ~80 uA, 0.4% of the clamp rating. **Not** on the Coordinator line, which cannot differ from the buffers either way |
+The five leg resistors stand along the free column rather than in-row: the connector's
+ground pin lands straight in the GND bus hole, which leaves one hole between it and the
+chip pin. Each leg bridges out of the buffer pin, runs the resistor up or down the
+column, and bridges across to the connector, so no hole carries two inserted leads.
+Position along the run does not matter electrically -- it is series either way -- so
+they are here rather than spliced into five cables.
 
 SQW and one buffer output come out to test points. Every edge-rate figure here is computed from
 worst-case datasheet capacitance, not measured.
@@ -247,17 +249,22 @@ The same wiring by net rather than by component, generated from the same source 
 | **SPI_SCLK** | `J1.7 (hdr23)`, `J2.4 (SCLK)` |  |
 | **T2_FRONT** | `U1.3 (1Y)`, `U2.2 (1A)`, `U2.5 (2A)`, `U2.9 (3A)`, `U2.12 (4A)` |  |
 | **T2_REAR** | `U1.6 (2Y)`, `U3.2 (1A)`, `U3.5 (2A)`, `U3.9 (3A)`, `U3.12 (4A)` |  |
-| **PPS_COORD** | `U2.6 (2Y)`, `J1.2 (hdr18)` | returns on header pin 18 = BCM GPIO24 |
-| **PPS_FC** | `U2.3 (1Y)`, `J3.1` |  |
-| **PPS_NE** | `U2.8 (3Y)`, `J4.1` |  |
-| **PPS_NW** | `U2.11 (4Y)`, `J5.1` |  |
-| **PPS_SE** | `U3.3 (1Y)`, `J6.1` |  |
-| **PPS_SW** | `U3.6 (2Y)`, `J7.1` |  |
+| **PPS_COORD** | `U3.11 (4Y)`, `J1.2 (hdr18)` | returns on header pin 18 = BCM GPIO24 |
+| **PPS_FC** | `U2.3 (1Y)`, `R3.1` |  |
+| **PPS_FC_J** | `R3.2`, `J3.1` | connector side of the 1k; the leg past the series resistor |
+| **PPS_NE** | `U2.8 (3Y)`, `R4.1` |  |
+| **PPS_NE_J** | `R4.2`, `J4.1` | connector side of the 1k; the leg past the series resistor |
+| **PPS_NW** | `U2.11 (4Y)`, `R5.1` |  |
+| **PPS_NW_J** | `R5.2`, `J5.1` | connector side of the 1k; the leg past the series resistor |
+| **PPS_SE** | `U3.3 (1Y)`, `R6.1` |  |
+| **PPS_SE_J** | `R6.2`, `J6.1` | connector side of the 1k; the leg past the series resistor |
+| **PPS_SW** | `U3.6 (2Y)`, `R7.1` |  |
+| **PPS_SW_J** | `R7.2`, `J7.1` | connector side of the 1k; the leg past the series resistor |
 | **LED_DRV** | `U3.8 (3Y)`, `R2.1` | U3's third output to the resistor |
 | **LED_A** | `R2.2`, `D1.2 (anode)` | resistor to LED anode -- both land in K-17, so this net is one junction |
 | **T1_SPARE1** | `U1.8 (3Y)` | first-tier spare output, live, for a future second-tier package |
 | **T1_SPARE2** | `U1.11 (4Y)` | first-tier spare output, live, for a future second-tier package |
-| **U3_SPARE** | `U3.11 (4Y)` | rear distributor spare output |
+| **U2_SPARE** | `U2.6 (2Y)` | rear distributor spare output |
 
 `J1.6` (header pin 22, BCM GPIO25) is spare and carries a no-connect.
 
@@ -275,9 +282,21 @@ specifically, which is not interchangeable with a general ground run.
 **Column plan.** `A` is the GND bus and `M` the 3V3 bus, both bare solid-core wire threaded
 through and tacked at each hole they cross, so the joints are parallel taps off a continuous
 conductor rather than a series chain. `K` and `L` are free for test points. `C1` goes straight across `JP1.6`/`JP1.7`. `R1` cannot span SQW to VCC the same way -- they are
-adjacent header pins, one row apart -- so it runs up column `O` to the 3V3 bus at its own
-lead pitch. Still unplaced: `J1`, the Coordinator's 2x4 -- so `PPS_COORD` and the
-four SPI lines have no landings yet.
+adjacent header pins, one row apart -- so it runs up column `N` to the 3V3 bus at its own
+lead pitch. It is in `N` and not `O` because all seven of the breakout's header pins are in
+column `P`, so each one needs the hole beside it in `O` to get off its own column: `O-01`
+through `O-07` are spoken for.
+
+**The Coordinator's leg is not a block on this board.** Each of its seven wires is its own
+dupont jumper off the Pi's header, soldered at the far end onto the hole it belongs to:
+3V3 and GND onto the two buses, the four SPI lines onto the breakout's escape holes in `O`,
+and the returning PPS onto `H-20`. `PPS_COORD` comes off `U3.11`, the output on the G side,
+not `U2.6` -- `U2.6` can only leave its pin through `C-10`, which is held open (below).
+
+**Held holes.** An output is only spare if the hole it would escape through is still free, so
+three are reserved and the generator fails if anything takes one: `C-10` for `U2.6`, `H-01`
+for `U1.8`, `H-04` for `U1.11`. Without them the n/c outputs are unreachable without undoing
+neighbouring wiring, which is not a spare.
 
 **Decoupling.** Each cap sits against pin 14 at `H-nn`, its lower leg stepping one column
 out to `I` to clear the row below, and its ground jumper running to pin 7's own tap. That is
@@ -299,18 +318,23 @@ J2 (DS3234 breakout JP1): pin 7 GND at P-01 up to pin 1 SS at P-07
 0.1 uF (U1): H-07 / I-05
 0.1 uF (U2): H-15 / I-13
 0.1 uF (U3): H-23 / I-21
-R1 (2.2k): O-03 / O-06
+R1 (2.2k): N-03 / N-06
 C1 (0.1 uF): P-02 / P-01
 R2 (1k): H-17 / K-17
 D1 (LED): K-17 / L-17
+R3 (1k): C-13 / C-08
+R7 (1k): C-18 / C-16
+R6 (1k): C-21 / C-24
+R4 (1k): I-09 / I-11
+R5 (1k): I-12 / I-14
 
 Offboard pigtails (2-pin, signal / ground):
 
-J3: B-13 (PPS_FC) / A-13 (GND) -- ground pin lands on the GND bus
-J6: B-21 (PPS_SE) / A-21 (GND) -- ground pin lands on the GND bus
-J7: B-18 (PPS_SW) / A-18 (GND) -- ground pin lands on the GND bus
-J4: I-09 (PPS_NE) / K-09 (GND)
-J5: I-12 (PPS_NW) / K-12 (GND)
+J3: B-08 (PPS_FC) / A-08 (GND) -- ground pin lands on the GND bus
+J7: B-16 (PPS_SW) / A-16 (GND) -- ground pin lands on the GND bus
+J6: B-24 (PPS_SE) / A-24 (GND) -- ground pin lands on the GND bus
+J4: K-11 (PPS_NE) / L-11 (GND)
+J5: K-14 (PPS_NW) / L-14 (GND)
 
 Busses:
 
@@ -322,7 +346,7 @@ N/C:
 
 G-01 (U1.8 3Y)
 G-04 (U1.11 4Y)
-G-20 (U3.11 4Y)
+D-10 (U2.6 2Y)
 
 bridges:
 
@@ -355,6 +379,9 @@ P-01 (J2.7 GND) / O-01 | GND
 P-02 (J2.6 VCC) / O-02 | 3V3
 
 P-03 (J2.5 SQW) / O-03 | SQW
+O-03 / N-03 | SQW
+
+N-06 (R1.2 1A) / M-06 | 3V3
 
 G-17 (U3.8 3Y) / H-17 | LED_DRV
 
@@ -375,15 +402,39 @@ D-22 (U3.2 1A) / C-22 / B-22 | T2_REAR
 G-18 (U3.9 3A) / H-18 / I-18 | T2_REAR
 G-21 (U3.12 4A) / H-21 | T2_REAR
 
-D-13 (U2.3 1Y) / C-13 / B-13 | PPS_FC
+D-13 (U2.3 1Y) / C-13 | PPS_FC
 
-D-21 (U3.3 1Y) / C-21 / B-21 | PPS_SE
+C-08 (R3.2 1A) / B-08 | PPS_FC_J
 
-D-18 (U3.6 2Y) / C-18 / B-18 | PPS_SW
+D-18 (U3.6 2Y) / C-18 | PPS_SW
+
+C-16 (R7.2 1A) / B-16 | PPS_SW_J
+
+D-21 (U3.3 1Y) / C-21 | PPS_SE
+
+C-24 (R6.2 1A) / B-24 | PPS_SE_J
 
 G-09 (U2.8 3Y) / H-09 / I-09 | PPS_NE
 
+I-11 (R4.2 1A) / K-11 | PPS_NE_J
+
+L-11 / L-12 | GND
+
 G-12 (U2.11 4Y) / H-12 / I-12 | PPS_NW
+
+I-14 (R5.2 1A) / K-14 | PPS_NW_J
+
+L-14 / L-15 | GND
+
+P-04 (J2.4 SCLK) / O-04 | SPI_SCLK
+
+P-05 (J2.3 MISO) / O-05 | SPI_MISO
+
+P-06 (J2.2 MOSI) / O-06 | SPI_MOSI
+
+P-07 (J2.1 SS) / O-07 | SPI_CS
+
+G-20 (U3.11 4Y) / H-20 | PPS_COORD
 
 jumpers:
 
@@ -420,7 +471,6 @@ I-21 / B-17 | GND (cap)
 O-01 / A-01 | GND
 
 O-02 / M-02 | 3V3
-O-06 / M-06 | 3V3
 
 L-17 / A-17 | GND
 
@@ -439,8 +489,8 @@ B-19 / C-22 | T2_REAR
 B-22 / H-18 | T2_REAR
 I-18 / H-21 | T2_REAR
 
-K-09 / A-09 | GND
-K-12 / A-12 | GND
+L-12 / A-12 | GND
+L-15 / A-15 | GND
 ```
 
 #### Schematic
@@ -470,14 +520,14 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 
 | header pin | BCM | signal | to |
 |------------|-----|--------|-----|
-| 17 | -- | 3V3 | board +3V3 bus (RTC + all buffers) |
-| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW. Overlay line is `dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1` -- **the `assert_falling_edge` half is not in the flashed image yet** (dotfiles-symm#81); everything else in this table is as-built |
-| 19 | GPIO10 | MOSI | `JP1.2` |
-| 20 | -- | GND | board GND bus |
-| 21 | GPIO9 | MISO | `JP1.3` |
+| 17 | -- | 3V3 | board +3V3 bus (RTC + all buffers), at `M-10` |
+| 18 | GPIO24 | **PPS in** | U3 pin 11 -- a buffered output, not SQW, at `H-20`. Overlay line is `dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1` -- **the `assert_falling_edge` half is not in the flashed image yet** (dotfiles-symm#81); everything else in this table is as-built |
+| 19 | GPIO10 | MOSI | `JP1.2`, at `O-06` |
+| 20 | -- | GND | board GND bus, at `A-13` |
+| 21 | GPIO9 | MISO | `JP1.3`, at `O-05` |
 | 22 | GPIO25 | spare | -- |
-| 23 | GPIO11 | SCLK | `JP1.4` |
-| 24 | GPIO8 | CE0 | `JP1.1` (SS) |
+| 23 | GPIO11 | SCLK | `JP1.4`, at `O-04` |
+| 24 | GPIO8 | CE0 | `JP1.1` (SS), at `O-07` |
 
 `dtparam=spi=on` and the `pps-gpio` overlay are in the coordinator image as of
 `coordinator-pi-20261011.img`. Both are device tree, so they come from the image rather than

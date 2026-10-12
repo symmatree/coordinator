@@ -6,12 +6,15 @@ import netlist as NL
 
 COLS, ROWS = P.COLS, 24
 S = 34                      # px per 2.54mm hole pitch
-MX, MY = 60, 46             # margins
-W = MX*2 + (len(COLS)-1)*S
-H = MY*2 + (ROWS-1)*S
+MX, MY = 60, 96            # left margin; top margin leaves room for the title
+RM, BM = 178, 62           # right margin carries the breakout overhang; bottom, the legend
+W = MX + (len(COLS)-1)*S + RM
+H = MY + (ROWS-1)*S + BM
 
 NETCOL = {"GND":"#4a4a4a", "3V3":"#d62728", "GND (cap)":"#8c564b",
-          "SQW":"#ff7f0e", "T2_FRONT":"#1f77b4", "T2_REAR":"#2ca02c"}
+          "SQW":"#ff7f0e", "T2_FRONT":"#1f77b4", "T2_REAR":"#2ca02c",
+          "PPS_COORD":"#17becf",
+          "SPI_CS":"#9467bd", "SPI_MOSI":"#9467bd", "SPI_MISO":"#9467bd", "SPI_SCLK":"#9467bd"}
 PENDCOL = "#b07aa1"
 
 def px(h):
@@ -44,6 +47,14 @@ def _glyph(ref, a, b):
         out.append(f'<polygon points="{tri}" fill="#d9a441" stroke="#6b5223" stroke-width="1.6"/>')
         out.append(line(pt(5,-7), pt(5,7), 2.8))
     return out, (mx, my)
+
+def lbl(x, y, txt, fill, size=10, anchor="start", weight="normal"):
+    """Text on an opaque patch -- these labels land on top of wires."""
+    w = len(txt) * size * 0.62 + 5
+    bx = {"start": x-2.5, "end": x-w+2.5, "middle": x-w/2}[anchor]
+    return [f'<rect x="{bx:.1f}" y="{y-size+1.5:.1f}" width="{w:.1f}" height="{size+4}" fill="#fbf8f2" opacity="0.88"/>',
+            f'<text x="{x}" y="{y}" font-size="{size}" font-weight="{weight}" fill="{fill}" text-anchor="{anchor}">{txt}</text>']
+
 
 o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="ui-monospace,Menlo,monospace">']
 o.append(f'<rect width="{W}" height="{H}" fill="#fbf8f2"/>')
@@ -89,7 +100,8 @@ for ref,(r1,r8) in P.CHIPS.items():
 for ref, p, n in P.caps:
     g, (mx_, my_) = _glyph("C", p, n)
     o.extend(g)
-    o.append(f'<text x="{mx_+14}" y="{my_+4}" font-size="10" fill="#6b5223">0.1uF</text>')
+    _ux, _uy = px(p)
+    o += lbl(_ux+13, _uy-8, "0.1uF", "#6b5223")
 
 # bridges: short link between adjacent holes
 for net, hs in P.bridges:
@@ -135,11 +147,18 @@ for i, (net, a, b) in enumerate(P.jumpers):
         o.append(f'<circle cx="{x}" cy="{y}" r="3.4" fill="{col}"/>')
 
 
+# Labels go on the side clear of the chip bodies (D-G) and the breakout (P).
+LABEL_SIDE = {"C": "left", "O": "left", "P": "left"}
+
 # discrete parts, as schematic symbols
 for _ref, _val, _a, _b in P.discretes:
     _g, (_mx, _my) = _glyph(_ref, _a, _b)
     o.extend(_g)
-    o.append(f'<text x="{_mx+14}" y="{_my-10}" font-size="10" fill="#6b5223">{_ref} {_val}</text>')
+    _side = LABEL_SIDE.get(_a.split('-')[0], 'right')
+    if _side == 'left':
+        o += lbl(_mx-13, _my+4, f"{_ref} {_val}", "#6b5223", anchor="end")
+    else:
+        o += lbl(_mx+14, _my-10, f"{_ref} {_val}", "#6b5223")
 
 # DS3234 breakout -- header in column P, board hanging off to the right
 _x7, _y7 = px(P.pin[("J2",7)]); _x1, _y1 = px(P.pin[("J2",1)])
@@ -161,8 +180,24 @@ for ref, net, sig, gnd in P.pigtails:
         o.append(f'<rect x="{x-4}" y="{y-4}" width="8" height="8" fill="#6a5acd"/>')
     o.append(f'<text x="{bx+bw/2}" y="{by-4}" font-size="10" font-weight="bold" fill="#4b3f9e" text-anchor="middle">{ref} {net.replace("PPS_","")}</text>')
 
+# The Coordinator's wires: individual dupont legs, each landing on its own hole.
+# Drawn as a tag at the destination, because there is no block on the board.
+for _n, _h in sorted(P.PI.items()):
+    _x, _y = px(_h)
+    o.append(f'<circle cx="{_x}" cy="{_y}" r="6.5" fill="none" stroke="#4b3f9e" stroke-width="2"/>')
+    _left = COLS.index(_h.split("-")[0]) > len(COLS) / 2
+    o += lbl(_x + (-11 if _left else 11), _y+3.5, f"Pi {P.HDR[str(_n)][3:]}", "#4b3f9e",
+             size=9, anchor="end" if _left else "start", weight="bold")
+
+# Holes held open so the n/c outputs stay usable -- an output with no way off its
+# pin is not a spare.
+for _h, _who in sorted(P.RESERVED.items()):
+    _x, _y = px(_h)
+    o.append(f'<circle cx="{_x}" cy="{_y}" r="6" fill="none" stroke="#a33" stroke-width="1.6" stroke-dasharray="3 2.5"/>')
+    o += lbl(_x+10, _y-7, f"held for {_who}", "#a33", size=8)
+
 # pending outputs -> stub toward the right
-pend = {"PPS_COORD":"U2.6","LED_DRV":"U3.8"}
+pend = {"LED_DRV":"U3.8"}
 for net, rp in pend.items():
     ref, pn = rp.split("."); h = P.pin[(ref, int(pn))]
     x, y = px(h)
@@ -179,14 +214,27 @@ for ref, pn in P.ncs:
 # legend
 lx, ly = MX, H - 22
 items = [("GND","GND"),("3V3","3V3"),("GND (cap)","cap return"),
-         ("SQW","SQW"),("T2_FRONT","T2_FRONT"),("T2_REAR","T2_REAR")]
+         ("SQW","SQW"),("T2_FRONT","T2_FRONT"),("T2_REAR","T2_REAR"),
+         ("SPI_CS","SPI x4"),("PPS_COORD","PPS_COORD")]
+step = (W - 2*MX) / len(items)
 for i,(k,lab) in enumerate(items):
-    x = lx + i*118
+    x = lx + i*step
     o.append(f'<line x1="{x}" y1="{ly}" x2="{x+22}" y2="{ly}" stroke="{NETCOL[k]}" stroke-width="4"/>')
     o.append(f'<text x="{x+28}" y="{ly+4}" font-size="11" fill="#5a5245">{lab}</text>')
-o.append(f'<text x="{W-MX}" y="{ly+4}" font-size="11" fill="{PENDCOL}" text-anchor="end">dashed violet = not placed yet</text>')
-o.append(f'<text x="{MX}" y="{MY-S/2-24}" font-size="13" font-weight="bold" fill="#3a3429">PPS buffer board -- component side</text>')
+o.append(f'<text x="{MX}" y="{MY-S/2-50}" font-size="14" font-weight="bold" fill="#3a3429">PPS buffer board -- component side</text>')
+o.append(f'<text x="{W-20}" y="{MY-S/2-50}" font-size="11" fill="{PENDCOL}" text-anchor="end">dashed violet = not placed yet</text>')
 o.append('</svg>')
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pps-protoboard.svg")
 open(OUT, "w").write("\n".join(o) + "\n")
 print("wrote pps-protoboard.svg", W, "x", H)
+
+# A PNG in /tmp for anything that cannot render SVG (phones). The SVG is the
+# committed artifact; this is a convenience render, not a second copy to go stale.
+try:
+    import cairosvg
+    import tempfile
+    png = os.path.join(tempfile.gettempdir(), "pps-protoboard.png")
+    cairosvg.svg2png(url=OUT, write_to=png, scale=3, background_color="white")
+    print("wrote " + png)
+except ImportError:
+    print("cairosvg not installed; skipped the PNG")

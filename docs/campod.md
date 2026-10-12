@@ -86,6 +86,8 @@ These are all unproven claims about load and thermals.
 
 Run a **twisted pair** from the hub PPS buffer (driven by [**SparkFun DeadOn RTC DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW**, typically 1 Hz): signal wire + dedicated signal ground (any GND pin from the Pi header). This keeps the loop area near zero and prevents ESC EMI from corrupting the pulse.
 
+The leg's 1k series resistor is on the hub board, not in the pigtail ([central-hub.md](rekon10/central-hub.md)); the pod end of the cable is bare wire to the header.
+
 The signal ground goes straight through, with nothing in series. An earlier revision put a
 100-ohm resistor here against a "high-current shortcut during a motor failure"; there is no
 path by which a motor fault reaches this wire, and each pod already returns through the USB
