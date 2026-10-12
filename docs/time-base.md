@@ -173,49 +173,13 @@ ansible, while the hardware doc owns which outputs exist.
 
 ## The FC leg
 
-The FC takes a buffered copy on **pad S11 = PE5 = GPIO(60)**, bound as a camera feedback
-pin so each edge lands in the dataflash with a hardware-captured timestamp beside the EKF
-state. `ardupilot/inputs/pps-feedback.param`:
+The FC takes a buffered copy on servo pad **S11**, bound as a camera feedback input, so
+every edge lands in the dataflash with a hardware-captured timestamp beside the EKF state
+at that instant. That is what ties a capture to a pose, and it does not go through UTC.
 
-```
-SERVO11_FUNCTION  -1   frees the pad as a GPIO
-CAM1_FEEDBAK_PIN  60
-CAM1_FEEDBAK_POL  0
-CAM1_TYPE         5
-```
-
-**The pad.** `S5`-`S12` are all exposed with nothing soldered to them. TBS silkscreens
-servo pads `S` where ArduPilot's board page says `M`, which is why an earlier read of
-`hwdef` made them look absent -- "M11/M12" appears nowhere in the Lucid manual. `S11`/`S12`
-are the TIM15 `NODMA` pair, so of the eight they are the least likely to be wanted for PWM.
-
-```
-S5  PA2  GPIO(54)      S9   PD14  GPIO(58)
-S6  PA3  GPIO(55)      S10  PD15  GPIO(59)
-S7  PD12 GPIO(56)      S11  PE5   GPIO(60)
-S8  PD13 GPIO(57)      S12  PE6   GPIO(61)
-```
-
-EXTI is clear for it: on STM32 line events are shared by pin *number* across every port,
-the pins numbered 5 here are all peripheral users with none on EXTI, and `hwdef` declares
-no interrupt pins -- so the hardware-timestamped ISR is available rather than the 1 kHz
-polling fallback `setup_feedback_callback()` drops to on failure. Confirmable on first run:
-ISR timestamps are microsecond-grained, polled ones land on 1 ms boundaries.
-
-`PE5` and `PE6` are 5 V tolerant (`FT`, STM32H743xI pin table). Moot while the buffer runs
-from 3.3 V, and it matters only if a signal generator or a 5 V-powered buffer ever reaches
-the pin.
-
-**`CAM1_FEEDBAK_POL` is 0 and the default is wrong here.** `0` is `INTERRUPT_FALLING`; the
-default `1` is the rising edge, which on this part is the half second and the undriven one.
-`POL=0` also enables a pull-up so the pin idles high, which is the wanted failure mode: with
-the coordinator off and the FC on battery the buffer output is unpowered, and a defined idle
-beats a floating pin feeding an ISR.
-
-**`CAM1_TYPE` is a gate, not a camera.** `AP_Camera::init()` creates no backend for
-`CameraType::NONE`, so there is no `attach_interrupt` and no ISR. `5` (MAVLINK) binds no
-pin, relay or servo output. No camera is fitted. Cost: a `CAM` record every second, forever,
-in the dataflash.
+Which pad, why it is free and what else could take it:
+[rekon10/flight-platform.md](rekon10/flight-platform.md). The parameters and what each
+means: [rekon10/ardupilot.md](rekon10/ardupilot.md).
 
 ## Which clock pairings are strong
 
