@@ -77,7 +77,15 @@ SOCK_SAMPLE = "=qqdiiii"
 # templates from the same variable as the drop-in -- so the sender and the listener
 # cannot disagree. This default is only for a run by hand.
 CHRONY_SOCK = os.environ.get("COORD_RTC_CHRONY_SOCK", "/run/chrony.ds3234.sock")
-FEED_PERIOD_S = float(os.environ.get("COORD_RTC_FEED_PERIOD_S", "64"))
+#
+# 1 Hz, because the chip's second boundary arrives as a kernel-timestamped edge and a
+# sample costs one register read. It was 64 s when the boundary had to be found by chasing
+# the seconds register, and the only thing a slow rate cost was cold-start time: chrony
+# will not select a refclock it has not characterised over several samples, so at 64 s
+# apiece that was minutes of a flight line, every boot. The chip's information is one
+# integer -- which second it is -- and sampling it faster does not sharpen it; it only
+# gets chrony to a usable measurement sooner.
+FEED_PERIOD_S = float(os.environ.get("COORD_RTC_FEED_PERIOD_S", "1"))
 
 # Where coordinator-mavlink publishes the current FC-measured offset from UTC:
 # "offset_us rtt_us local_us". Used ONLY to correct the chip's epoch while disarmed --
@@ -98,11 +106,29 @@ ARM_FILE = os.environ.get("COORD_RTC_ARM_FILE", "/var/lib/coordinator/ipc/fc_arm
 # sees roughly one correction, during pre-arm, and then nothing.
 FC_CORRECT_OVER_S = float(os.environ.get("COORD_RTC_CORRECT_OVER_S", "0.1"))
 
-# How often to look while waiting for the chip's seconds register to change. The chip
-# has no sub-second register, so the rollover instant is the only way to know where
-# inside a second we are, and this interval bounds that error -- so it is also what
-# the refclock's declared precision has to be derived from. At most ~500 eight-byte
-# SPI reads per sample, once per FEED_PERIOD_S.
+# THE SECOND BOUNDARY COMES OFF THE PULSE. The chip has no sub-second register, so a
+# plain read says "it is second N" with a whole second of ambiguity -- the same size as
+# the window chrony folds a PPS into. But that boundary is already on a wire: the 1 Hz's
+# falling edge IS the rollover (DS3234 datasheet p11), the overlay is configured
+# assert_falling_edge=1, and the kernel timestamps it. So the instant is the kernel's, to
+# microseconds, and all this has to do is read the label that goes with it.
+#
+# sysfs rather than the PPS_FETCH ioctl on /dev/pps0: a plain read contends with nothing,
+# and chronyd holds that device open as a refclock.
+PPS_ASSERT_FILE = os.environ.get("COORD_RTC_PPS_ASSERT", "/sys/class/pps/pps0/assert")
+# How often to check whether a new edge has been stamped. This does NOT bound the
+# sample's error -- the timestamp is the kernel's, and noticing it late costs nothing. It
+# only has to be quick enough to read the chip inside the second the edge started.
+PPS_WATCH_POLL_S = 0.05
+# Read the chip within this much of the edge. Past it the register may have rolled again
+# and the label would belong to the next second -- the one failure mode of pairing a
+# timestamp taken by someone else with a value read by us.
+PPS_LABEL_WINDOW_S = 0.4
+
+# The fallback, for a coordinator whose PPS leg is not soldered: pps-gpio presents
+# /dev/pps0 on an unconnected pin, so the device exists and no edge ever arrives. How
+# often to look while waiting for the chip's seconds register to change instead. This
+# interval bounds the error of THAT path -- at most ~500 eight-byte SPI reads per sample.
 ROLLOVER_POLL_S = 0.002
 
 # struct spi_ioc_transfer, 32 bytes. Field order and widths are the kernel's.
@@ -337,6 +363,61 @@ def should_set_chip(no_epoch: bool, chip_error: float | None, is_armed: bool) ->
     return no_epoch or abs(chip_error) > FC_CORRECT_OVER_S
 
 
+def pps_assert(path: str | None = None) -> tuple[float, int] | None:
+    """The kernel's timestamp and sequence number for the last captured edge.
+
+    `/sys/class/pps/pps0/assert` reads as `<secs>.<nsecs>#<seq>`. None if the file is
+    absent (no pps-gpio) or empty (the device exists and has never seen an edge, which is
+    what an unsoldered leg looks like).
+    """
+    try:
+        with open(path or PPS_ASSERT_FILE) as fh:
+            raw = fh.read().strip()
+    except OSError:
+        return None
+    if not raw or "#" not in raw:
+        return None
+    stamp, _, seq = raw.partition("#")
+    try:
+        return float(stamp), int(seq)
+    except ValueError:
+        return None
+
+
+def pulse_boundary(rtc: Ds3234, deadline_s: float = 2.0,
+                   path: str | None = None) -> tuple[int, float] | None:
+    """Wait for the chip's second boundary on the 1 Hz, then read the label.
+
+    The division of labour is the whole point: the INSTANT is the kernel's timestamp of
+    the falling edge, which is the rollover, and the VALUE is one register read
+    afterwards. Noticing the edge late does not degrade the sample -- `at` is not our
+    reading of the clock -- so this can watch lazily. It only has to read the chip before
+    the next rollover, or the label would belong to the following second.
+
+    None when no edge arrives, which is the unsoldered-leg case and the caller's cue to
+    fall back to chasing the register.
+    """
+    first = pps_assert(path)
+    if first is None:
+        return None
+    give_up = time.time() + deadline_s
+    while time.time() < give_up:
+        time.sleep(PPS_WATCH_POLL_S)
+        latest = pps_assert(path)
+        if latest is None or latest[1] == first[1]:
+            continue
+        at = latest[0]
+        if time.time() - at > PPS_LABEL_WINDOW_S:
+            # Too late to be sure which second the register holds. Wait for the next
+            # edge rather than send a label that could be a whole second wrong.
+            first = latest
+            continue
+        regs = rtc.read(REG_SECONDS, 7)
+        stamp = decode_time(regs)
+        return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S")), at
+    return None
+
+
 def chip_boundary(rtc: Ds3234, deadline_s: float = 1.5) -> tuple[int, float] | None:
     """Watch the seconds register until it changes, and return (chip time, instant).
 
@@ -413,12 +494,26 @@ def cmd_feed(rtc: Ds3234) -> int:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     refused = 0
     sent = 0
+    source = ""
     while True:
-        edge = chip_boundary(rtc)
+        # The pulse first: its instant is the kernel's, to microseconds. Chasing the
+        # register is the fallback for a leg that is not soldered, where /dev/pps0
+        # exists and never fires.
+        edge = pulse_boundary(rtc)
+        via = "the 1 Hz, kernel-timestamped"
         if edge is None:
-            print("chip's seconds register did not change within 1.5 s", file=sys.stderr)
+            edge = chip_boundary(rtc)
+            via = f"the seconds register -- no edge on {PPS_ASSERT_FILE}"
+        if edge is None:
+            print("no edge on the 1 Hz, and the chip's seconds register did not change "
+                  "within 1.5 s", file=sys.stderr)
             time.sleep(FEED_PERIOD_S)
             continue
+        if via != source:
+            # Which path the samples come from, and said again if it ever changes. A
+            # silent fall back to the millisecond path would otherwise be invisible.
+            print(f"coord-rtc: second boundary from {via}", flush=True)
+            source = via
 
         chip_s, at = edge
         no_epoch = bool(rtc.read(REG_STATUS)[0] & SR_OSF)

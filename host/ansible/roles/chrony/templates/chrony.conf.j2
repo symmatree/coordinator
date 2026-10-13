@@ -34,15 +34,21 @@ makestep 1 3
 # silently discarded. UTC is a label on this base, not the base; coordinator-mavlink
 # logs the FC's GPS-derived offset per session for that.
 #
-# precision 2e-3 is this path's error: the second boundary is found by polling the
-# seconds register, so the poll interval bounds it.
+# poll 0 = 1 s, which is coord-rtc's FEED_PERIOD_S. These have to agree: chrony shifts a
+# zero into the reach register for every poll that finds no sample, so a feed slower than
+# the poll makes a working source read as unreliable.
 #
-# poll 6 = 64 s, which is coord-rtc's FEED_PERIOD_S. These have to agree. At poll 4 chrony
-# looked for a sample every 16 s and got one every 64, so three polls in four shifted a
-# zero into the reach register and the source never read as reliably reachable. 64 s is the
-# feed's side of it because a sample costs a spin on the chip's seconds register to catch
-# the rollover, and the chip drifts 2 ppm -- there is nothing to learn by asking faster.
-refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 2e-3 poll 6
+# 1 Hz is affordable because coord-rtc takes the second boundary off the 1 Hz itself --
+# the kernel timestamps the falling edge, which is the rollover, and the sample is one
+# register read against that timestamp. What this rate buys is cold-start time and nothing
+# else: chrony will not select a refclock it has not characterised over several samples,
+# and the chip's information is one integer that sampling faster does not sharpen.
+#
+# precision 1e-5 is conservative for that path. The instant is the same kernel edge
+# timestamp the PPS refclock below uses, where the observed dispersion is ~65 us; 1e-5 is
+# declared rather than measured, and is three orders better than the 2e-3 this line
+# carried when the boundary was found by polling the register at 2 ms.
+refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 1e-5 poll 0
 {% if coord_pps_wired | bool %}
 
 # The buffered 1 Hz, and the reason the circuit exists. `lock DS32` pairs each edge with a

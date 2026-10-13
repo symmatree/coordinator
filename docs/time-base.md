@@ -42,8 +42,29 @@ One chip generates both the seconds label and the edge, so the two cannot disagr
 falling edge -- and reports *the chip's* time over a SOCK refclock. chrony's reference and
 the pulse it is locked to are therefore the same clock and agree by construction.
 
+**The sample is the pulse plus a label.** The rollover does not have to be hunted for: the
+falling edge *is* it, `pps-gpio` is configured `assert_falling_edge=1`, and the kernel
+timestamps it. So the feed waits for an assert on `/dev/pps0`, reads the seconds register
+once, and reports that second as having begun at the kernel's timestamp. The instant costs
+nothing and is good to microseconds; noticing the edge late is harmless, because the
+timestamp is not ours. The one thing that is not harmless is reading the label *after the
+next* rollover, which would pair a timestamp with the wrong second -- so a read that
+misses its window is dropped rather than sent.
+
+A coordinator whose PPS leg is not soldered falls back to finding the boundary by polling
+the seconds register at 2 ms, which is where the old `precision 2e-3` came from, and says
+in the journal that it has done so.
+
+**What the sample rate is for.** The chip's contribution is one integer -- which second it
+is -- and sampling it faster does not sharpen that. What a faster rate buys is cold start:
+chrony will not select a refclock it has not characterised across several samples, so at
+the 64 s period this used to run, a boot spent minutes with no usable time even though the
+pulse was arriving cleanly the whole while. At 1 Hz that is seconds. The pods are behind
+it, taking the second over the gadget link, so the coordinator's convergence is the front
+of their queue too.
+
 ```
-refclock SOCK /run/chrony.ds3234.sock refid DS32 precision 2e-3 poll 6
+refclock SOCK /run/chrony.ds3234.sock refid DS32 precision 1e-5 poll 0
 refclock PPS  /dev/pps0 refid PPS lock DS32 precision 1e-7 poll 2
 ```
 
