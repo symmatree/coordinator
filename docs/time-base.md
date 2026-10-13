@@ -60,11 +60,34 @@ GPIO24 is not a state the board has, since both come off the same distribution b
 is -- and sampling it faster does not sharpen that. What a faster rate buys is cold start:
 chrony will not select a refclock it has not characterised across several samples, so at
 the 64 s period this used to run, a boot spent minutes with no usable time even though the
-pulse was arriving cleanly the whole while. Measured on the coordinator after the change,
-from a cold boot: 15 s from chronyd starting to a selected source, 20 s to the chip, with
-the chip then selected at a 154 ns standard deviation. The pods are behind it, taking the
-second over the gadget link, so the coordinator's convergence is the front of their queue
-too.
+pulse was arriving cleanly the whole while. The pods are behind it, taking the second over
+the gadget link, so the coordinator's convergence is the front of their queue too.
+
+**Measured on the coordinator, cold boot, with `poll 2` and the pulse pacing the feed.**
+chronyd started at 06:46:55.17 and selected a source at 06:47:10.18 -- **15.0 s**, and the
+`Can't synchronise: no selectable sources` that a slower feed produced does not appear at
+all. The feed's first sample landed 0.58 s after its unit started.
+
+The steady state a minute later, which is the division of labour this is built for:
+
+```
+#- DS32   poll 2  reach 377  lastrx 2-4   +381ns      +/-  10us
+#* PPS    poll 2  reach 377  lastrx 1-5   +317ns      +/- 1.5us
+Reference ID : 50505300 (PPS)    System time : 244 ns fast    RMS offset : 915 ns
+```
+
+The **pulse** is the selected source and steers the clock; the **chip** is reachable and
+supplies the second but is excluded from combining, its 10 us dispersion being no use
+against the pulse's 1.5. `reach 377` on both is the point of `poll 2`: every poll yields a
+filtered sample. At `poll 0` the chip's register read `4 -> 20 -> 100 -> 1`.
+
+And the model keeps tightening after the first sync, which is what the 64-sample
+regression window is for -- one minute apart, same boot:
+
+| | NP | Span | Freq Skew | Std Dev |
+|---|---|---|---|---|
+| DS32 | 5 -> 10 | 15 -> 36 s | 1.702 -> 0.052 ppm | 1683 -> 368 ns |
+| PPS | 4 -> 7 | 12 -> 23 s | 3.794 -> 0.079 ppm | 1102 -> 205 ns |
 
 **`poll 2` on a 1 Hz feed, because four samples per poll is the real constraint.** A
 refclock's filter refuses to produce a filtered sample below a minimum of four
