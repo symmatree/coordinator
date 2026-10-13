@@ -14,14 +14,17 @@ curl -sXPOST .../nodes/campod-se/provision                   # a fresh card, end
 curl -sXPOST ".../nodes/campod-se/provision?reflashed=true"  # ...that was just written
 ```
 
-| | playbook | installs | reboots |
-|---|---|---|---|
-| **Converge** | `deploy.yaml` | nothing | no |
-| **Full provision** | `site.yaml` (provision then deploy) | the whole package set | yes, partway |
+| | playbook |
+|---|---|
+| **Converge** | `deploy.yaml` |
+| **Full provision** | `site.yaml` |
 
 **Converge is the one pressed between flights**, so it is the default and the primary button. Full
 provision is the first-run path; on a card that is already provisioned it is a slow way to get a
 converge.
+
+What each playbook installs, reboots or leaves behind is documented with it and changes without
+this file knowing -- the "reboots partway" that was here was true for about a day.
 
 They are two operations rather than one at two sizes, which is why they are two routes and not a
 size flag. After the playbook split in two
