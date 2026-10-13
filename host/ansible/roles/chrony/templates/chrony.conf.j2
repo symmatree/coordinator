@@ -36,7 +36,13 @@ makestep 1 3
 #
 # precision 2e-3 is this path's error: the second boundary is found by polling the
 # seconds register, so the poll interval bounds it.
-refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 2e-3 poll 4
+#
+# poll 6 = 64 s, which is coord-rtc's FEED_PERIOD_S. These have to agree. At poll 4 chrony
+# looked for a sample every 16 s and got one every 64, so three polls in four shifted a
+# zero into the reach register and the source never read as reliably reachable. 64 s is the
+# feed's side of it because a sample costs a spin on the chip's seconds register to catch
+# the rollover, and the chip drifts 2 ppm -- there is nothing to learn by asking faster.
+refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 2e-3 poll 6
 {% if coord_pps_wired | bool %}
 
 # The buffered 1 Hz, and the reason the circuit exists. `lock DS32` pairs each edge with a
