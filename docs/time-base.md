@@ -92,12 +92,18 @@ pre-arm. The cadence is a policy choice and nothing forces it: `PPS_LOCK_LIMIT` 
 the pulse against the reference, and the reference is the same chip, so the chip's error
 against UTC never enters that comparison.
 
-**After replacing the coin cell, or on a new RTC, set the chip once by hand** --
-`sudo coord-rtc systohc` on a bench network, where the system clock is NTP-synced. An
-unset chip reads `2000-01-01`, so the first GPS fix would write a 26-year correction into
-it, and that is a jump of unknown consequence arriving outdoors, immediately before
-flying. Setting it once makes that first fix a sub-second correction instead. Not
-automated: it is one command per cell.
+**After replacing the coin cell, or on a new RTC, set the chip once by hand.** An unset
+chip reads `2000-01-01`, so the first GPS fix would write a 26-year correction into it --
+a jump of unknown consequence arriving outdoors, immediately before flying. Setting it
+once makes that first fix a sub-second correction instead. Not automated: it is one
+command per cell.
+
+`coord-rtc systohc` copies the **system clock** into the chip, and on a converged
+coordinator there is nothing good to copy: this configuration gives chrony no source but
+the chip itself, so an unset chip means an unset system clock. Set the system clock first
+(`sudo timedatectl set-time '<UTC>'`), then `sudo coord-rtc systohc`. Seconds of accuracy
+is the whole requirement -- the point is to avoid the 26-year jump, and the FC corrects
+the rest once it has a fix.
 
 **Why `fc_armed` is the right gate rather than merely an available one.** pod-link's
 publisher "watches the arm file the MAVLink router already writes and publishes it as
