@@ -11,10 +11,36 @@
 # managed set too, not only in the seed: that keeps rotating it a `terraform apply` plus a
 # converge, pushing the new key over the old one, instead of a reflash.
 #
+# THE FLEET KEY COMES FROM THE DRIVER, NOT FROM THE REPO. `fleet_ssh_public_key` is passed at
+# run time by whoever is converging -- fleet-control derives it from the private key it is
+# authenticating with (containers/fleet-control/src/ansible.ts). So what a device trusts is
+# definitionally what reached it, and there is no committed copy to go stale. A literal here
+# previously disagreed with the cluster secret the service loads, which would have written an
+# authorized_keys the service could not use.
+#
 # ansible.builtin.template rather than ansible.posix.authorized_key with exclusive: this
 # repo uses no module outside ansible.builtin, and the runner that performs converges
 # installs bare ansible-core with no collections (containers/fleet-control/Dockerfile), so
 # ansible.posix is not there. Writing the file also makes the whole set the unit of review.
+
+# BEFORE WRITING ANYTHING. This role replaces authorized_keys whole, so a run that does not
+# know the driver's own key writes a file that locks the driver out -- at the END of an
+# otherwise successful converge, which is the worst moment to discover it. Failing here costs
+# a re-run; failing to fail costs a card.
+- name: Require the driving key, since this file is written whole
+  ansible.builtin.assert:
+    that:
+      - fleet_ssh_public_key is defined
+      - fleet_ssh_public_key is string
+      - fleet_ssh_public_key.startswith('ssh-')
+    fail_msg: >-
+      fleet_ssh_public_key is not set, so this play cannot write authorized_keys without
+      removing the key it is connected over. fleet-control passes it automatically, derived
+      from the key it authenticates with. Running by hand, pass the public half of the key you
+      are using -- as JSON, because a public key contains a space and ansible's `-e key=value`
+      form stops at the first one, which silently yields the string "ssh-ed25519":
+      -e "{\"fleet_ssh_public_key\": \"$(ssh-keygen -y -f <your key>)\"}"
+    quiet: true
 
 - name: Ensure the login account's .ssh directory exists
   ansible.builtin.file:

@@ -30,6 +30,29 @@ ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
 **Budget twenty minutes or more on a campod**, against a few minutes for a Pi 4B. Measured from
 this side -- wall time for one converge driven from here -- so it is this service's to state.
 
+### The key a device trusts is the key we present
+
+`roles/ssh-access` writes `authorized_keys` **whole**, so the play has to be told every key it
+should contain. The humans are a committed list in `host/ansible/group_vars/all.yml`, which is
+the point of that arrangement -- operator access as a reviewable diff.
+
+**The fleet key is not committed anywhere.** This service derives it from the private key it is
+about to authenticate with (`ssh-keygen -y`) and passes it as the `fleet_ssh_public_key` extra
+var. So what a device is told to trust is definitionally what reached it, and there is no second
+copy to drift.
+
+There was one, and it drifted: a literal in `group_vars` carried terraform's `fleet_ssh_public_key`
+output while the cluster secret this service actually loads held a *different keypair*. A converge
+would have rewritten `authorized_keys` to a key the service does not hold -- locking it out of the
+device at the end of its own successful run.
+
+**The play refuses to write the file if it was not told.** An `assert` ahead of the template, so a
+run that cannot name the driving key costs a re-run instead of a card.
+
+Worth knowing if you ever drive the play by hand: a public key contains a space, and ansible's
+`-e key=value` form stops at the first one -- it silently yields the string `ssh-ed25519`. Pass it
+as JSON. This service writes `env/extravars` as JSON and is unaffected.
+
 ### Reflashed cards
 
 `POST /nodes/<name>/converge?reflashed=true` clears the recorded SSH host key first.

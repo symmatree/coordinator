@@ -10,7 +10,7 @@
 // mid-converge -- the playbook stops with it, same as before. Losing the orchestrator is a
 // real gap and it is not fixed by moving where Ansible runs.
 
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -168,6 +168,22 @@ function lineSplitter(emit: (line: string) => void): { push(c: Buffer): void; en
  * Ansible reboots the device and waits for it when something actually changed, so there is no
  * retry dance here and nothing to interpret beyond the code.
  */
+/**
+ * The public half of the key this service authenticates with.
+ *
+ * `ssh-keygen -y` reads the private key and prints its public half; nothing is written and the
+ * private key does not move. Throwing is right if it fails -- a converge that cannot state its
+ * own key would have `ssh-access` write an authorized_keys without it, locking this service out
+ * of the device at the end of its own successful run.
+ */
+export function publicKeyOf(privateKeyPath: string): string {
+  const out = execFileSync('ssh-keygen', ['-y', '-f', privateKeyPath], { encoding: 'utf8' }).trim();
+  if (!out.startsWith('ssh-')) {
+    throw new Error(`could not read the fleet public key from ${privateKeyPath}: ${out.slice(0, 120)}`);
+  }
+  return out;
+}
+
 export async function converge(opts: ConvergeOptions): Promise<number> {
   // ansible-runner wants a private data directory: project/ holds the playbook, env/ the
   // settings and extra vars, inventory/ the hosts.
@@ -190,6 +206,13 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
           // not forward it. The inventory variable is the supported route and needs no
           // command-line string splitting.
           ansible_ssh_private_key_file: opts.privateKeyPath,
+          // THE FLEET KEY, DERIVED FROM THE ONE WE AUTHENTICATE WITH. `roles/ssh-access`
+          // writes authorized_keys whole, so it has to be told every key -- and this one is
+          // the service's own. Deriving it here rather than reading a committed copy means
+          // what the device trusts is definitionally what this process presents: there is no
+          // second value to go stale, which is how a terraform literal and the cluster secret
+          // came to disagree and lock the service out of a freshly flashed card.
+          fleet_ssh_public_key: publicKeyOf(opts.privateKeyPath),
           ...opts.extraVars,
         },
         null,
