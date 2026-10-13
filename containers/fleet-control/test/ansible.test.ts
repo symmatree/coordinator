@@ -1,14 +1,24 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { existsSync, rmSync } from 'node:fs';
-import { converge, renderEvent, runDir } from '../src/ansible.js';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { converge, publicKeyOf, renderEvent, runDir } from '../src/ansible.js';
 
 // converge() spawns `ansible-runner`. These tests exercise what this module is actually
 // responsible for -- turning the event stream into operator-readable lines, and reporting the
 // exit code honestly -- without requiring ansible or a node.
 
 describe('converge -- when ansible-runner is not installed', () => {
+  // A REAL key, because converge now derives its public half before it does anything else --
+  // the device is told to trust the key we authenticate with, so a converge that cannot state
+  // its own key must not proceed. `/dev/null` stood in here while nothing read the path.
+  const keyDir = mkdtempSync(join(tmpdir(), 'convergekey-'));
+  const keyPath = join(keyDir, 'id');
+  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', '', '-f', keyPath]);
+
   /** Run a converge that cannot start, under a run id of our choosing. */
   async function failedConverge(runId: string): Promise<string[]> {
     const lines: string[] = [];
@@ -18,7 +28,7 @@ describe('converge -- when ansible-runner is not installed', () => {
           runId,
           host: '10.0.0.1',
           user: 'pi',
-          privateKeyPath: '/dev/null',
+          privateKeyPath: keyPath,
           extraVars: { device_role: 'campod' },
           sink: (_stream, line) => lines.push(line),
         }),
@@ -109,4 +119,29 @@ describe('renderEvent -- a failed command task', () => {
     };
     assert.equal(renderEvent(ok), '  ok: h Gathering Facts');
   });
+});
+
+describe('the fleet key', () => {
+  it('the fleet public key is derived from the key we authenticate with', () => {
+  // The whole point: what a device is told to trust is derived from the private key this
+  // process actually presents, so there is no second copy to disagree with it. A committed
+  // literal and the cluster secret did exactly that and locked the service out of a fresh card.
+  const dir = mkdtempSync(join(tmpdir(), 'fleetkey-'));
+  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', '', '-f', join(dir, 'id')]);
+  const expected = execFileSync('ssh-keygen', ['-y', '-f', join(dir, 'id')], { encoding: 'utf8' }).trim();
+
+  const got = publicKeyOf(join(dir, 'id'));
+  assert.equal(got, expected);
+  assert.match(got, /^ssh-ed25519 AAAA/);
+  // It contains a space, which is why it travels as JSON extravars and not `-e key=value`:
+  // ansible's k=v form stops at the first space and silently yields "ssh-ed25519".
+  assert.ok(got.includes(' '));
+  });
+
+  it('a key it cannot read throws rather than converging without one', () => {
+  // Returning empty would have `ssh-access` write an authorized_keys with no fleet key --
+  // locking this service out of the device at the end of its own successful run.
+  assert.throws(() => publicKeyOf(join(tmpdir(), 'no-such-key-at-all')));
+  });
+
 });
