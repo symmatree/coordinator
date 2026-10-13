@@ -46,7 +46,8 @@ input, so of the eight they are the least likely to be wanted for something else
 
 **`S11` is in use:** the PPS leg from the hub board's buffer tree, as a camera feedback
 input -- [time-base.md](../time-base.md) for what it is for, [ardupilot.md](ardupilot.md)
-for the parameters. A 1k series resistor at this end, per the hub doc's off-board parts.
+for the parameters. The leg's 1k series resistor is on the hub board, not at this end; the FC end of
+the cable is bare wire to the pad.
 
 `FT` is 5 V tolerant, read per pin from the STM32H743xI pin table rather than generalised:
 `PA2`/`PA3` are ADC-capable, and analog-capable H7 pins are often `TTa` (3.6 V) instead, so
