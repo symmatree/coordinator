@@ -351,8 +351,11 @@ way past.
 Through **Home Assistant**, which is an appliance on the house LAN rather than a workload here, so
 this is plain HTTP with a bearer token and no Kubernetes identity. A cluster pod reaches it:
 `homeassistant.local.symmatree.com` resolves to 10.0.99.9 and the API answers, checked from a pod.
-HA presents every plug as a `switch.` entity whatever it speaks, so nothing here knows the plug is
-Z-Wave.
+
+**The entity's domain is not assumed.** Calls go through `homeassistant.turn_on`/`turn_off`, which
+HA documents as acting "across any domain in a single action", so `FLEET_HA_SWITCH` names an entity
+and this service never has to know what kind it is. An earlier version called `switch/turn_on` and
+would not have driven a plug that is not in that domain.
 
 **The state is read, never remembered.** The HA app, a wall button and an automation can all move
 that plug, so a cached answer would be a guess shown as a fact. `on` and `off` re-read after acting
@@ -373,7 +376,7 @@ something else.
 |---|---|---|
 | `FLEET_HA_URL` | `https://homeassistant.local.symmatree.com:8123` | |
 | `FLEET_HA_TOKEN` | *(unset)* | a long-lived access token, from HA's profile page |
-| `FLEET_HA_SWITCH` | *(unset)* | the `switch.` entity. **Unset disables the feature** |
+| `FLEET_HA_SWITCH` | *(unset)* | the entity to operate, any domain. **Unset disables the feature** |
 
 Worth knowing operationally rather than for the design: today the plug only reaches the vehicle
 after someone has swapped the pigtails for the charger's cables at the bench. Once the connector

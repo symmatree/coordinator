@@ -50,6 +50,17 @@ test('the state is read from HA, with the bearer token', async () => {
   } finally { ha.restore(); }
 });
 
+test('the call is domain-agnostic, so a non-switch entity works', async () => {
+  // The entity is a name we pass through. `homeassistant.turn_on` acts across any domain;
+  // `switch/turn_on` would not have driven an entity outside that one.
+  const ha = fakeHa(() => ({ body: { state: 'on' } }));
+  try {
+    await setPower({ ...CFG, entity: 'light.bench_plug' }, true);
+    assert.match(ha.seen[0]?.url ?? '', /\/api\/services\/homeassistant\/turn_on$/);
+    assert.equal(ha.seen[0]?.body, JSON.stringify({ entity_id: 'light.bench_plug' }));
+  } finally { ha.restore(); }
+});
+
 test('turning it on calls the service and then RE-READS, rather than assuming', async () => {
   // "I pressed on and it is still off" has to be visible. Asserting the call worked would hide it.
   const ha = fakeHa((u) => u.pathname.startsWith('/api/services')
@@ -59,7 +70,7 @@ test('turning it on calls the service and then RE-READS, rather than assuming', 
     const s = await setPower(CFG, true);
     assert.equal(s.state, 'on');
     assert.equal(ha.seen.length, 2);
-    assert.match(ha.seen[0]?.url ?? '', /\/api\/services\/switch\/turn_on$/);
+    assert.match(ha.seen[0]?.url ?? '', /\/api\/services\/homeassistant\/turn_on$/);
     assert.equal(ha.seen[0]?.method, 'POST');
     assert.equal(ha.seen[0]?.body, JSON.stringify({ entity_id: 'switch.christmas_tree' }));
     assert.match(ha.seen[1]?.url ?? '', /\/api\/states\//);
@@ -70,7 +81,7 @@ test('off calls turn_off, not turn_on', async () => {
   const ha = fakeHa((u) => u.pathname.startsWith('/api/services') ? { body: [] } : { body: { state: 'off' } });
   try {
     await setPower(CFG, false);
-    assert.match(ha.seen[0]?.url ?? '', /turn_off$/);
+    assert.match(ha.seen[0]?.url ?? '', /\/homeassistant\/turn_off$/);
   } finally { ha.restore(); }
 });
 
