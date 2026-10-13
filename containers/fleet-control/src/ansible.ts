@@ -6,7 +6,7 @@
 // maintained, and is the documented way to drive Ansible from something that is not Python.
 //
 // There is no SSH session held open here and nothing detached on the device: Ansible owns the
-// connection, including the reboot-and-wait. What that does NOT solve is this process dying
+// connection for as long as the play runs. What that does NOT solve is this process dying
 // mid-converge -- the playbook stops with it, same as before. Losing the orchestrator is a
 // real gap and it is not fixed by moving where Ansible runs.
 
@@ -165,8 +165,9 @@ function lineSplitter(emit: (line: string) => void): { push(c: Buffer): void; en
 /**
  * Converge one host. Resolves with the playbook's exit code; **0 means converged**.
  *
- * Ansible reboots the device and waits for it when something actually changed, so there is no
- * retry dance here and nothing to interpret beyond the code.
+ * No reboot, in either play, so a converge is only ever the playbook running to completion --
+ * there is no retry dance here and nothing to interpret beyond the code. A reboot is its own
+ * action and its own run (`POST /nodes/:name/reboot`).
  */
 /**
  * The public half of the key this service authenticates with.

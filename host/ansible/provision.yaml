@@ -70,24 +70,22 @@
       when: device_role == 'campod'
 
   post_tasks:
-    # Unconditional (#457). It also restores read-only /usr -- see
-    # docs/deployment-model.md, "The /usr hatch".
-    - name: Reboot and wait for the device to come back
-      ansible.builtin.reboot:
-        msg: Rekon provisioning -- applying kernel/firmware/module changes and restoring read-only /usr
-      when:
-        - allow_reboot | bool
-        # ansible.builtin.reboot refuses under connection=local rather than rebooting
-        # its own control node, and it would refuse at the LAST task. Skip and say so.
-        - ansible_connection | default('ssh') != 'local'
-
+    # NO REBOOT. This play used to end with reboot-and-wait, which put it in the middle of
+    # flash -> provision -> deploy: the slowest, most stateful thing in the sequence,
+    # sitting where someone has to wait for a card to come back before the next play can
+    # run. A reboot is the operator's: `POST /nodes/<name>/reboot`, when the whole sequence
+    # is done.
+    #
+    # What that leaves undone until they take it: /usr stays writable (roles/usr-rw opened
+    # it and only a boot restores ro), and the udev rules, module loads and gadget link a
+    # fresh card needs are written but not applied. Said below rather than guarded, because
+    # the next step is deploy, which neither needs nor minds either of those.
     - name: Report what the device ended up in
       ansible.builtin.debug:
         msg: >-
           {{ inventory_hostname }} provisioned (device_role={{ device_role }}).
-          {% if allow_reboot | bool and ansible_connection | default('ssh') != 'local' %}
-          Rebooted, which is what restores read-only /usr. Run deploy.yaml next; until
-          then this device has no checkout and no stack.
-          {% else %}
-          NOT rebooted -- /usr is still writable. Reboot before flight.
-          {% endif %}
+          NOT rebooted -- /usr is still writable and the udev rules, module loads and
+          gadget link are written but not applied. Run deploy.yaml next, then reboot
+          (`POST /nodes/{{ inventory_hostname }}/reboot`), which applies those and
+          restores read-only /usr. Until deploy runs this device has no checkout and no
+          stack.

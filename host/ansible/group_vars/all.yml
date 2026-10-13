@@ -46,11 +46,10 @@ coord_repo_version: main
 # be here was also a footgun: it started as lookup('env','USER'), which resolves on
 # the CONTROL NODE, so driving remotely added the driver's username to the device.
 
-# From outside, ansible can reboot the target AND WAIT, so the old
-# "exit 1, reboot, run it again" dance collapses into one play. #113 had to
-# remove auto-reboot precisely because it ran locally, where ansible refuses to
-# reboot its own control node.
-allow_reboot: true
+# No allow_reboot. Neither play reboots now: provision's reboot-and-wait sat in the middle
+# of flash -> provision -> deploy, and a reboot is the operator's -- `POST
+# /nodes/<name>/reboot` when the sequence is done. The variable had exactly one consumer,
+# so it went with the task rather than becoming a switch for a thing that no longer exists.
 
 # The HUMANS who can log in as the device's login account. Public keys, so version control
 # is the right home for them: the flashed card seeds only the fleet management key
