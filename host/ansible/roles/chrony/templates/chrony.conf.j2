@@ -39,9 +39,9 @@ makestep 1 3
 refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 2e-3 poll 4
 {% if coord_pps_wired | bool %}
 
-# The buffered 1 Hz, and the reason the circuit exists. lock=DS32 pairs each edge with a
+# The buffered 1 Hz, and the reason the circuit exists. `lock DS32` pairs each edge with a
 # chip sample: the chip says which second, the edge says where the second starts.
-refclock PPS /dev/pps0 refid PPS lock=DS32 precision 1e-7 poll 2
+refclock PPS /dev/pps0 refid PPS lock DS32 precision 1e-7 poll 2
 {% endif %}
 
 # Serve the campods over the USB gadget network. Derived from the coordinator's own
@@ -65,7 +65,7 @@ server {{ campod_gadget_coordinator_ip }} iburst
 {% if coord_pps_wired | bool %}
 
 # The pod's own buffered leg of the same edge, which is what actually aligns capture.
-# No lock=: a PPS refclock with no lock is used once chrony is already synchronised to
+# No lock option: a PPS refclock with no lock is used once chrony is already synchronised to
 # within half a second, which the server above provides. There is nothing to lock to
 # here anyway -- a pod has no SPI connection to the chip and gets no RTC from it.
 #

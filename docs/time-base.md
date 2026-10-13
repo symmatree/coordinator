@@ -44,7 +44,7 @@ the pulse it is locked to are therefore the same clock and agree by construction
 
 ```
 refclock SOCK /run/chrony.ds3234.sock refid DS32 precision 2e-3 poll 4
-refclock PPS  /dev/pps0 refid PPS lock=DS32 precision 1e-7 poll 2
+refclock PPS  /dev/pps0 refid PPS lock DS32 precision 1e-7 poll 2
 ```
 
 **That is the whole of `chrony.conf` on the coordinator, not a drop-in.** Debian's file
