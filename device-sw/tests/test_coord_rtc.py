@@ -346,7 +346,90 @@ check("a 0 arm flag reads as disarmed", cr.armed(str(_armfile)) is False)
 _armfile.write_text("1\n")
 check("a 1 arm flag reads as armed", cr.armed(str(_armfile)) is True)
 
-# ---- 18. the feed says it is feeding, once -------------------------------------------
+# ---- 18. the second boundary comes off the pulse --------------------------------------
+#
+# The instant is the kernel's timestamp of the falling edge; we only supply the label. So
+# the risks are in the pairing, not in the timing: a stale sequence number read as a new
+# edge, and a label read so late that the register has rolled again and the label belongs
+# to the next second. Both would be a whole second wrong, which is the one error size this
+# design cannot absorb -- chrony folds a PPS into +/-0.5 s.
+
+_ppsdir = Path(tempfile.mkdtemp())
+_ppsfile = _ppsdir / "assert"
+
+
+class _LabelRtc:
+    """Returns a fixed second as the seven time registers."""
+
+    def __init__(self, second="2026-10-13T02:44:03"):
+        self.second = second
+
+    def read(self, reg, n=1):
+        t = _time.strptime(self.second, "%Y-%m-%dT%H:%M:%S")
+        def bcd(v):
+            return ((v // 10) << 4) | (v % 10)
+        return bytes([bcd(t.tm_sec), bcd(t.tm_min), bcd(t.tm_hour), 0x01,
+                      bcd(t.tm_mday), bcd(t.tm_mon), bcd(t.tm_year - 2000)])
+
+
+_ppsfile.write_text("1791860357.000005475#1174\n")
+check("an assert reads as (instant, sequence)",
+      cr.pps_assert(str(_ppsfile)) == (1791860357.000005475, 1174))
+check("a missing pps device is None, not a crash",
+      cr.pps_assert(str(_ppsdir / "nope")) is None)
+_ppsfile.write_text("")
+check("an unsoldered leg -- device present, never fired -- is None",
+      cr.pps_assert(str(_ppsfile)) is None)
+_ppsfile.write_text("garbage\n")
+check("an unparseable assert is None rather than a bogus instant",
+      cr.pps_assert(str(_ppsfile)) is None)
+
+# A sequence that never advances is an edge that never came: it must time out, not hand
+# back the stale one as if it were fresh.
+_ppsfile.write_text("1791860357.000005475#1174\n")
+check("a sequence that never advances times out",
+      cr.pulse_boundary(_LabelRtc(), deadline_s=0.2, path=str(_ppsfile)) is None)
+
+
+# A fresh edge: the returned instant must be the KERNEL's, to the nanosecond, not our
+# reading of the clock -- that is the entire reason for taking this path.
+def _advance_then(_s, _f=_ppsfile):
+    _f.write_text(f"{_time.time():.9f}#1175\n")
+
+
+_ppsfile.write_text("1791860357.000005475#1174\n")
+_saved_sleep = cr.time.sleep
+cr.time.sleep = _advance_then
+_edge = cr.pulse_boundary(_LabelRtc(), deadline_s=1.0, path=str(_ppsfile))
+cr.time.sleep = _saved_sleep
+check("a fresh edge yields the chip's label and the kernel's instant",
+      _edge is not None
+      and _edge[0] == calendar.timegm(_time.strptime("2026-10-13T02:44:03",
+                                                     "%Y-%m-%dT%H:%M:%S")),
+      str(_edge))
+
+# THE failure mode: noticing the edge is free, but reading the label late is not. Past the
+# window the register may hold the NEXT second, so the pairing must be refused.
+_ppsfile.write_text("1791860357.000005475#1174\n")
+
+
+def _advance_but_stale(_s, _f=_ppsfile):
+    _f.write_text(f"{_time.time() - cr.PPS_LABEL_WINDOW_S - 0.1:.9f}#1176\n")
+
+
+cr.time.sleep = _advance_but_stale
+_late = cr.pulse_boundary(_LabelRtc(), deadline_s=0.3, path=str(_ppsfile))
+cr.time.sleep = _saved_sleep
+check("an edge noticed too late to label safely is refused, not guessed",
+      _late is None, str(_late))
+
+check("the label window is under a second, or it could not tell seconds apart",
+      0 < cr.PPS_LABEL_WINDOW_S < 1.0, f"{cr.PPS_LABEL_WINDOW_S}s")
+check("the feed period matches the pulse it samples",
+      cr.FEED_PERIOD_S == 1.0, f"{cr.FEED_PERIOD_S}s")
+
+
+# ---- 19. the feed says it is feeding, once -------------------------------------------
 #
 # The risk this covers is both directions of a one-shot log line: silence, which is what
 # sent us chasing a working feed as if it were broken, and a line per sample, which at one
@@ -405,10 +488,43 @@ except TimeoutError:
 
 _lines = [ln for ln in _out.getvalue().splitlines() if ln.strip()]
 check("the feed sends a sample every pass", _datagrams == 4, f"{_datagrams} datagrams")
-check("the feed says so exactly once, not per sample", len(_lines) == 1,
-      f"{len(_lines)} lines")
-check("and the line carries the offset chrony will show",
-      bool(_lines) and "-0.846 s" in _lines[0], _lines[0] if _lines else "(no line)")
+# Two one-shot lines over four passes: which path the boundary came from, and the first
+# sample. Four passes rather than one is the point -- these must not repeat per sample,
+# which at 1 Hz would be a line a second saying nothing changed.
+check("the feed says so twice over four passes, not per sample", len(_lines) == 2,
+      f"{len(_lines)} lines: {_lines}")
+check("it names the path the boundary came from",
+      any("second boundary from" in ln for ln in _lines), str(_lines))
+check("and carries the offset chrony will show",
+      any("-0.846 s" in ln for ln in _lines), str(_lines))
+
+# The run above had no PPS file, so it exercised the fallback. This one has a working
+# edge: the loop must PREFER it. Without this check, deleting the pulse from cmd_feed
+# entirely still passes, because falling back looks the same from outside.
+_livepps = _ppsdir / "assert_live"
+_livepps.write_text("1791860357.000005475#2000\n")
+cr.PPS_ASSERT_FILE = str(_livepps)
+_seq = {"n": 2000}
+
+
+def _tick(_s, _f=_livepps):
+    _seq["n"] += 1
+    _f.write_text(f"{_time.time():.9f}#{_seq['n']}\n")
+    if _seq["n"] >= 2004:
+        raise _Stop
+
+
+cr.time.sleep = _tick
+_out2 = io.StringIO()
+with redirect_stdout(_out2):
+    try:
+        cr.cmd_feed(_LabelRtc())
+    except _Stop:
+        pass
+cr.time.sleep = _saved_sleep
+check("with an edge available the feed takes the boundary from the pulse",
+      "second boundary from the 1 Hz" in _out2.getvalue(),
+      _out2.getvalue().strip().splitlines()[:1] or "(nothing)")
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

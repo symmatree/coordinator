@@ -5,11 +5,15 @@ Documentation=https://github.com/symmatree/coordinator/issues/11
 # so, until the socket appears.
 After=chronyd.service
 Wants=chronyd.service
-# pps_gpio is a module, so /dev/pps0 appears only after udev coldplug. Not needed by
-# this unit, which never opens it, but chronyd's refclock does -- see the chronyd
-# drop-in.
+# spidev and pps_gpio are both modules, so these appear only after udev coldplug. The
+# feed needs both now: the chip over SPI for the label, and the pulse for the instant it
+# belongs to. Wants rather than Requires on the PPS device -- without an edge the feed
+# falls back to chasing the seconds register and says so, which is worth having on a
+# coordinator whose leg is not soldered.
 Wants=dev-spidev0.0.device
 After=dev-spidev0.0.device
+Wants=dev-pps0.device
+After=dev-pps0.device
 
 [Service]
 # One definition of the socket path, shared with the drop-in that tells chrony to
