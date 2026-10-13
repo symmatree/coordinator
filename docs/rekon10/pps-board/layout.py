@@ -130,15 +130,15 @@ for net, ref, r, (chip, p_), tap, crow, sigcol, gndcol in CONN:
 # That is why R1 had to move to N: O-01 through O-07 are all spoken for.
 for _net, _jp in (("SPI_SCLK",4), ("SPI_MISO",3), ("SPI_MOSI",2), ("SPI_CS",1)):
     B(_net, pin[("J2",_jp)], hole("O", int(pin[("J2",_jp)].split("-")[1])))
-B("PPS_COORD", pin[("U3",11)], hole("H", 20))
-PI = {1: hole(V33BUS,10), 2: hole("H",20), 3: hole("O",6), 4: hole(GNDBUS,13),
+B("PPS_COORD", pin[("U2",6)], hole("C", 10))
+PI = {1: hole(V33BUS,10), 2: hole("C",10), 3: hole("O",6), 4: hole(GNDBUS,13),
       5: hole("O",5), 7: hole("O",4), 8: hole("O",7)}            # 6 (GPIO25) unused
 for _n, _h in PI.items(): pin[("J1",_n)] = _h
 
 # A spare output is only spare if the hole it would escape through is still there.
-RESERVED = {hole("C",10): "U2.6", hole("H",1): "U1.8", hole("H",4): "U1.11"}
+RESERVED = {hole("H",20): "U3.11", hole("H",1): "U1.8", hole("H",4): "U1.11"}
 
-for ref,p in (("U1",8), ("U1",11), ("U2",6)): ncs.append((ref,p))
+for ref,p in (("U1",8), ("U1",11), ("U3",11)): ncs.append((ref,p))
 
 # ---------------- verification ----------------
 declared, parent = {h: 'GND' for h in EXTRA_GND}, {}
@@ -177,7 +177,7 @@ for col in (GNDBUS, V33BUS):
 
 PENDING = {  # C5 is not fitted -- see the passives table
            "C5_UNUSED",
-           "T1_SPARE1","T1_SPARE2","U2_SPARE"}
+           "T1_SPARE1","T1_SPARE2","U3_SPARE"}
 # a hole shared by two parts is its own node, and is a connected net already
 for h in list(declared): find(h)
 
@@ -265,7 +265,7 @@ HDR = {"1":"hdr17","2":"hdr18","3":"hdr19","4":"hdr20","5":"hdr21","6":"hdr22","
 NETORDER = ["+3V3","GND","SQW","SPI_CS","SPI_MOSI","SPI_MISO","SPI_SCLK","T2_FRONT","T2_REAR",
             "PPS_COORD","PPS_FC","PPS_FC_J","PPS_NE","PPS_NE_J","PPS_NW","PPS_NW_J",
             "PPS_SE","PPS_SE_J","PPS_SW","PPS_SW_J",
-            "LED_DRV","LED_A","T1_SPARE1","T1_SPARE2","U2_SPARE"]
+            "LED_DRV","LED_A","T1_SPARE1","T1_SPARE2","U3_SPARE"]
 NETNOTE = {
   **{f"PPS_{k}_J": "connector side of the 1k; the leg past the series resistor"
      for k in ("FC","NE","NW","SE","SW")},
@@ -275,7 +275,7 @@ NETNOTE = {
   "PPS_COORD": "returns on header pin 18 = BCM GPIO24",
   "T1_SPARE1": "first-tier spare output, live, for a future second-tier package",
   "T1_SPARE2": "first-tier spare output, live, for a future second-tier package",
-  "U2_SPARE": "rear distributor spare output",
+  "U3_SPARE": "rear distributor spare output",
   "LED_DRV": "U3's third output to the resistor",
   "LED_A": "resistor to LED anode -- both land in K-17, so this net is one junction",
 }

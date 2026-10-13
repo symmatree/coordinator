@@ -618,7 +618,7 @@
 <line x1="536" y1="742" x2="502" y2="742" stroke="#9467bd" stroke-width="5.5" stroke-linecap="round" opacity="0.95"/>
 <line x1="536" y1="708" x2="502" y2="708" stroke="#9467bd" stroke-width="5.5" stroke-linecap="round" opacity="0.95"/>
 <line x1="536" y1="674" x2="502" y2="674" stroke="#9467bd" stroke-width="5.5" stroke-linecap="round" opacity="0.95"/>
-<line x1="264" y1="232" x2="298" y2="232" stroke="#17becf" stroke-width="5.5" stroke-linecap="round" opacity="0.95"/>
+<line x1="162" y1="572" x2="128" y2="572" stroke="#17becf" stroke-width="5.5" stroke-linecap="round" opacity="0.95"/>
 <path d="M128 674 Q94.0 681.0 60 674" fill="none" stroke="#4a4a4a" stroke-width="2.4" opacity="0.9"/>
 <circle cx="128" cy="674" r="3.4" fill="#4a4a4a"/>
 <circle cx="60" cy="674" r="3.4" fill="#4a4a4a"/>
@@ -811,9 +811,9 @@
 <circle cx="434" cy="572" r="6.5" fill="none" stroke="#4b3f9e" stroke-width="2"/>
 <rect x="392.6" y="568.0" width="32.9" height="13" fill="#fbf8f2" opacity="0.88"/>
 <text x="423" y="575.5" font-size="9" font-weight="bold" fill="#4b3f9e" text-anchor="end">Pi 17</text>
-<circle cx="298" cy="232" r="6.5" fill="none" stroke="#4b3f9e" stroke-width="2"/>
-<rect x="306.5" y="228.0" width="32.9" height="13" fill="#fbf8f2" opacity="0.88"/>
-<text x="309" y="235.5" font-size="9" font-weight="bold" fill="#4b3f9e" text-anchor="start">Pi 18</text>
+<circle cx="128" cy="572" r="6.5" fill="none" stroke="#4b3f9e" stroke-width="2"/>
+<rect x="136.5" y="568.0" width="32.9" height="13" fill="#fbf8f2" opacity="0.88"/>
+<text x="139" y="575.5" font-size="9" font-weight="bold" fill="#4b3f9e" text-anchor="start">Pi 18</text>
 <circle cx="502" cy="708" r="6.5" fill="none" stroke="#4b3f9e" stroke-width="2"/>
 <rect x="460.6" y="704.0" width="32.9" height="13" fill="#fbf8f2" opacity="0.88"/>
 <text x="491" y="711.5" font-size="9" font-weight="bold" fill="#4b3f9e" text-anchor="end">Pi 19</text>
@@ -829,20 +829,20 @@
 <circle cx="502" cy="674" r="6.5" fill="none" stroke="#4b3f9e" stroke-width="2"/>
 <rect x="460.6" y="670.0" width="32.9" height="13" fill="#fbf8f2" opacity="0.88"/>
 <text x="491" y="677.5" font-size="9" font-weight="bold" fill="#4b3f9e" text-anchor="end">Pi 24</text>
-<circle cx="128" cy="572" r="6" fill="none" stroke="#a33" stroke-width="1.6" stroke-dasharray="3 2.5"/>
-<rect x="135.5" y="558.5" width="69.5" height="12" fill="#fbf8f2" opacity="0.88"/>
-<text x="138" y="565" font-size="8" font-weight="normal" fill="#a33" text-anchor="start">held for U2.6</text>
 <circle cx="298" cy="878" r="6" fill="none" stroke="#a33" stroke-width="1.6" stroke-dasharray="3 2.5"/>
 <rect x="305.5" y="864.5" width="69.5" height="12" fill="#fbf8f2" opacity="0.88"/>
 <text x="308" y="871" font-size="8" font-weight="normal" fill="#a33" text-anchor="start">held for U1.8</text>
 <circle cx="298" cy="776" r="6" fill="none" stroke="#a33" stroke-width="1.6" stroke-dasharray="3 2.5"/>
 <rect x="305.5" y="762.5" width="74.4" height="12" fill="#fbf8f2" opacity="0.88"/>
 <text x="308" y="769" font-size="8" font-weight="normal" fill="#a33" text-anchor="start">held for U1.11</text>
+<circle cx="298" cy="232" r="6" fill="none" stroke="#a33" stroke-width="1.6" stroke-dasharray="3 2.5"/>
+<rect x="305.5" y="218.5" width="74.4" height="12" fill="#fbf8f2" opacity="0.88"/>
+<text x="308" y="225" font-size="8" font-weight="normal" fill="#a33" text-anchor="start">held for U3.11</text>
 <line x1="264" y1="334" x2="280" y2="334" stroke="#b07aa1" stroke-width="2.2" stroke-dasharray="3 3"/>
 <text x="284" y="338" font-size="10" fill="#b07aa1" text-anchor="start">LED_DRV</text>
 <path d="M259 873 L269 883 M269 873 L259 883" stroke="#a33" stroke-width="2"/>
 <path d="M259 771 L269 781 M269 771 L259 781" stroke="#a33" stroke-width="2"/>
-<path d="M157 567 L167 577 M167 567 L157 577" stroke="#a33" stroke-width="2"/>
+<path d="M259 227 L269 237 M269 227 L259 237" stroke="#a33" stroke-width="2"/>
 <line x1="60.0" y1="918" x2="82.0" y2="918" stroke="#4a4a4a" stroke-width="4"/>
 <text x="88.0" y="922" font-size="11" fill="#5a5245">GND</text>
 <line x1="147.0" y1="918" x2="169.0" y2="918" stroke="#d62728" stroke-width="4"/>

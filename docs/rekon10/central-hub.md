@@ -249,7 +249,7 @@ The same wiring by net rather than by component, generated from the same source 
 | **SPI_SCLK** | `J1.7 (hdr23)`, `J2.4 (SCLK)` |  |
 | **T2_FRONT** | `U1.3 (1Y)`, `U2.2 (1A)`, `U2.5 (2A)`, `U2.9 (3A)`, `U2.12 (4A)` |  |
 | **T2_REAR** | `U1.6 (2Y)`, `U3.2 (1A)`, `U3.5 (2A)`, `U3.9 (3A)`, `U3.12 (4A)` |  |
-| **PPS_COORD** | `U3.11 (4Y)`, `J1.2 (hdr18)` | returns on header pin 18 = BCM GPIO24 |
+| **PPS_COORD** | `U2.6 (2Y)`, `J1.2 (hdr18)` | returns on header pin 18 = BCM GPIO24 |
 | **PPS_FC** | `U2.3 (1Y)`, `R3.1` |  |
 | **PPS_FC_J** | `R3.2`, `J3.1` | connector side of the 1k; the leg past the series resistor |
 | **PPS_NE** | `U2.8 (3Y)`, `R4.1` |  |
@@ -264,7 +264,7 @@ The same wiring by net rather than by component, generated from the same source 
 | **LED_A** | `R2.2`, `D1.2 (anode)` | resistor to LED anode -- both land in K-17, so this net is one junction |
 | **T1_SPARE1** | `U1.8 (3Y)` | first-tier spare output, live, for a future second-tier package |
 | **T1_SPARE2** | `U1.11 (4Y)` | first-tier spare output, live, for a future second-tier package |
-| **U2_SPARE** | `U2.6 (2Y)` | rear distributor spare output |
+| **U3_SPARE** | `U3.11 (4Y)` | rear distributor spare output |
 
 `J1.6` (header pin 22, BCM GPIO25) is spare and carries a no-connect.
 
@@ -272,6 +272,12 @@ The same wiring by net rather than by component, generated from the same source 
 
 Hole-by-hole plan for the buffer tree, generated from the same netlist as the schematic and
 checked against it: every placed net connected, no hole carrying two nets, no orphaned pin.
+
+**This is the design, not a record of the built board.** It exists to build from, and
+afterwards to troubleshoot against or build a second unit from. It has been re-laid several
+times since the board was built, so the two differ at hole level; where they disagree, the
+board is the authority. The second-tier outputs are interchangeable, so which one a leg comes
+off is a property of the board rather than of this page.
 
 **5x7cm protoboard, columns A-S (no J), rows numbered bottom to top 01 to 24.** Reading the
 notation: a **bridge** fans one chip pin out to adjacent free holes, one per jumper end that
@@ -290,11 +296,11 @@ through `O-07` are spoken for.
 **The Coordinator's leg is not a block on this board.** Each of its seven wires is its own
 dupont jumper off the Pi's header, soldered at the far end onto the hole it belongs to:
 3V3 and GND onto the two buses, the four SPI lines onto the breakout's escape holes in `O`,
-and the returning PPS onto `H-20`. `PPS_COORD` comes off `U3.11`, the output on the G side,
-not `U2.6` -- `U2.6` can only leave its pin through `C-10`, which is held open (below).
+and the returning PPS onto `C-10`. `PPS_COORD` comes off `U2.6`, which leaves its pin through
+`C-10`, its only way out; R3's far lead is placed at `C-08` to keep that hole clear.
 
 **Held holes.** An output is only spare if the hole it would escape through is still free, so
-three are reserved and the generator fails if anything takes one: `C-10` for `U2.6`, `H-01`
+three are reserved and the generator fails if anything takes one: `H-20` for `U3.11`, `H-01`
 for `U1.8`, `H-04` for `U1.11`. Without them the n/c outputs are unreachable without undoing
 neighbouring wiring, which is not a spare.
 
@@ -346,7 +352,7 @@ N/C:
 
 G-01 (U1.8 3Y)
 G-04 (U1.11 4Y)
-D-10 (U2.6 2Y)
+G-20 (U3.11 4Y)
 
 bridges:
 
@@ -434,7 +440,7 @@ P-06 (J2.2 MOSI) / O-06 | SPI_MOSI
 
 P-07 (J2.1 SS) / O-07 | SPI_CS
 
-G-20 (U3.11 4Y) / H-20 | PPS_COORD
+D-10 (U2.6 2Y) / C-10 | PPS_COORD
 
 jumpers:
 
@@ -521,7 +527,7 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 | header pin | BCM | signal | to |
 |------------|-----|--------|-----|
 | 17 | -- | 3V3 | board +3V3 bus (RTC + all buffers), at `M-10` |
-| 18 | GPIO24 | **PPS in** | U3 pin 11 -- a buffered output, not SQW, at `H-20`. Overlay line is `dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1` -- **the `assert_falling_edge` half is not in the flashed image yet** (dotfiles-symm#81); everything else in this table is as-built |
+| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW, at `C-10`. Overlay line is `dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1` -- **the `assert_falling_edge` half is not in the flashed image yet** (dotfiles-symm#81); everything else in this table is as-built |
 | 19 | GPIO10 | MOSI | `JP1.2`, at `O-06` |
 | 20 | -- | GND | board GND bus, at `A-13` |
 | 21 | GPIO9 | MISO | `JP1.3`, at `O-05` |
