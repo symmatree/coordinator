@@ -90,10 +90,13 @@ a thing is a property of the **device** or of a **commit**.
 | hardware | udev, gadget link, bridge, I2C, masked gettys | -- |
 | config | -- | collectd, VIO calibration, stack units, image pulls |
 
-**Neither play starts the stack, and only provision reboots.** Deploy's quiesce stops the
-stack and nothing in the play brings it back: `coord start`, or a power cycle, is the
-operator's. Provision's reboot is for the udev rules, module loads and gadget link a fresh
-card needs.
+**Neither play starts the stack, and neither reboots.** Deploy's quiesce stops the stack
+and nothing in the play brings it back: `coord start`, or a power cycle, is the operator's.
+Provision used to end with reboot-and-wait, for the udev rules, module loads and gadget
+link a fresh card needs -- which put the slowest, most stateful step in the middle of
+flash -> provision -> deploy, where someone waits for a card to come back before the next
+play can run. Those changes are written by provision and applied by the next boot, whenever
+the operator takes it: `POST /nodes/<name>/reboot`.
 
 `site.yaml` is both, in order, for a fresh card.
 
@@ -126,8 +129,8 @@ Two measured facts, both from the coordinator during bring-up:
 
 So after a converge, `/usr` stays writable until the next boot. That is not a problem to
 solve: a box running with a writable `/usr` is working as designed, and the next boot --
-whenever the operator wants one -- restores `ro`. Provision happens to reboot for its own
-reasons, which closes the hatch as a side effect; deploy does not reboot at all.
+whenever the operator wants one -- restores `ro`. Neither play reboots, so after either one
+`/usr` stays writable until the operator takes a boot.
 
 Who writes under `/usr`: `roles/podman-host` and `roles/collectd-install` (packages,
 provision), and `roles/host-cli` (the device CLIs in `/usr/local/bin`, deploy).

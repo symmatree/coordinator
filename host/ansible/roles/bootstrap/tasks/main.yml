@@ -153,10 +153,12 @@
 
 # In-place OS upgrade, off by default. Was a separate playbook
 # (host/ansible/os-upgrade.yaml); folded in here because keeping it separate meant
-# duplicating the hatch and the reboot-and-wait, and it silently missed the capture
-# quiesce and the --check refusal. A dist-upgrade is the heaviest thing we run, so
-# running it against a live capture was the worst case of the contention we spend
-# effort avoiding.
+# duplicating the hatch, and it silently missed the capture quiesce and the --check
+# refusal. A dist-upgrade is the heaviest thing we run, so running it against a live
+# capture was the worst case of the contention we spend effort avoiding.
+#
+# It does not reboot, and a new kernel or firmware needs one. No play reboots now; the
+# operator takes it when the sequence is done.
 #
 # A role rather than provision.yaml's `tasks:`, which runs AFTER all roles -- the rest
 # would converge on the old packages and then upgrade them.
