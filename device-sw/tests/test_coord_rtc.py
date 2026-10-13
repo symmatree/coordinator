@@ -242,41 +242,6 @@ check("the measurement time is the system time of the reading",
 check("offset is true minus system", abs(offset - (-0.25)) < 1e-6, str(offset))
 
 
-# 14. chip_boundary exists because the chip has no sub-second register. It must catch
-# the rollover, and it must give up rather than hang on a chip whose clock is stopped.
-class TickingBus(FakeBus):
-    """Seconds register advances after a set number of reads."""
-
-    def __init__(self, flip_after=3, **kw):
-        regs = cr.time_regs(_time.gmtime(1791742065))
-        super().__init__(regs={i: regs[i] for i in range(7)}, **kw)
-        self.reads = 0
-        self.flip_after = flip_after
-
-    def transfer(self, tx):
-        if not tx[0] & cr.WRITE:
-            self.reads += 1
-            if self.reads > self.flip_after:
-                nxt = cr.time_regs(_time.gmtime(1791742066))
-                for i in range(7):
-                    self.regs[i] = nxt[i]
-        return super().transfer(tx)
-
-
-bus = TickingBus()
-t0 = _time.time()
-edge = cr.chip_boundary(cr.Ds3234(bus))
-check("chip_boundary catches the rollover", edge is not None)
-check("and reports the second it rolled INTO, not out of",
-      edge and edge[0] == 1791742066, str(edge))
-check("and the instant it saw it", edge and t0 <= edge[1] <= _time.time(), str(edge))
-
-static = FakeBus(regs={i: cr.time_regs(_time.gmtime(1791742065))[i] for i in range(7)})
-t0 = _time.time()
-edge = cr.chip_boundary(cr.Ds3234(static), deadline_s=0.2)
-check("a stopped chip gives up rather than hanging",
-      edge is None and _time.time() - t0 < 1.0, f"{edge} after {_time.time()-t0:.2f}s")
-
 src = (CLI / "coord-rtc").read_text()
 
 # 15. The sample reports the CHIP, always. Reporting UTC here would make chrony's
@@ -353,6 +318,11 @@ check("a 1 arm flag reads as armed", cr.armed(str(_armfile)) is True)
 # edge, and a label read so late that the register has rolled again and the label belongs
 # to the next second. Both would be a whole second wrong, which is the one error size this
 # design cannot absorb -- chrony folds a PPS into +/-0.5 s.
+#
+# There is no fallback path to test. Without the edge there is no sample, and the feed says
+# so: the chip's label alone leaves the second ambiguous, which is the error it cannot
+# absorb. A chip reachable over SPI whose 1 Hz is not reaching GPIO24 is not a wiring state
+# the board has -- both come off the same distribution board.
 
 _ppsdir = Path(tempfile.mkdtemp())
 _ppsfile = _ppsdir / "assert"
@@ -378,7 +348,7 @@ check("an assert reads as (instant, sequence)",
 check("a missing pps device is None, not a crash",
       cr.pps_assert(str(_ppsdir / "nope")) is None)
 _ppsfile.write_text("")
-check("an unsoldered leg -- device present, never fired -- is None",
+check("a device present but never fired is None",
       cr.pps_assert(str(_ppsfile)) is None)
 _ppsfile.write_text("garbage\n")
 check("an unparseable assert is None rather than a bogus instant",
@@ -465,7 +435,7 @@ def _stop_after_four(_s):
         raise _Stop
 
 
-cr.chip_boundary = lambda rtc, deadline_s=1.5: (1791859443, 1791859443.846)
+cr.pulse_boundary = lambda rtc, deadline_s=2.0, path=None: (1791859443, 1791859443.846)
 cr.fc_offset = lambda: None
 cr.armed = lambda path=None: True          # so no path here can write the chip
 cr.time.sleep = _stop_after_four
@@ -488,43 +458,15 @@ except TimeoutError:
 
 _lines = [ln for ln in _out.getvalue().splitlines() if ln.strip()]
 check("the feed sends a sample every pass", _datagrams == 4, f"{_datagrams} datagrams")
-# Two one-shot lines over four passes: which path the boundary came from, and the first
-# sample. Four passes rather than one is the point -- these must not repeat per sample,
-# which at 1 Hz would be a line a second saying nothing changed.
-check("the feed says so twice over four passes, not per sample", len(_lines) == 2,
+# One one-shot line over four passes. Four rather than one is the point: at 1 Hz a line
+# per sample would be a line a second saying nothing changed.
+check("the feed says so once over four passes, not per sample", len(_lines) == 1,
       f"{len(_lines)} lines: {_lines}")
-check("it names the path the boundary came from",
-      any("second boundary from" in ln for ln in _lines), str(_lines))
-check("and carries the offset chrony will show",
-      any("-0.846 s" in ln for ln in _lines), str(_lines))
+check("and the line carries the offset chrony will show",
+      bool(_lines) and "-0.846 s" in _lines[0], _lines[0] if _lines else "(no line)")
 
-# The run above had no PPS file, so it exercised the fallback. This one has a working
-# edge: the loop must PREFER it. Without this check, deleting the pulse from cmd_feed
-# entirely still passes, because falling back looks the same from outside.
-_livepps = _ppsdir / "assert_live"
-_livepps.write_text("1791860357.000005475#2000\n")
-cr.PPS_ASSERT_FILE = str(_livepps)
-_seq = {"n": 2000}
-
-
-def _tick(_s, _f=_livepps):
-    _seq["n"] += 1
-    _f.write_text(f"{_time.time():.9f}#{_seq['n']}\n")
-    if _seq["n"] >= 2004:
-        raise _Stop
-
-
-cr.time.sleep = _tick
-_out2 = io.StringIO()
-with redirect_stdout(_out2):
-    try:
-        cr.cmd_feed(_LabelRtc())
-    except _Stop:
-        pass
-cr.time.sleep = _saved_sleep
-check("with an edge available the feed takes the boundary from the pulse",
-      "second boundary from the 1 Hz" in _out2.getvalue(),
-      _out2.getvalue().strip().splitlines()[:1] or "(nothing)")
+# cmd_feed's only boundary source is the pulse, and this section patched pulse_boundary --
+# so the four datagrams above are themselves the check that it still goes through it.
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
