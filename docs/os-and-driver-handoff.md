@@ -176,7 +176,7 @@ Treat the state column as the part that rots; check `origin/main` and the issue'
 | **#447** `gpu_mem` | Answered: 32, measured, shipped. Close it or leave it as the record of the measurement -- that is Seth's |
 | **#452** the docs PR carrying the `gpu_mem` findings and the bare-OS baseline | Open last I looked |
 | **#434** warm up and hold idle-ready | The measurement that was mine is closed -- the camera holds its CMA across a pause. The rest is flight-platform's |
-| **#370** campod time | PPS is now in the coordinator image (`dtparam=spi=on`, `dtoverlay=pps-gpio,gpiopin=24`). The campod half is not: `roles/campod/config.append.txt` still has no `pps-gpio`, and it needs a reflash when the fan-out reaches a pod |
+| **#370** campod time | PPS is now in the coordinator image (`dtparam=spi=on`, `dtoverlay=pps-gpio,gpiopin=24`). The campod half is not: `roles/campod/config.append.txt` still has no `pps-gpio`, and it needs a reflash when the fan-out reaches a pod. The pod-side pin is now chosen -- header 37/39, so `gpiopin=26` ([campod.md](campod.md)) |
 | **#251** disarm RO snapshot of `@data` | A decision Seth has declined to make, twice. Do not re-raise it as a thing to settle; it is not costing anything |
 | **#90** bake container images into the image | Not built. Different and harder than baking packages: it needs the image store populated offline |
 | **#236**, **#261** provisioning service, fleet SSH key | Not started |
