@@ -412,6 +412,7 @@ def cmd_feed(rtc: Ds3234) -> int:
     """
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     refused = 0
+    sent = 0
     while True:
         edge = chip_boundary(rtc)
         if edge is None:
@@ -457,6 +458,18 @@ def cmd_feed(rtc: Ds3234) -> int:
                 if refused in (1, 10) or refused % 100 == 0:
                     print(f"{CHRONY_SOCK} not accepting samples ({refused} so far)",
                           file=sys.stderr)
+            else:
+                # Once, on the first sample that lands. Without it the journal for this
+                # unit is a single systemd "Started" line and then silence, which reads
+                # exactly like a feed that is doing nothing -- it cost a wrong diagnosis
+                # on the first boot that had a good epoch. Not per sample: that would be
+                # a line a minute forever to say nothing changed.
+                sent += 1
+                if sent == 1:
+                    stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(chip_s))
+                    print(f"coord-rtc: feeding chrony from the chip, {stamp}Z, "
+                          f"{chip_s - at:+.3f} s from this clock, every "
+                          f"{FEED_PERIOD_S:g} s", flush=True)
         time.sleep(FEED_PERIOD_S)
 
 

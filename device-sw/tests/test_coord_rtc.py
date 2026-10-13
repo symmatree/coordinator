@@ -324,10 +324,9 @@ check("disarmed, past the debounce: yes, either sign",
       and cr.should_set_chip(False, -cr.FC_CORRECT_OVER_S * 1.1, False) is True)
 
 # The quantity compared is the CHIP's error, not our clock's offset. Our clock is only a
-# proxy for the chip while chrony is tracking the chip -- and on the bench it has the
-# vendor config's upstream pool as well, since our drop-in is additive. Which source it
-# then prefers is chrony's selection and is NOT established here. That is the point: the
-# decision is about the chip, so it should not rest on an assumption about chrony.
+# proxy for the chip while chronyd is up and converged onto the chip; before it steps at
+# boot, or with chronyd stopped, the two are independently wrong. That is the point: the
+# decision is about the chip, so it should not rest on the state of a daemon.
 check("a drifted chip is corrected even when our own clock is near truth",
       cr.should_set_chip(False, 10.0, False) is True)
 
@@ -346,6 +345,70 @@ _armfile.write_text("0\n")
 check("a 0 arm flag reads as disarmed", cr.armed(str(_armfile)) is False)
 _armfile.write_text("1\n")
 check("a 1 arm flag reads as armed", cr.armed(str(_armfile)) is True)
+
+# ---- 18. the feed says it is feeding, once -------------------------------------------
+#
+# The risk this covers is both directions of a one-shot log line: silence, which is what
+# sent us chasing a working feed as if it were broken, and a line per sample, which at one
+# a minute would bury the journal in notice that nothing changed. So: exactly one line,
+# and the sends keep going after it.
+
+import socket as _socket
+
+_sockdir = tempfile.mkdtemp()
+_sockpath = str(Path(_sockdir) / "chrony.sock")
+_srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_DGRAM)
+_srv.bind(_sockpath)
+cr.CHRONY_SOCK = _sockpath
+
+
+class _OsfClearRtc:
+    """Status register with OSF clear, which is all cmd_feed reads it for."""
+
+    def read(self, reg, n=1):
+        return bytes([0x00])
+
+
+class _Stop(Exception):
+    pass
+
+
+_iterations = {"n": 0}
+
+
+def _stop_after_four(_s):
+    _iterations["n"] += 1
+    if _iterations["n"] >= 4:
+        raise _Stop
+
+
+cr.chip_boundary = lambda rtc, deadline_s=1.5: (1791859443, 1791859443.846)
+cr.fc_offset = lambda: None
+cr.armed = lambda path=None: True          # so no path here can write the chip
+cr.time.sleep = _stop_after_four
+
+_out = io.StringIO()
+with redirect_stdout(_out):
+    try:
+        cr.cmd_feed(_OsfClearRtc())
+    except _Stop:
+        pass
+
+_srv.settimeout(0.2)
+_datagrams = 0
+try:
+    while True:
+        _srv.recv(64)
+        _datagrams += 1
+except TimeoutError:
+    pass
+
+_lines = [ln for ln in _out.getvalue().splitlines() if ln.strip()]
+check("the feed sends a sample every pass", _datagrams == 4, f"{_datagrams} datagrams")
+check("the feed says so exactly once, not per sample", len(_lines) == 1,
+      f"{len(_lines)} lines")
+check("and the line carries the offset chrony will show",
+      bool(_lines) and "-0.846 s" in _lines[0], _lines[0] if _lines else "(no line)")
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
