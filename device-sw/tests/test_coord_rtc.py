@@ -395,8 +395,8 @@ check("an edge noticed too late to label safely is refused, not guessed",
 
 check("the label window is under a second, or it could not tell seconds apart",
       0 < cr.PPS_LABEL_WINDOW_S < 1.0, f"{cr.PPS_LABEL_WINDOW_S}s")
-check("the feed period matches the pulse it samples",
-      cr.FEED_PERIOD_S == 1.0, f"{cr.FEED_PERIOD_S}s")
+check("the retry wait is a backoff, not a sample period, and is bounded",
+      0 < cr.RETRY_PERIOD_S <= 5.0, f"{cr.RETRY_PERIOD_S}s")
 
 
 # ---- 19. the feed says it is feeding, once -------------------------------------------
@@ -426,19 +426,25 @@ class _Stop(Exception):
     pass
 
 
-_iterations = {"n": 0}
+# The loop is stopped from the PULSE, not from sleep, because a successful pass must not
+# sleep at all: the next pass blocks on the next edge, and that is what paces it at 1 Hz.
+# Sleeping as well made it one sample per 2 s, which is under the four-per-poll a SOCK
+# refclock's filter needs -- the reach register showed it and chrony never filled it.
+_edges = {"n": 0}
 
 
-def _stop_after_four(_s):
-    _iterations["n"] += 1
-    if _iterations["n"] >= 4:
+def _four_edges(rtc, deadline_s=2.0, path=None):
+    _edges["n"] += 1
+    if _edges["n"] > 4:
         raise _Stop
+    return (1791859443, 1791859443.846)
 
 
-cr.pulse_boundary = lambda rtc, deadline_s=2.0, path=None: (1791859443, 1791859443.846)
+_slept = []
+cr.pulse_boundary = _four_edges
 cr.fc_offset = lambda: None
 cr.armed = lambda path=None: True          # so no path here can write the chip
-cr.time.sleep = _stop_after_four
+cr.time.sleep = lambda s: _slept.append(s)
 
 _out = io.StringIO()
 with redirect_stdout(_out):
@@ -458,6 +464,8 @@ except TimeoutError:
 
 _lines = [ln for ln in _out.getvalue().splitlines() if ln.strip()]
 check("the feed sends a sample every pass", _datagrams == 4, f"{_datagrams} datagrams")
+check("and a successful pass does not sleep -- the pulse is what paces it",
+      _slept == [], f"slept {_slept}")
 # One one-shot line over four passes. Four rather than one is the point: at 1 Hz a line
 # per sample would be a line a second saying nothing changed.
 check("the feed says so once over four passes, not per sample", len(_lines) == 1,

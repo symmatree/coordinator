@@ -60,12 +60,29 @@ GPIO24 is not a state the board has, since both come off the same distribution b
 is -- and sampling it faster does not sharpen that. What a faster rate buys is cold start:
 chrony will not select a refclock it has not characterised across several samples, so at
 the 64 s period this used to run, a boot spent minutes with no usable time even though the
-pulse was arriving cleanly the whole while. At 1 Hz that is seconds. The pods are behind
-it, taking the second over the gadget link, so the coordinator's convergence is the front
-of their queue too.
+pulse was arriving cleanly the whole while. Measured on the coordinator after the change,
+from a cold boot: 15 s from chronyd starting to a selected source, 20 s to the chip, with
+the chip then selected at a 154 ns standard deviation. The pods are behind it, taking the
+second over the gadget link, so the coordinator's convergence is the front of their queue
+too.
+
+**`poll 2` on a 1 Hz feed, because four samples per poll is the real constraint.** A
+refclock's filter refuses to produce a filtered sample below a minimum of four
+(`SPF_CreateInstance(MIN(filter_length, 4), ...)` in chrony's `refclock.c`, and
+`select_samples()` returning 0 under `min_samples` in `samplefilt.c`), and a poll that
+produces nothing shifts a zero into the source's reach register. That minimum is normally
+hidden because `filter_length` gets clamped to what one poll can hold -- but only for
+drivers with a poll function, and `RCL_SOCK_driver`'s is `NULL`, so a SOCK refclock keeps
+the default 64 and the minimum stays 4. `RCL_PPS_driver` has one, which is why the PPS
+line's filter is clamped to exactly the four pulses a 4 s poll collects.
+
+So the shortest poll a 1 Hz source can fill is 4 s. At `poll 0` the chip's source sat at
+reach `4 -> 20 -> 100 -> 1`, a single bit marching, while the pulse sat at `377`. The feed
+is paced by the pulse rather than by a configured period, so this rate follows from the
+signal rather than from two ends being kept in step by hand.
 
 ```
-refclock SOCK /run/chrony.ds3234.sock refid DS32 precision 1e-5 poll 0
+refclock SOCK /run/chrony.ds3234.sock refid DS32 precision 1e-5 poll 2
 refclock PPS  /dev/pps0 refid PPS lock DS32 precision 1e-7 poll 2
 ```
 

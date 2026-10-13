@@ -34,21 +34,34 @@ makestep 1 3
 # silently discarded. UTC is a label on this base, not the base; coordinator-mavlink
 # logs the FC's GPS-derived offset per session for that.
 #
-# poll 0 = 1 s, which is coord-rtc's FEED_PERIOD_S. These have to agree: chrony shifts a
-# zero into the reach register for every poll that finds no sample, so a feed slower than
-# the poll makes a working source read as unreliable.
+# poll 2 = 4 s, and it is FOUR SAMPLES PER POLL that matters, not matching the feed's
+# rate. From chrony 4.6.1 refclock.c, a refclock's filter is built as
 #
-# 1 Hz is affordable because coord-rtc takes the second boundary off the 1 Hz itself --
-# the kernel timestamps the falling edge, which is the rollover, and the sample is one
-# register read against that timestamp. What this rate buys is cold-start time and nothing
-# else: chrony will not select a refclock it has not characterised over several samples,
-# and the chip's information is one integer that sampling faster does not sharpen.
+#     /* Require the filter to have at least 4 samples to produce a filtered
+#        sample, or be full for shorter lengths [...] */
+#     SPF_CreateInstance(MIN(params->filter_length, 4), params->filter_length, ...)
+#
+# and samplefilt.c's select_samples() returns nothing at all below that minimum. A poll
+# that produces no filtered sample gives the source nothing, which is a zero shifted into
+# the reach register. filter_length is clamped to what one poll can hold -- but only
+# `if (inst->driver->poll)`, and RCL_SOCK_driver's poll is NULL, so for a SOCK refclock
+# the clamp never runs and filter_length stays at its default of 64, leaving the minimum
+# at 4. The PPS line below takes the other branch: RCL_PPS_driver HAS a poll, so poll 2
+# with dpoll 0 clamps its filter to 4, which a 1 Hz pulse fills exactly.
+#
+# So at poll 0 this source needed four samples inside one second from a 1 Hz chip, which
+# cannot happen: measured on the coordinator, DS32 sat at reach 4 -> 20 -> 100 -> 1, one
+# bit marching, while PPS sat at 377. 4 s is the shortest poll a 1 Hz feed can fill.
+#
+# coord-rtc's samples are paced by the pulse itself rather than by a configured period, so
+# the rate here is a property of the signal and not something the two ends have to be kept
+# in step by hand.
 #
 # precision 1e-5 is conservative. The instant is the same kernel edge timestamp the PPS
 # refclock below uses, where the observed dispersion is ~65 us; 1e-5 is declared rather
 # than measured, and is three orders better than the 2e-3 this line carried when the
 # boundary was found by polling the register at 2 ms.
-refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 1e-5 poll 0
+refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 1e-5 poll 2
 {% if coord_pps_wired | bool %}
 
 # The buffered 1 Hz, and the reason the circuit exists. `lock DS32` pairs each edge with a

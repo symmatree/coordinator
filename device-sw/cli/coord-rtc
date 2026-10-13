@@ -78,14 +78,12 @@ SOCK_SAMPLE = "=qqdiiii"
 # cannot disagree. This default is only for a run by hand.
 CHRONY_SOCK = os.environ.get("COORD_RTC_CHRONY_SOCK", "/run/chrony.ds3234.sock")
 #
-# 1 Hz, because the chip's second boundary arrives as a kernel-timestamped edge and a
-# sample costs one register read. It was 64 s when the boundary had to be found by chasing
-# the seconds register, and the only thing a slow rate cost was cold-start time: chrony
-# will not select a refclock it has not characterised over several samples, so at 64 s
-# apiece that was minutes of a flight line, every boot. The chip's information is one
-# integer -- which second it is -- and sampling it faster does not sharpen it; it only
-# gets chrony to a usable measurement sooner.
-FEED_PERIOD_S = float(os.environ.get("COORD_RTC_FEED_PERIOD_S", "1"))
+# NOT the sample period. THE PULSE PACES THE LOOP: each pass waits for the next edge, so
+# samples go out at exactly 1 Hz without anything here deciding that. This is only how
+# long to wait before trying again when a pass produced nothing -- no edge, a socket that
+# will not take the sample, or just after a chip write, where the point is to let the
+# re-phased 1 Hz settle before sampling it.
+RETRY_PERIOD_S = float(os.environ.get("COORD_RTC_RETRY_PERIOD_S", "1"))
 
 # Where coordinator-mavlink publishes the current FC-measured offset from UTC:
 # "offset_us rtt_us local_us". Used ONLY to correct the chip's epoch while disarmed --
@@ -474,7 +472,7 @@ def cmd_feed(rtc: Ds3234) -> int:
             if no_edge in (1, 10) or no_edge % 100 == 0:
                 print(f"no edge on the 1 Hz at {PPS_ASSERT_FILE}, so there is nothing to "
                       f"tell chrony ({no_edge} so far)", file=sys.stderr)
-            time.sleep(FEED_PERIOD_S)
+            time.sleep(RETRY_PERIOD_S)
             continue
 
         chip_s, at = edge
@@ -494,7 +492,7 @@ def cmd_feed(rtc: Ds3234) -> int:
             print(f"coord-rtc: set the chip to {stamp}Z from the FC "
                   f"(chip was off {chip_error:+.3f} s, landed {err * 1000:+.1f} ms, "
                   f"status 0x{sr:02x}); the 1 Hz is re-phased", flush=True)
-            time.sleep(FEED_PERIOD_S)
+            time.sleep(RETRY_PERIOD_S)
             continue
 
         if no_epoch:
@@ -525,9 +523,11 @@ def cmd_feed(rtc: Ds3234) -> int:
                 if sent == 1:
                     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(chip_s))
                     print(f"coord-rtc: feeding chrony from the chip, {stamp}Z, "
-                          f"{chip_s - at:+.3f} s from this clock, every "
-                          f"{FEED_PERIOD_S:g} s", flush=True)
-        time.sleep(FEED_PERIOD_S)
+                          f"{chip_s - at:+.3f} s from this clock, once per pulse",
+                          flush=True)
+        # NO SLEEP HERE. The next pass blocks on the next edge, which paces this at
+        # 1 Hz by construction. Sleeping as well made it 2 s -- the edge wait PLUS the
+        # period -- which is half the samples chrony needs per poll.
 
 
 def set_system(ts: float) -> None:
