@@ -51,9 +51,10 @@ timestamp is not ours. The one thing that is not harmless is reading the label *
 next* rollover, which would pair a timestamp with the wrong second -- so a read that
 misses its window is dropped rather than sent.
 
-A coordinator whose PPS leg is not soldered falls back to finding the boundary by polling
-the seconds register at 2 ms, which is where the old `precision 2e-3` came from, and says
-in the journal that it has done so.
+Without an edge there is no sample, and the feed says so rather than sending the chip's
+label on its own -- that would leave the second ambiguous, which is the error this cannot
+absorb. There is no second path: a chip reachable over SPI whose 1 Hz is not reaching
+GPIO24 is not a state the board has, since both come off the same distribution board.
 
 **What the sample rate is for.** The chip's contribution is one integer -- which second it
 is -- and sampling it faster does not sharpen that. What a faster rate buys is cold start:

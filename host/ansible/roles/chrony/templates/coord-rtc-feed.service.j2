@@ -5,11 +5,9 @@ Documentation=https://github.com/symmatree/coordinator/issues/11
 # so, until the socket appears.
 After=chronyd.service
 Wants=chronyd.service
-# spidev and pps_gpio are both modules, so these appear only after udev coldplug. The
-# feed needs both now: the chip over SPI for the label, and the pulse for the instant it
-# belongs to. Wants rather than Requires on the PPS device -- without an edge the feed
-# falls back to chasing the seconds register and says so, which is worth having on a
-# coordinator whose leg is not soldered.
+# spidev and pps_gpio are both modules, so these appear only after udev coldplug. The feed
+# needs both: the chip over SPI for the label, and the pulse for the instant it belongs to.
+# Without an edge there is no sample and it says so in the journal, once a second.
 Wants=dev-spidev0.0.device
 After=dev-spidev0.0.device
 Wants=dev-pps0.device

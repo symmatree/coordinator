@@ -125,12 +125,6 @@ PPS_WATCH_POLL_S = 0.05
 # timestamp taken by someone else with a value read by us.
 PPS_LABEL_WINDOW_S = 0.4
 
-# The fallback, for a coordinator whose PPS leg is not soldered: pps-gpio presents
-# /dev/pps0 on an unconnected pin, so the device exists and no edge ever arrives. How
-# often to look while waiting for the chip's seconds register to change instead. This
-# interval bounds the error of THAT path -- at most ~500 eight-byte SPI reads per sample.
-ROLLOVER_POLL_S = 0.002
-
 # struct spi_ioc_transfer, 32 bytes. Field order and widths are the kernel's.
 XFER = "=QQIIHBBBBBB"
 SPI_IOC_WR_MODE = 0x40016B01
@@ -418,33 +412,6 @@ def pulse_boundary(rtc: Ds3234, deadline_s: float = 2.0,
     return None
 
 
-def chip_boundary(rtc: Ds3234, deadline_s: float = 1.5) -> tuple[int, float] | None:
-    """Watch the seconds register until it changes, and return (chip time, instant).
-
-    This exists because the chip has no sub-second register. A plain read says "it is
-    second N" and leaves a whole second of ambiguity, which is the same order as
-    chrony's 0.5 s fold limit -- so the sample would have no margin against the RTC's
-    own drift. Catching the rollover removes the ambiguity: at that instant the chip's
-    time IS the value just read, to within one polling interval.
-    """
-    first = rtc.read(REG_SECONDS, 7)
-    give_up = time.time() + deadline_s
-    while time.time() < give_up:
-        time.sleep(ROLLOVER_POLL_S)
-        regs = rtc.read(REG_SECONDS, 7)
-        if regs[0] != first[0]:
-            # The rollover happened somewhere in the poll interval just ended, so the
-            # observation instant is LATE by 0..ROLLOVER_POLL_S. Backdating by half the
-            # interval centres that, leaving +/-1 ms of noise rather than a 0..2 ms
-            # bias. The interval sets the chip path's precision and is what the chrony
-            # drop-in's `precision 2e-3` is derived from -- at the 20 ms it used to be,
-            # that figure was wrong by an order of magnitude.
-            at = time.time() - ROLLOVER_POLL_S / 2
-            stamp = decode_time(regs)
-            return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S")), at
-    return None
-
-
 def sock_sample(chip_s: int, at: float) -> bytes:
     """One struct sock_sample: at system time `at`, the chip read second `chip_s`.
 
@@ -494,26 +461,21 @@ def cmd_feed(rtc: Ds3234) -> int:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     refused = 0
     sent = 0
-    source = ""
+    no_edge = 0
     while True:
-        # The pulse first: its instant is the kernel's, to microseconds. Chasing the
-        # register is the fallback for a leg that is not soldered, where /dev/pps0
-        # exists and never fires.
         edge = pulse_boundary(rtc)
-        via = "the 1 Hz, kernel-timestamped"
         if edge is None:
-            edge = chip_boundary(rtc)
-            via = f"the seconds register -- no edge on {PPS_ASSERT_FILE}"
-        if edge is None:
-            print("no edge on the 1 Hz, and the chip's seconds register did not change "
-                  "within 1.5 s", file=sys.stderr)
+            # No edge means the signal this whole design rests on is not arriving. There
+            # is nothing useful to send without it -- the chip's label on its own leaves
+            # a second of ambiguity, which is the error size chrony cannot absorb. Said
+            # on the same schedule as a refused socket, because at this period saying it
+            # every pass would be the only thing in the journal.
+            no_edge += 1
+            if no_edge in (1, 10) or no_edge % 100 == 0:
+                print(f"no edge on the 1 Hz at {PPS_ASSERT_FILE}, so there is nothing to "
+                      f"tell chrony ({no_edge} so far)", file=sys.stderr)
             time.sleep(FEED_PERIOD_S)
             continue
-        if via != source:
-            # Which path the samples come from, and said again if it ever changes. A
-            # silent fall back to the millisecond path would otherwise be invisible.
-            print(f"coord-rtc: second boundary from {via}", flush=True)
-            source = via
 
         chip_s, at = edge
         no_epoch = bool(rtc.read(REG_STATUS)[0] & SR_OSF)
