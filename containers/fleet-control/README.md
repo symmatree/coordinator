@@ -6,15 +6,31 @@ linux/amd64. Child of [#223](https://github.com/symmatree/coordinator/issues/223
 
 Live at `https://fleet.{cluster}.symmatree.com`; deployment lives in `tiles`.
 
-## Converge
+## Converge, and full provision
 
-The service runs the fleet playbook against the node, here on the control node, and reports the
-exit code. **0 means converged.**
+```sh
+curl -sXPOST .../nodes/campod-se/converge                    # config, stacks, images
+curl -sXPOST .../nodes/campod-se/provision                   # a fresh card, end to end
+curl -sXPOST ".../nodes/campod-se/provision?reflashed=true"  # ...that was just written
+```
 
-```
-ansible-playbook host/ansible/site.yaml -i '<addr>,' -u pi \
-  -e device_role=<coordinator|campod>
-```
+| | playbook | installs | reboots |
+|---|---|---|---|
+| **Converge** | `deploy.yaml` | nothing | no |
+| **Full provision** | `site.yaml` (provision then deploy) | the whole package set | yes, partway |
+
+**Converge is the one pressed between flights**, so it is the default and the primary button. Full
+provision is the first-run path; on a card that is already provisioned it is a slow way to get a
+converge.
+
+They are two operations rather than one at two sizes, which is why they are two routes and not a
+size flag. After the playbook split in two
+([#453](https://github.com/symmatree/coordinator/pull/453)) this service ran `site.yaml` for
+everything, so a routine converge paid the full apt set, the `/usr` hatch and a reboot.
+
+Exit 0 means converged either way. What each playbook does is documented with it:
+[`host/ansible/`](../../host/ansible/) and
+[docs/deployment-model.md](../../docs/deployment-model.md).
 
 > **Scope of this file.** It documents the *service*. **What the playbook does, which playbook
 > runs when, and what state a device is left in are documented with the playbook** --
@@ -55,7 +71,7 @@ as JSON. This service writes `env/extravars` as JSON and is unaffected.
 
 ### Reflashed cards
 
-`POST /nodes/<name>/converge?reflashed=true` clears the recorded SSH host key first.
+`POST /nodes/<name>/provision?reflashed=true` clears the recorded SSH host key first.
 
 A reflashed card presents a **new key for the same address**, which is a *changed* key rather
 than an unknown one — `StrictHostKeyChecking=accept-new` accepts unknown hosts and still
@@ -389,7 +405,7 @@ The UI is one client of the routes; it has no private endpoints.
 
 ```sh
 curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/converge"
-curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/converge?reflashed=true"
+curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/provision?reflashed=true"
 curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 ```
 
@@ -401,7 +417,8 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /nodes` | the roster |
 | `GET /pods` | what the devices say they are doing, off the bus. Costs them nothing |
 | `POST /nodes/:name/stack?desired=` | `running` or `stopped`, published retained to the bus |
-| `POST /nodes/:name/converge[?reflashed=true]` | start a run -> `202 {id}` |
+| `POST /nodes/:name/converge` | config, stacks and images -> `202 {id}` |
+| `POST /nodes/:name/provision[?reflashed=true]` | a fresh card, end to end -> `202 {id}` |
 | `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
 | `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first, and abandons this node's in-flight runs |
 | `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |

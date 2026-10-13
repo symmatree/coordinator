@@ -46,14 +46,35 @@ function note(sink: EventSink | undefined, msg: string): void {
  * ssh error buried. Clearing it is a caller decision, so it stays here and the playbook
  * encodes no trust policy.
  */
+/**
+ * Two operations, not one at two sizes.
+ *
+ * `converge` runs `deploy.yaml`: config, stack definitions and image pulls. It installs no
+ * packages, opens no `/usr` hatch and does not reboot, so it is the one that is cheap to run
+ * between flights, and it is the default.
+ *
+ * `provision` runs `site.yaml` -- provision then deploy, because a bare card needs both. It
+ * installs the whole package set and reboots partway, at the hand-off between the two.
+ *
+ * Which playbook runs used to be neither, because this service ran `site.yaml` for everything
+ * after the playbook split in two (#453) -- so a routine converge paid the fresh-card path.
+ */
+export type ConvergeKind = 'converge' | 'provision';
+
+const PLAYBOOK: Record<ConvergeKind, string> = {
+  converge: 'deploy.yaml',
+  provision: 'site.yaml',
+};
+
 export async function converge(
   node: FleetNode,
   ctx: ActionContext,
-  opts: { runId: string; reflashed?: boolean },
+  opts: { runId: string; kind: ConvergeKind; reflashed?: boolean },
   sink?: EventSink,
 ): Promise<void> {
   const host = hostOf(node);
-  note(sink, `converging ${node.name} (${host}) as ${node.role}`);
+  const playbook = PLAYBOOK[opts.kind];
+  note(sink, `${opts.kind} on ${node.name} (${host}) as ${node.role} -- ${playbook}`);
 
   if (opts.reflashed) {
     const forgotten = await forgetHostKey(host, ctx.knownHostsPath);
@@ -67,17 +88,18 @@ export async function converge(
     privateKeyPath: ctx.privateKeyPath,
     sshTimeoutSec: ctx.sshTimeoutSec,
     knownHostsPath: ctx.knownHostsPath,
+    playbook,
     extraVars: { device_role: node.role },
     sink,
   });
 
   if (rc !== 0) {
     throw new ActionError(
-      `${node.name}: converge failed (ansible-runner exit ${rc}). See the output above; the ` +
+      `${node.name}: ${opts.kind} failed (ansible-runner exit ${rc}). See the output above; the ` +
         `play recap names the failing task and host.`,
     );
   }
-  note(sink, `${node.name} converged`);
+  note(sink, `${node.name} ${opts.kind === 'converge' ? 'converged' : 'provisioned'}`);
 }
 
 /**

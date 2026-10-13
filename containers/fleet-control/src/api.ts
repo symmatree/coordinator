@@ -64,19 +64,46 @@ export function buildServer(
     return { ...b, repo, title, head, current: head === undefined ? undefined : head === b.revision };
   });
 
+  // ---- converge, and full provision --------------------------------------------------------
+  //
+  // Two routes rather than one with a size flag, because they are not the same operation at
+  // two sizes: one installs nothing and does not reboot, the other does both. Which playbook
+  // runs is the whole difference between them, and after #453 split the playbook this service
+  // ran `site.yaml` for both -- so a routine converge paid the fresh-card path.
+
   /**
-   * Converge a node. `?reflashed=true` clears the recorded host key first, which is the one
-   * thing a reflashed card needs and nothing else does.
+   * Config, stack definitions and image pulls. The routine one, and the default.
+   */
+  app.post<{ Params: { name: string } }>('/nodes/:name/converge', async (req, reply) => {
+    const node = findNode(cfg.inventory, req.params.name);
+    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
+    try {
+      const run = runs.start('converge', node.name, (emit, runId) =>
+        converge(node, cfg.action, { runId, kind: 'converge' }, sinkFor(emit)),
+      );
+      return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
+    } catch (err) {
+      return reply.code(409).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * A fresh card, end to end -- `site.yaml`, provision then deploy, because a bare card needs
+   * both. Reboots partway, at the hand-off between them.
+   *
+   * `?reflashed=true` clears the recorded host key first. Only here: a reflashed card presents
+   * a changed key, which `accept-new` refuses, and a card that has just been written is the
+   * only thing that needs provisioning anyway.
    */
   app.post<{ Params: { name: string }; Querystring: { reflashed?: string } }>(
-    '/nodes/:name/converge',
+    '/nodes/:name/provision',
     async (req, reply) => {
       const node = findNode(cfg.inventory, req.params.name);
       if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
       const reflashed = req.query.reflashed === 'true';
       try {
-        const run = runs.start('converge', node.name, (emit, runId) =>
-          converge(node, cfg.action, { runId, reflashed }, sinkFor(emit)),
+        const run = runs.start('provision', node.name, (emit, runId) =>
+          converge(node, cfg.action, { runId, kind: 'provision', reflashed }, sinkFor(emit)),
         );
         return reply.code(202).send({ id: run.id, action: run.action, node: run.node, reflashed });
       } catch (err) {
