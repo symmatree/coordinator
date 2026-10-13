@@ -414,7 +414,12 @@
 
   async function run(name, action) {
     const st = state.get(name) ?? {};
-    st.busy = true; st.runAction = action; st.log = [`starting ${action}...`];
+    // CLEARED ON PRESS, and the adopted run forgotten with it -- otherwise the next render
+    // can readopt the old run and put its log back under the new one.
+    st.busy = true;
+    st.runAction = action;
+    st.runId = undefined;
+    st.log = [`[fleet-control] ${new Date().toISOString().slice(11, 19)}  starting ${action}`];
     state.set(name, st);
     render(await j('/nodes'));
     let id;
@@ -430,12 +435,13 @@
   async function follow(name, st, id) {
     const status = await watchRun(id, async (line, reset) => {
       if (reset) st.log = [];
-      st.log.push(line);
+      st.log.push(typeof line === 'string' ? line : stamped(line));
       if (st.log.length > 400) st.log.splice(0, st.log.length - 400);
       render(await j('/nodes'));
     });
     st.busy = false;
-    st.log.push(lostNote(status) ?? `[fleet-control] run ${status}`);
+    const now = new Date().toISOString().slice(11, 19);
+    st.log.push(lostNote(status) ?? `[fleet-control] ${now}  run ${status}`);
     state.set(name, st);
     render(await j('/nodes'));
   }
@@ -463,11 +469,12 @@
       st.runId = r.id;
       try {
         const full = await j(`/runs/${r.id}`);
-        st.log = full.lines.map((l) => l.line).slice(-400);
+        // The header first, so the top of the log says what this is and when -- an adopted
+        // run and a just-pressed one are otherwise indistinguishable.
+        st.log = [runHeader(full), ...full.lines.map(stamped).slice(-400)];
         st.busy = full.status === 'running';
         // What is running, so the reboot dialog can name what it would end.
         st.runAction = r.action;
-        if (full.status !== 'running') st.log.push(`[fleet-control] run ${full.status}`);
         state.set(node, st);
         if (full.status === 'running') void follow(node, st, r.id);
       } catch {
@@ -504,7 +511,8 @@
     return new Promise((resolve) => {
       const attach = () => {
         const es = new EventSource(`/runs/${id}/stream`);
-        es.onmessage = (ev) => onLine(JSON.parse(ev.data).line, false);
+        // The whole line object, not just its text: it carries the stamp the card shows.
+        es.onmessage = (ev) => onLine(JSON.parse(ev.data), false);
         es.addEventListener('done', (ev) => {
           es.close();
           resolve(JSON.parse(ev.data).status);
@@ -514,7 +522,7 @@
           let run;
           try { run = await j(`/runs/${id}`); } catch { return resolve('lost'); }
           if (run.status !== 'running') {
-            run.lines.forEach((l, i) => onLine(l.line, i === 0));
+            run.lines.forEach((l, i) => onLine(l, i === 0));
             return resolve(run.status);
           }
           onLine('[fleet-control] connection dropped; still running, reattaching (log resynced)', true);
@@ -554,6 +562,45 @@
   }
 
   const MB = (n) => `${(n / 1e6).toFixed(0)} MB`;
+
+  /**
+   * One log line, stamped.
+   *
+   * Every line has carried a `t` since the registry existed -- `/runs/:id` returns it and the
+   * event stream sends the whole object -- and the page threw it away. Without it a run that
+   * finished two days ago and one that finished in three seconds read identically, which is
+   * the whole difficulty in telling a stale card from a fast one.
+   *
+   * Time of day only. The date is on the run header below; repeating it on 400 lines is noise.
+   *
+   * `stamped`, not `stamp`: a function below already binds `stamp` to the topbar's
+   * `getElementById('stamp')`, and two things of that name in one file is a trap for whoever
+   * edits either next.
+   */
+  const stamped = (l) => `${(l.t ?? '').slice(11, 19)}  ${l.line}`;
+
+  /** `6m56s`, `3s`. For saying how long ago, and how long it took. */
+  function since(a, b) {
+    const s = Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000));
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
+    return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
+  }
+
+  /**
+   * What run the card is showing, and when it was.
+   *
+   * THE POINT OF THE WHOLE CHANGE. A card adopted on page load used to look exactly like one
+   * from a button press a second ago, so "did this just run" was unanswerable without reading
+   * the service's own log.
+   */
+  function runHeader(r) {
+    const when = r.startedAt.replace('T', ' ').slice(0, 19);
+    if (r.status === 'running') return `[fleet-control] ${r.action} started ${when}Z, running for ${since(r.startedAt, new Date().toISOString())}`;
+    const took = r.endedAt ? ` in ${since(r.startedAt, r.endedAt)}` : '';
+    const ago = since(r.startedAt, new Date().toISOString());
+    return `[fleet-control] ${r.action} ${r.status}${took} -- started ${when}Z, ${ago} ago`;
+  }
   const clock = (iso) => `${iso.slice(11, 19)}Z`;
 
   /**

@@ -303,6 +303,25 @@ fleet unless somebody asked.
 rather than parsing `-v` output, which is not a stable interface and prints each task's entire
 result object — one `docker.service` fact block is several kilobytes.
 
+### The log says when
+
+Every line carries the time of day, and the top of an adopted log says what run it is, how it
+ended and how long ago:
+
+```
+[fleet-control] converge failed in 3s -- started 2026-10-13 12:10:53Z, 10m03s ago
+12:10:55  TASK Stop data collection for the duration of the deploy
+12:10:56  UNREACHABLE: 10.0.2.49 -- host key verification failed
+```
+
+The stamp was always on the wire -- `/runs/:id` returns a `t` per line and the event stream sends
+the whole object -- and the page dropped it. Without it a run that finished two days ago and one
+that finished in three seconds read identically, so "is this card stale or was it just fast" could
+only be answered from the pod's own log.
+
+**A button press clears the log and forgets the adopted run**, so the next render cannot put the
+old one back underneath the new one.
+
 ### The screen picks up what the service is already doing
 
 On load, the page asks `/runs` and shows the newest run per node -- in flight or just finished.
