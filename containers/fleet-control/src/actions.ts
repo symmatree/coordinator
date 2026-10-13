@@ -49,12 +49,10 @@ function note(sink: EventSink | undefined, msg: string): void {
 /**
  * Two operations, not one at two sizes.
  *
- * `converge` runs `deploy.yaml`: config, stack definitions and image pulls. It installs no
- * packages, opens no `/usr` hatch and does not reboot, so it is the one that is cheap to run
- * between flights, and it is the default.
- *
- * `provision` runs `site.yaml` -- provision then deploy, because a bare card needs both. It
- * installs the whole package set and reboots partway, at the hand-off between the two.
+ * `converge` runs `deploy.yaml` and `provision` runs `site.yaml`. What each of those does is
+ * documented with them -- `host/ansible/` and docs/deployment-model.md. The difference that is
+ * this service's business: converge is the routine one and the default, provision is for a card
+ * that has just been written.
  *
  * Which playbook runs used to be neither, because this service ran `site.yaml` for everything
  * after the playbook split in two (#453) -- so a routine converge paid the fresh-card path.

@@ -130,15 +130,15 @@
 
   const WHAT = {
     converge:
-      'Config, stack definitions and image pulls. Installs nothing, does not reboot -- the one ' +
-      'that is cheap to run between flights. Minutes on a Pi 4B, longer on a Zero.',
+      'Config, stack definitions and image pulls \u2014 the routine one, pressed between ' +
+      'flights. Minutes on a Pi 4B, longer on a Zero. The row above shows what the device ' +
+      'says it is afterwards.',
     provision:
-      'A FRESH CARD, end to end: the full package set, the /usr hatch, hardware wiring, then ' +
-      'the config. Reboots partway and waits. The first-run path -- on a card that is already ' +
+      'A FRESH CARD, end to end. The first-run path \u2014 on a card that is already ' +
       'provisioned it is a slow way to get a converge.',
     'provision?reflashed=true':
-      'As Full provision, and clears the recorded SSH host key first -- for a card that has ' +
-      'just been written and therefore presents a changed key, which the check refuses.',
+      'As Full provision, and clears the recorded SSH host key first \u2014 a card that has ' +
+      'just been written presents a CHANGED key, which the host-key check refuses.',
     stop:
       'Signals the container set and waits for it to exit. Nothing else -- packages, config ' +
       'and images are untouched, and a card that has never been converged can still be ' +
