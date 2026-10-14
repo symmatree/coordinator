@@ -16,6 +16,7 @@
 // pod bus, not from anything this file believes about the play.
 
 import { hostOf, type FleetNode, type Inventory } from './inventory.js';
+import type { BusConfig } from './bus.js';
 import { converge as runPlaybook, type EventSink } from './ansible.js';
 import { forgetHostKey } from './knownhosts.js';
 import { stopCapture } from './sessions.js';
@@ -31,6 +32,13 @@ export interface ActionContext {
   privateKeyPath: string;
   sshTimeoutSec: number;
   knownHostsPath: string;
+  /**
+   * The pod bus, because quiescing a device goes over it rather than over ssh.
+   *
+   * Here rather than passed per call: every function that touches a device already takes an
+   * ActionContext, and the quiesce is a property of reaching a device at all.
+   */
+  bus: BusConfig;
 }
 
 function note(sink: EventSink | undefined, msg: string): void {
@@ -103,17 +111,24 @@ export async function converge(
 /**
  * Stop the container set on a node, and nothing else.
  *
- * ONE SIGNAL OVER PLAIN SSH, no playbook. What sits between ssh and the kill is the whole
- * question on a box that cannot `stat` a file inside its own timeout (#362), and a signal
- * needs nothing of ours installed -- so this works on a card that has never converged, and on
- * one too loaded to run an ansible module.
+ * ONE MESSAGE ON THE BUS, no playbook and no ssh. What sits between us and the stop is the
+ * whole question on a box that cannot `stat` a file inside its own timeout (#362): pod-link
+ * is already resident and already connected, so stopping costs a publish rather than an sshd
+ * fork and a shell faulted in off a card that is the thing being contended for.
  *
- * NOT A STICKY OFF. The boot unit's ExecStart is unconditional (#97), so the stack comes back
- * on the next power cycle and nothing has to remember to undo this. To keep a device down
- * across a reboot, disable the unit; that is a deliberate act and not a button.
+ * WHAT THIS GIVES UP. The ssh signal needed nothing of ours installed, so it reached a card
+ * that had never converged. This needs pod-link running. A device that has not been
+ * provisioned, or whose pod-link is down, cannot be stopped from here at all -- the trade is
+ * deliberate (it is the box in trouble that could least afford the old path), and ssh by hand
+ * is the way through.
  *
- * The wait for the containers to actually exit lives in `stopCapture`, shared with post-flight
- * and the playbooks, so there is one definition of what stopping means.
+ * NOT A STICKY OFF. The units are enabled at boot, so the stack comes back on the next power
+ * cycle and nothing has to remember to undo this. To keep a device down across a reboot,
+ * disable the unit; that is a deliberate act and not a button.
+ *
+ * The wait for the containers to actually exit is the device's: pod-link polls systemd until
+ * each unit is inactive before it answers, so there is one definition of what stopping means
+ * and it is held where the units are.
  */
 export async function stop(node: FleetNode, ctx: ActionContext, sink?: EventSink): Promise<void> {
   const host = hostOf(node);

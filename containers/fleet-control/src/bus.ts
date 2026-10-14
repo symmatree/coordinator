@@ -4,10 +4,10 @@
 // campod plus the coordinator publishes a RETAINED status document to `rekon/pod/<node>/status`.
 //
 // WHY THIS EXISTS RATHER THAN A PROBE. `probe.ts` asks a device what is installed, and pays a
-// quiesce to do it -- `PROBE_COMMAND` is `quiesced('coord version')`, so loading the status screen
-// SIGTERMs every container on every node and nothing restarts them until a reboot. Asking whether
-// the pods are ready was the thing that made them not ready (#434). Readiness does not need that
-// any more: it is published, and reading it costs the devices nothing at all.
+// quiesce to do it, so loading the status screen stops collection on every node and nothing
+// restarts it until a power cycle. Asking whether the pods are ready was the thing that made them
+// not ready (#434). Readiness does not need that any more: it is published, and reading it costs
+// the devices nothing at all.
 //
 // The two questions stay separate on purpose. This answers "what is it doing" -- ready, capturing,
 // frames, free bytes, sensors. The probe answers "what is installed" -- image digests and
@@ -193,17 +193,24 @@ export async function quiesceNode(
     });
     const done = new Promise<{ units: string; error?: string }>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error(`${node} did not report a quiesce within ${timeoutMs} ms`)),
+        () => reject(new Error(`did not report a quiesce within ${timeoutMs} ms`)),
         timeoutMs);
-      // The status topic is retained, so the FIRST message is the device's state from
-      // before we asked -- including any earlier quiesce. Telling it apart by arrival time
-      // would be a race in the unsafe direction: lose it and we ignore the real answer and
-      // then time out. last_quiesce_at_boot_s is the device's uptime when it last
-      // quiesced, which only increases, so the discriminator is the VALUE, not the timing.
-      // MQTT delivers the retained copy on subscribe, before anything published after.
+      // The status topic is retained, so the device's state from BEFORE we asked arrives
+      // too -- including any earlier quiesce, which reads as success if taken for ours.
+      // Two things separate it from the answer, and neither is arrival time (losing that
+      // race means ignoring the real answer and then timing out):
+      //
+      //   the RETAIN FLAG, which the broker sets only on the copy replayed at subscribe, so
+      //   a retained message is by definition not a reply to a publish we had not made yet;
+      //
+      //   and the VALUE of last_quiesce_at_boot_s, the device's uptime when it last
+      //   quiesced, which only increases. That rules out an out-of-band heartbeat published
+      //   after we asked but before the units were out.
+      //
+      // The flag is what makes a device with no retained copy work: there, the first message
+      // IS the answer, and a rule that spent the first message on a baseline would eat it.
       let baseline: number | undefined;
-      let haveBaseline = false;
-      client.on('message', (_topic, payload) => {
+      client.on('message', (_topic, payload, packet) => {
         let doc: Record<string, unknown>;
         try {
           doc = JSON.parse(payload.toString()) as Record<string, unknown>;
@@ -212,8 +219,7 @@ export async function quiesceNode(
         }
         const at = typeof doc.last_quiesce_at_boot_s === 'number'
           ? doc.last_quiesce_at_boot_s : undefined;
-        if (!haveBaseline) {
-          haveBaseline = true;
+        if (packet.retain) {
           baseline = at;
           return;
         }

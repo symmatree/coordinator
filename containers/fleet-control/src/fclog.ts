@@ -8,7 +8,7 @@
 //
 // Only the coordinator has an FC: it is the only thing wired to /dev/ttyAMA0. The port must be
 // free -- coordinator-mavlink holds it while the stack is up, and two readers on one UART get
-// half a byte stream each -- so every command here is quiesced like the rest.
+// half a byte stream each -- so every command here quiesces first like the rest.
 //
 // Device side is coordinator#384 and #395.
 
@@ -19,7 +19,7 @@ import { createWriteStream } from 'node:fs';
 import { rename } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { hostOf, type FleetNode } from './inventory.js';
-import { quiesced } from './quiesce.js';
+import { quiesce } from './quiesce.js';
 import type { ActionContext } from './actions.js';
 
 const run = promisify(execFile);
@@ -67,8 +67,9 @@ function describe(node: FleetNode, err: unknown, gaveUpAfterSec: number): Error 
  */
 export async function listLogs(node: FleetNode, ctx: ActionContext): Promise<FcLog[]> {
   const timeoutSec = 180;
+  await quiesce(node.name, ctx, 'fc-log list');
   try {
-    const { stdout } = await run('ssh', sshArgs(node, ctx, quiesced('sudo coord fc-log list')), {
+    const { stdout } = await run('ssh', sshArgs(node, ctx, 'sudo coord fc-log list'), {
       maxBuffer: 4 * 1024 * 1024,
       timeout: timeoutSec * 1000,
     });
@@ -129,7 +130,8 @@ export async function fetchLog(
   const everyMs = (opts.progressEverySec ?? 30) * 1000;
   const part = `${destPath}.part`;
 
-  const child = spawn('ssh', sshArgs(node, ctx, quiesced(`sudo coord fc-log pull ${id}`)));
+  await quiesce(node.name, ctx, `fc-log pull ${id}`);
+  const child = spawn('ssh', sshArgs(node, ctx, `sudo coord fc-log pull ${id}`));
 
   const hash = createHash('sha256');
   let bytes = 0;
@@ -142,8 +144,8 @@ export async function fetchLog(
     try {
       ev = JSON.parse(line) as typeof ev;
     } catch {
-      // Not ours. The quiesce prefix runs `sudo pkill` first and may say something; passing
-      // that through is better than failing on it.
+      // Not ours -- anything the device writes to stderr that is not an event. Passing it
+      // through is better than failing on it.
       if (line.trim()) say(`  ${line.trim().slice(0, 200)}`);
       return;
     }

@@ -39,6 +39,14 @@ function required(name: string): string {
 
 export function loadConfig(): Config {
   const inventory = loadInventory(required('FLEET_INVENTORY'));
+  const bus = {
+    // The broker is mochi-mqtt on the coordinator, listening on every interface, so this is
+    // the coordinator's own address -- not a cluster service.
+    url: env('FLEET_MQTT_URL', ''),
+    // Retained messages arrive right after SUBACK with no count to expect, so the read ends by
+    // stopping rather than by being satisfied. Long enough for four pods on a 2.4 GHz hop.
+    settleMs: Number(env('FLEET_MQTT_SETTLE_MS', '1500')),
+  };
   return {
     inventory,
     action: {
@@ -50,6 +58,8 @@ export function loadConfig(): Config {
       // On the /state volume so recorded keys survive a pod restart -- otherwise every
       // restart is a fresh first contact and the check protects nothing.
       knownHostsPath: env('FLEET_KNOWN_HOSTS', '/state/known_hosts'),
+      // A device is quiesced over the bus, not over ssh, so reaching one needs this.
+      bus,
     },
     images: {
       repo: env('FLEET_IMAGE_REPO', 'symmatree/dotfiles-symm'),
@@ -73,14 +83,7 @@ export function loadConfig(): Config {
       // cluster name the way Alloy's notifier does rather than to empty.
       tag: env('FLEET_NOTIFY_TAG', 'tiles'),
     },
-    bus: {
-      // The broker is mochi-mqtt on the coordinator, listening on every interface, so this is
-      // the coordinator's own address -- not a cluster service.
-      url: env('FLEET_MQTT_URL', ''),
-      // Retained messages arrive right after SUBACK with no count to expect, so the read ends by
-      // stopping rather than by being satisfied. Long enough for four pods on a 2.4 GHz hop.
-      settleMs: Number(env('FLEET_MQTT_SETTLE_MS', '1500')),
-    },
+    bus,
     cluster: {
       mimirUrl: env('FLEET_MIMIR_URL', 'http://mimir-gateway.mimir.svc'),
       // The Mimir tenant is the cluster name (charts/.../alloy-application.yaml), so it is

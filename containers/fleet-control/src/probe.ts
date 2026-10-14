@@ -12,7 +12,7 @@
 import { execFile } from 'node:child_process';
 import { connect } from 'node:net';
 import { promisify } from 'node:util';
-import { quiesced } from './quiesce.js';
+import { quiesce } from './quiesce.js';
 import { hostOf, type FleetNode } from './inventory.js';
 import { parseProbe, type Probe } from './manifest.js';
 import type { ActionContext } from './actions.js';
@@ -57,11 +57,10 @@ async function canConnect(host: string, port = 22): Promise<boolean> {
 /**
  * What the device prints. `coord` is on PATH at /usr/local/bin (coordinator#327).
  *
- * Quiesced: probing a capturing campod takes minutes, because `coord version` makes five
- * dockerd round-trips. `coord version` itself stays read-only -- the stop is a separate
- * statement, not something the verb does.
+ * Read-only, and sent only after the node is quiesced over the bus: probing a capturing
+ * campod takes minutes, because `coord version` makes five container-runtime round-trips.
  */
-export const PROBE_COMMAND = quiesced('coord version');
+export const PROBE_COMMAND = 'coord version';
 
 export interface NodeStatus {
   node: string;
@@ -130,6 +129,10 @@ export async function probeNode(node: FleetNode, ctx: ActionContext): Promise<No
   }
 
   try {
+    // The stop comes first and over the bus, so that the command below meets an idle box.
+    // A node that will not quiesce is not probed: see quiesce.ts for why there is no ssh
+    // fallback. probeNode never throws, so that surfaces as this node's error.
+    await quiesce(node.name, ctx, 'probe');
     const { stdout } = await run(
       'ssh',
       [
