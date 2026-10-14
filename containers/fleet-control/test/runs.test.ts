@@ -224,3 +224,54 @@ describe('a reboot ends the runs it ends', () => {
   });
 
 });
+
+describe('one playbook run at a time', () => {
+  it('refuses a second playbook run on a DIFFERENT node', async () => {
+    // The per-node lock does not cover this: three converges against three nodes is three
+    // ansible interpreters in one pod, which OOM-killed it on 2026-10-13 and took all three
+    // half-finished applies with it.
+    const runs = new RunRegistry(() => {});
+    let release: () => void = () => {};
+    runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    assert.throws(
+      () => runs.start('converge', 'campod-se', async () => {}, { playbook: true }),
+      /only 1 playbook run can be in flight/,
+    );
+    release();
+  });
+
+  it('does not block the cheap actions, which are ssh rather than ansible', async () => {
+    // stop, reboot, offload and the rest cost a connection, not an interpreter. Capping them
+    // would make the fleet less usable for no memory gain.
+    const runs = new RunRegistry(() => {});
+    let release: () => void = () => {};
+    runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    const stop = runs.start('stop', 'campod-se', async () => {});
+    assert.equal(stop.status, 'running');
+    release();
+  });
+
+  it('frees the slot when the run ends, not when its record is evicted', async () => {
+    const runs = new RunRegistry(() => {});
+    let release: () => void = () => {};
+    runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    release();
+    await new Promise((r) => setTimeout(r, 10));
+    // The finished run is still in the registry -- that is the point of keeping it -- but it
+    // no longer holds an interpreter, so it must not hold the slot.
+    const next = runs.start('converge', 'campod-se', async () => {}, { playbook: true });
+    assert.equal(next.status, 'running');
+  });
+
+  it('an abandoned run frees the slot too', async () => {
+    // Reboot abandons a node's runs (#424). If that did not release the slot, a wedged
+    // converge would lock out every other node's converge until the pod restarted.
+    const runs = new RunRegistry(() => {});
+    let release: () => void = () => {};
+    runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    runs.abandonFor('coordinator', 'rebooting coordinator');
+    const next = runs.start('converge', 'campod-se', async () => {}, { playbook: true });
+    assert.equal(next.status, 'running');
+    release();
+  });
+});

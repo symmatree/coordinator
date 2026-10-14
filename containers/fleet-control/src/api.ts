@@ -80,7 +80,7 @@ export function buildServer(
     try {
       const run = runs.start('converge', node.name, (emit, runId) =>
         converge(node, cfg.action, { runId, kind: 'converge' }, sinkFor(emit)),
-      );
+      { playbook: true });
       return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
     } catch (err) {
       return reply.code(409).send({ error: (err as Error).message });
@@ -104,7 +104,7 @@ export function buildServer(
       try {
         const run = runs.start('provision', node.name, (emit, runId) =>
           converge(node, cfg.action, { runId, kind: 'provision', reflashed }, sinkFor(emit)),
-        );
+        { playbook: true });
         return reply.code(202).send({ id: run.id, action: run.action, node: run.node, reflashed });
       } catch (err) {
         return reply.code(409).send({ error: (err as Error).message });
@@ -463,9 +463,11 @@ export function buildServer(
         sha: held.sha,
       };
       try {
+        // Counts against the playbook cap for the same reason converge does -- reimage.yaml
+        // is a play, so it is an ansible interpreter in this pod.
         const run = runs.start('reimage', node.name, (emit, runId) =>
           reimage(node, cfg.action, { runId, image }, sinkFor(emit)),
-        );
+        { playbook: true });
         return reply.code(202).send({ id: run.id, action: run.action, node: run.node, image });
       } catch (err) {
         return reply.code(409).send({ error: (err as Error).message });
