@@ -34,8 +34,11 @@ func TestPoolNeverBlocksWhenTheWriterIsBehind(t *testing.T) {
 		t.Fatal("get BLOCKED on an exhausted pool -- this is the failure mode the " +
 			"whole design exists to prevent")
 	}
-	if got := p.drops.Load(); got != 1 {
-		t.Fatalf("drops = %d, want 1: a dropped batch must be counted, not silent", got)
+	// get() deliberately does NOT count. Only the caller knows how many samples the
+	// discarded drain took, and a sample count is the whole value of the field -- so
+	// the counting is asserted in the capture-loop test below, where n exists.
+	if got := p.droppedSamples.Load(); got != 0 {
+		t.Fatalf("droppedSamples = %d; get() must not count, the caller does", got)
 	}
 
 	p.recycle(held[0])
@@ -72,7 +75,7 @@ func TestPoolAbsorbsItsFullDepthBeforeDropping(t *testing.T) {
 	// drains/second on camera and 1261 on arm, so 256 batches is 175 ms and 203 ms
 	// -- not the "over a second" this was originally written against, and shorter
 	// than the 361 ms stall that flight actually hit. If someone shrinks this, the
-	// test should make them think; if someone grows it, `drops` is the evidence.
+	// test should make them think; if someone grows it, dropped_samples is the evidence.
 	const depth = 256
 	p := newPool(depth)
 	for i := 0; i < depth; i++ {
@@ -80,8 +83,8 @@ func TestPoolAbsorbsItsFullDepthBeforeDropping(t *testing.T) {
 			t.Fatalf("pool exhausted after %d of %d", i, depth)
 		}
 	}
-	if got := p.drops.Load(); got != 0 {
-		t.Fatalf("drops = %d before exhaustion", got)
+	if got := p.droppedSamples.Load(); got != 0 {
+		t.Fatalf("droppedSamples = %d before exhaustion", got)
 	}
 }
 
@@ -112,23 +115,36 @@ func TestDroppedBatchesReachTheStreamAsACounter(t *testing.T) {
 
 	// With every batch held, the capture loop can only drain-and-discard.
 	deadline := time.After(2 * time.Second)
-	for p.drops.Load() == 0 {
+	for p.droppedSamples.Load() == 0 {
 		select {
 		case <-deadline:
-			t.Fatal("capture loop recorded no drops while the pool was exhausted")
+			t.Fatal("capture loop recorded no dropped samples while the pool was exhausted")
 		default:
 			time.Sleep(time.Millisecond)
 		}
 	}
 
-	// Hand one back; the next batch through must carry the drops that happened
+	// SAMPLES, NOT EVENTS, which is the whole point of the field and the distinction
+	// two readers already got wrong. refillingSPI keeps the FIFO topped to exactly
+	// fifoDepth, so every discarded drain takes exactly that many samples and the
+	// counter must always be an exact multiple of it. An event counter would be
+	// incremented by one per discard, so it lands on a multiple of 32 only by
+	// coincidence -- which is what makes this a discriminator rather than a
+	// restatement of "something was counted".
+	if n := p.droppedSamples.Load(); n == 0 || n%fifoDepth != 0 {
+		t.Fatalf("droppedSamples = %d; want a non-zero multiple of fifoDepth=%d. "+
+			"A count that is not a multiple of the FIFO depth means the discard path "+
+			"is counting events rather than the samples it threw away", n, fifoDepth)
+	}
+
+	// Hand one back; the next batch through must carry the dropped samples from
 	// while it was unavailable.
 	p.recycle(held[0])
 	select {
 	case b := <-p.filled:
-		if b.Drops == 0 {
-			t.Fatal("batch emitted after a pool exhaustion carries drops = 0, so the " +
-				"hole before it is indistinguishable from a quiet device")
+		if b.DroppedSamples == 0 {
+			t.Fatal("batch emitted after a pool exhaustion carries dropped_samples = 0, " +
+				"so the hole before it is indistinguishable from a quiet device")
 		}
 		if b.Errs != 0 {
 			t.Fatalf("errs = %d with a fake that never fails", b.Errs)
