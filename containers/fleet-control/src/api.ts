@@ -185,9 +185,8 @@ export function buildServer(
   /**
    * Stop or start the container set on one device, over the bus.
    *
-   * The same selection the ssh quiesce makes -- SIGTERM to every container init by `dumb-init`
-   * name -- for the cost of a publish instead of an sshd fork and a docker CLI that faults in
-   * ~71 MiB of mapped text on a 417 MiB board.
+   * The same units a quiesce stops, held as a desire rather than sent as an action: this is
+   * the button, `quiesceNode` is what every other command does on its way past.
    *
    * `stack: running` is NOT reconciled device-side (docs/pod-bus.md): it clears the desire to be
    * stopped, and a power cycle is what actually brings the stack back. So this is the honest verb

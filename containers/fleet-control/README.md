@@ -102,14 +102,33 @@ curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/stop"
 curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/reboot"
 ```
 
-**Stop** signals the container set and waits for it to exit. One signal over plain ssh, no
-playbook: what sits between ssh and the kill is the whole question on a box that cannot `stat`
-a file inside its own timeout ([#362](https://github.com/symmatree/coordinator/pull/362)), and
-a signal needs nothing of ours installed -- so it works on a card that has never converged. It
-is **not a sticky off**: the boot unit's `ExecStart` is unconditional
-([#97](https://github.com/symmatree/coordinator/issues/97)), so the stack returns on the next
-power cycle and nothing has to remember to undo this. Keeping a device down across a reboot
-means disabling that unit, which is a deliberate act and not a button.
+**Stop** asks the device over the pod bus to stop collecting, and returns when the device
+reports the units are actually inactive. One message, no playbook and no ssh: what sits between
+us and the stop is the whole question on a box that cannot `stat` a file inside its own timeout
+([#362](https://github.com/symmatree/coordinator/pull/362)), and pod-link is already resident
+and already connected. It is **not a sticky off**: the units are enabled at boot, so the stack
+returns on the next power cycle and nothing has to remember to undo this. Keeping a device down
+across a reboot means disabling that unit, which is a deliberate act and not a button.
+
+**Every command this service sends a device is preceded by a quiesce**, including the read-only
+ones -- `docker ps` measured 2.1-22.0 s with capture running against 136-223 ms without. That
+quiesce was `sudo pkill -x -TERM dumb-init` over ssh with a 40 s poll loop, which is two
+problems. It forked an sshd and then polled from the far end of it, on the box least able to
+afford either -- the paging cost arriving at exactly the moment pod-link exists to avoid. And
+`pkill -x dumb-init` matches **every** container init, so it stopped pod-link and the broker as
+well: it killed the thing carrying the instruction to undo it. The bus quiesce stops only the
+units pod-link is configured to stop, and pod-link is never among them.
+
+**What that gives up:** the ssh signal needed nothing of ours installed, so it reached a card
+that had never converged. This needs pod-link running. A device that has not been provisioned,
+or whose pod-link is down, cannot be stopped from here and **the command fails rather than
+falling back** -- ssh by hand is the way through. The fallback was the thing being removed, and
+it would have fired exactly when the device could least afford it.
+
+**The wait is the device's now.** `StopUnit` returns when the job is accepted, not when the unit
+is gone; measured on campod-se, the camera exited 19.0 s after the old command had already
+returned. pod-link polls systemd until each unit is inactive and then publishes, so a caller
+that reads the device straight afterwards is no longer racing a shutdown in flight.
 
 **Reboot** is one command over ssh, `sudo systemctl --no-block reboot`, **gated on nothing**.
 It does not stop the stack first: a reboot is the way out of a stuck box -- the thing that was
@@ -254,10 +273,10 @@ Every campod and the coordinator publish a **retained** status document to
 free bytes on the card, the sensors and their self-tests. Reading it is a subscribe, so **it costs
 the devices nothing** -- they were publishing anyway.
 
-**That is why readiness is here and not on the probe.** `GET /status` runs
-`quiesced('coord version')` against every node, so loading it SIGTERMs every container on the fleet
-and nothing restarts them until a reboot -- asking whether the pods were ready was what made them
-not ready ([#434](https://github.com/symmatree/coordinator/issues/434)). The two questions are
+**That is why readiness is here and not on the probe.** `GET /status` quiesces every node and
+then asks it `coord version`, so loading it stops collection on the whole fleet and nothing
+restarts it until a power cycle -- asking whether the pods were ready was what made them not
+ready ([#434](https://github.com/symmatree/coordinator/issues/434)). The two questions are
 genuinely different and only one of them is expensive:
 
 | question | answered by | costs |
@@ -269,18 +288,18 @@ So the probe stays what it always was: a deliberate, expensive, definitive quest
 on purpose. It is just no longer the price of looking at the screen.
 
 **`POST /nodes/:name/stack?desired=running|stopped`** publishes a desired state, retained, as the
-bare word the contract specifies. `stopped` makes **the same selection the ssh quiesce makes** --
-SIGTERM to every container init by `dumb-init` name -- for a publish instead of an sshd fork and a
-docker CLI that faults in ~71 MiB of mapped text on a 417 MiB board.
+bare word the contract specifies -- the same units a quiesce stops, held as a desire rather than
+sent as an action.
 
 `running` is **not reconciled device-side**, by the contract's design: it clears the desire to be
 stopped, and a power cycle is what actually brings the stack back. So this is the honest verb for
 "stop collecting" rather than a start button pretending to be one.
 
-**Stop capture on all** now uses the bus for any node publishing a status, and falls back to the
-ssh route for one that is not -- the pods reach the broker over the gadget link only, and that link
-is not always up. Which path a node took is said in the log, because the two cost it very different
-amounts.
+**Stop capture on all** does not use this; it uses `/stop-capture`, the quiesce. Two reasons: the
+quiesce returns when the units are actually out rather than when the desire was recorded, and it
+is unretained, so it does not outlive the bench session it was pressed in. This route had briefly
+been the bus half of a per-node bus-or-ssh choice in that button, which stopped meaning anything
+once `/stop-capture` became the bus itself.
 
 **A broker that cannot be reached is a 502, not an empty fleet.** "Nothing is publishing" and "we
 could not look" are different answers and an empty list must not be able to mean either. A document
@@ -290,7 +309,7 @@ drops what it cannot read hides that same class of bug.
 
 | env | default | |
 |---|---|---|
-| `FLEET_MQTT_URL` | *(empty)* | the coordinator's broker, e.g. `mqtt://10.0.99.75:1883`. **Empty disables the bus** |
+| `FLEET_MQTT_URL` | *(empty)* | the coordinator's broker, e.g. `mqtt://10.0.99.75:1883`. **Required.** Empty disables the bus, and with it every command that touches a device: each one quiesces first, and the quiesce goes over the bus |
 | `FLEET_MQTT_SETTLE_MS` | `1500` | how long to listen after subscribing. Retained messages arrive unprompted with no count to expect, so the read ends by stopping rather than by being satisfied |
 
 No persistent subscription and no poll loop: connect, subscribe, read, disconnect. Retained means
@@ -488,7 +507,7 @@ either way, so a pod roll still kills it, and a roll is how every release arrive
 | `FLEET_IMAGE_REF` | `main` | the ref the fleet tracks |
 | `FLEET_GITHUB_TOKEN` | *(unset)* | needed **only** to download an artifact; see below |
 | `FLEET_IMAGE_CACHE` | `/images` | where fetched images are kept |
-| `FLEET_MQTT_URL` / `FLEET_MQTT_SETTLE_MS` | *(empty)* / `1500` | the pod bus; see above. Empty disables it |
+| `FLEET_MQTT_URL` / `FLEET_MQTT_SETTLE_MS` | *(empty)* / `1500` | the pod bus; see above. Required -- empty disables every device command, not just the bus reads |
 | `FLEET_FLIGHTS_DIR` | `/mnt/flights` | where flight directories are assembled |
 | `FLEET_GROUND_TLOGS` | `/mnt/ground-tlogs` | tlog-split's output, read-only (tiles#794) |
 | `FLEET_MIMIR_URL` / `FLEET_MIMIR_TENANT` | `http://mimir-gateway.mimir.svc` / `tiles` | for the backpack series. The tenant is the cluster name, and there is more than one cluster |
@@ -554,6 +573,11 @@ deliberate: the previous version had a 60-minute ceiling, hit it on a slow node,
 a *successful* converge as a failure while the play was still running. Killing a running play
 is worse than waiting — it leaves a half-configured box. The cost is that a genuinely wedged
 run holds that node's slot until the pod restarts.
+
+**Nothing reaches a device without pod-link.** Every command here quiesces first and the
+quiesce goes over the bus, so a device whose pod-link is down or that has never been
+provisioned cannot be probed, stopped, enumerated or pulled from. There is no ssh fallback, on
+purpose; see **Stop and reboot** above.
 
 **Dry runs are not available.** The playbook refuses `--check`, for reasons recorded with the
 playbook. `--syntax-check` validates structure without connecting, and the image build already

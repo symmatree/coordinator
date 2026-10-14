@@ -140,10 +140,11 @@
       'As Full provision, and clears the recorded SSH host key first \u2014 a card that has ' +
       'just been written presents a CHANGED key, which the host-key check refuses.',
     stop:
-      'Signals the container set and waits for it to exit. Nothing else -- packages, config ' +
-      'and images are untouched, and a card that has never been converged can still be ' +
-      'stopped. NOT a sticky off: the boot unit starts the stack again on the next power ' +
-      'cycle, so nothing has to remember to undo this.',
+      'Asks the device over the pod bus to stop collecting, and waits until it reports the ' +
+      'units are out. Nothing else -- packages, config and images are untouched. Needs ' +
+      'pod-link running on the device: a card that has never been provisioned cannot be ' +
+      'stopped from here. NOT a sticky off: the units are enabled at boot, so the stack ' +
+      'starts again on the next power cycle and nothing has to remember to undo this.',
     reboot:
       'One command, gated on nothing -- including not gated on this node being busy, since a ' +
       'wedged run is the commonest reason to want it. Nothing waits for it to come back -- ' +
@@ -773,28 +774,25 @@
   }
 
   /**
-   * Stop collecting, over the bus where there is one.
+   * Stop collecting -- step one, so sizes and spans hold still while they are read.
    *
-   * `desired/stack: stopped` makes the SAME selection the ssh quiesce makes -- SIGTERM to every
-   * container init by `dumb-init` name -- for a publish instead of an sshd fork and a docker CLI
-   * that faults in ~71 MiB of mapped text on a 417 MiB board (docs/pod-bus.md).
+   * One route for every node. There used to be two, a bus path and an ssh path chosen per node
+   * by whether it was publishing; `/stop-capture` is now itself the bus, so the choice was
+   * between a thing and itself and the log line claiming ssh was simply wrong.
    *
-   * Falls back to the ssh route per node, because a pod that is not on the bus still has to be
-   * stoppable: the pods reach the broker over the gadget link only, and that link is not always
-   * up. Which path was taken is said in the log rather than hidden, since the two cost the device
-   * very different amounts.
+   * `/stop-capture` rather than `desired/stack: stopped`: it is an action, so it returns when
+   * the units are actually inactive rather than when the desire was recorded, and it is not
+   * retained, so it does not outlive the bench session it was pressed in.
+   *
+   * A node that cannot be reached on the bus says so and the rest still stop. There is no ssh
+   * behind this (see src/quiesce.ts) -- a device that will not answer the bus is one to ssh to
+   * by hand, not one to quietly do something heavier to.
    */
   document.getElementById('pfStop').onclick = async () => {
-    const nodes = await j('/nodes');
-    const onBus = new Set();
-    try { for (const p of (await j('/pods')).pods) onBus.add(p.node); } catch { /* no bus; ssh it is */ }
-    for (const n of nodes) {
-      const viaBus = onBus.has(n.name);
+    for (const n of await j('/nodes')) {
       try {
-        await (viaBus
-          ? j(`/nodes/${n.name}/stack?desired=stopped`, { method: 'POST' })
-          : j(`/nodes/${n.name}/stop-capture`, { method: 'POST' }));
-        log(`${n.name}: stopping${viaBus ? ' (bus)' : ' (ssh, not on the bus)'}`);
+        await j(`/nodes/${n.name}/stop-capture`, { method: 'POST' });
+        log(`${n.name}: stopped`);
       } catch (e) { log(`${n.name}: ${e.message}`); }
     }
   };

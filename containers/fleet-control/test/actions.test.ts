@@ -11,12 +11,20 @@ const ctx: ActionContext = {
   // Short: the point is the ordering, not how patient ssh is.
   sshTimeoutSec: 2,
   knownHostsPath: '/dev/null',
+  // No broker. Reboot must not care; stop must say so rather than reach for ssh.
+  bus: { url: '', settleMs: 10 },
 };
 const node = { name: 'campod-se', role: 'campod', host: '203.0.113.9' };
 
 describe('stop', () => {
-  it('names the node in its failure rather than reporting a bare ssh error', async () => {
+  it('names the node in its failure rather than reporting a bare transport error', async () => {
     await assert.rejects(() => stop(node, ctx), /^Error: campod-se: /);
+  });
+
+  it('goes over the bus, so no bus is a refusal and not a quiet ssh fallback', async () => {
+    // The device half of this is campod-se's pod-link. Without a broker there is no path to
+    // it, and the old `sudo pkill` over ssh is deliberately not waiting behind it.
+    await assert.rejects(() => stop(node, ctx), /no pod bus configured/);
   });
 });
 

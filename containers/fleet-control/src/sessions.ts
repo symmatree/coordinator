@@ -9,7 +9,7 @@
 // point: the path is resolved where the data lives, and an id containing a separator is
 // refused there rather than interpreted here.
 
-import { QUIESCE, quiesced } from './quiesce.js';
+import { quiesce } from './quiesce.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { hostOf, type FleetNode } from './inventory.js';
@@ -70,6 +70,7 @@ async function coordSessions<T>(
   timeoutSec: number,
 ): Promise<T> {
   const host = hostOf(node);
+  await quiesce(node.name, ctx, `sessions ${args[0]}`);
   try {
     const { stdout } = await run(
       'ssh',
@@ -80,10 +81,10 @@ async function coordSessions<T>(
         '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
         '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
         `${ctx.inventory.user}@${host}`,
-        // sudo for the same reason the quiesce needs it: the capture tree is written by
-        // containers running as root, so `delete` cannot rmtree it and `package` cannot
-        // read it as `pi`. Reported as EACCES per session, which looked like a coord bug.
-        quiesced(['sudo', 'coord', 'sessions', ...args].join(' ')),
+        // sudo because the capture tree is written by containers running as root, so
+        // `delete` cannot rmtree it and `package` cannot read it as `pi`. Reported as
+        // EACCES per session, which looked like a coord bug.
+        ['sudo', 'coord', 'sessions', ...args].join(' '),
       ],
       // Packaging a session is minutes of zstd on a Zero, so this is the caller's to set.
       { maxBuffer: 16 * 1024 * 1024, timeout: timeoutSec * 1000 },
@@ -141,35 +142,16 @@ export async function deleteSessions(
  * The post-flight flow needs a quiet machine before it enumerates: capture writes ~6 GB/hour
  * and a session that is still growing is one whose size and span change while the operator
  * reads them. A converge stops capture too, but converging to stop capture is twenty minutes
- * of apt to achieve a `docker compose stop`.
+ * of apt to achieve what the bus does in one message.
  *
- * `coord stop` is not a sticky off -- the boot unit's ExecStart is unconditional (#256) -- so
- * a power cycle brings the stack back and nothing has to remember to undo this.
+ * Not sticky: the units are enabled at boot, so a power cycle brings the stack back and
+ * nothing has to remember to undo this.
+ *
+ * Unlike the old ssh signal, this returns when the units are actually inactive rather than
+ * when the signal was sent -- pod-link polls systemd before it answers. The 19.0 s the camera
+ * took to exit on campod-se now happens inside this call instead of after it, so a caller
+ * that reads the device straight afterwards is no longer racing a shutdown in flight.
  */
 export async function stopCapture(node: FleetNode, ctx: ActionContext): Promise<void> {
-  const host = hostOf(node);
-  try {
-    await run(
-      'ssh',
-      [
-        '-i', ctx.privateKeyPath,
-        '-o', 'BatchMode=yes',
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
-        '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
-        `${ctx.inventory.user}@${host}`,
-        QUIESCE,
-      ],
-      // Bounded, but this returns as soon as the signal is sent -- it does not wait for the
-      // containers to exit. On campod-se that was 1.1s for the accel and 19.0s for the camera
-      // AFTER the command had already returned, so a caller that reads the device straight
-      // afterwards is racing a shutdown in flight.
-      { maxBuffer: 1024 * 1024, timeout: 60_000 },
-    );
-  } catch (err) {
-    const e = err as { stderr?: string; message?: string; killed?: boolean };
-    if (e.killed === true) throw new Error(`${node.name}: stop signal gave up after 60s`);
-    const why = (e.stderr ?? '').trim() || e.message || 'ssh failed';
-    throw new Error(`${node.name}: ${why.split('\n').slice(-2).join(' ').slice(0, 300)}`);
-  }
+  await quiesce(node.name, ctx, 'stop capture');
 }
