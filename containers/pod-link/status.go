@@ -73,6 +73,14 @@ type podStatus struct {
 	LastIntentAtBootS float64 `json:"last_intent_at_boot_s,omitempty"`
 	LastIntentError   string  `json:"last_intent_error,omitempty"`
 
+	// The last quiesce: when it was asked for, what it stopped, and what was still up
+	// if anything. Same shape and same reason as last_intent above -- a caller that
+	// just published one reads this to learn it finished, instead of guessing from a
+	// timeout.
+	LastQuiesceAtBootS float64 `json:"last_quiesce_at_boot_s,omitempty"`
+	LastQuiesceUnits   string  `json:"last_quiesce_units,omitempty"`
+	LastQuiesceError   string  `json:"last_quiesce_error,omitempty"`
+
 	DataFreeBytes int64 `json:"data_free_bytes,omitempty"`
 
 	// WHAT THIS PROCESS ITSELF COSTS, reported by the process in question.
