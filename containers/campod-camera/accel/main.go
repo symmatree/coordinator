@@ -62,15 +62,16 @@ type config struct {
 	// Where per-sensor presence and liveness is published for pod-link to read.
 	// Empty disables it, which is what a bench run outside the stack wants: there
 	// is no reader there, and /tmp is not the shared tmpfs.
-	statusFile string
-	node       string
-	session    string
-	odrHz      int
-	rangeG     int
-	spiHz      uint32
-	poolDepth  int
-	syncKiB    int
-	sepM       string
+	statusFile  string
+	captureFlag string
+	node        string
+	session     string
+	odrHz       int
+	rangeG      int
+	spiHz       uint32
+	poolDepth   int
+	syncKiB     int
+	sepM        string
 }
 
 // envStr returns the default for an UNSET variable but honours an explicitly
@@ -122,14 +123,19 @@ func loadConfig() config {
 	c := config{
 		dir:        os.Getenv("CAMPOD_ACCEL_DIR"),
 		statusFile: envStr("CAMPOD_ACCEL_STATUS_FILE", "/tmp/campod_accel_status"),
-		node:       os.Getenv("CAMPOD_NODE_NAME"),
-		session:    bootID(),
-		sepM:       os.Getenv("CAMPOD_ACCEL_SEPARATION_M"),
-		odrHz:      envInt("CAMPOD_ACCEL_ODR_HZ", 3200),
-		rangeG:     envInt("CAMPOD_ACCEL_RANGE_G", 16),
-		spiHz:      uint32(envInt("CAMPOD_ACCEL_SPI_HZ", defaultSPIHz)),
-		poolDepth:  envInt("CAMPOD_ACCEL_POOL", 256),
-		syncKiB:    envInt("CAMPOD_ACCEL_SYNC_KIB", syncEveryBytes/1024),
+		// THE SAME FILE capture.py gates on, so one intent drives both readers and a
+		// pod cannot be half-collecting. pod-link writes it from the coordinator's arm
+		// state; a person can write it by hand. Empty disables gating and writes
+		// continuously, which is what every deployment did before this existed.
+		captureFlag: envStr("CAMPOD_ACCEL_CAPTURE_FLAG", "/tmp/campod_capture"),
+		node:        os.Getenv("CAMPOD_NODE_NAME"),
+		session:     bootID(),
+		sepM:        os.Getenv("CAMPOD_ACCEL_SEPARATION_M"),
+		odrHz:       envInt("CAMPOD_ACCEL_ODR_HZ", 3200),
+		rangeG:      envInt("CAMPOD_ACCEL_RANGE_G", 16),
+		spiHz:       uint32(envInt("CAMPOD_ACCEL_SPI_HZ", defaultSPIHz)),
+		poolDepth:   envInt("CAMPOD_ACCEL_POOL", 256),
+		syncKiB:     envInt("CAMPOD_ACCEL_SYNC_KIB", syncEveryBytes/1024),
 	}
 	if c.dir == "" {
 		c.dir = "/captures"
@@ -250,10 +256,78 @@ type live struct {
 	count  int64
 }
 
+// writeLoop drains p.filled until it closes, counting every batch and writing only the
+// ones the capture intent says to write.
+//
+// Its own function so the gate is testable. It was an anonymous goroutine, which is why
+// the gate shipped with no test that it gates -- ungating the write passed every test in
+// the package.
+func writeLoop(p *pool, w *writer, st *stats, in *intent) {
+	nextClock := time.Now()
+	for b := range p.filled {
+		// A clock-pair record, on this goroutine rather than the capture
+		// loop, which must do nothing but drain.
+		//
+		// The pod has no RTC and, until something disciplines it, no
+		// honest wall clock. docs/flight-data-interpretation.md has the
+		// rule: join on monotonic and repair wall stamps from it, never
+		// key a join on a wall timestamp. That needs BOTH clocks in the
+		// file -- the coordinator's capture sidecars carry monotonic_ns
+		// and wall_clock_unix for exactly this reason, and this reader
+		// carried only monotonic, so a step was undetectable in its own
+		// data.
+		//
+		// A step is what happens when time service arrives: measured on
+		// the coordinator at +184.288 s at monotonic 69.5 s. In the field
+		// with nothing to sync against there is no step at all and the
+		// clock is simply wrong for the whole flight -- so the ABSENCE of
+		// a divergence here is not evidence the clock is right.
+		//
+		// A stream rather than a trailer, because the session's ending
+		// signal is a battery yank: a summary written at close would be
+		// missing exactly when it is needed.
+		// Gated with the batches: a clock pair is only meaningful beside the
+		// samples it dates, and a file of nothing but clk records would be a
+		// session that looks like it captured.
+		if now := time.Now(); in.writing.Load() && !now.Before(nextClock) {
+			nextClock = now.Add(clockPairInterval)
+			if err := w.record(map[string]any{
+				"t": "clk", "boot_ns": bootNS(), "mono_ns": monoNS(), "wall_ns": wallNS(),
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "accel: write clk: %v\n", err)
+			}
+		}
+		// COUNTED WHETHER OR NOT IT IS WRITTEN. The sensors are read and
+		// tallied continuously; only the card write is gated. So `samples`
+		// and `batches` in the status document say the part is alive and at
+		// what rate even while a pod sits disarmed, and a quiet pod reads
+		// differently from a dead accelerometer.
+		st.samples.Add(int64(b.N))
+		st.batches.Add(1)
+		if in.writing.Load() {
+			rec := map[string]any{
+				"t": "b", "i": st.samples.Load(), "boot_ns": b.BootNS, "mono_ns": b.MonoNS,
+				"drain_ns": b.DrainNS, "gap_ns": b.GapNS,
+				"n": b.N, "ovr": b.Ovr, "dropped_samples": b.DroppedSamples, "errs": b.Errs,
+				"x": b.X, "y": b.Y, "z": b.Z,
+			}
+			if err := w.record(rec); err != nil {
+				fmt.Fprintf(os.Stderr, "accel: write: %v\n", err)
+			}
+		}
+		p.recycle(b)
+	}
+}
+
 func run() error {
 	c := loadConfig()
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	// Read once before anything can write, so the first batch is gated correctly rather
+	// than slipping through while a goroutine catches up.
+	in := newIntent(c.captureFlag)
+	intentDone := make(chan struct{})
 
 	sessionDir := filepath.Join(c.dir, c.node, c.session)
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
@@ -347,50 +421,7 @@ func run() error {
 		wg.Add(1)
 		go func(p *pool, w *writer, st *stats) {
 			defer wg.Done()
-			nextClock := time.Now()
-			for b := range p.filled {
-				// A clock-pair record, on this goroutine rather than the capture
-				// loop, which must do nothing but drain.
-				//
-				// The pod has no RTC and, until something disciplines it, no
-				// honest wall clock. docs/flight-data-interpretation.md has the
-				// rule: join on monotonic and repair wall stamps from it, never
-				// key a join on a wall timestamp. That needs BOTH clocks in the
-				// file -- the coordinator's capture sidecars carry monotonic_ns
-				// and wall_clock_unix for exactly this reason, and this reader
-				// carried only monotonic, so a step was undetectable in its own
-				// data.
-				//
-				// A step is what happens when time service arrives: measured on
-				// the coordinator at +184.288 s at monotonic 69.5 s. In the field
-				// with nothing to sync against there is no step at all and the
-				// clock is simply wrong for the whole flight -- so the ABSENCE of
-				// a divergence here is not evidence the clock is right.
-				//
-				// A stream rather than a trailer, because the session's ending
-				// signal is a battery yank: a summary written at close would be
-				// missing exactly when it is needed.
-				if now := time.Now(); !now.Before(nextClock) {
-					nextClock = now.Add(clockPairInterval)
-					if err := w.record(map[string]any{
-						"t": "clk", "boot_ns": bootNS(), "mono_ns": monoNS(), "wall_ns": wallNS(),
-					}); err != nil {
-						fmt.Fprintf(os.Stderr, "accel: write clk: %v\n", err)
-					}
-				}
-				rec := map[string]any{
-					"t": "b", "i": st.samples.Load(), "boot_ns": b.BootNS, "mono_ns": b.MonoNS,
-					"drain_ns": b.DrainNS, "gap_ns": b.GapNS,
-					"n": b.N, "ovr": b.Ovr, "dropped_samples": b.DroppedSamples, "errs": b.Errs,
-					"x": b.X, "y": b.Y, "z": b.Z,
-				}
-				st.samples.Add(int64(b.N))
-				st.batches.Add(1)
-				if err := w.record(rec); err != nil {
-					fmt.Fprintf(os.Stderr, "accel: write: %v\n", err)
-				}
-				p.recycle(b)
-			}
+			writeLoop(p, w, st, in)
 		}(p, w, st)
 	}
 
@@ -418,11 +449,19 @@ func run() error {
 	if c.statusFile != "" {
 		go sw.loop(statusDone)
 	}
-	fmt.Printf("accel: logging %d device(s) odr=%d range=+/-%dg spi=%d pool=%d\n",
-		len(lives), c.odrHz, c.rangeG, c.spiHz, c.poolDepth)
+	if c.captureFlag != "" {
+		go in.poll(intentDone)
+	}
+	gate := c.captureFlag
+	if gate == "" {
+		gate = "none -- writing continuously"
+	}
+	fmt.Printf("accel: logging %d device(s) odr=%d range=+/-%dg spi=%d pool=%d gate=%s writing=%v\n",
+		len(lives), c.odrHz, c.rangeG, c.spiHz, c.poolDepth, gate, in.writing.Load())
 
 	capture(lives, c, stop)
 	close(statusDone)
+	close(intentDone)
 
 	for _, lv := range lives {
 		close(lv.pool.filled)

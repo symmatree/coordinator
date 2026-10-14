@@ -23,6 +23,11 @@ Volume=/etc/fleet-image:/etc/fleet-image:ro
 Environment=CAMPOD_ACCEL_SEPARATION_M=
 Environment=CAMPOD_ACCEL_SYNC_KIB=0
 Environment=CAMPOD_ACCEL_STATUS_FILE=/tmp/campod_accel_status
+# THE SAME FILE campod-camera gates on, so one capture intent drives both readers and a
+# pod cannot end up half-collecting. pod-link writes it from the coordinator's arm state.
+# The sensors are still read and counted while this is off -- only the card writes stop,
+# so the status document still shows the parts alive and at what rate.
+Environment=CAMPOD_ACCEL_CAPTURE_FLAG=/tmp/campod_capture
 
 [Service]
 TimeoutStopSec=120
