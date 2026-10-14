@@ -40,6 +40,28 @@ const MAX_RUNS = 50;
 /** Per-run line cap. A pathological log must not exhaust the pod's memory. */
 const MAX_LINES = 5_000;
 
+/**
+ * How many playbook runs may be in flight at once, anywhere in the fleet.
+ *
+ * ONE, and this is a memory bound rather than a device one -- the per-node lock above already
+ * covers "do not drive one box twice". `ansible-runner` spawns a full Python interpreter with
+ * ansible-core loaded, INSIDE THIS POD'S CGROUP, and that is about 60 MB apiece.
+ *
+ * Measured on the live pod against its 256 MB limit:
+ *
+ *     idle            anon  44 MB   page cache 142 MB   total 194/256
+ *     one converge    anon 104 MB   page cache 124 MB   total 247/256
+ *
+ * So one fits with roughly 9 MB spare and two does not. Three were started at once on
+ * 2026-10-13 and the pod was OOM-killed (exit 137), taking all three half-finished applies
+ * with it -- the registry is in memory, so even the record of what died went too.
+ *
+ * This is a floor under that specific failure, not a fix for the shape of it: the apply is a
+ * child of this process either way, so a pod roll still kills it. #280 is where that is being
+ * weighed.
+ */
+const MAX_PLAYBOOK_RUNS = 1;
+
 type Listener = (line: RunLine) => void;
 
 /** Where run lines are echoed, in addition to the registry. */
@@ -58,6 +80,8 @@ export const echoToProcess: Echo = (run, l) => {
 };
 
 export class RunRegistry {
+  /** Which runs hold an ansible interpreter. See MAX_PLAYBOOK_RUNS. */
+  private readonly playbookRuns = new Set<string>();
   private runs = new Map<string, Run>();
   private listeners = new Map<string, Set<Listener>>();
   /** Fired once per watcher when a run finishes, after its last line. */
@@ -122,14 +146,33 @@ export class RunRegistry {
    * Refuses to start a second action against a node that already has one running -- two
    * concurrent `coord pull`s on the same device fight over the docker daemon and the checkout,
    * and the failure is confusing rather than loud.
+   *
+   * `playbook: true` additionally refuses a second one ANYWHERE. See MAX_PLAYBOOK_RUNS.
    */
-  start(action: string, node: string, work: (emit: Listener, runId: string) => Promise<void>): Run {
+  start(
+    action: string,
+    node: string,
+    work: (emit: Listener, runId: string) => Promise<void>,
+    opts: { playbook?: boolean } = {},
+  ): Run {
     const busy = this.activeFor(node);
     if (busy) {
       throw new Error(
         `${node} already has '${busy.action}' running (run ${busy.id}). ` +
           `Wait for it or look at why it is stuck; do not run two at once against one device.`,
       );
+    }
+
+    if (opts.playbook === true) {
+      const running = this.list().filter((r) => r.status === 'running' && this.playbookRuns.has(r.id));
+      if (running.length >= MAX_PLAYBOOK_RUNS) {
+        const other = running[0] as Run;
+        throw new Error(
+          `${other.node} is already running '${other.action}' (run ${other.id.slice(0, 8)}), and ` +
+            `only ${MAX_PLAYBOOK_RUNS} playbook run can be in flight at a time -- each one is an ` +
+            `ansible interpreter in this pod's memory. Wait for it, then start ${node}.`,
+        );
+      }
     }
 
     const run: Run = {
@@ -141,6 +184,7 @@ export class RunRegistry {
       lines: [],
     };
     this.runs.set(run.id, run);
+    if (opts.playbook === true) this.playbookRuns.add(run.id);
     this.prune();
 
     const emit: Listener = (l) => this.line(run, l);
@@ -192,6 +236,9 @@ export class RunRegistry {
    */
   private end(run: Run, status: RunStatus, error?: string): void {
     if (run.endedAt !== undefined) return;
+    // Released here rather than in prune(): the interpreter is gone the moment the run ends,
+    // and the slot has to come back then rather than when the record is eventually evicted.
+    this.playbookRuns.delete(run.id);
     run.status = status;
     if (error !== undefined) {
       run.error = error;

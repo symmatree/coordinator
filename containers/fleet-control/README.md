@@ -460,6 +460,20 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 One action per node at a time; a second `POST` against a busy node is a `409`. **Except reboot**,
 which is the way out of a stuck box and so cannot be the thing a stuck box refuses.
 
+**And one playbook run at a time, fleet-wide.** Converge, full provision and reimage each spawn
+`ansible-runner`, which is a full Python interpreter with ansible-core loaded **inside this pod's
+cgroup** -- about 60 MB apiece. Measured against the 256 MB limit: idle is 194 MB, one converge is
+247 MB. So one fits and two do not. Three were started at once on 2026-10-13 and the pod was
+OOM-killed, taking all three half-finished applies with it.
+
+The per-node lock does not cover that, because three converges against three nodes is three
+interpreters in one pod. The cheap actions -- stop, reboot, offload, the FC pull -- cost a
+connection rather than an interpreter and are not capped.
+
+This is a floor under that failure, not a fix for its shape: the apply is a child of this process
+either way, so a pod roll still kills it, and a roll is how every release arrives.
+[#280](https://github.com/symmatree/coordinator/issues/280) is where that is being weighed.
+
 ## Configuration
 
 | env | default | |
