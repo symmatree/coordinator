@@ -56,7 +56,6 @@
     dest: /etc/systemd/system/chronyd.service.d/10-pps-device.conf
     mode: "0644"
   notify: Restart chronyd
-  when: coord_pps_wired | bool
 
 # Coordinator only: it is the device with the chip on SPI.
 - name: Install the DS3234 feed unit

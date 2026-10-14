@@ -62,12 +62,10 @@ makestep 1 3
 # than measured, and is three orders better than the 2e-3 this line carried when the
 # boundary was found by polling the register at 2 ms.
 refclock SOCK {{ coord_rtc_chrony_sock }} refid DS32 precision 1e-5 poll 2
-{% if coord_pps_wired | bool %}
 
 # The buffered 1 Hz, and the reason the circuit exists. `lock DS32` pairs each edge with a
 # chip sample: the chip says which second, the edge says where the second starts.
 refclock PPS /dev/pps0 refid PPS lock DS32 precision 1e-7 poll 2
-{% endif %}
 
 # Serve the campods over the USB gadget network. Derived from the coordinator's own
 # address rather than a second subnet variable, which vars/gadget-net.yml says not to
@@ -87,7 +85,6 @@ local stratum 10
 # second is enough for that, which the gadget link clears by orders of magnitude -- its
 # asymmetry and jitter are the reason it cannot supply the phase.
 server {{ campod_gadget_coordinator_ip }} iburst
-{% if coord_pps_wired | bool %}
 
 # The pod's own buffered leg of the same edge, which is what actually aligns capture.
 # No lock option: a PPS refclock with no lock is used once chrony is already synchronised to
@@ -97,6 +94,7 @@ server {{ campod_gadget_coordinator_ip }} iburst
 # Every pod takes a copy of ONE edge, so whatever is wrong about when that edge happened
 # is identically wrong for all of them, and inter-camera alignment is a difference -- so
 # it cancels. NTP alone cannot do that: its error is per-pod and adds.
+#
+# Harmless with no leg connected: no samples arrive and the second comes from NTP above.
 refclock PPS /dev/pps0 refid PPS precision 1e-7 poll 2
-{% endif %}
 {% endif %}
