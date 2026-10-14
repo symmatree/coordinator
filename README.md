@@ -15,14 +15,11 @@ On-vehicle companion for Rekon: OAK-D VIO to MAVLink, Pi Zero USB bridging, and 
 | `host/ansible/site.yaml` | Host bootstrap + config convergence, driven over SSH from any machine; `-e device_role=coordinator\|campod` |
 | `docs/` | Architecture, bench runbooks, campod bringup, references |
 
-## Vision stack
+## What runs on a device
 
-| Service | Role | Status |
-|---------|------|--------|
-| `vio-tracker` | OAK-D `feature_tracker` (USB); opt-in disparity + RGB still capture ([#72](https://github.com/symmatree/coordinator/issues/72)) | Image + CI in progress |
-| `vio-estimator` | `vins_fusion` | Planned |
-| `coordinator-mavlink` | Coordinator MAVLink router to FC | Router built (pose + dPos/dt velocity + covariance); first FC run pending ([design](docs/coordinator-mavlink.md)) |
-| `sh1106-display` | Front-panel status OLED on the Pi's I2C (`0x3C`) ([#115](https://github.com/symmatree/coordinator/issues/115)) | Container + render test built; SH1106 confirmed on the bench |
+Enumerated in one place: [docs/architecture.md](docs/architecture.md), beside what each
+service is for. The authority is `stacks/<role>/*.container`, which is what a converge
+installs.
 
 Processes share Unix sockets via `${COORDINATOR_IPC_DIR}` mounted at `/tmp`. Details: [docs/vio-integration.md](docs/vio-integration.md).
 

@@ -148,18 +148,23 @@ USB OAK-D
        (later: Pi Zero traffic, obstacle MAVLink, etc.)
 ```
 
-| Service | Binary (hypothesis) | Devices / mounts |
-|---------|---------------------|------------------|
-| `vio-tracker` | `feature_tracker` | USB; `${COORDINATOR_IPC_DIR}:/tmp`; config ro |
-| `vio-estimator` | `vins_fusion` | `${COORDINATOR_IPC_DIR}:/tmp`; config ro |
-| `coordinator-mavlink` | coordinator MAVLink router | `${COORDINATOR_IPC_DIR}:/tmp`; FC serial; host network for Pi Zeros |
+**What runs on a device is `stacks/<role>/*.container` and nothing else.** That directory is
+what a converge installs and what the image pull reads, so it is the list; this table says
+what each one is for, and no other doc should carry its own copy.
 
-**The two VIO services are not deployed.** `stacks/coordinator/` no longer carries their
-quadlet files, so a converge installs no unit for them and nothing pulls their images. The
-images and their sources are untouched -- `containers/vio-tracker/`,
-`containers/vio-estimator/` and their CI still build and publish. Running them on a device
-again means restoring those two `.container` files; until then any `coord start vio-*` in
-the bench and replay docs needs that first.
+| Service | Binary | Devices / mounts |
+|---------|--------|------------------|
+| `coordinator-mavlink` | coordinator MAVLink router | `${COORDINATOR_IPC_DIR}:/tmp`; FC serial; host network for Pi Zeros |
+| `mochi-mqtt` | the pod bus broker ([docs/pod-bus.md](pod-bus.md)) | host network |
+| `pod-link` | carries capture intent, reconciles desired state | `pid: host`; `/run/dbus` |
+| `sh1106-display` | front-panel OLED | I2C |
+
+**The VIO services are not deployed.** `vio-tracker` (`feature_tracker`) and `vio-estimator`
+(`vins_fusion`) have no quadlet file, so a converge installs no unit and nothing pulls their
+images. The sources and CI are untouched -- `containers/vio-tracker/`,
+`containers/vio-estimator/` still build and publish -- and restoring the two `.container`
+files is what runs them again. Any `coord start vio-*` in the bench and replay docs needs
+that first.
 
 ### Why three containers
 
