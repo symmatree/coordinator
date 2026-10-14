@@ -21,7 +21,6 @@ device_role: coordinator
 # version rather than whatever main happens to be.
 coord_checkout: "/home/{{ ansible_user | default('pi') }}/coordinator"
 
-
 # In-place `apt upgrade dist`. OFF by default: in the appliance model the OS
 # version is a property of the flashed image (#96) and a reflash is the primary
 # way to move it, so a routine config deploy must not drag a dist-upgrade and
@@ -65,9 +64,3 @@ coord_repo_version: main
 device_authorized_keys:
   - comment: Seth, operator
     key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAbgqMtIZuknRiE3MYAO2mkBzf/5xqLuOYklzQ+E/VOz
-
-# Whether a PPS buffer leg is soldered to this device (coordinator#11). Not detectable:
-# the pps-gpio overlay presents /dev/pps0 on an unconnected pin, so the device exists
-# either way. Only the first tier is built, feeding the coordinator; set this true per
-# host as the fan-out reaches the pods.
-coord_pps_wired: "{{ device_role == 'coordinator' }}"

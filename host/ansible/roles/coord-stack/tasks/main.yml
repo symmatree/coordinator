@@ -124,13 +124,6 @@
 # checking -- plus the FC records the same edges, so the pair measures how the clocks
 # related with no link in the path.
 #
-# Only where a buffer leg is actually soldered. There is no way to detect that: the
-# pps-gpio overlay presents /dev/pps0 on an unconnected pin -- a quiet device, which is
-# what makes the overlay safe to ship before the fan-out reaches a pod -- so the device
-# existing says nothing about whether an edge will ever arrive. Running it anyway would
-# leave ppstest resident on a Zero waiting for edges that never come. Which pods are
-# wired is inventory, not something the box can answer, so it is a variable; the tree
-# beyond the first tier is not built, so today that is the coordinator alone.
 # The namespace's own journald config, so its budget is deliberate rather than
 # journald's default of 10% of the filesystem.
 - name: Configure the pps journal namespace
@@ -138,18 +131,15 @@
     src: journald-pps.conf
     dest: /etc/systemd/journald@pps.conf
     mode: "0644"
-  when: coord_pps_wired | bool
 
 - name: Install the PPS arrival recorder
   ansible.builtin.template:
     src: coord-pps-log.service.j2
     dest: /etc/systemd/system/coord-pps-log.service
     mode: "0644"
-  when: coord_pps_wired | bool
 
 - name: Enable the PPS arrival recorder
   ansible.builtin.systemd:
     name: coord-pps-log.service
     enabled: true
     daemon_reload: true
-  when: coord_pps_wired | bool

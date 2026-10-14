@@ -258,9 +258,8 @@ for (persistent journald,
 instance only. `coord-sessions package` asks for the namespace by name and the bundle
 carries `pps.log`.
 
-Only where a leg is soldered (`coord_pps_wired`). That is not detectable -- the `pps-gpio`
-overlay presents `/dev/pps0` on an unconnected pin -- so it is deployment state in
-ansible, while the hardware doc owns which outputs exist.
+On every device, unconditionally. With no leg connected no samples arrive, the second comes
+from NTP, and it starts working when a wire goes on.
 
 ## The FC leg
 
