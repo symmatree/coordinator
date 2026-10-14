@@ -3,8 +3,6 @@
 [Unit]
 Description=Coordinator MAVLink router
 PartOf=coordinator-stack.target
-# Ordering only: the router tolerates an absent estimator.
-After=vio-estimator.service
 
 [Container]
 Image=ghcr.io/symmatree/coordinator-mavlink:main
