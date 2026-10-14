@@ -151,6 +151,91 @@ export async function readPods(cfg: BusConfig): Promise<BusRead> {
  * Bare words, not JSON -- one enum value does not need a wrapper, and `mosquitto_sub -v` at a
  * bench stays readable.
  */
+/**
+ * Ask one device to quiesce, and wait until it says it has.
+ *
+ * UNRETAINED, unlike setDesired. A quiesce is an action, not a state: retained, it would
+ * stop collection again on every boot, which is a device that silently never collects.
+ * `reboot` is unretained for the same reason.
+ *
+ * THE WAIT IS THE DEVICE'S, not ours. pod-link stops the units and then polls systemd
+ * until they are actually out -- `StopUnit` returns when the job is accepted, and the
+ * camera took 19.0 s to go after the old command had returned. It publishes its status
+ * out of band when it finishes, so all we do here is wait for one message. Doing the
+ * polling from this end is what we are getting rid of: every round trip to a device whose
+ * collection is still running is the thing that hangs.
+ *
+ * Resolves with what the device reported, or rejects on timeout. A timeout is worth
+ * surfacing rather than carrying on: the caller's next move assumes the memory is free.
+ */
+export async function quiesceNode(
+  cfg: BusConfig,
+  node: string,
+  reason: string,
+  timeoutMs = 60_000,
+): Promise<{ units: string; error?: string }> {
+  const client = mqtt.connect(cfg.url, {
+    connectTimeout: 5_000,
+    reconnectPeriod: 0,
+    clientId: `fleet-control-${Math.random().toString(16).slice(2, 10)}`,
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      client.once('connect', () => resolve());
+      client.once('error', (e) => reject(new Error(`${cfg.url}: ${e.message}`)));
+    });
+    // Subscribe BEFORE publishing. The status is published the moment the device finishes,
+    // and a subscribe afterwards can miss it -- the retained copy would then be the one
+    // from before the quiesce, which reads as success.
+    await new Promise<void>((resolve, reject) => {
+      client.subscribe(`rekon/pod/${node}/status`, { qos: 0 }, (e) =>
+        e ? reject(new Error(`subscribe failed: ${e.message}`)) : resolve());
+    });
+    const done = new Promise<{ units: string; error?: string }>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`${node} did not report a quiesce within ${timeoutMs} ms`)),
+        timeoutMs);
+      // The status topic is retained, so the FIRST message is the device's state from
+      // before we asked -- including any earlier quiesce. Telling it apart by arrival time
+      // would be a race in the unsafe direction: lose it and we ignore the real answer and
+      // then time out. last_quiesce_at_boot_s is the device's uptime when it last
+      // quiesced, which only increases, so the discriminator is the VALUE, not the timing.
+      // MQTT delivers the retained copy on subscribe, before anything published after.
+      let baseline: number | undefined;
+      let haveBaseline = false;
+      client.on('message', (_topic, payload) => {
+        let doc: Record<string, unknown>;
+        try {
+          doc = JSON.parse(payload.toString()) as Record<string, unknown>;
+        } catch {
+          return; // a status we cannot read is not the one we are waiting for
+        }
+        const at = typeof doc.last_quiesce_at_boot_s === 'number'
+          ? doc.last_quiesce_at_boot_s : undefined;
+        if (!haveBaseline) {
+          haveBaseline = true;
+          baseline = at;
+          return;
+        }
+        if (at === undefined) return;
+        if (baseline !== undefined && at <= baseline) return;
+        clearTimeout(timer);
+        resolve({
+          units: String(doc.last_quiesce_units ?? ''),
+          error: doc.last_quiesce_error ? String(doc.last_quiesce_error) : undefined,
+        });
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      client.publish(`rekon/pod/${node}/quiesce`, reason, { qos: 1, retain: false }, (e) =>
+        e ? reject(new Error(`publish failed: ${e.message}`)) : resolve());
+    });
+    return await done;
+  } finally {
+    client.end(true);
+  }
+}
+
 export async function setDesired(
   cfg: BusConfig,
   node: string,

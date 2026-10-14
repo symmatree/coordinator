@@ -326,7 +326,11 @@ func run(c config, stop <-chan struct{}) error {
 	status := topicFor(c.node)
 	want := newWanted()
 	seen := &seenIntent{}
+	quiesced := &quiesceResult{}
 	h := &host{}
+	// Declared here and assigned below, because the quiesce handler is registered on
+	// connect -- before the closure's definition in source order -- and needs to call it.
+	var publishStatusNow func()
 
 	// Publisher state: the last intent published. Guarded because the on-connect
 	// handler clears it from paho's goroutine while the loop below reads it, and
@@ -417,9 +421,16 @@ func run(c config, stop <-chan struct{}) error {
 			}
 			fmt.Printf("pod-link: quiesce requested (%s), stopping %s\n",
 				strings.TrimSpace(string(m.Payload())), strings.Join(units, " "))
-			if err := h.quiesce(units); err != nil {
+			err := h.quiesce(units)
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "pod-link: quiesce: %v\n", err)
+			} else {
+				fmt.Printf("pod-link: quiesced, %s stopped\n", strings.Join(units, " "))
 			}
+			quiesced.record(uptimeS(), units, err)
+			// Out of band rather than on the next tick: the caller published this and is
+			// holding a command until it hears back, and the status period is 60 s.
+			publishStatusNow()
 		})
 		if !qt.WaitTimeout(10*time.Second) || qt.Error() != nil {
 			fmt.Fprintf(os.Stderr, "pod-link: subscribe quiesce failed: %v\n", qt.Error())
@@ -461,9 +472,12 @@ func run(c config, stop <-chan struct{}) error {
 		}
 	}
 
-	publishStatusNow := func() {
+	publishStatusNow = func() {
 		doc := reconcile(c, h, want)
 		doc.LastIntent, doc.LastIntentAtBootS, doc.LastIntentError = seen.snapshot()
+		if ok, atBootS, units, errText := quiesced.snapshot(); ok {
+			doc.LastQuiesceAtBootS, doc.LastQuiesceUnits, doc.LastQuiesceError = atBootS, units, errText
+		}
 		if body, err := json.Marshal(doc); err == nil {
 			publishStatus(cl, status, string(body))
 		} else {

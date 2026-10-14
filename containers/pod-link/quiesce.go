@@ -30,7 +30,19 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
+
+// How long to let the units take. StopUnit does not wait for its job, and the camera's
+// TimeoutStopSec is the number that matters here -- so this has to outlast the slowest
+// unit's own stop timeout or it would report a failure that was merely slow. Bounded
+// because the caller is holding a command: past this, saying what is still up beats
+// waiting longer.
+const quiesceDeadline = 45 * time.Second
+
+// How often to ask systemd whether they are down yet. A D-Bus property read, no spawn.
+const quiescePoll = 500 * time.Millisecond
 
 // collectionUnits is the set to stop, from POD_LINK_COLLECTION_UNITS, comma separated.
 //
@@ -74,5 +86,65 @@ func (h *host) quiesce(units []string) error {
 	if failed != nil {
 		return fmt.Errorf("stopping %s", strings.Join(failed, "; "))
 	}
-	return nil
+	return h.awaitStopped(units)
+}
+
+// awaitStopped blocks until every unit is out, or the deadline passes.
+//
+// THE WAIT BELONGS HERE, not in the caller. StopUnit returns when the job is accepted, so
+// "asked it to stop" and "it is gone" are different facts, and the old ssh loop learned
+// that the hard way -- 19.0 s for the camera after the command returned. Polling a D-Bus
+// property from a resident process is the cheap place to find out; doing it from the other
+// end of an ssh connection is what we are getting rid of.
+func (h *host) awaitStopped(units []string) error {
+	deadline := time.Now().Add(quiesceDeadline)
+	for {
+		var up []string
+		for _, u := range units {
+			st, err := h.unitState(u)
+			if err != nil {
+				// Treat an unreadable state as still up: the point is to be sure before
+				// telling the caller it is safe to run something.
+				up = append(up, fmt.Sprintf("%s (%v)", u, err))
+				continue
+			}
+			if st != "inactive" && st != "failed" && st != "not-found" {
+				up = append(up, fmt.Sprintf("%s is %s", u, st))
+			}
+		}
+		if len(up) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("still up after %s: %s", quiesceDeadline, strings.Join(up, ", "))
+		}
+		time.Sleep(quiescePoll)
+	}
+}
+
+// quiesceResult is the last quiesce, for the status document -- the same shape as
+// last_intent, and for the same reason: "did it take" should be one read of the status
+// topic rather than an inference from somewhere else.
+type quiesceResult struct {
+	mu       sync.Mutex
+	atBootS  float64
+	units    string
+	errorStr string
+	seen     bool
+}
+
+func (q *quiesceResult) record(atBootS float64, units []string, err error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.seen, q.atBootS, q.units = true, atBootS, strings.Join(units, " ")
+	q.errorStr = ""
+	if err != nil {
+		q.errorStr = err.Error()
+	}
+}
+
+func (q *quiesceResult) snapshot() (bool, float64, string, string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.seen, q.atBootS, q.units, q.errorStr
 }
