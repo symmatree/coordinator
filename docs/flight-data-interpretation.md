@@ -16,7 +16,7 @@ Four, and they are not interchangeable.
 
 | clock | where | honest? |
 |---|---|---|
-| FC `TimeUS` | every `.bin` record | yes -- monotonic from FC boot, never steps |
+| FC `TimeUS` | every `.bin` record | yes -- monotonic from FC boot, never steps. But it is **not a good second**: it runs fast against GPS by a flight-dependent amount, see below |
 | coordinator `CLOCK_MONOTONIC` | capture sidecars (`monotonic_ns`), `.feat` frame headers, `timesync.jsonl`, `telemetry.jsonl` | yes -- never steps |
 | coordinator wall clock | sidecar `wall_clock_unix` / `wall_clock_utc`, `.feat` frame headers | **no** -- see below |
 | OAK-D device clock | sidecar `sensor_timestamp_ns`, `.feat` feature payloads | yes -- and it is the only one that says when a frame was *captured* |
@@ -37,6 +37,64 @@ corrects it.
 
 **So: join on monotonic, and repair pre-step wall stamps from it**
 (`capture_align.repair_wall_clock`). Never key a join on `wall_clock_unix` directly.
+
+### FC `TimeUS` runs hundreds of ppm fast, and by a different amount each flight
+
+Fitting GPS seconds-of-week (`GPS.GWk`/`GMS`, the receiver's own time) against `TimeUS` across a
+whole log:
+
+| flight | records | rate error | residual |
+|---|---|---|---|
+| 260923 | 1877 | **+313.1 ppm** | 8.7 ms rms, 29 ms max |
+| 260926 | 2957 | **+241.8 ppm** | 11.3 ms rms, 38 ms max |
+
+So `TimeUS` is monotonic and jump-free but it is not a calibrated second, and the error **moved
+71 ppm between two flights three days apart** -- plausibly thermal, not measured as such. At
+313 ppm a one-shot offset costs 313 us per second of separation from where it was taken: 94 ms
+across a 300 s flight. **Fit the rate per flight; do not store it as a constant.**
+
+This also means the GPS fit is the anchor for anything absolute. Its residual is the FC's
+log-time-versus-fix-time jitter, and it averages down: 8.7 ms over 1877 records is 0.20 ms on a
+fitted offset, which over a 600 s flight is **0.33 ppm**. That is the best absolute time reference
+on the vehicle and it is good enough to check a TCXO against.
+
+### `SYSTEM_TIME` is NOT GPS-authoritative, and can be a day wrong
+
+`SYSTEM_TIME` carries `AP::rtc().get_utc_usec()` and `AP_HAL::millis()` sampled together inside the
+FC, which makes it look like the clean way to get UTC with no link latency in it. It is not
+trustworthy. On 260923, comparing it against the FC's **own GPS** at matched boot times, with GPS
+locked and valid throughout:
+
+```
+boot 52.6 s   SYSTEM_TIME: 2026-09-22 12:26:10.517
+              its own GPS: 2026-09-23 12:06:28.353
+              delta: -85217.836 s, constant over 214 samples
+```
+
+**A day behind, while GPS was right.** The coordinator's wall clock stepped +85,093 s that morning
+at 12:06:17Z, and the only other time source on that link is the coordinator -- so `get_utc_usec()`
+can be sourced from *our* clock rather than from GPS. That matters for any scheme whose point is to
+be independent of our clock discipline: if `get_utc_usec()` is in the chain, it isn't. Take UTC from
+the dataflash's own `GPS` records instead.
+
+Even when the RTC is right it agrees with GPS to only **median +18.7 ms, rms 18.5 ms** (678
+samples) -- so that route has a ~19 ms floor regardless.
+
+And `SYSTEM_TIME` **cannot measure the FC clock rate**: on the same flight it gives +2.0 ppm with a
+0.2 ms residual against the GPS route's +313.1 ppm. My reading is that `get_utc_usec()` returns
+`micros64()` plus a stored offset, so the message ships the same clock twice and their difference
+reveals the offset-refresh interval rather than the crystal. Consistent with a ~310 us sawtooth
+buried in `time_boot_ms`'s integer-millisecond quantisation, but **the mechanism is inferred from
+behaviour, not read from `AP_RTC`.** The 150x discrepancy is the established part.
+
+### `vehicle.tlog` concatenates FC boot sessions with no marker
+
+260923's tlog has **three backward steps in `time_boot_ms`** -- at message indices 597, 848 and
+1526 of 2123 `SYSTEM_TIME` records -- so the file spans **four** FC boot sessions. The deltas are a
+clean 500 ms otherwise, so this is the file's content and not a parse error. Anything joining tlog
+to dataflash has to establish which session it is in, and the boundaries have to be found from
+boot-time discontinuities because nothing marks them. Fitting a line across two sessions a day
+apart yields a 165,000,000 ppm clock error, which is how this was found.
 
 ### Getting to FC time
 
@@ -457,6 +515,36 @@ instant of the read, not the interval before it, and the interval is where the h
 10.08 ms arm on 260923). **The classifier is the other stream:** the two devices are drained by one
 loop, so asking whether the co-stream kept producing at its own expected rate during the gap
 separates a process-level stall from a device-level one. That is a measurement, unlike `ovr`.
+
+**But `gap_ns` is structurally blind to loss spread one sample at a time**, which is the thing
+this section got wrong. Measured on a seven-hour PPS-locked campod-sw session (785k batches): the
+`drops` counter reached 103k (arm) and 144k (camera), which at one sample each is **44 s of dark
+time, 0.18% of the session** -- while `gap_ns` found only **six** gaps over 10 ms in the whole night
+(worst 247 ms arm, 514 ms camera, 0.001% of batches). Both are correct. A discard does extend the
+following `gap_ns`, because `lastNS` is only updated on the successful path -- but at 5.7 events/s
+it extends it by ~0.31 ms against a **measured median gap of 0.50 ms**, so it lands inside the
+normal spread. Any threshold at 2x the fill time cannot see it, however much of it there is.
+
+So the two qualifiers are complementary and neither subsumes the other: **`gap_ns` finds
+concentrated holes, a drop counter finds thin loss.** `gap_ns` is still the right gate for an
+analysis window, because a 500 ms hole is what corrupts a decay fit or a spectrum segment, and a
+0.18% thinning is a negligible broadband noise addition. But "no stalls" is not "no loss".
+
+**`drops` counts failed pool allocations, not samples.** The field was added to attribute holes and
+does not do that cleanly. Two traps in it: the name invites reading it as lost samples, and it is
+*cumulative*, so summing it across the batches in a window inflates it by the batch count (summing
+~1600 batches of a ~116k counter gives 186M, which is not a loss figure). Take endpoints.
+
+Each failed allocation does discard at least one sample -- `if n == 0 { continue }` sits before
+`pool.get()`, so the "found nothing" case returns earlier -- so `drops` is a lower bound on
+discarded samples in units of events, and the conversion to samples is unrecorded.
+
+**And the fitted rate does not bound loss.** The rate is `(true ODR) x (1 - loss_fraction)`, so a
+constant loss fraction scales it and leaves it flat. Rate flatness bounds the *variation* in loss,
+not loss itself, and absolute loss is unbounded from the rate alone because the ADXL345 datasheet
+gives no ODR tolerance to compare against. A corollary for anything quoting absolute ADXL rates:
+those are emitted-sample rates, so the true ODR is higher by the loss fraction -- on that session,
+-1.21% and +1.48% of nominal become -1.08% and +1.66%.
 
 | capture | stream | stalls | of which loop-blocked | of which co-stream at full rate | elapsed time with no samples | last stall |
 |---|---|---|---|---|---|---|
