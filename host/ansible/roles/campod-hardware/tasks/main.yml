@@ -86,7 +86,6 @@
     campod_host_addr: >-
       02:{{ (('campod-host:' + ansible_hostname) | hash('sha256'))[0:10]
             | regex_replace('(..)(?!$)', '\1:') }}
-  when: campod_gadget_enabled | bool
 
 - name: Let NetworkManager manage the gadget interface
   # Without this the campod-gadget profile below is INERT. NetworkManager ships
@@ -111,7 +110,6 @@
       # Managed by roles/campod. Counters 85-nm-unmanaged.rules for this one
       # interface; see the task comment for why the profile is dead without it.
       SUBSYSTEM=="net", ACTION=="add|change|move", ENV{DEVTYPE}=="gadget", ENV{INTERFACE}=="{{ campod_gadget_iface }}", ENV{NM_UNMANAGED}="0"
-  when: campod_gadget_enabled | bool
   notify: Reload udev rules
 
 - name: Load the USB gadget modules at boot
@@ -124,7 +122,6 @@
       # the pair legible in one place.
       dwc2
       g_ether
-  when: campod_gadget_enabled | bool
 
 - name: Pin the g_ether MAC addresses
   ansible.builtin.copy:
@@ -134,7 +131,6 @@
       # Managed by roles/campod. Derived from the hostname; see the task comment.
       # Must exist before the module loads, which modules-load.d guarantees.
       options g_ether dev_addr={{ campod_dev_addr | trim }} host_addr={{ campod_host_addr | trim }}
-  when: campod_gadget_enabled | bool
 
 - name: Give the gadget interface its static address
   # Static both ends, no DHCP, nothing to run on the coordinator (#211). A keyfile
@@ -167,7 +163,6 @@
       [ipv6]
       method=disabled
   when:
-    - campod_gadget_enabled | bool
     - ansible_hostname in campod_gadget_addresses
   notify: Reload NetworkManager connections
 
@@ -184,13 +179,11 @@
   ansible.builtin.command: lsmod
   changed_when: false
   register: campod_lsmod
-  when: campod_gadget_enabled | bool
 
 - name: Load the gadget module now
   # The options file above is already written, so this picks up the pinned MACs.
   ansible.builtin.command: modprobe g_ether
   when:
-    - campod_gadget_enabled | bool
     - "'g_ether' not in campod_lsmod.stdout"
   changed_when: true
 
@@ -203,7 +196,6 @@
       g_ether was already loaded, so any change to the pinned MAC addresses takes
       effect on the next reboot.
   when:
-    - campod_gadget_enabled | bool
     - "'g_ether' in campod_lsmod.stdout"
 
 - name: Warn when this node has no gadget address assigned
@@ -212,7 +204,6 @@
       {{ ansible_hostname }} is not in campod_gadget_addresses, so {{ campod_gadget_iface }}
       gets no address. Add it in host/ansible/vars/gadget-net.yml.
   when:
-    - campod_gadget_enabled | bool
     - ansible_hostname not in campod_gadget_addresses
 
 # Same avionics rail, same yank, same SD card as the coordinator -- so the same

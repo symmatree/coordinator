@@ -9,10 +9,6 @@
 # The dwc2 overlay is device tree and comes from the campod image. Everything
 # here is userspace.
 
-# Enable/disable the whole gadget-net block on both devices. Off leaves each
-# exactly as it was.
-campod_gadget_enabled: true
-
 # Interface the g_ether gadget presents ON THE CAMPOD. The coordinator side does
 # not get to assume a name -- see campod_gadget_host_drivers below.
 campod_gadget_iface: usb0
