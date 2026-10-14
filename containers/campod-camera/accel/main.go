@@ -318,9 +318,14 @@ func run() error {
 				"read when the FIFO came back full, and is false by construction on a short " +
 				"batch. To find a hole, compare gap_ns against the FIFO fill time (32 / the " +
 				"FITTED rate, ~10 ms here); to attribute one, difference the cumulative " +
-				"counters across it -- drops rising means the batch pool was empty and samples " +
-				"were drained and discarded, errs rising means the SPI read failed, and neither " +
-				"rising means the device had nothing to give. " +
+				"counters across it -- dropped_samples rising means the batch pool was empty and " +
+				"that many samples were drained and discarded, errs rising means the SPI read " +
+				"failed, and neither rising means the device had nothing to give. IT IS A " +
+				"SAMPLE COUNT, not a count of events: a field whose units a reader has to " +
+				"guess is worse than no field, and this one was guessed wrong twice. " +
+				"dropped_samples is also the ONLY thing here that sees loss spread one sample " +
+				"at a time: such a drop extends the next gap_ns by about 0.3 ms against a " +
+				"0.5 ms median, so no gap threshold can find it however much there is. " +
 				"RECORD TYPES: filter on \"t\" -- \"b\" is a sample batch, \"clk\" is a " +
 				"clock-pair (boot_ns, mono_ns, wall_ns) emitted about once a second. " +
 				"This pod has no RTC, so join on monotonic and repair wall stamps " +
@@ -376,7 +381,7 @@ func run() error {
 				rec := map[string]any{
 					"t": "b", "i": st.samples.Load(), "boot_ns": b.BootNS, "mono_ns": b.MonoNS,
 					"drain_ns": b.DrainNS, "gap_ns": b.GapNS,
-					"n": b.N, "ovr": b.Ovr, "drops": b.Drops, "errs": b.Errs,
+					"n": b.N, "ovr": b.Ovr, "dropped_samples": b.DroppedSamples, "errs": b.Errs,
 					"x": b.X, "y": b.Y, "z": b.Z,
 				}
 				st.samples.Add(int64(b.N))
@@ -435,7 +440,7 @@ func run() error {
 		// device's name. The sensor has carried its own label all along.
 		fmt.Printf("accel: %s: %d samples in %d batches, %d overruns, %d dropped batches, %d read errors\n",
 			lv.s.label, lv.st.samples.Load(), lv.st.batches.Load(),
-			lv.st.overruns.Load(), lv.pool.drops.Load(), lv.st.readErrs.Load())
+			lv.st.overruns.Load(), lv.pool.droppedSamples.Load(), lv.st.readErrs.Load())
 		lv.s.bus.Close()
 	}
 	return nil
@@ -489,8 +494,11 @@ func capture(lives []*live, c config, stop <-chan os.Signal) {
 			if b == nil {
 				// Writer is behind. Drain anyway so the FIFO does not carry the
 				// backlog into the next cycle, but discard rather than stall.
-				// pool.get() has already counted this; it reaches the stream as
-				// `drops` on the next batch that does get through.
+				//
+				// Counted HERE, in samples, because this is the only place that knows
+				// n. It reaches the stream as `dropped_samples` on the next batch that
+				// does get through. n >= 1 always: the n == 0 case returned above.
+				lv.pool.droppedSamples.Add(int64(n))
 				_ = lv.s.drain(n, &Batch{X: make([]int16, 0, fifoDepth),
 					Y: make([]int16, 0, fifoDepth), Z: make([]int16, 0, fifoDepth)})
 				continue
@@ -499,7 +507,7 @@ func capture(lives []*live, c config, stop <-chan os.Signal) {
 			b.BootNS = t0
 			b.MonoNS = monoNS()
 			b.Ovr = ovr
-			b.Drops = lv.pool.drops.Load()
+			b.DroppedSamples = lv.pool.droppedSamples.Load()
 			b.Errs = lv.st.readErrs.Load()
 			if lv.lastNS != 0 {
 				b.GapNS = t0 - lv.lastNS

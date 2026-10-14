@@ -48,11 +48,11 @@ type deviceStatus struct {
 	Detail string `json:"detail,omitempty"`
 	// SelfTest is pass or fail from the datasheet's electrostatic test, run once
 	// at startup. Empty for a device that never got that far.
-	SelfTest string `json:"self_test,omitempty"`
-	Samples  int64  `json:"samples"`
-	Batches  int64  `json:"batches"`
-	Drops    int64  `json:"drops"`
-	Errs     int64  `json:"errs"`
+	SelfTest       string `json:"self_test,omitempty"`
+	Samples        int64  `json:"samples"`
+	Batches        int64  `json:"batches"`
+	DroppedSamples int64  `json:"dropped_samples"`
+	Errs           int64  `json:"errs"`
 	// LastSampleBootNS is CLOCK_BOOTTIME at the most recent drain. Present and
 	// not advancing is a different fault from absent, and this is what separates
 	// them -- the consumer differences it against the document's own as_of.
@@ -110,7 +110,7 @@ func (w *statusWriter) snapshot(nowBootNS int64) *accelStatus {
 				SelfTest:         w.selfTests[lv.s.label],
 				Samples:          lv.st.samples.Load(),
 				Batches:          lv.st.batches.Load(),
-				Drops:            lv.pool.drops.Load(),
+				DroppedSamples:   lv.pool.droppedSamples.Load(),
 				Errs:             lv.st.readErrs.Load(),
 				LastSampleBootNS: lv.st.lastSampleNS.Load(),
 			})

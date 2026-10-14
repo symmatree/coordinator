@@ -15,9 +15,9 @@ type Batch struct {
 	// Counters as of this drain, so a hole in the stream can be attributed by
 	// differencing them across it rather than guessed at. Stamped in the capture
 	// goroutine, which owns both, so the writer never reads them concurrently.
-	Drops   int64 // batches drained and discarded because the pool was empty
-	Errs    int64 // entries()/drain() failures, neither emitted nor counted as samples
-	X, Y, Z []int16
+	DroppedSamples int64 // SAMPLES drained and discarded because the pool was empty
+	Errs           int64 // entries()/drain() failures, neither emitted nor counted as samples
+	X, Y, Z        []int16
 }
 
 // pool is a fixed set of preallocated batches cycling between the capture
@@ -30,14 +30,21 @@ type Batch struct {
 // drain rate is set by how fast the FIFO refills, not by a schedule: 260923
 // measured 1463 drains/second on camera and 1261 on arm, so 256 batches buys
 // 175 ms and 203 ms respectively. The SD stalls measured on that flight reach
-// 361 ms, which is longer than that -- when the pool loses, `drops` on the next
-// emitted batch is what says so.
+// 361 ms, which is longer than that -- when the pool loses, `dropped_samples` on
+// the next emitted batch is what says so.
 type pool struct {
 	free   chan *Batch
 	filled chan *Batch
-	// Atomic because a drop is read back out on the capture goroutine to stamp
-	// the next batch, and again on the main goroutine at teardown.
-	drops atomic.Int64
+	// Atomic because it is read back out on the capture goroutine to stamp the next
+	// batch, and again on the main goroutine at teardown.
+	//
+	// SAMPLES, NOT EVENTS, and the distinction cost real time: as an event count it
+	// read as ~144k over seven hours, which two readers independently took for
+	// samples -- one of them deriving a required ODR of 10.6 kHz from a 3.2 kHz part
+	// before the arithmetic caught it. An event count has no use a sample count does
+	// not serve better: thin loss is the only thing this counter can see that
+	// gap_ns cannot, and seeing it means knowing how many samples went.
+	droppedSamples atomic.Int64
 }
 
 func newPool(depth int) *pool {
@@ -56,12 +63,14 @@ func newPool(depth int) *pool {
 // because blocking the capture loop would cost the hardware FIFO -- samples we
 // can never recover -- to save samples we already have in hand. Dropping is the
 // cheaper failure and the only one that is bounded.
+//
+// The COUNTING is the caller's, not ours: only the caller knows how many samples the
+// discarded drain actually took, and that count is the whole value of the field.
 func (p *pool) get() *Batch {
 	select {
 	case b := <-p.free:
 		return b
 	default:
-		p.drops.Add(1)
 		return nil
 	}
 }
