@@ -27,6 +27,7 @@ TESTS=(
 	device-sw/tests/test_coord_fc_log.py
 	device-sw/tests/test_quadlet_units.py
 	host/ansible/test_notifies.py
+	host/ansible/test_syntax.py
 	harness/test_input_replayer.py
 	harness/test_router_stack.py
 	harness/test_router_telem.py
