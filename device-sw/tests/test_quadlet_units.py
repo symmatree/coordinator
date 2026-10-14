@@ -74,6 +74,20 @@ for stack in sorted((REPO / "stacks").iterdir()):
 
         # WantedBy brings the stack up at boot; PartOf makes one stop take it down.
         check(f"{name}: WantedBy the stack target", f"WantedBy={target}" in text)
+
+        # POD_LINK_COLLECTION_UNITS is what a quiesce stops. pod-link must never be in
+        # it: it is the process that carries the instruction, and a device that signals
+        # its own foothold leaves the bus until somebody reboots it by hand -- which is
+        # what the fleet-wide pkill it replaces did. Asserted here rather than in
+        # pod-link's Go tests because those run inside the image build, where only
+        # containers/pod-link is in the build context and stacks/ is not visible.
+        for ln in text.splitlines():
+            ln = ln.strip()
+            if ln.startswith("Environment=POD_LINK_COLLECTION_UNITS="):
+                units = {u.strip().split(".")[0]
+                         for u in ln.split("=", 2)[2].split(",") if u.strip()}
+                check(f"{name}: a quiesce does not stop pod-link",
+                      "pod-link" not in units, ",".join(sorted(units)))
         check(f"{name}: PartOf the stack target", f"PartOf={target}" in text)
 
         # A power-up must need no network: docs/deployment-model.md.
