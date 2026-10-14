@@ -3,6 +3,7 @@ import { loadInventory, type Inventory } from './inventory.js';
 import type { ActionContext } from './actions.js';
 import type { GithubOptions } from './github.js';
 import type { BusConfig } from './bus.js';
+import type { PowerConfig } from './power.js';
 
 export interface Config {
   inventory: Inventory;
@@ -15,6 +16,8 @@ export interface Config {
   notify: { url: string; tag: string };
   /** The pod bus. An empty url disables it. See bus.ts and docs/pod-bus.md. */
   bus: BusConfig;
+  /** The bench's switch, through Home Assistant. An empty url or entity disables it. */
+  power: PowerConfig;
   /** Where the ground station's own record of a flight lives. See cluster.ts. */
   cluster: {
     mimirUrl: string;
@@ -80,6 +83,13 @@ export function loadConfig(): Config {
       // Retained messages arrive right after SUBACK with no count to expect, so the read ends by
       // stopping rather than by being satisfied. Long enough for four pods on a 2.4 GHz hop.
       settleMs: Number(env('FLEET_MQTT_SETTLE_MS', '1500')),
+    },
+    power: {
+      url: env('FLEET_HA_URL', 'https://homeassistant.local.symmatree.com:8123'),
+      token: env('FLEET_HA_TOKEN', ''),
+      // No default: which plug feeds the bench is a fact about the house, and a guess here
+      // would switch something else. Absent means the feature is off, which the screen shows.
+      entity: env('FLEET_HA_SWITCH', ''),
     },
     cluster: {
       mimirUrl: env('FLEET_MIMIR_URL', 'http://mimir-gateway.mimir.svc'),
