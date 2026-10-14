@@ -1,5 +1,10 @@
 # Bench: VIO estimator (full vision chain)
 
+
+> **The VIO units are not in the coordinator stack.** Restore
+> `stacks/coordinator/vio-tracker.container` and `vio-estimator.container` before any
+> `coord start` below -- see [architecture.md](architecture.md).
+
 Second coordinator iteration: prove `vins_fusion` in `vio-estimator` consumes the tracker's IMU + feature streams and publishes pose on `/tmp/chobits_server`. Runs the vision chain (tracker + estimator) by naming both services. No FC required. Builds on [bench-tracker.md](bench-tracker.md) (#8).
 
 ## Prerequisites

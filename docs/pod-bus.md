@@ -232,7 +232,7 @@ flight rather than diagnosing after one.
 | desired | reconciled by | notes |
 |---|---|---|
 | `capture` | writing `/tmp/campod_capture`, which `capture.py` reads once per tick | written in the message handler rather than on the tick: arm comes from the operator's controller and the first frame should not wait a status period on top of the publisher's poll. Re-asserted on the tick if a write failed |
-| `service/<unit>` | `StartUnit`/`StopUnit` on systemd over the system bus | the granularity that matters on the coordinator. The unit name is the quadlet file's (`coordinator-mavlink`), and a bare name, `.service` or `.container` all work. systemd owns the stop timeout -- from `TimeoutStopSec` in the unit, next to the measurement that justifies it -- so there is nothing to reimplement and nothing to wait for |
+| `service/<unit>` | `StartUnit`/`StopUnit` on systemd over the system bus | the granularity that matters on the coordinator. `<unit>` is the quadlet file's name, and a bare name, `.service` or `.container` all resolve; which units exist is `stacks/<role>/*.container` and [architecture.md](architecture.md), not restated here. systemd owns the stop timeout -- from `TimeoutStopSec` in the unit, next to the measurement that justifies it -- so there is nothing to reimplement and nothing to wait for |
 | `stack: stopped` | `SIGTERM` to every container init but its own | runtime-independent: it signals `dumb-init` by name and needs nothing else reachable. `coord stop` and the ansible quiesce use `systemctl stop` on the stack target, which is synchronous; this is the path for when systemd cannot be reached |
 | `stack: running` | **nothing** | see below |
 | `radio` | NetworkManager's `WirelessEnabled` over the system bus | the same property `coord radio` sets, persisted by NM across boots. Read every pass whether or not anything asked; a failed *read* is reported as `unknown` rather than as an error, because a device with no bus socket is not a fault |
@@ -331,7 +331,6 @@ evidenced than the ssh one.
 mosquitto_sub -t 'rekon/#' -v                                     # including retained
 mosquitto_pub -t rekon/pod/campod-sw/desired/radio -r -m open
 mosquitto_pub -t rekon/pod/campod-sw/desired/stack -r -m stopped
-mosquitto_pub -t rekon/pod/coordinator/desired/service/coordinator_mavlink -r -m stopped
 mosquitto_pub -t rekon/pod/campod-sw/reboot -m 'back to idle-ready'   # NOT -r
 ```
 

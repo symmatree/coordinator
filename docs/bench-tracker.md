@@ -1,5 +1,10 @@
 # Bench: OAK-D feature tracker
 
+
+> **The VIO units are not in the coordinator stack.** Restore
+> `stacks/coordinator/vio-tracker.container` and `vio-estimator.container` before any
+> `coord start` below -- see [architecture.md](architecture.md).
+
 First coordinator iteration: prove `feature_tracker` runs in `vio-tracker` with the OAK-D on USB. No VINS estimator or FC required.
 
 ## Prerequisites
