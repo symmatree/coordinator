@@ -448,7 +448,6 @@ do reach for one, a **Linux** laptop at least shares the driver with the coordin
 Throughput and stability over the gadget link are unmeasured, and the only measurement that
 means anything is Pi 4B host to Zero 2 W gadget through the real hub.
 
-Set `campod_gadget_enabled: false` to leave a node exactly as it was.
 
 ## Open: seams with the coordinator
 
