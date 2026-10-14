@@ -154,6 +154,13 @@ USB OAK-D
 | `vio-estimator` | `vins_fusion` | `${COORDINATOR_IPC_DIR}:/tmp`; config ro |
 | `coordinator-mavlink` | coordinator MAVLink router | `${COORDINATOR_IPC_DIR}:/tmp`; FC serial; host network for Pi Zeros |
 
+**The two VIO services are not deployed.** `stacks/coordinator/` no longer carries their
+quadlet files, so a converge installs no unit for them and nothing pulls their images. The
+images and their sources are untouched -- `containers/vio-tracker/`,
+`containers/vio-estimator/` and their CI still build and publish. Running them on a device
+again means restoring those two `.container` files; until then any `coord start vio-*` in
+the bench and replay docs needs that first.
+
 ### Why three containers
 
 | Benefit | Notes |
