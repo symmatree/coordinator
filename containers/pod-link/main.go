@@ -75,6 +75,16 @@ const (
 	// Reboot. NOT RETAINED, and that is load-bearing -- see reconcile.go. A
 	// retained reboot request is a boot loop.
 	topicRebootFmt = "rekon/pod/%s/reboot"
+	// Quiesce: stop the collection containers so something else can run without
+	// risking a paging storm. NOT RETAINED, for the same reason reboot is not -- a
+	// retained quiesce would stop collection again on every boot, which is a device
+	// that silently never collects.
+	//
+	// AN ACTION, NOT A DESIRED STATE, and that is why it is not under desired/. The
+	// state afterwards is "collection is off until something starts it", which is
+	// what `coord start` and a power cycle already mean. Nothing here reconciles it
+	// back on.
+	topicQuiesceFmt = "rekon/pod/%s/quiesce"
 )
 
 // topicFor is per node, deliberately. One shared status topic would mean the last
@@ -86,6 +96,7 @@ func topicFor(node string) string { return fmt.Sprintf(topicStatusFmt, node) }
 // segment of a received topic.
 func desiredPrefix(node string) string { return fmt.Sprintf(topicDesiredFmt, node) }
 func rebootTopic(node string) string   { return fmt.Sprintf(topicRebootFmt, node) }
+func quiesceTopic(node string) string  { return fmt.Sprintf(topicQuiesceFmt, node) }
 
 // concern is the part of a desired-state topic that says what is being asked for --
 // "radio", "stack", or "service/<container>". Returns "" for a topic that is not
@@ -388,6 +399,30 @@ func run(c config, stop <-chan struct{}) error {
 		})
 		if !rt.WaitTimeout(10*time.Second) || rt.Error() != nil {
 			fmt.Fprintf(os.Stderr, "pod-link: subscribe reboot failed: %v\n", rt.Error())
+		}
+
+		// Quiesce, for the same reason as reboot: an action, handled on arrival rather
+		// than on the tick, because the caller is waiting to run a command.
+		qt := cl.Subscribe(quiesceTopic(c.node), 1, func(_ mqtt.Client, m mqtt.Message) {
+			if m.Retained() {
+				fmt.Fprintf(os.Stderr, "pod-link: refusing a retained quiesce; it would "+
+					"stop collection again on every boot. Publish it with retain off\n")
+				return
+			}
+			units := collectionUnits()
+			if len(units) == 0 {
+				fmt.Printf("pod-link: quiesce requested (%s), but POD_LINK_COLLECTION_UNITS "+
+					"is empty, so nothing here collects\n", strings.TrimSpace(string(m.Payload())))
+				return
+			}
+			fmt.Printf("pod-link: quiesce requested (%s), stopping %s\n",
+				strings.TrimSpace(string(m.Payload())), strings.Join(units, " "))
+			if err := h.quiesce(units); err != nil {
+				fmt.Fprintf(os.Stderr, "pod-link: quiesce: %v\n", err)
+			}
+		})
+		if !qt.WaitTimeout(10*time.Second) || qt.Error() != nil {
+			fmt.Fprintf(os.Stderr, "pod-link: subscribe quiesce failed: %v\n", qt.Error())
 		}
 	})
 	if t := cl.Connect(); t.Wait() && t.Error() != nil {
