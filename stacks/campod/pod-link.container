@@ -22,6 +22,11 @@ Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket
 Volume=/var/lib/campod/captures:/captures:ro
 
 Environment=POD_LINK_ROLE=subscriber
+# The heavyweight collectors, stopped by a quiesce before anything else runs on this
+# box -- see containers/pod-link/quiesce.go. NOT pod-link itself: it is what carries the
+# instruction, and a pod that signals its own foothold leaves the bus until someone
+# reboots it by hand.
+Environment=POD_LINK_COLLECTION_UNITS=campod-camera,campod-accel
 # The coordinator's gadget-net address, pinned in host/ansible/vars/gadget-net.yml.
 Environment=POD_LINK_BROKER=tcp://10.55.0.1:1883
 Environment=POD_LINK_FLAG_FILE=/tmp/campod_capture

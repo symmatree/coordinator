@@ -20,6 +20,10 @@ Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket
 Volume=/var/lib/coordinator/captures:/captures:ro
 
 Environment=POD_LINK_ROLE=publisher
+# The collector to stop on a quiesce: the router holds the FC serial and writes the
+# session. The coordinator has more slack than a Zero, so this is about releasing the
+# port and the capture directory rather than about memory.
+Environment=POD_LINK_COLLECTION_UNITS=coordinator-mavlink
 Environment=POD_LINK_BROKER=tcp://127.0.0.1:1883
 Environment=POD_LINK_ARM_FILE=/ipc/fc_armed
 Environment=POD_LINK_PERIOD_S=2
