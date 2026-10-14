@@ -121,6 +121,11 @@ COPY capture.py /opt/campod/capture.py
 COPY --from=accel-build /out/campod-accel /opt/campod/campod-accel
 COPY test_capture_wait.py /opt/campod/test_capture_wait.py
 RUN cd /opt/campod && python3 test_capture_wait.py --require-manifest && rm test_capture_wait.py
+# Which pod paces the others. Runs at build time like the wait test above, so a change
+# that makes every pod a client -- sync that looks on while nothing is synchronised --
+# fails the build rather than the flight.
+COPY test_sync_leader.py /opt/campod/test_sync_leader.py
+RUN cd /opt/campod && python3 test_sync_leader.py && rm test_sync_leader.py
 
 # Flush logs immediately so `coord logs -f campod-camera` is live (cf. the
 # vio-tracker stdbuf line-buffering fix).

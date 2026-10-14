@@ -34,7 +34,15 @@ Environment=CAMPOD_STILL_MAX_EXPOSURE_US=5000
 # Lens position in dioptres, 1/metres. Mapping subjects are at infinity.
 Environment=CAMPOD_STILL_FOCUS=infinity
 # off | server | client. Multi-campod sync is #24.
-Environment=CAMPOD_SYNC_MODE=off
+# libcamera software sync: one pod paces, the rest follow. ON, with campod-sw named as
+# the pacesetter -- it is the pod with the accelerometers, so its frames are the ones worth
+# having a hard reference for.
+#
+# ONE VALUE FOR EVERY POD, which is all this file can express: it is copied identically to
+# each pod and a converge passes only device_role, so there is no per-pod env to hold
+# "server". Each pod compares this against its own /etc/hostname. Electing the leader over
+# the bus instead is coordinator#501.
+Environment=CAMPOD_SYNC_LEADER=campod-sw
 # Capture is paused until something writes this file (#434, docs/pod-bus.md). Empty
 # disables gating and captures continuously.
 Environment=CAMPOD_CAPTURE_FLAG=/tmp/campod_capture

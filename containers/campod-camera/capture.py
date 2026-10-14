@@ -17,7 +17,9 @@ Config via environment (all optional):
   CAMPOD_STILL_MAX_EXPOSURE_US
                       cap the shutter (default: 5000; 0 = uncapped AE)
   CAMPOD_STILL_FOCUS     infinity | <dioptres> (default: infinity)
-  CAMPOD_SYNC_MODE       off | server | client (default: off) -- see note below
+  CAMPOD_SYNC_LEADER     hostname of the pod that paces the others; this pod becomes
+                      the sync server if it matches its own name and a client if it
+                      does not. Empty disables sync entirely (default: empty)
   CAMPOD_WARMUP_FRAMES   frames to capture at startup before going ready (default: 10)
   CAMPOD_CAPTURE_FLAG    path whose contents gate capture; empty disables gating
                       and captures continuously (default: /tmp/campod_capture)
@@ -126,6 +128,27 @@ def _apply_focus(picam2, focus):
     distance = "infinity" if dioptres <= 0 else f"{1.0 / dioptres:.2f} m"
     print(f"capture: lens fixed at {dioptres} dioptres ({distance}), AF off", flush=True)
     return dioptres
+
+
+def _sync_mode_for(leader, node):
+    """server on the leader, client on everyone else, off when no leader is named.
+
+    ONE VALUE, IDENTICAL ON EVERY POD, because that is the only kind of configuration the
+    deployment can currently express: stacks/campod/ is one file copied to every pod and a
+    converge passes only device_role, so there is no per-pod env to put "server" in. Each
+    pod compares the leader's name against its own, which it already reads from the host's
+    /etc/hostname for its capture path (#272).
+
+    Naming a leader rather than electing one is deliberate for now and is the smaller half
+    of the problem -- coordinator#501 covers doing it over the bus, where the pods already
+    all see one value.
+
+    An unknown leader name leaves every pod a client and nothing paces them, which is why
+    the caller logs what it resolved to rather than only that sync is on.
+    """
+    if not leader:
+        return "off"
+    return "server" if leader == node else "client"
 
 
 def _maybe_apply_sync(picam2, mode):
@@ -390,7 +413,7 @@ def main():
     quality = _env_int("CAMPOD_JPEG_QUALITY", 90)
     max_exposure_us = _env_int("CAMPOD_STILL_MAX_EXPOSURE_US", 5000)
     focus = (os.getenv("CAMPOD_STILL_FOCUS") or "infinity").strip().lower()
-    sync_mode = (os.getenv("CAMPOD_SYNC_MODE") or "off").strip().lower()
+    sync_leader = (os.getenv("CAMPOD_SYNC_LEADER") or "").strip()
     warmup_frames = _env_int("CAMPOD_WARMUP_FRAMES", 10)
     flag_raw = os.getenv("CAMPOD_CAPTURE_FLAG", "/tmp/campod_capture")
     flag_path = Path(flag_raw) if flag_raw.strip() else None
@@ -450,6 +473,13 @@ def main():
     picam2.configure(config)
     picam2.options["quality"] = quality
 
+    # Resolved here, not in config, so the log line names BOTH the leader and what this
+    # pod became. "sync is on" without "and I am a client" is the state where every pod is
+    # a client, nothing paces them, and the frames are no more aligned than before.
+    sync_mode = _sync_mode_for(sync_leader, node)
+    if sync_leader:
+        print(f"capture: sync leader is {sync_leader!r}; this pod ({node}) is {sync_mode}",
+              flush=True)
     sync_active = _maybe_apply_sync(picam2, sync_mode)
     picam2.start()
 
