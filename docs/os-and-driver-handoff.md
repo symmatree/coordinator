@@ -251,6 +251,88 @@ into that secondary flow faulting back in elsewhere. So readiness needs outside
 observation, which is what makes the collectd question above matter rather than being
 tidiness.
 
+## If the pods move off the Pi Zero 2 W
+
+Live as of 2026-10-15, with five Radxa Zero 3W (RK3566, 2 GB) ordered and arrival from Hong
+Kong unknown. Recorded so it is not re-derived: what is **measured**, what is **read from a
+config**, and what is **not established** are labelled, because that distinction is most of
+the value here.
+
+**Why the question exists.** Zero 2 W supply and price show no sign of recovering, and the
+fleet owns exactly four. Separately, a C-mount Pregius global-shutter camera needs USB 3.0 to
+drive it, and a Zero 2 W is USB 2.0 with a single OTG port -- so it cannot host such a camera
+at all. The camera choice forces the board question rather than coinciding with it.
+
+**The boot layout, measured** by streaming the first 48 MiB of
+`radxa-zero3_debian_bullseye_cli_b6.img.xz` and parsing it. Protective MBR (type `0xee`) plus
+GPT, with two raw blobs *ahead* of the first partition:
+
+| offset | content |
+|---|---|
+| sector 64 | `RKNS` -- Rockchip idbloader |
+| sector 16384 | `d00dfeed` -- U-Boot FIT (`u-boot.itb`) |
+| sector 32768 | partition `config`, 16.8 MB |
+| sector 65536 | partition `boot`, 314.6 MB |
+| sector 679936 | partition `rootfs`, 2201.5 MB |
+
+So `build-image.sh`'s `parted mklabel msdos` plus `sfdisk --disk-id 0xc0dec0de` would erase
+both loader blobs and the GPT. A re-lay has to preserve sectors 64 through 32767 verbatim and
+emit GPT. The fixed-MBR-id trick goes with it -- GPT has its own stable identifiers, so
+`disk/partuuid-stable` is replaceable rather than lost, but it is a rewrite and not a rename.
+Armbian's own board config agrees with the measurement, which is why this reads as the
+platform's shape rather than one build's accident: `IMAGE_PARTITION_TABLE="gpt"` and
+`BOOT_SCENARIO="spl-blobs"`.
+
+**The OS base is Armbian, not Radxa.** Radxa's own CLI images for this board stop at `b6`,
+2024-01-10, on Debian bullseye; everything since (`rsdk-t1` .. `rsdk-b1`, to 2025-07-15) is
+KDE desktop on bookworm. There is no current official CLI image and nothing on trixie. Read
+from `armbian/build`: `config/boards/radxa-zero3.conf` is a `.conf` rather than a `.csc`, so
+standard support rather than community, maintainer `igorpecovnik`,
+`KERNEL_TARGET="vendor,current,edge"` with `KERNEL_TEST_TARGET="vendor,current"`, and
+`BOOT_FDT_FILE="rockchip/rk3566-radxa-zero3.dtb"`. A current artifact exists:
+`Armbian_26.8.0-trunk.420_Radxa-zero3_forky_vendor_6.1.115_minimal.img.xz`, 2026-07-17 -- a
+minimal image on forky, ahead of our trixie rather than behind it.
+
+**The ports, from Radxa's marketing copy rather than a schematic:** USB 3.0 HOST Type-C for
+data, USB 2.0 OTG Type-C for power and data. Two controllers, so the two roles a pod needs --
+USB device on the coordinator's hub for the gadget link, USB host for the camera -- do not
+contend. The gadget half lands on the USB 2.0 OTG port, which is a dwc2-family controller, so
+`g_ether` is the configuration already in use with `dr_mode = "peripheral"` in device tree
+instead of a `dtoverlay=dwc2` line. It also collapses the two-micro-USB trap that left
+campod-sw dark for days: there is one port that carries power and it is the data one.
+
+**What transfers unchanged:** `assemble-btrfs.sh` entirely, `grow-rootfs`, the
+`/etc/fleet-image` manifest, the purge-simulate / mark-manual / mask-timers machinery, the
+chrony and hardware-sync design, and roughly 12 of the 21 claim checks. The converge is close
+to platform-neutral already -- `vcgencmd` is its only Pi dependency and is already behind a
+`command -v` guard that self-disables.
+
+**What needs a second implementation:** the firmware config layer. 32 `dtoverlay`/`dtparam`
+hits, 25 `cmdline.txt`, 18 `auto_initramfs` across the image build, all of it Pi-firmware
+shaped, against ordinary DT overlays and boot args on Rockchip.
+
+**What disappears:** `gpu_mem` and the cut-down-firmware finding, the CMA arithmetic, the
+`psi=1` justification, the no-swap reasoning, and the 417 MiB budget generally. At 2 GB, a 128
+MiB CMA reservation is 6% rather than 31%. None of those findings become wrong; they stop
+applying to pods. And 4x the page cache is aimed at the measured mechanism rather than at
+headroom in general -- the import storm was 92.4% card utilisation and 19 MB/s of reads,
+blocked on the card.
+
+**What gets better:** A/B boot. U-Boot does real slot selection, so #372 and #312 stop being
+blocked on firmware that stores the tryboot flag and ignores it.
+
+**Caveats, both unverified on hardware.** WiFi is an AIC8800 served by an out-of-tree driver
+carried as an Armbian extension (`AIC8800_TYPE="sdio"`, `enable_extension "radxa-aic8800"`),
+not an in-tree module like `brcmfmac` -- tolerable where the operating state is the gadget
+link and WiFi is bench mode, but `coord radio open` depends on a third-party driver continuing
+to build. And nobody has checked whether that `vendor_6.1.115` kernel ships `pps_gpio`, the
+dwc2 gadget, `btrfs`, `spidev` and `uvcvideo`; every one of those is load-bearing, and the
+rootfs sits 348 MB into the image so it needs the full download rather than a prefix.
+
+**Not evaluated:** the Cubie A7s units, which have more RAM. The axis that decides it is
+Allwinner's mainline position against Rockchip's -- RK3566 has `current` and `edge` branches in
+Armbian's test matrix, where newer Allwinner parts tend to be vendor-BSP-only.
+
 ## How to work here
 
 **Seth is the only decision-maker, and he is unusually good at catching a wrong premise.**
