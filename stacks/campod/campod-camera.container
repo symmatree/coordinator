@@ -10,6 +10,23 @@ Exec=python3 /opt/campod/capture.py
 # A power-up must need no network: docs/deployment-model.md.
 Pull=never
 
+# HOST NETWORK NAMESPACE, because the camera-sync algorithm is a network protocol.
+# libcamera's sync server multicasts to 239.255.255.250 and the client joins that
+# group; in podman's default bridge namespace both happen on a veth that the other
+# pod cannot reach, and usb0 -- the only path between pods -- does not exist there
+# at all.
+#
+# MEASURED 2026-10-15: with the camera in its own namespace, `ip maddr show` on both
+# campods showed the group joined on NO host interface, and the client reported
+# SyncTimer None for two consecutive runs while capturing and discarding every frame.
+# The server appeared to work only because a sync server never has to receive
+# anything.
+#
+# Needs the gadget route in roles/campod-hardware to be useful: that decides WHICH
+# host interface the group resolves to, and this decides whether the camera can see
+# host interfaces at all. Neither alone is enough.
+Network=host
+
 # privileged: libcamera/IMX708 and /dev/spidev* for the accelerometer reader. Needs
 # dtparam=spi=on on the host for the spidev nodes to exist.
 PodmanArgs=--privileged --stop-timeout=90
