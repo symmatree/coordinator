@@ -41,7 +41,7 @@ the startup-side numbers were first measured).
 
 | source | what it gives | where | caveats |
 |---|---|---|---|
-| collectd | disk read/write octets, per-core cpu incl. iowait, memory absolute, thermal, interface | `/var/log/collectd/<node>/`, 10s **raw counters**, 7d retention | **stops early in shutdown** -- the teardown window is blank, not quiet. Counters reset across a boot, producing one garbage negative sample |
+| collectd | disk read/write octets, per-core cpu incl. iowait, memory absolute, thermal, interface | `/var/log/collectd/<node>/`, 7s **raw counters**, 7d retention | **stops early in shutdown** -- the teardown window is blank, not quiet. Counters reset across a boot, producing one garbage negative sample |
 | journal | ansible task invocations, async countdowns, systemd shutdown sequence, `coord-throttle-log` every 30s | `journalctl -b -N` | persistent (#100) |
 | docker logs | `capture: received signal 15`, frame counts, accel session summaries | `docker logs -t <container>` | survive reboots; containers are reused, not recreated |
 | `docker inspect` | `ExitCode`, `FinishedAt` | | 137 = 128+9 = SIGKILL |

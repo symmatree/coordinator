@@ -1,9 +1,19 @@
 ---
-# Sampling interval, seconds. 10s resolves a thermal ramp or an iowait spike across
-# a short flight; coordinator-throttle.timer runs at 30s, so throttle events land on
-# a coarser timeline than the temperature that caused them. Raising this is the first
-# knob to reach for if the write volume turns out to matter.
-metrics_interval: 10
+# Sampling interval, seconds. A PRIME, and deliberately not a round number: this
+# plugin's own period then shares no factor with anything else periodic on the box
+# -- the 1 Hz still cadence, the 30s coordinator-throttle.timer -- so a periodic
+# artifact at 7s is attributable to collectd and one at 10s or 30s is not.
+#
+# Measured on the 20261015 campod-sw capture, with this at 10: the device's write
+# path stalled 0.5-1.9s once per 10.0s (0.40s jitter), 8.6% of the capture with no
+# samples, and collectd's write instant sat 0.67s ahead of each stall on a 10.000s
+# period of its own. Same period, so that run could not separate the two. At 7 they
+# separate: a stall that stays on 10s is not this plugin.
+#
+# 7s also resolves a thermal ramp or an iowait spike across a short flight, and is
+# 43% more rows per unit time than 10s on a card whose write path is the thing under
+# measurement. Raising it is the first knob to reach for if that volume matters.
+metrics_interval: 7
 
 # How long samples stay on the card. These are flight forensics: once a flight's
 # window has been copied off, the on-device copy is a convenience. Bounded so the

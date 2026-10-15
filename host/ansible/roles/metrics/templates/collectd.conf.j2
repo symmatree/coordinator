@@ -125,9 +125,15 @@ LoadPlugin chrony
   # carries disk_io_time, disk_merged, disk_octets, disk_ops and disk_time and
   # nothing else. The utilization signal we actually have is disk_io_time, whose
   # io_time field is milliseconds during which the device had I/O in flight --
-  # so a 10 s interval advancing it by 10000 is a device that was busy
-  # throughout. Read saturation off that, not off a byte rate against a guessed
-  # ceiling.
+  # so an interval advancing it by {{ metrics_interval * 1000 }} is a device that
+  # was busy throughout. Read saturation off that, not off a byte rate against a
+  # guessed ceiling.
+  #
+  # AND IT CANNOT RESOLVE A STALL SHORTER THAN ONE INTERVAL. A device that blocks
+  # for 1 s once per interval contributes 1000 to io_time in every sample and looks
+  # like steady light load; the 20261015 campod-sw write stalls were invisible here
+  # and visible only in the accel stream's own per-batch gap_ns at ~1300 Hz. For a
+  # sub-interval event, the higher-rate witness is the instrument.
   Disk "/^mmcblk[0-9]+$/"
   Disk "/^nvme[0-9]+n[0-9]+$/"
   IgnoreSelected false
