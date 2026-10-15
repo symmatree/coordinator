@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Pack the playbooks into one tarball, so whatever runs them fetches a published output
+# instead of carrying a copy (#513).
+#
+#   packaging/build-ansible <output-dir>
+#
+# `host/ansible` goes in whole. Nothing selects within it: a guard that covers a file only
+# because somebody remembered to list it is one new playbook away from covering nothing.
+#
+# WHY THIS EXISTS. Today fleet-control's Dockerfile does `COPY host/ansible /app/ansible`
+# and `.github/components.json` lists `host/ansible/**` in its rebuild paths, so a
+# playbook-only merge rebuilds the service image and rolls the pod -- killing any converge
+# in flight. Observed twice in one week, on #505 and #510. #504 is what consumes this and
+# takes that coupling out; this is only the artifact.
+set -euo pipefail
+
+out_dir=${1:?usage: packaging/build-ansible <output-dir>}
+repo=$(cd "$(dirname "$0")/.." && pwd)
+
+# Set by the workflow from github.sha / github.ref / the repo URL. Falls back to git for a
+# hand run. Same names as build-device-sw so the two scripts are driven alike.
+version=${PAYLOAD_COMMIT:-$(git -C "$repo" rev-parse HEAD)}
+# Fully qualified -- refs/heads/main, not main. github.ref already is; see
+# docs/build-and-provenance.md for why the abbreviated spelling cannot be used.
+ref=${PAYLOAD_REF:-$(git -C "$repo" rev-parse --symbolic-full-name HEAD)}
+source=${PAYLOAD_SOURCE:-$(git -C "$repo" config --get remote.origin.url)}
+
+mkdir -p "$out_dir"
+out_dir=$(cd "$out_dir" && pwd)
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+root=$stage/ansible
+
+# The playbooks, their roles and their vars. Deliberately NOT the tests that sit beside
+# them: test_syntax.py and test_notifies.py are run by test.sh in the notebook image and
+# are not something a converge executes. Excluding them also keeps a __pycache__ left by a
+# local test run out of the archive, which would otherwise break byte-for-byte
+# reproducibility for the same commit.
+mkdir -p "$root"
+tar -C "$repo/host/ansible" \
+	--exclude='test_*.py' --exclude='__pycache__' --exclude='*.pyc' \
+	-cf - . | tar -C "$root" -xf -
+
+# WHAT THIS FILE IS FOR, since it is the whole reason the artifact is versioned rather
+# than just packed. Baking the playbooks into fleet-control's image CLAMPS two revisions
+# together: one fact identifies both, so "which playbook ran" is a single lookup against
+# `GET /build`. The same shape as /status reporting device_sw and checkout_pi as one
+# revision because the checkout IS the git revision.
+#
+# This artifact unclamps them deliberately. Once the playbooks arrive separately, only
+# whatever unpacked them knows which version it got -- so the archive has to say, and the
+# run has to record what it unpacked rather than what was available.
+#
+# coord-version's vocabulary, not a second one: fleet-control's manifest.ts already parses
+# this format, so a run reports the playbook revision with the existing parser. A new
+# convention would mean a second parser in the one place that aggregates versions.
+cat >"$root/VERSION" <<VER
+ORG_OPENCONTAINERS_IMAGE_SOURCE="$source"
+ORG_OPENCONTAINERS_IMAGE_REVISION="$version"
+FLEET_SOURCE_REF="$ref"
+VER
+
+tarball=$out_dir/ansible-$version.tar.gz
+# Fixed ownership and mtime so the same commit packs to the same bytes.
+tar -C "$stage" --numeric-owner --owner=0 --group=0 --sort=name \
+	--mtime="@$(git -C "$repo" show -s --format=%ct "$version" 2>/dev/null || echo 0)" \
+	-czf "$tarball" ansible
+echo "$tarball"
