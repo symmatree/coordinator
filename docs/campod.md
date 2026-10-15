@@ -209,3 +209,65 @@ The matching problems identified in the DJI experiments (nearfield parallax, "pa
 - **Intra-pod stereo baseline** (~4-5 inches between cameras in the same pod) produces small, manageable parallax even for nearfield objects, vs meters of baseline between sequential single-camera captures.
 - **Forward-and-back cameras** capture opposite sides of a tree within seconds of passing overhead, vs a lawnmower grid where front and back come from different passes (a full track-width of lateral displacement, minutes apart).
 - **Feature tracks** may not extend across captures taken seconds later (wind moves things), but within each synchronized burst the stitching web should be far more robust than sequential grids.
+
+## Simulated flight on the bench: end-to-end procedure
+
+A full-stack exercise with no vehicle and no FC arm event: the arm file is written by hand so
+the real capture-intent path runs, and the run ends with an actual collect-and-retrieve. The
+point is to exercise the whole chain -- intent -> capture -> session -> package -> transfer --
+rather than any one component, and to find out what breaks when all of it runs at once.
+
+Every step is a fleet-control call except the one marked imperative. Nothing here needs a
+shell on a pod.
+
+### The procedure
+
+1. **Converge the coordinator**, then the campods if they are not already at head.
+   `POST /nodes/<node>/converge`. A converge leaves the stack stopped, so this is not the
+   state anything gets tested in.
+2. **Reboot the coordinator** -- `POST /nodes/coordinator/reboot`. The reboot is what starts
+   the stack; this is also what puts the broker and the bus link back up after the converge
+   stopped collection.
+3. **Reboot both campods.** Same call per node.
+4. **Wait about 2 minutes** for all three to settle: chrony to lock, the camera to negotiate
+   libcamera sync, pod-link to connect and publish.
+5. **Stop the FC talker** -- `POST /nodes/coordinator/stop-capture`. On the coordinator the
+   bus quiesce stops `coordinator-mavlink`, which is the process that owns the arm file. With
+   it stopped, a value written by hand stays written instead of being overwritten at the
+   router's next MAVLink frame.
+6. **Imperative step: arm by hand.** Write `1` to `/var/lib/coordinator/ipc/fc_armed` on the
+   coordinator. That host path is the router's `/tmp/fc_armed` and pod-link's `/ipc/fc_armed`
+   (read-only); the format is one line, `1` or `0`. pod-link's publisher role reads it every
+   2 s and publishes `rekon/capture/intent`, each campod's pod-link writes
+   `/tmp/campod_capture`, and `capture.py` and the accel reader both gate their writes on
+   that file. This is the only step that touches a device directly.
+7. **Let it collect for about 4 minutes.**
+8. **Write `0` to the arm file, then wait 20 seconds** so the intent propagates and the
+   writers close out. Note that the router's disarm-time `sync()` does not happen here,
+   because the router is the process that was stopped in step 5 -- the clean reboot in the
+   next step is what makes the data durable instead.
+9. **Reboot all three.**
+10. **Wait about 2 minutes.**
+11. **`GET /status`.** This reports what every node is running and pays a quiesce per node to
+    do it, so it collects the versions and stops collection everywhere in one call.
+12. **Collect.** `GET /nodes/<node>/sessions` to list, then
+    `POST /nodes/<node>/offload?session=<id>&flight=<name>` per session. One session per call
+    by design: each is minutes of zstd plus a transfer, and a failure should cost that session
+    rather than the whole selection. The session is deleted after a verified transfer unless
+    `keep=true`.
+
+### What each part is expected to show
+
+- The campods should hold a session of roughly four minutes: JPEGs with sidecars, and accel
+  JSONL with batch records. An empty session means the intent path did not reach the pod; a
+  session with accel batches but no frames, or the reverse, isolates which gate failed.
+- The sidecars carry `sync_mode`, `sync_ready` and `sync_timer_us`, so whether libcamera sync
+  actually converged is answered from the bundle rather than from a log pull on a live pod.
+- The FC dataflash logs and the tlog are not expected: the talker was stopped for the whole
+  run, and whether the FC was powered is a separate question. Their absence is not a failure
+  of this procedure.
+
+### Notes from running it
+
+(Append per run: what broke, what the waits actually needed to be, what the bundle did or did
+not contain. This section is the point of writing the procedure down.)

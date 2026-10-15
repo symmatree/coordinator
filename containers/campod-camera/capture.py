@@ -110,20 +110,38 @@ def _apply_exposure_cap(picam2, max_us):
 
 
 def _apply_focus(picam2, focus):
-    """Fix the lens at a given position. Fatal if it cannot.
+    """Fix the lens at a given position, if the module has a lens that moves.
 
-    The CM3 focuses with a voice coil, so AF can hunt mid-flight and the lens is
-    free to move under vibration (docs/campod.md: prefer a locked lens, and
-    do not let AF move right before a shot on a vibrating airframe).
+    Returns the dioptres applied, or the string "mechanically-fixed" for a module with
+    no focus mechanism at all. Still fatal if a MOVABLE lens cannot be pinned.
 
-    Units are NOT the OAK-D's 0-255 lens scale: libcamera LensPosition is in
-    DIOPTRES, the reciprocal of focus distance in metres. 0.0 is infinity, 0.5 is
-    2 m, 2.0 is 0.5 m. Copying OAK_STILL_FOCUS=125 here would ask for 8 mm.
+    A voice-coil module focuses by holding a suspended lens group against springs with
+    open-loop current -- no position feedback -- so AF can hunt mid-flight and the group
+    is free to be displaced by vibration (docs/campod.md: prefer a locked lens, and do
+    not let AF move right before a shot on a vibrating airframe).
 
-    Not caught: every frame of a survey is taken at whatever this sets, so a run
-    whose lens position is unknown is not worth flying.
+    **A module with a fixed lens has neither problem, and must not be treated as a
+    failure.** M12-mount and other fixed-lens boards advertise no `AfMode` and no
+    `LensPosition`, so setting them raises -- which killed capture at startup and
+    presented as a dead camera rather than as an unsupported control. The reason this
+    was fatal is that "a run whose lens position is unknown is not worth flying", and on
+    a fixed lens the position is known permanently and by construction. So the test is
+    whether the control EXISTS, not whether it can be set.
+
+    Units are NOT the OAK-D's 0-255 lens scale: libcamera LensPosition is in DIOPTRES,
+    the reciprocal of focus distance in metres. 0.0 is infinity, 0.5 is 2 m, 2.0 is
+    0.5 m. Copying OAK_STILL_FOCUS=125 here would ask for 8 mm.
     """
     from libcamera import controls  # noqa: PLC0415  (version-dependent)
+
+    if "LensPosition" not in (picam2.camera_controls or {}):
+        print(
+            "capture: no LensPosition control -- this module's lens is mechanically "
+            "fixed, so there is nothing to pin and nothing for vibration to displace. "
+            f"CAMPOD_STILL_FOCUS={focus} is ignored.",
+            flush=True,
+        )
+        return "mechanically-fixed"
 
     dioptres = 0.0 if focus == "infinity" else float(focus)
     picam2.set_controls(
@@ -675,6 +693,11 @@ def main():
                 "exposure_cap_us": exposure_cap,
                 "lens_position": metadata.get("LensPosition"),
                 "af_state": metadata.get("AfState"),
+                # Distinguishes "no voice coil on this module" from "metadata absent":
+                # both leave lens_position null, but only the first means the lens
+                # cannot be displaced by vibration. A fixed-lens frame reads
+                # "mechanically-fixed" here.
+                "focus_commanded": focus_active,
                 # libcamera's own account of the camera-sync state, per frame.
                 #
                 # SyncReady goes true on the first frame server and clients agree they are
