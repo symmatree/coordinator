@@ -269,5 +269,47 @@ shell on a pod.
 
 ### Notes from running it
 
-(Append per run: what broke, what the waits actually needed to be, what the bundle did or did
-not contain. This section is the point of writing the procedure down.)
+Append per run: what broke, what the waits actually needed to be, what the bundle did or did
+not contain. This section is the point of writing the procedure down.
+
+#### 2026-10-15, first run
+
+The procedure itself held: every step worked as written, and the waits were right -- all three
+nodes were back on the bus inside two minutes of the reboots, and capture intent reached both
+pods within 30 s of the arm file being written. What the run found was in the system, not in
+the procedure.
+
+**It is worth running with nothing wrong, because the bundle is the instrument.** Every
+finding below came out of the three bundles after the fact, read off the NAS. Nothing was
+diagnosed by logging into a pod.
+
+- **`campod-sw` (sync server) captured; `campod-se` (client) did not.** sw wrote 302 frames
+  over a 4m41s window, last file two seconds after the disarm. se wrote none: its log says
+  `waiting for sync as client, 700 frames so far, SyncTimer None us`, so it was capturing and
+  discarding the whole time, and no sync packet ever arrived. The `SyncReady` gate behaved
+  exactly as specified -- what it exposed is that the client cannot hear the server.
+- **Cause, measured on both pods:** `ip route get 239.255.255.250` answers `dev wlan0`. The
+  libcamera sync socket binds no interface (`IP_MULTICAST_IF` unset on the server,
+  `imr_interface = INADDR_ANY` on the client), so the kernel resolves the group through the
+  only route that matches it, which is the WiFi default route. Asked with a gadget source
+  address the same kernel answers `dev usb0`, so the gadget path and the coordinator's bridge
+  are not implicated.
+- **Achieved frame rate was ~1.1 fps against a 5 fps pin.** Steady: 60 frames per 60 s across
+  four consecutive samples. Unexplained as of this run.
+- **The coordinator was running two units that had been deleted from the stack definition.**
+  `vio-estimator` and `vio-tracker` started at boot from quadlet files left in
+  `/etc/containers/systemd`, because the stack role copies units and never prunes. They are
+  not in `POD_LINK_COLLECTION_UNITS`, so the quiesce in step 5 did not stop them, and the
+  OAK-D wrote 54 12 MP stills into the coordinator's session during a window that was
+  believed to be quiesced. Removed by hand; the mechanism that leaves them behind is
+  unchanged.
+- **`campod-se` has no working accelerometers.** `DEVID 0x00, expected 0xE5` on both chip
+  selects, so the reader exits 1 and `Restart=no` leaves it down for the boot. Not a software
+  gate, and not new -- se has no `accel-*.jsonl` in any session on the card.
+- **Collect worked end to end** for all three nodes: package, transfer, verify, delete, into
+  one flight directory. 1123 MB, 36 MB and 150 MB freed on device.
+
+Two procedure notes for next time. The arm file has to be written over ssh because no
+fleet-control verb writes it, and that remains the only imperative step. And `GET /status` is
+the right call for step 11 but is not free -- it probes each node and pays a quiesce to do it,
+which is exactly what you want after a run and exactly what you must not do during one.
