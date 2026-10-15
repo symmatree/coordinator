@@ -25,6 +25,36 @@ it, and the cost is page cache rather than CPU -- the docker CLI alone faults in
 ~71 MiB of mapped text on a 417 MiB Zero with no swap, which is why `docker ps`
 measures 2.1-22.0 s with capture running against 136-223 ms without.
 
+### The control plane is not the payload
+
+`<role>-stack.target` is the **collection payload**: on a campod the camera and the
+accel reader, on the coordinator the MAVLink router and the display. `pod-link`, and the
+broker it speaks to on the coordinator, are deliberately **not** `PartOf` it, and are
+started from `multi-user.target` instead.
+
+The reason is that the foothold has to outlive the thing it is asked to stop. Everything
+that stops collection stops it by the target:
+
+| path | what runs |
+|---|---|
+| `coord stop` | `systemctl stop <role>-stack.target` |
+| `deploy.yaml`, before anything else in a converge | the same, over `raw` |
+| `reimage.yaml`, before staging | the same |
+| the bus quiesce (`containers/fleet-control/src/quiesce.ts`) | `StopUnit` on each of `POD_LINK_COLLECTION_UNITS` |
+| `desired/stack: stopped` | `SIGTERM` to every container init but its own |
+
+The last two name what they stop and so can exclude the foothold. The first three name a
+target, so membership is the only thing that can protect it -- and while `pod-link` was a
+member, every converge took the pod off the bus and left it there until somebody rebooted
+it by hand. That is the same failure the fleet-wide `pkill -x dumb-init` had, reached by a
+different mechanism, and it is why the exclusion is structural rather than a list each
+caller has to remember. The invariant is asserted in
+`device-sw/tests/test_quadlet_units.py`.
+
+One consequence worth knowing: a converge pulls the new control-plane image but does not
+restart into it, because nothing stops those units. `pod-link` keeps running the code it
+started with until the next boot.
+
 **This is a bench and maintenance surface, not a flight one.** In flight the lifecycle
 is the power plug: it is pulled before switching to battery -- sometimes repeatedly,
 chasing a radio link or RTCM -- and again at the end. Capture is actuated by the arm
@@ -233,7 +263,7 @@ flight rather than diagnosing after one.
 |---|---|---|
 | `capture` | writing `/tmp/campod_capture`, which `capture.py` reads once per tick | written in the message handler rather than on the tick: arm comes from the operator's controller and the first frame should not wait a status period on top of the publisher's poll. Re-asserted on the tick if a write failed |
 | `service/<unit>` | `StartUnit`/`StopUnit` on systemd over the system bus | the granularity that matters on the coordinator. `<unit>` is the quadlet file's name, and a bare name, `.service` or `.container` all resolve; which units exist is `stacks/<role>/*.container` and [architecture.md](architecture.md), not restated here. systemd owns the stop timeout -- from `TimeoutStopSec` in the unit, next to the measurement that justifies it -- so there is nothing to reimplement and nothing to wait for |
-| `stack: stopped` | `SIGTERM` to every container init but its own | runtime-independent: it signals `dumb-init` by name and needs nothing else reachable. `coord stop` and the ansible quiesce use `systemctl stop` on the stack target, which is synchronous; this is the path for when systemd cannot be reached |
+| `stack: stopped` | `SIGTERM` to every container init but its own | runtime-independent: it signals `dumb-init` by name and needs nothing else reachable. `coord stop` and the ansible quiesce use `systemctl stop` on the stack target, which is synchronous and excludes the control plane by membership (above); this is the path for when systemd cannot be reached |
 | `stack: running` | **nothing** | see below |
 | `radio` | NetworkManager's `WirelessEnabled` over the system bus | the same property `coord radio` sets, persisted by NM across boots. Read every pass whether or not anything asked; a failed *read* is reported as `unknown` rather than as an error, because a device with no bus socket is not a fault |
 

@@ -2,7 +2,10 @@
 # docs/pod-bus.md.
 [Unit]
 Description=campod bus link
-PartOf=campod-stack.target
+# NOT PartOf the stack target, and WantedBy multi-user.target rather than it: the
+# target is the collection payload and this is the foothold that starts and stops
+# it, so a stop of the payload must not take it with it. Why, and the list of paths
+# that stop things: docs/pod-bus.md, "The control plane is not the payload".
 
 [Container]
 Image=ghcr.io/symmatree/coordinator-pod-link:main
@@ -41,4 +44,4 @@ TimeoutStopSec=40
 Restart=no
 
 [Install]
-WantedBy=campod-stack.target
+WantedBy=multi-user.target

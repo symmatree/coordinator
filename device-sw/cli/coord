@@ -3,6 +3,8 @@
 #
 # The stack is podman quadlet units under stacks/<name>/, started and stopped through
 # their systemd target. Design intent: docs/deployment-model.md.
+#
+# What the target covers, and why the bus link is not in it: docs/pod-bus.md.
 set -euo pipefail
 
 # A device carries exactly one stack, so nothing takes a stack argument. COORD_STACK
@@ -55,8 +57,8 @@ usage() {
 Usage: coord <command>
 
   pull              Fetch this stack's images. Does not start or stop anything
-  start             Start the stack
-  stop              Stop the stack. Returns when it is down
+  start             Start the stack's collection units
+  stop              Stop them. Returns when they are down
   restart           Stop then start
   status            systemctl status for the stack's units
   logs              Follow the journal for the stack's units
