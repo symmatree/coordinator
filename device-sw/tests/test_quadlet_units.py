@@ -98,6 +98,14 @@ for stack in sorted((REPO / "stacks").iterdir()):
         # single-frame correction meaningless. Checked here rather than in
         # containers/campod-camera's build-time test, which cannot see stacks/.
         if name == "campod-camera":
+            # Camera sync is a network protocol between pods, so the client has to be
+            # where the gadget link is. In podman's default namespace the multicast
+            # join lands on a veth and usb0 does not exist -- measured as the group
+            # joined on no host interface and SyncTimer None for a whole run.
+            # The generator writes `--network=host`, with the equals -- which is why this
+            # asserts on the generated ExecStart and not on `Network=host` in the source.
+            check(f"{name}: runs in the host network namespace, which sync requires",
+                  "--network=host" in exec_start, exec_start[-200:])
             check(f"{name}: names a sync leader",
                   "Environment=CAMPOD_SYNC_LEADER=" in text
                   and not text.count("Environment=CAMPOD_SYNC_LEADER=\n"))
