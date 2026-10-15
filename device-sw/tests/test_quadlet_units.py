@@ -75,6 +75,18 @@ for stack in sorted((REPO / "stacks").iterdir()):
         # WantedBy brings the stack up at boot; PartOf makes one stop take it down.
         check(f"{name}: WantedBy the stack target", f"WantedBy={target}" in text)
 
+        # Camera sync needs BOTH of these and is silently useless without either: a
+        # leader nobody matches leaves every pod a client with nothing pacing them, and an
+        # unpinned frame duration makes libcamera log an error every frame and its
+        # single-frame correction meaningless. Checked here rather than in
+        # containers/campod-camera's build-time test, which cannot see stacks/.
+        if name == "campod-camera":
+            check(f"{name}: names a sync leader",
+                  "Environment=CAMPOD_SYNC_LEADER=" in text
+                  and not text.count("Environment=CAMPOD_SYNC_LEADER=\n"))
+            check(f"{name}: pins a frame duration, which sync requires",
+                  "Environment=CAMPOD_FRAME_DURATION_US=" in text)
+
         # POD_LINK_COLLECTION_UNITS is what a quiesce stops. pod-link must never be in
         # it: it is the process that carries the instruction, and a device that signals
         # its own foothold leaves the bus until somebody reboots it by hand -- which is
