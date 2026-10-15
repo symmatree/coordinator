@@ -14,9 +14,7 @@
 # THE FLEET KEY COMES FROM THE DRIVER, NOT FROM THE REPO. `fleet_ssh_public_key` is passed at
 # run time by whoever is converging -- fleet-control derives it from the private key it is
 # authenticating with (containers/fleet-control/src/ansible.ts). So what a device trusts is
-# definitionally what reached it, and there is no committed copy to go stale. A literal here
-# previously disagreed with the cluster secret the service loads, which would have written an
-# authorized_keys the service could not use.
+# definitionally what reached it, and there is no committed copy to go stale.
 #
 # ansible.builtin.template rather than ansible.posix.authorized_key with exclusive: this
 # repo uses no module outside ansible.builtin, and the runner that performs converges
