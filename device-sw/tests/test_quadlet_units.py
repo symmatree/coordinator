@@ -67,13 +67,30 @@ for stack in sorted((REPO / "stacks").iterdir()):
     target = f"{stack.name}-stack.target"
     check(f"{stack.name}: ships its stack target", (stack / target).is_file())
 
+    # The control plane is not the payload. These carry the instruction that stops and
+    # starts the collection units, so they are outside the stack target: a stop of the
+    # target must not be able to take them with it. docs/pod-bus.md.
+    control_plane = {"pod-link", "mochi-mqtt"} & declared
+    check(f"{stack.name}: has a control-plane unit outside the target",
+          bool(control_plane), ",".join(sorted(control_plane)))
+
     for name, text in sorted(units.items()):
         exec_start = next((ln for ln in text.splitlines()
                            if ln.startswith("ExecStart=")), "")
         src = (stack / f"{name}.container").read_text()
 
-        # WantedBy brings the stack up at boot; PartOf makes one stop take it down.
-        check(f"{name}: WantedBy the stack target", f"WantedBy={target}" in text)
+        if name in control_plane:
+            # Started at boot by multi-user.target, and no PartOf, so `systemctl stop
+            # <role>-stack.target` -- what `coord stop`, deploy.yaml and reimage.yaml all
+            # run -- leaves it up. Without this the pod leaves the bus on every converge
+            # and only a reboot brings it back. Everything below this branch applies to
+            # these units too: being outside the target is the only difference.
+            check(f"{name}: WantedBy multi-user.target", "WantedBy=multi-user.target" in text)
+            check(f"{name}: NOT PartOf the stack target", f"PartOf={target}" not in text)
+        else:
+            # WantedBy brings the stack up at boot; PartOf makes one stop take it down.
+            check(f"{name}: WantedBy the stack target", f"WantedBy={target}" in text)
+            check(f"{name}: PartOf the stack target", f"PartOf={target}" in text)
 
         # Camera sync needs BOTH of these and is silently useless without either: a
         # leader nobody matches leaves every pod a client with nothing pacing them, and an
@@ -96,11 +113,10 @@ for stack in sorted((REPO / "stacks").iterdir()):
         for ln in text.splitlines():
             ln = ln.strip()
             if ln.startswith("Environment=POD_LINK_COLLECTION_UNITS="):
-                units = {u.strip().split(".")[0]
-                         for u in ln.split("=", 2)[2].split(",") if u.strip()}
+                collected = {u.strip().split(".")[0]
+                             for u in ln.split("=", 2)[2].split(",") if u.strip()}
                 check(f"{name}: a quiesce does not stop pod-link",
-                      "pod-link" not in units, ",".join(sorted(units)))
-        check(f"{name}: PartOf the stack target", f"PartOf={target}" in text)
+                      "pod-link" not in collected, ",".join(sorted(collected)))
 
         # A power-up must need no network: docs/deployment-model.md.
         check(f"{name}: never fetches at start", "--pull never" in exec_start,

@@ -10,6 +10,10 @@
 #
 # Does not reboot and does not start the stack: the quiesce at the top leaves it
 # stopped, and `coord start` or a power cycle is the operator's call.
+#
+# That quiesce stops the COLLECTION units only. pod-link and the broker are outside
+# the stack target, so the device stays on the bus across a converge -- which is what
+# every bus-mediated verb (quiesce, session delete, fc-log) needs to work afterwards.
 
 - name: Rekon config deploy
   hosts: all
@@ -46,6 +50,9 @@
     # rc 5 is systemd for "no such unit", which is the first deploy onto a card that
     # has been provisioned but never deployed: the target is a symlink this play has
     # not made yet. Nothing to stop is success.
+    # Stops the collection units, not the control plane: pod-link is not PartOf this
+    # target (stacks/*/pod-link.container). A converge that took it down left the pod
+    # off the bus until somebody rebooted it by hand.
     - name: Stop data collection for the duration of the deploy
       ansible.builtin.raw: systemctl stop {{ device_role }}-stack.target
       register: coord_stack_quiesced
