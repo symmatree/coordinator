@@ -159,6 +159,33 @@
       method=manual
       address1={{ campod_gadget_addresses[ansible_hostname] }}/{{ campod_gadget_prefix }}
       never-default=true
+      # The camera-sync multicast group, pinned to this link. libcamera's sync
+      # algorithm names no interface -- the server sets no IP_MULTICAST_IF and the
+      # client joins with imr_interface = INADDR_ANY -- so the kernel resolves the
+      # group through the routing table, and this route is what it resolves to.
+      #
+      # MEASURED 2026-10-15, before this line existed: `ip route get
+      # 239.255.255.250` answered `dev wlan0` on both campods, so the server
+      # transmitted its sync into the WiFi and the client joined there. The client
+      # reported `SyncTimer None` for a whole 4m41s run and wrote nothing, having
+      # captured and discarded 700 frames. Asked with a gadget source address the
+      # same kernel answered `dev usb0`, so neither the link nor the coordinator's
+      # bridge was implicated.
+      #
+      # A ROUTE and not a metric. Metrics arbitrate between routes matching the same
+      # destination, and nothing on a campod matches this address except the default
+      # route -- usb0 already holds the better metric (100 against wlan0's 600) and
+      # it cannot help. This is the first and only match, so nothing competes with it
+      # afterwards.
+      #
+      # No next hop, which is what makes it a device route on {{ campod_gadget_iface }}
+      # -- the same reason the address above needs no gateway. A /32 rather than
+      # 224.0.0.0/4 so mDNS and everything else multicast stay where they are.
+      #
+      # The address is libcamera's own default (kDefaultGroup,
+      # src/ipa/rpi/controller/rpi/sync.cpp), which is also the SSDP group. A tuning
+      # file that overrides sync.group has to change this with it.
+      route1=239.255.255.250/32
 
       [ipv6]
       method=disabled
