@@ -56,11 +56,9 @@ coord_repo_version: main
 #
 # THE FLEET KEY IS NOT HERE, DELIBERATELY. It is supplied at run time as
 # `fleet_ssh_public_key` by whoever is driving the play, derived from the private key they
-# are authenticating with -- see roles/ssh-access. A committed copy of it is a third store
-# that can disagree with the other two, and did: the literal that used to sit here came
-# from terraform's output while the cluster secret fleet-control actually loads held a
-# different keypair, so a converge would have written an authorized_keys the service could
-# not then use.
+# are authenticating with -- see roles/ssh-access. A committed copy would be a third store
+# that can disagree with the other two, and this file is written whole: a stale literal here
+# becomes an authorized_keys the driver cannot then use.
 device_authorized_keys:
   - comment: Seth, operator
     key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAbgqMtIZuknRiE3MYAO2mkBzf/5xqLuOYklzQ+E/VOz
