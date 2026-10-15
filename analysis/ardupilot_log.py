@@ -30,6 +30,10 @@ GPS_STATUS = {
 DEFAULT_MESSAGES = frozenset({
     'VIBE', 'GPS', 'ATT', 'BARO', 'BAT', 'ESC', 'CTUN', 'MODE', 'ARM', 'EV',
     'IMU', 'MOTB', 'RCOU', 'MSG', 'ERR', 'XKF1', 'RATE', 'PARM',
+    # GPS quality and the RF environment: fix status and the receiver's own
+    # accuracy estimates, the F9P's interference view, link RSSI, and per-port
+    # byte counters. docs/flight-data-interpretation.md has what each carries.
+    'GPA', 'UBX1', 'UBX2', 'RAD', 'RSSI', 'UART',
 })
 
 
