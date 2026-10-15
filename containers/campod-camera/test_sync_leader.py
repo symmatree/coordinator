@@ -58,6 +58,54 @@ check("a misspelled leader leaves nobody pacing",
 check("the match is exact", f("campod-s", "campod-sw") == "client")
 check("and not a suffix either", f("sw", "campod-sw") == "client")
 
+# ---- the pinned frame duration ------------------------------------------------------
+#
+# The sync algorithm needs min == max. libcamera clamps whatever it is given into the
+# sensor mode's range and publishes the validated pair back, so a value outside that range
+# silently becomes something else -- which is why _pin_frame_duration reads the achievable
+# range and RETURNS what it got rather than what was asked.
+
+
+class _FakeCam:
+    def __init__(self, lo, hi):
+        self.camera_controls = {"FrameDurationLimits": (lo, hi, lo)}
+        self.applied = None
+
+    def set_controls(self, c):
+        self.applied = c
+
+
+class _NoLimitsCam:
+    camera_controls = {}
+
+    def set_controls(self, c):  # pragma: no cover - must not be reached
+        raise AssertionError("set_controls called with no FrameDurationLimits to clamp to")
+
+
+LO, HI = 69669, 220535845  # measured on campod-se at 4608x2592
+
+for label, lo, hi, want, expect in (
+    ("5 fps is inside this mode", LO, HI, 200_000, 200_000),
+    ("faster than the mode allows clamps up", LO, HI, 1_000, LO),
+    ("slower than the mode allows clamps down", LO, 100_000, 200_000, 100_000),
+):
+    cam = _FakeCam(lo, hi)
+    got = cap._pin_frame_duration(cam, want)
+    check(f"{label}", got == expect, f"got {got}, want {expect}")
+    # MIN AND MAX THE SAME VALUE is the whole point; a range here is the bug being fixed.
+    check(f"{label}: set as a single value",
+          cam.applied == {"FrameDurationLimits": (expect, expect)}, str(cam.applied))
+
+# A camera that does not report the range is reported, not guessed at: pinning blind could
+# land outside the mode and be clamped to something nobody chose.
+check("no reported range means no pin, and a warning",
+      cap._pin_frame_duration(_NoLimitsCam(), 200_000) is None)
+
+# The deployed value, so the quadlet and the code cannot drift apart silently.
+quadlet = (HERE.parent.parent / "stacks" / "campod" / "campod-camera.container").read_text()
+check("the quadlet asks for 5 fps",
+      "CAMPOD_FRAME_DURATION_US=200000" in quadlet)
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)

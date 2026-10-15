@@ -42,6 +42,13 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # each pod and a converge passes only device_role, so there is no per-pod env to hold
 # "server". Each pod compares this against its own /etc/hostname. Electing the leader over
 # the bus instead is coordinator#501.
+# Fixed frame duration, which the camera-sync algorithm requires -- without it libcamera
+# logs an error every frame and its single-frame correction has nothing stable to correct
+# against. 5 fps rather than the sensor mode's floor (~14.4 fps measured on campod-se):
+# sync needs the rate FIXED, not fast, and a Zero running its sensor flat out for a 1 Hz
+# stills job is heat for nothing. Clamped to what the mode allows; capture.py logs what it
+# actually achieved.
+Environment=CAMPOD_FRAME_DURATION_US=200000
 Environment=CAMPOD_SYNC_LEADER=campod-sw
 # Capture is paused until something writes this file (#434, docs/pod-bus.md). Empty
 # disables gating and captures continuously.
