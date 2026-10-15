@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""List capture sessions on this device, and package one into a verified bundle (#302).
+"""List, package and delete this device's capture sessions.
 
-Device-side half of post-flight recovery. Two operations, no service and no state:
-`list` says what is here, `package` turns one session into a single file plus a
-manifest that describes it. Who moves the bytes afterwards is a transport question
-and is not here.
+A bundle is this boot's WHOLE record, not just its captures: the session directory,
+`collectd/`, `journal.log`, and `pps.log` from the pps journal namespace -- each
+selected by boot id, each hashed into one manifest. So a bundle answers log questions
+without logging into the device, which is the point of it.
 
-A SESSION IS A BOOT, and CAPTURE IS ASSUMED STOPPED for all three verbs -- both are
-properties of every script in here rather than of this one, so they live in
-bin/README.md. The short of it: a session directory is a kernel boot id, only a
-reboot ends one, and nothing here checks that capture has stopped.
+Design and the rest of the post-flight flow: docs/post-flight-collection.md.
+Why a session is a boot, and why capture is assumed stopped: bin/README.md.
 
-Output is JSON, not the TOML that bin/coord-version emits. That format exists so a
-manifest can be sourced by a shell and read by systemd; this is nested data with
-lists in it, and has no such caller.
+Output is JSON rather than coord-version's TOML: nested data with lists in it, and no
+caller that needs to source it from a shell.
 """
 
 from __future__ import annotations
