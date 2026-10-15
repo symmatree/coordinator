@@ -41,9 +41,16 @@ def check(label, ok, detail=""):
         failures.append(label)
 
 
-def build(out_dir):
+# CI checks out a detached HEAD, and the script refuses to guess a ref there -- so the
+# builds that are not ABOUT the ref stamp one, the same way the workflow does.
+BASELINE_REF = "refs/heads/test-baseline"
+
+
+def build(out_dir, **env):
     out = subprocess.run(
-        [str(BUILD), str(out_dir)], capture_output=True, text=True, cwd=str(REPO)
+        [str(BUILD), str(out_dir)],
+        capture_output=True, text=True, cwd=str(REPO),
+        env=dict(os.environ, PAYLOAD_REF=BASELINE_REF, **env),
     )
     if out.returncode != 0:
         print(out.stdout)
@@ -112,7 +119,7 @@ def main():
         # Fully qualified: refs/heads/main, not main. docs/build-and-provenance.md records
         # why the abbreviated spelling cannot be used.
         ref = found.get("FLEET_SOURCE_REF", "")
-        check("the ref is fully qualified", ref.startswith("refs/"), ref)
+        check("the ref reaches VERSION fully qualified", ref == BASELINE_REF, ref)
         check(
             "the filename names the same revision it carries",
             tarball.name == f"ansible-{revision}.tar.gz",
@@ -136,17 +143,44 @@ def main():
             capture_output=True, text=True, cwd=str(REPO),
             env=dict(os.environ, PAYLOAD_REF="HEAD"),
         )
+
         check(
             "a detached HEAD is refused, not recorded as the ref",
             detached.returncode != 0 and "detached" in detached.stderr,
             f"rc={detached.returncode} stderr={detached.stderr.strip()[:120]}",
         )
 
-        # Overriding the identity is how CI stamps it; a hand run falls back to git.
-        env = dict(os.environ, PAYLOAD_COMMIT="0" * 40, PAYLOAD_REF="refs/heads/probe")
+        # The git fallback, for a hand run. Only reachable on a branch: CI is detached and
+        # the script refuses there, which the previous check is about. Said out loud when
+        # it does not run, because a check that quietly skips is the thing worth avoiding.
+        on_branch = subprocess.run(
+            ["git", "-C", str(REPO), "symbolic-ref", "-q", "HEAD"],
+            capture_output=True, text=True,
+        )
+        if on_branch.returncode == 0:
+            fallback = subprocess.run(
+                [str(BUILD), str(pathlib.Path(tmp) / "e")],
+                capture_output=True, text=True, cwd=str(REPO),
+                env={k: v for k, v in os.environ.items() if k != "PAYLOAD_REF"},
+            )
+            with tarfile.open(pathlib.Path(fallback.stdout.strip())) as tf:
+                got = parse_version(tf.extractfile("ansible/VERSION").read().decode())
+            check(
+                "with no PAYLOAD_REF the git fallback gives a real ref",
+                got.get("FLEET_SOURCE_REF") == on_branch.stdout.strip(),
+                str(got.get("FLEET_SOURCE_REF")),
+            )
+        else:
+            print(
+                "  SKIPPED: the git-ref fallback -- HEAD is detached here, which is the "
+                "case the refusal check above covers"
+            )
+
+        # Overriding the identity is how CI stamps it.
         out = subprocess.run(
             [str(BUILD), str(pathlib.Path(tmp) / "c")],
-            capture_output=True, text=True, cwd=str(REPO), env=env,
+            capture_output=True, text=True, cwd=str(REPO),
+            env=dict(os.environ, PAYLOAD_COMMIT="0" * 40, PAYLOAD_REF="refs/heads/probe"),
         )
         stamped = pathlib.Path(out.stdout.strip())
         with tarfile.open(stamped) as tf:
