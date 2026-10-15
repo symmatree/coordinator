@@ -101,10 +101,10 @@ for label, lo, hi, want, expect in (
 check("no reported range means no pin, and a warning",
       cap._pin_frame_duration(_NoLimitsCam(), 200_000) is None)
 
-# The deployed value, so the quadlet and the code cannot drift apart silently.
-quadlet = (HERE.parent.parent / "stacks" / "campod" / "campod-camera.container").read_text()
-check("the quadlet asks for 5 fps",
-      "CAMPOD_FRAME_DURATION_US=200000" in quadlet)
+# NOT checked here: that the quadlet asks for 5 fps. This file runs at IMAGE BUILD time,
+# where the context is containers/campod-camera only and stacks/ does not exist -- so that
+# assertion lives in device-sw/tests/test_quadlet_units.py, which walks the quadlets from
+# the repo. Same trap caught the same way in coordinator#499.
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

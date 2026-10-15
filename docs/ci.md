@@ -85,6 +85,17 @@ Checks that belong to one component live in its Dockerfile where they can --
 `coordinator-mavlink` runs its router isolation test at image build time, so
 the build failing *is* the test failing.
 
+**A build-time test can only see its own component's directory.** The build context is
+`containers/<component>/`, so `stacks/`, `host/ansible/` and the rest of the repo do not
+exist from inside it. A test that reaches for them fails only in CI, where it is slowest to
+diagnose -- it passes locally because the repo is right there. This has now bitten twice:
+a `pod-link` test reading `stacks/campod/pod-link.container`, and a `campod-camera` test
+reading the same file for a different reason.
+
+So an assertion **about** a component that reads **other** files belongs in the repo suite
+that `tests` runs instead. `device-sw/tests/test_quadlet_units.py` already walks every
+stack's quadlets and is the right home for "this unit sets the variable its code needs".
+
 `fleet-control` is the exception: its TypeScript typecheck and tests need Node
 rather than the image, so it has its own job. That job no longer gates the
 build the way it did when it was a `needs:` predecessor. It does not need to:
