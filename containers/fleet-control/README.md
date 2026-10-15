@@ -60,11 +60,6 @@ about to authenticate with (`ssh-keygen -y`) and passes it as the `fleet_ssh_pub
 var. So what a device is told to trust is definitionally what reached it, and there is no second
 copy to drift.
 
-There was one, and it drifted: a literal in `group_vars` carried terraform's `fleet_ssh_public_key`
-output while the cluster secret this service actually loads held a *different keypair*. A converge
-would have rewritten `authorized_keys` to a key the service does not hold -- locking it out of the
-device at the end of its own successful run.
-
 **The play refuses to write the file if it was not told.** An `assert` ahead of the template, so a
 run that cannot name the driving key costs a re-run instead of a card.
 
