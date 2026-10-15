@@ -17,6 +17,10 @@ Config via environment (all optional):
   CAMPOD_STILL_MAX_EXPOSURE_US
                       cap the shutter (default: 5000; 0 = uncapped AE)
   CAMPOD_STILL_FOCUS     infinity | <dioptres> (default: infinity)
+  CAMPOD_FRAME_DURATION_US  fixed frame duration in microseconds; the camera-sync
+                      algorithm requires a FIXED rate and warns every frame without one.
+                      Clamped to what the sensor mode allows, and the achieved value is
+                      logged (default: 200000, i.e. 5 fps)
   CAMPOD_SYNC_LEADER     hostname of the pod that paces the others; this pod becomes
                       the sync server if it matches its own name and a client if it
                       does not. Empty disables sync entirely (default: empty)
@@ -149,6 +153,48 @@ def _sync_mode_for(leader, node):
     if not leader:
         return "off"
     return "server" if leader == node else "client"
+
+
+def _pin_frame_duration(picam2, want_us):
+    """Fix the frame duration, which the sync algorithm needs and nothing else sets.
+
+    WHY SYNC NEEDS IT. From libcamera's `ipa_base.cpp`, in the block that runs the sync
+    algorithm every frame:
+
+        if (minFrameDuration_ != maxFrameDuration_)
+            LOG(IPARPI, Error) << "Sync algorithm enabled with variable framerate. "
+
+    Measured on campod-se with nothing pinning it: 69669 us to 220535845 us -- 14.4 fps to
+    220 seconds. The algorithm still RUNS in that state (it takes frameDurationOffset and
+    publishes SyncReady regardless), so this is not a refusal; its correction is a
+    single-frame nudge to the duration, which is not meaningful when the duration floats.
+
+    CLAMPED BY THE MODE, so this returns what was actually achieved rather than what was
+    asked. `applyFrameDurations` clamps into [mode_.minFrameDuration, mode_.maxFrameDuration]
+    and publishes the validated pair back as metadata, so a value outside the mode's range
+    is silently something else. Reading the range from the camera and saying what we got
+    beats a magic number nobody can check.
+
+    5 fps by default rather than the mode's floor: sync needs the duration FIXED, not fast,
+    and a Zero 2 W running its sensor flat out for a 1 Hz stills job is heat we do not need.
+    """
+    lo_hi = picam2.camera_controls.get("FrameDurationLimits")
+    if lo_hi is None:
+        print("capture: WARNING camera reports no FrameDurationLimits, so the frame "
+              "duration cannot be pinned and sync will run against a variable rate",
+              flush=True)
+        return None
+    lo, hi = lo_hi[0], lo_hi[1]
+    got = max(lo, min(hi, want_us))
+    try:
+        picam2.set_controls({"FrameDurationLimits": (got, got)})
+    except Exception as exc:  # noqa: BLE001  one control must not stop the camera
+        print(f"capture: WARNING could not pin the frame duration: {exc}", flush=True)
+        return None
+    note = "" if got == want_us else f" (asked {want_us}, mode allows {lo}..{hi})"
+    print(f"capture: frame duration pinned to {got} us "
+          f"= {1e6 / got:.2f} fps{note}", flush=True)
+    return got
 
 
 def _maybe_apply_sync(picam2, mode):
@@ -414,6 +460,7 @@ def main():
     max_exposure_us = _env_int("CAMPOD_STILL_MAX_EXPOSURE_US", 5000)
     focus = (os.getenv("CAMPOD_STILL_FOCUS") or "infinity").strip().lower()
     sync_leader = (os.getenv("CAMPOD_SYNC_LEADER") or "").strip()
+    frame_duration_us = _env_int("CAMPOD_FRAME_DURATION_US", 200_000)
     warmup_frames = _env_int("CAMPOD_WARMUP_FRAMES", 10)
     flag_raw = os.getenv("CAMPOD_CAPTURE_FLAG", "/tmp/campod_capture")
     flag_path = Path(flag_raw) if flag_raw.strip() else None
@@ -445,6 +492,10 @@ def main():
         "capturing": False,
         "frames": 0,
         "last_frame_mono_s": None,
+        # On the bus, where it answers "can this pod's frames be used yet" for the fleet
+        # at a glance. SyncTimer deliberately is NOT here -- it changes every frame and
+        # belongs in the sidecar beside the frame it describes.
+        "sync_ready": None,
     }
 
     def publish():
@@ -487,11 +538,13 @@ def main():
     # control must not prevent the camera coming up at all.
     exposure_cap = _apply_exposure_cap(picam2, max_exposure_us)
     focus_active = _apply_focus(picam2, focus)
+    pinned_us = _pin_frame_duration(picam2, frame_duration_us)
 
     print(
         f"capture: node={node} dir={session_dir} size={size[0]}x{size[1]} "
         f"hz={hz} quality={quality} exposure_cap={exposure_cap or 'none'} "
-        f"focus={focus_active} sync={sync_active or 'off'}",
+        f"focus={focus_active} sync={sync_active or 'off'} "
+        f"frame_duration={pinned_us or 'unpinned'}",
         flush=True,
     )
 
@@ -508,6 +561,11 @@ def main():
     phase = "warmup" if warmup_frames > 0 else "capture"
     capturing = True
     ready_logged = False
+    # Latched, because SyncReady "will continue to signal the value true for the rest of
+    # the session" -- so once seen there is nothing to re-check, and no reason to keep
+    # paying a metadata retrieval per frame.
+    sync_ready_seen = False
+    sync_waits = 0
     state["phase"] = phase
     publish()
     try:
@@ -551,6 +609,42 @@ def main():
                     publish()
                     continue
 
+                # RESPECT SyncReady, which is libcamera's instruction and not our policy:
+                # "While this control value is false, applications (on both client and
+                # server) should continue to wait, and not use the frames."
+                # (control_ids_rpi.yaml). Writing frames before it would produce images
+                # that look like a synchronised set and are not.
+                #
+                # capture_metadata() rather than capture_file(): the state arrives in frame
+                # metadata, and asking for metadata alone costs no encode and no card
+                # write, so waiting is cheap. Once true it stays true for the session, so
+                # this costs one extra retrieval per frame only until it flips.
+                if sync_active and not sync_ready_seen:
+                    md = picam2.capture_metadata()
+                    if md.get("SyncReady"):
+                        sync_ready_seen = True
+                        state["sync_ready"] = True
+                        # SyncTimer at the crossing is the headline number: at this moment
+                        # it "indicates how closely synchronised the client believes it is
+                        # with the server". Logged because it is the one frame where that
+                        # reading exists.
+                        print(f"capture: SYNC READY as {sync_active} after {sync_waits} "
+                              f"waiting frames; SyncTimer at the crossing is "
+                              f"{md.get('SyncTimer')} us", flush=True)
+                        publish()
+                    else:
+                        sync_waits += 1
+                        state["sync_ready"] = False
+                        # Said periodically rather than every frame: a pod that never
+                        # reaches sync must be visible in its own log, not merely absent
+                        # from the capture directory.
+                        if sync_waits == 1 or sync_waits % 50 == 0:
+                            print(f"capture: waiting for sync as {sync_active}, "
+                                  f"{sync_waits} frames so far, SyncTimer "
+                                  f"{md.get('SyncTimer')} us", flush=True)
+                        publish()
+                        continue
+
             if now < next_tick:
                 time.sleep(min(next_tick - now, 0.1))
                 continue
@@ -581,6 +675,20 @@ def main():
                 "exposure_cap_us": exposure_cap,
                 "lens_position": metadata.get("LensPosition"),
                 "af_state": metadata.get("AfState"),
+                # libcamera's own account of the camera-sync state, per frame.
+                #
+                # SyncReady goes true on the first frame server and clients agree they are
+                # synchronised, and stays true for the session. SyncTimer counts
+                # microseconds to that moment and keeps reporting afterwards -- and at the
+                # crossing it "indicates how closely synchronised the client believes it is
+                # with the server" (control_ids_rpi.yaml), which makes it a MEASUREMENT and
+                # not a flag. That is why it is here per frame rather than on the bus.
+                #
+                # Absent rather than false when sync is off: None distinguishes "not using
+                # sync" from "using it and not ready", which a boolean would conflate.
+                "sync_mode": sync_active,
+                "sync_ready": metadata.get("SyncReady"),
+                "sync_timer_us": metadata.get("SyncTimer"),
                 # Rolling-shutter window. Band pitch in rows -> Hz needs the
                 # line time; see containers/campod-camera/README.md.
                 "frame_duration_us": metadata.get("FrameDuration"),
