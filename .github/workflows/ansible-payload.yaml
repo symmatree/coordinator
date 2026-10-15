@@ -1,0 +1,39 @@
+name: ansible-payload
+# Pack the playbooks into one tarball per commit, so whatever runs them fetches a
+# published output instead of carrying a copy (#513). The work is in
+# packaging/build-ansible, which also runs by hand; this is the trigger and the upload.
+#
+# No `paths:` filter: a workflow skipped by path filtering never reports a check, so it
+# could not be required. See docs/ci.md.
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: ansible-payload-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ansible-payload:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build the archive
+        env:
+          PAYLOAD_COMMIT: ${{ github.sha }}
+          PAYLOAD_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          packaging/build-ansible out
+          tar -tvzf out/ansible-*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ansible-${{ github.sha }}
+          path: out/ansible-*.tar.gz
+          if-no-files-found: error
