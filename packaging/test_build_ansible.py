@@ -127,6 +127,21 @@ def main():
             tarball.read_bytes() == again.read_bytes(),
         )
 
+        # A detached HEAD must refuse rather than write FLEET_SOURCE_REF="HEAD". This is
+        # the normal CI state -- actions/checkout detaches -- so the fallback being wrong
+        # there is not a corner case. Simulated with an env override, since detaching the
+        # real checkout inside a test would be worse.
+        detached = subprocess.run(
+            [str(BUILD), str(pathlib.Path(tmp) / "d")],
+            capture_output=True, text=True, cwd=str(REPO),
+            env=dict(os.environ, PAYLOAD_REF="HEAD"),
+        )
+        check(
+            "a detached HEAD is refused, not recorded as the ref",
+            detached.returncode != 0 and "detached" in detached.stderr,
+            f"rc={detached.returncode} stderr={detached.stderr.strip()[:120]}",
+        )
+
         # Overriding the identity is how CI stamps it; a hand run falls back to git.
         env = dict(os.environ, PAYLOAD_COMMIT="0" * 40, PAYLOAD_REF="refs/heads/probe")
         out = subprocess.run(

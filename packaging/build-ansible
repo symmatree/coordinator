@@ -22,7 +22,19 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 version=${PAYLOAD_COMMIT:-$(git -C "$repo" rev-parse HEAD)}
 # Fully qualified -- refs/heads/main, not main. github.ref already is; see
 # docs/build-and-provenance.md for why the abbreviated spelling cannot be used.
+#
+# A DETACHED HEAD HAS NO REF, and this refuses rather than inventing one. `git rev-parse
+# --symbolic-full-name HEAD` answers the literal string `HEAD` there, which would go into
+# VERSION as FLEET_SOURCE_REF="HEAD" -- a field whose entire job is to say where this came
+# from, saying nothing. `actions/checkout` detaches, so this is the normal CI state, not a
+# corner: the workflow passes PAYLOAD_REF and anyone running it from a detached checkout
+# by hand has to as well.
 ref=${PAYLOAD_REF:-$(git -C "$repo" rev-parse --symbolic-full-name HEAD)}
+if [[ $ref == "HEAD" || -z $ref ]]; then
+	echo "build-ansible: HEAD is detached, so there is no ref to record. Pass PAYLOAD_REF" >&2
+	echo "  (fully qualified, e.g. refs/heads/main) -- VERSION must not claim a ref it does not have." >&2
+	exit 2
+fi
 source=${PAYLOAD_SOURCE:-$(git -C "$repo" config --get remote.origin.url)}
 
 mkdir -p "$out_dir"
