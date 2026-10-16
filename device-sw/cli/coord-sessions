@@ -87,6 +87,34 @@ def sidecar_utc(path: Path) -> str | None:
         return None
 
 
+def last_activity_utc(session_dir: Path) -> str | None:
+    """When anything in this boot was last written, as a wall clock the caller can sort on.
+
+    WHY THIS EXISTS, which is picking the right session without a human looking. The
+    directory name is a boot id and carries no clock, and `first_utc`/`last_utc` below come
+    out of SIDECAR CONTENTS -- so a session with no frames reports null for both, and a
+    session whose frames were all written in the seconds before chrony locked reports the
+    image's build epoch. Every ordering built on those two picked the wrong session: a
+    four-minute capture window lost to a 23-second boot, twice, because one had more files
+    and the other had no sidecars at all.
+
+    Taken from mtimes rather than from file contents, and across the boot's collectd tree
+    as well as its captures: collectd writes every few seconds for as long as the box is
+    up, and its DataDir is keyed by the same boot id (roles/metrics). So any boot that
+    outlived the clock lock -- which is seconds, the coordinator is an NTP server on the
+    gadget link -- has a real timestamp here even if it captured nothing at all.
+
+    The honest limit: a boot that died before chrony locked reports a pre-lock stamp, since
+    there is no later clock to have observed it with. That is a boot with nothing in it
+    worth choosing anyway.
+    """
+    stamps = [p.stat().st_mtime for p in session_dir.rglob("*") if p.is_file()]
+    stamps += [p.stat().st_mtime for p in collectd_for(session_dir.name)]
+    if not stamps:
+        return None
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(max(stamps)))
+
+
 def describe(session_dir: Path, node: str, current_boot: str) -> dict:
     """One session. Frame count, bytes and span, because the name carries no clock.
 
@@ -94,6 +122,9 @@ def describe(session_dir: Path, node: str, current_boot: str) -> dict:
     tells a 25-minute flight from a failed-lock power cycle is ~1500 frames against
     tens, the total size, and the span between the first and last sidecar -- and the
     sidecar clock is the device's, with no PPS wired (#11).
+
+    To CHOOSE between sessions mechanically, sort on `last_activity_utc`: see its
+    docstring for why the sidecar-derived stamps cannot carry that weight.
     """
     files = [p for p in session_dir.rglob("*") if p.is_file()]
     sidecars = sorted(p for p in files if p.suffix == ".json" and p.parent == session_dir)
@@ -114,6 +145,9 @@ def describe(session_dir: Path, node: str, current_boot: str) -> dict:
         "manifests": sorted(p.name for p in (session_dir / "manifests").glob("*")),
         "first_utc": first,
         "last_utc": last,
+        # The field to sort on. Unlike the two above it is never null for a session that
+        # exists, and it is a real clock for any boot that outlived chrony's lock.
+        "last_activity_utc": last_activity_utc(session_dir),
     }
 
 
