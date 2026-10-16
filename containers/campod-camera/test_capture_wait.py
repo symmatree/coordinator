@@ -24,10 +24,17 @@ Runs at image build time, so a reintroduced crash loop fails the build.
     python3 test_capture_wait.py
 """
 import importlib.util
+import io
+import json
+import os
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import types
+from contextlib import redirect_stdout
+from pathlib import Path
 
 fake = types.ModuleType("picamera2")
 
@@ -299,6 +306,139 @@ for _phase in (0, 37_000_000, 123_456_789, 199_999_999):
     check(f"grid phase {_phase} ns: one frame per second, no second missed",
           len(_picked) == len(_seconds) and len(_seconds) >= 9,
           f"{len(_picked)} frames over {len(_seconds)} seconds")
+
+# ---- main() actually starts, and keeps one frame per second ------------------------
+# THE TEST THIS FILE SHIPPED WITHOUT. Everything above exercises helpers; nothing ran
+# main(), so #523 shipped a startup line referencing a variable defined below it. It
+# raised UnboundLocalError on the first second of every boot, Restart=no left the camera
+# dead, and both pods captured nothing for a whole cycle while CI was green.
+#
+# Time is INJECTED, not waited on: the fake hands out exposures on a scripted 200 ms grid
+# and the clock conversion is pinned, so the rule's behaviour is deterministic and the
+# test costs milliseconds.
+class _FakeRequest:
+    def __init__(self, md, saved):
+        self._md, self._saved = md, saved
+
+    def get_metadata(self):
+        return self._md
+
+    def save(self, name, path):
+        Path(path).write_bytes(b"\xff\xd8\xff" + bytes(64))
+        self._saved.append(path)
+
+    def release(self):
+        pass
+
+
+class _FakeCam:
+    """Enough of Picamera2 to run main(): configure, start, hand out frames, stop."""
+
+    def __init__(self, exposures):
+        self.exposures, self.i, self.saved, self.controls = exposures, 0, [], {}
+        self.options, self.sensor_resolution = {}, (4608, 2592)
+        self.camera_controls = {"FrameDurationLimits": (69669, 220535845)}
+
+    def create_still_configuration(self, main=None, **kw):
+        return {"main": main or {}}
+
+    def configure(self, cfg):
+        pass
+
+    def start(self):
+        pass
+
+    def set_controls(self, c):
+        self.controls.update(c)
+        if "FrameDurationLimits" in c:
+            self.camera_controls["FrameDurationLimits"] = c["FrameDurationLimits"]
+
+    def capture_request(self):
+        if self.i >= len(self.exposures):
+            capture._stop = True
+            return _FakeRequest({"SensorTimestamp": self.exposures[-1]}, self.saved)
+        ts = self.exposures[self.i]
+        self.i += 1
+        return _FakeRequest({"SensorTimestamp": ts, "ExposureTime": 4995,
+                             "FrameDuration": 199990}, self.saved)
+
+    def capture_metadata(self):
+        return {"SyncReady": True, "SyncTimer": 0}
+
+    def stop(self):
+        pass
+
+    def close(self):
+        pass
+
+
+_td2 = tempfile.mkdtemp(prefix="capture-smoke-")
+# A five-second grid at 200 ms, phase deliberately offset from the second so the rule has
+# to choose rather than accept everything: 25 frames in, 5 kept.
+_BOOT = 1_000_000_000_000
+_exposures = [_BOOT + 37_000_000 + n * 200_000_000 for n in range(25)]
+# Boot and wall coincide, so an exposure's wall time is its boot stamp -- which makes the
+# second boundaries fall where the arithmetic above says they do.
+capture._clock_triple = lambda: {"boot_ns": 0, "mono_ns": 0, "wall_ns": 0}
+_cam = _FakeCam(_exposures)
+# Patched on the MODULE, not on the fake package: capture.py did `from picamera2 import
+# Picamera2` at import time, so it holds its own reference and a package-level swap is
+# invisible to it. Getting this wrong is how the first run of this test "passed" nothing.
+class _FakeFactory:
+    """Stands in for the Picamera2 CLASS: main() both calls the constructor and asks the
+    class itself for global_camera_info(), so a bare lambda is not enough."""
+
+    def __new__(cls, *a, **k):
+        return _cam
+
+    @staticmethod
+    def global_camera_info():
+        return [CAM]
+
+
+capture.Picamera2 = _FakeFactory
+
+_env = {"CAMPOD_CAPTURE_DIR": _td2, "CAMPOD_WARMUP_FRAMES": "0",
+        "CAMPOD_STATUS_FILE": str(Path(_td2) / "status"), "CAMPOD_CAPTURE_FLAG": "",
+        "CAMPOD_SYNC_LEADER": "", "CAMPOD_FRAME_DURATION_US": "200000"}
+_old_env = {k: os.environ.get(k) for k in _env}
+os.environ.update(_env)
+capture._stop = False
+_buf = io.StringIO()
+try:
+    with redirect_stdout(_buf):
+        _rc = capture.main()
+except BaseException as _exc:  # noqa: BLE001
+    _rc = f"raised {_exc!r}"
+finally:
+    for _k, _v in _old_env.items():
+        if _v is None:
+            os.environ.pop(_k, None)
+        else:
+            os.environ[_k] = _v
+_out = _buf.getvalue()
+
+# None is main()'s normal return -- `sys.exit(main())` makes that exit 0. The thing under
+# test is that it does not RAISE, which is what shipped broken.
+check("main() starts and runs without raising", _rc in (0, None), f"rc={_rc}  {_out[-300:]}")
+check("it logs the selection rule it is running", "nearest the boundary" in _out,
+      _out[:200])
+# Five seconds of grid in, one frame per second out. The count is the assertion: the old
+# tick-driven loop would have written whatever its own clock asked for.
+check("one frame kept per second of exposures", len(_cam.saved) == 5,
+      f"{len(_cam.saved)} saved from {len(_exposures)} frames")
+_cards = sorted(Path(_td2).rglob("*.json"))
+_cards = [c for c in _cards if "manifests" not in str(c)]
+if _cards:
+    _sc = json.loads(_cards[0].read_text())
+    check("the sidecar carries the fields analysis joins on",
+          {"exposure_wall_ns", "second_offset_us", "clk", "sensor_timestamp_ns"} <= set(_sc),
+          ",".join(sorted(_sc)))
+    check("every kept frame is within half a grid period of its second",
+          all(abs(json.loads(c.read_text())["second_offset_us"]) <= 100_000 for c in _cards))
+else:
+    check("the sidecar carries the fields analysis joins on", False, "no sidecars written")
+shutil.rmtree(_td2, ignore_errors=True)
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

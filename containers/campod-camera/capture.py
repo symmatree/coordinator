@@ -614,6 +614,16 @@ def main():
     exposure_cap = _apply_exposure_cap(picam2, max_exposure_us)
     focus_active = _apply_focus(picam2, focus)
     pinned_us = _pin_frame_duration(picam2, frame_duration_us)
+    # Half the sensor's frame period: with frames every 200 ms, exactly one lands within
+    # +/-100 ms of each second, so this window selects one and only one. Derived from what
+    # the sensor actually accepted rather than from what was asked for, so an unpinnable
+    # mode cannot silently widen it.
+    #
+    # Here, directly below the pin, because the startup log line reports it: defining it
+    # further down with the rest of the loop state made that line raise UnboundLocalError
+    # and killed capture.py on startup, on both pods, for a whole test cycle.
+    grid_us = pinned_us or frame_duration_us
+    boundary_window_ns = grid_us * 1000 // 2
 
     print(
         f"capture: node={node} dir={session_dir} size={size[0]}x{size[1]} "
@@ -625,12 +635,6 @@ def main():
     )
 
     seq = 0
-    # Half the sensor's frame period: with frames every 200 ms, exactly one lands within
-    # +/-100 ms of each second, so this window selects one and only one. Derived from what
-    # the sensor actually accepted rather than from what was asked for, so an unpinnable
-    # mode cannot silently widen it.
-    grid_us = pinned_us or frame_duration_us
-    boundary_window_ns = grid_us * 1000 // 2
     # The second we have already written a frame for, so a second gets one frame even
     # though several frames fall inside the window when the grid is much faster.
     last_boundary = None
