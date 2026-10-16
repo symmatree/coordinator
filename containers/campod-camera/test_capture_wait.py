@@ -271,6 +271,35 @@ check("wall is an epoch stamp, not a since-boot one",
 _clk2 = capture._clock_triple()
 check("successive samples advance", _clk2["mono_ns"] > _clk["mono_ns"])
 
+# ---- the frame-selection rule ------------------------------------------------------
+# Pure arithmetic, so it is testable with no camera -- which matters because the rule is
+# what makes two pods choose the SAME exposure, and a wrong boundary is invisible in a
+# single pod's data.
+_S = 1_000_000_000
+check("a frame exactly on the second has zero offset",
+      capture._boundary_offset_ns(5 * _S) == (5, 0))
+check("just after the second is a small positive offset",
+      capture._boundary_offset_ns(5 * _S + 1_000_000) == (5, 1_000_000))
+# The case the rule exists for: a frame BEFORE the boundary belongs to that boundary, not
+# to the previous second. "First frame at or after the second" would have binned this with
+# second 4 and chosen an instant 200 ms from the other pod's.
+check("just before the second belongs to that second, with a negative offset",
+      capture._boundary_offset_ns(6 * _S - 1_000_000) == (6, -1_000_000))
+check("the midpoint rounds up, consistently on both pods",
+      capture._boundary_offset_ns(5 * _S + 500_000_000)[0] == 6)
+
+# On a 200 ms grid exactly one frame of five falls within +/-100 ms of a boundary, which is
+# the property that makes "one frame per second" fall out of the rule rather than be
+# enforced by a counter.
+_grid, _window = 200_000_000, 100_000_000
+for _phase in (0, 37_000_000, 123_456_789, 199_999_999):
+    _picked = [n for n in range(50)
+               if abs(capture._boundary_offset_ns(_phase + n * _grid)[1]) <= _window]
+    _seconds = {capture._boundary_offset_ns(_phase + n * _grid)[0] for n in _picked}
+    check(f"grid phase {_phase} ns: one frame per second, no second missed",
+          len(_picked) == len(_seconds) and len(_seconds) >= 9,
+          f"{len(_picked)} frames over {len(_seconds)} seconds")
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)

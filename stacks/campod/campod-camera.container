@@ -41,7 +41,8 @@ Volume=/etc/fleet-image:/etc/fleet-image:ro
 # Shared with pod-link and the accel reader: the capture flag and the status files.
 Volume=/tmp:/tmp
 
-Environment=CAMPOD_CAPTURE_HZ=1.0
+# No capture rate: one frame per second is a consequence of the selection rule, not a
+# setting. capture.py keeps the frame nearest each second from the pinned grid below.
 # 0 = sensor full resolution, 4608x2592.
 Environment=CAMPOD_CAPTURE_WIDTH=0
 Environment=CAMPOD_CAPTURE_HEIGHT=0

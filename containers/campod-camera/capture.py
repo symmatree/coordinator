@@ -10,7 +10,6 @@ share a network and time base (#24). See docs/campod.md.
 Config via environment (all optional):
   CAMPOD_NODE_NAME       node label in filenames/metadata (default: hostname)
   CAMPOD_CAPTURE_DIR     output dir (default: /captures)
-  CAMPOD_CAPTURE_HZ      captures per second (default: 1.0)
   CAMPOD_CAPTURE_WIDTH   frame width  (default: 0 = sensor full resolution)
   CAMPOD_CAPTURE_HEIGHT  frame height (default: 0 = sensor full resolution)
   CAMPOD_JPEG_QUALITY    1-100 (default: 90)
@@ -155,11 +154,15 @@ def _apply_focus(picam2, focus):
 def _clock_triple():
     """One boot/mono/wall sample, the three read back to back, microseconds apart.
 
+    Converts a frame's CLOCK_BOOTTIME exposure stamp into wall time, which is what the
+    selection rule below decides on. The OFFSET is the wanted part, not the sample instant,
+    so reading it after the frame costs nothing in accuracy: chrony slews at microseconds
+    per second, so an offset sampled a second late is still sub-microsecond here.
+
     Recorded ALONGSIDE FrameWallClock rather than instead of it, so the two cross-check:
     FrameWallClock is libcamera's own realtime stamp for the frame, and this is the
-    device's boot->wall conversion at the moment the frame was saved. Either one converts
-    `sensor_timestamp_ns` into a fleet-wide instant; disagreeing is itself a finding, and
-    if the libcamera on the device has no FrameWallClock this is what is left.
+    device's own conversion. Disagreement between them is itself a finding, and if the
+    libcamera on the device has no FrameWallClock this is what is left.
 
     Same three keys as the accel reader's `t:"clk"` records (accel/main.go), because
     analysis should not need two conventions for one quantity.
@@ -169,6 +172,43 @@ def _clock_triple():
         "mono_ns": time.monotonic_ns(),
         "wall_ns": time.time_ns(),
     }
+
+
+def _boundary_offset_ns(wall_exposure_ns, period_ns=1_000_000_000):
+    """Which boundary this exposure belongs to, and how far it is from it.
+
+    Returns (boundary_index, signed_offset_ns), the offset being exposure minus boundary,
+    so it is negative for a frame just before the second and positive just after.
+
+    THE SELECTION RULE, and why it is this one. The sensor runs a fixed 200 ms grid and we
+    keep one frame a second, so something has to choose which of the five. The old code
+    chose by its own monotonic tick, which is phase-independent of the grid: measured over
+    run 3, the gaps between kept exposures were 141 at 800 ms and 129 at 1200 ms with only
+    6 at 1000 ms -- a 1 Hz tick beating against a 200 ms grid. Two pods doing that pick
+    different grid slots however well their sensors are synchronised.
+
+    Nearest-to-the-boundary instead, because both pods compute it from their own wall
+    clocks, and those agree: chrony on each is disciplined off the same PPS edge, measured
+    ~12 us apart. So the rule is a shared function of a shared clock, and both pods select
+    the same exposure.
+
+    Centred on the boundary rather than starting at it. "First frame at or after the
+    second" would put the decision edge exactly where a frame can sit, so two pods whose
+    clocks differ by 12 us would routinely bin the same frame into different seconds and
+    choose instants a full grid period apart. Centring moves the decision edge to half a
+    grid period away from where frames normally land.
+
+    THE RESIDUAL CASE, which this does not fix: if the grid's phase happens to put frames
+    at almost exactly half a period from the boundary -- 100 ms, on a 200 ms grid -- then
+    the edge is again where the frames are, and two pods can split a pair. The margin is
+    100 ms minus the frame's own offset, not a flat 100 ms. `second_offset_us` is in every
+    sidecar so that condition is visible in the data rather than inferred: offsets sitting
+    near +/-100 ms mean the phase is at the risky edge. Steering the grid onto the second
+    removes the case entirely by parking every frame at offset ~0, which is the maximally
+    safe phase; that is deliberately not done here.
+    """
+    boundary = (wall_exposure_ns + period_ns // 2) // period_ns
+    return boundary, wall_exposure_ns - boundary * period_ns
 
 
 def _sync_mode_for(leader, node):
@@ -490,7 +530,6 @@ def _node_name():
 def main():
     node = _node_name()
     out_dir = Path(os.getenv("CAMPOD_CAPTURE_DIR", "/captures"))
-    hz = _env_float("CAMPOD_CAPTURE_HZ", 1.0)
     width = _env_int("CAMPOD_CAPTURE_WIDTH", 0)
     height = _env_int("CAMPOD_CAPTURE_HEIGHT", 0)
     quality = _env_int("CAMPOD_JPEG_QUALITY", 90)
@@ -504,7 +543,6 @@ def main():
     status_raw = os.getenv("CAMPOD_STATUS_FILE", "/tmp/campod_camera_status")
     status_path = Path(status_raw) if status_raw.strip() else None
 
-    interval = 1.0 / hz if hz > 0 else 1.0
 
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
@@ -579,14 +617,24 @@ def main():
 
     print(
         f"capture: node={node} dir={session_dir} size={size[0]}x{size[1]} "
-        f"hz={hz} quality={quality} exposure_cap={exposure_cap or 'none'} "
+        f"one frame per second nearest the boundary (+/-{boundary_window_ns // 1000} us) "
+        f"quality={quality} exposure_cap={exposure_cap or 'none'} "
         f"focus={focus_active} sync={sync_active or 'off'} "
         f"frame_duration={pinned_us or 'unpinned'}",
         flush=True,
     )
 
     seq = 0
-    next_tick = time.monotonic()
+    # Half the sensor's frame period: with frames every 200 ms, exactly one lands within
+    # +/-100 ms of each second, so this window selects one and only one. Derived from what
+    # the sensor actually accepted rather than from what was asked for, so an unpinnable
+    # mode cannot silently widen it.
+    grid_us = pinned_us or frame_duration_us
+    boundary_window_ns = grid_us * 1000 // 2
+    # The second we have already written a frame for, so a second gets one frame even
+    # though several frames fall inside the window when the grid is much faster.
+    last_boundary = None
+    unstamped = 0
     # Warm up, then hold ready. The frames are real and are kept: capturing and
     # writing them is what proves the path end to end and pays the allocations --
     # the camera import is ~16-20 MiB/s of reads for the first minute and a half,
@@ -641,8 +689,8 @@ def main():
                 if not capturing:
                     # Camera stays started; we simply do not retrieve. No file I/O,
                     # no encode, buffers held.
-                    time.sleep(min(interval, 0.5))
-                    next_tick = time.monotonic()
+                    time.sleep(0.5)
+                    last_boundary = None
                     publish()
                     continue
 
@@ -682,50 +730,91 @@ def main():
                         publish()
                         continue
 
-            if now < next_tick:
-                time.sleep(min(next_tick - now, 0.1))
-                continue
-            next_tick += interval
+            # ONE FRAME PER SECOND, CHOSEN BY ITS EXPOSURE, not by this loop's clock.
+            #
+            # capture_request() rather than capture_file(): the frame has to be inspected
+            # before it is kept, and capture_file() encodes whatever is current with no
+            # say in which frame that is. A request holds the image and its metadata
+            # together, so the decision is made on the frame that would be written.
+            #
+            # Released in a finally for a reason specific to this board: the still
+            # configuration has buffer_count=1, so a held request is the camera's only
+            # buffer and leaking one stops capture outright rather than slowing it.
+            request = picam2.capture_request()
+            try:
+                metadata = request.get_metadata()
+                exposure_boot_ns = metadata.get("SensorTimestamp")
+                if exposure_boot_ns is None:
+                    # No timestamp, no basis for choosing. Dropped rather than written,
+                    # because a frame whose instant is unknown cannot be paired with the
+                    # other pod's, which is the only reason this pod captures at all.
+                    unstamped += 1
+                    if unstamped == 1 or unstamped % 50 == 0:
+                        print(f"capture: {unstamped} frames with no SensorTimestamp, "
+                              "dropped -- cannot place them in time", flush=True)
+                    continue
 
-            wall = dt.datetime.now(dt.timezone.utc)
-            stem = f"{node}_{seq:08d}_{wall.strftime('%Y%m%dT%H%M%S_%f')}Z"
-            jpeg_path = session_dir / f"{stem}.jpg"
+                clk = _clock_triple()
+                exposure_wall_ns = exposure_boot_ns + (clk["wall_ns"] - clk["boot_ns"])
+                boundary, offset_ns = _boundary_offset_ns(exposure_wall_ns)
+                if boundary == last_boundary:
+                    continue
+                if abs(offset_ns) > boundary_window_ns:
+                    # Not the nearest frame to any boundary we still owe a frame to. At a
+                    # 200 ms grid this is the common case -- four frames in five.
+                    continue
+                last_boundary = boundary
 
-            metadata = picam2.capture_file(str(jpeg_path), format="jpeg")
-            clk = _clock_triple()
-            sidecar_mono = clk["mono_ns"]
+                wall = dt.datetime.fromtimestamp(exposure_wall_ns / 1e9, dt.timezone.utc)
+                stem = f"{node}_{seq:08d}_{wall.strftime('%Y%m%dT%H%M%S_%f')}Z"
+                jpeg_path = session_dir / f"{stem}.jpg"
+                request.save("main", str(jpeg_path))
+            finally:
+                request.release()
+            # Fresh, and after the save: clk above was sampled before it, and this field
+            # is documented as a post-save reading.
+            sidecar_mono = time.monotonic_ns()
 
             sidecar = {
                 "node": node,
                 "seq": seq,
                 "file": jpeg_path.name,
+                # CHANGED MEANING, and loudly because consumers join on it: these are now
+                # the EXPOSURE instant, converted from SensorTimestamp, where they used to
+                # be whenever the loop got around to stamping the frame -- which was a
+                # median 578 ms after the shutter. `monotonic_ns` below is still a
+                # post-save reading, so the old quantity has not been lost.
                 "wall_clock_utc": wall.isoformat().replace("+00:00", "Z"),
                 "wall_clock_unix": wall.timestamp(),
+                "exposure_wall_ns": exposure_wall_ns,
                 "monotonic_ns": sidecar_mono,
                 # SensorTimestamp is CLOCK_BOOTTIME ns at exposure -- the field
                 # that anchors PPK-style interpolation against ArduPilot pose. Per
                 # control_ids_core.yaml it is "the time when the first row of the image
                 # sensor active array is exposed", i.e. frame START, which is the quantity
-                # camera sync aligns.
-                "sensor_timestamp_ns": metadata.get("SensorTimestamp"),
-                # THE CROSS-POD FIELD. Same instant as SensorTimestamp, but CLOCK_REALTIME:
-                # "Being a wall clock measurement, it can be used to synchronise timing
-                # across different devices" (control_ids_core.yaml). It is also the exact
-                # value the sync algorithm compares -- ipa_base.cpp reads FrameWallClock
-                # into syncParams.wallClock, and sync.cpp aligns on that.
+                # camera sync aligns -- and, now, what this frame was selected on.
+                "sensor_timestamp_ns": exposure_boot_ns,
+                # THE CROSS-POD FIELD, and libcamera's own answer to the question this
+                # pod's selection rule computes by hand. Same instant as SensorTimestamp
+                # but CLOCK_REALTIME: "Being a wall clock measurement, it can be used to
+                # synchronise timing across different devices" (control_ids_core.yaml),
+                # and it is the exact value the sync algorithm compares -- ipa_base.cpp
+                # reads FrameWallClock into syncParams.wallClock and sync.cpp aligns on it.
                 #
-                # Recorded because without it two pods' exposures cannot be compared at
-                # all: SensorTimestamp is CLOCK_BOOTTIME, which is pod-local, and
-                # wall_clock_utc below is stamped BEFORE a capture that takes ~580 ms
-                # (measured median on campod-sw), so it cannot resolve better than that.
-                # With this field the acceptance test for sync is a subtraction between
-                # two pods' matched frames, done off the device.
+                # So it both cross-checks `exposure_wall_ns` above, which is derived from
+                # `clk`, and is the field to prefer when the two disagree.
                 #
                 # Null if the libcamera on the device predates the control, which is worth
                 # seeing in the data rather than papering over with a reconstruction.
                 "frame_wall_clock_ns": metadata.get("FrameWallClock"),
-                # This device's own boot->wall conversion, sampled this frame.
+                # This device's own boot->wall conversion for the line above, and the same
+                # keys the accel reader writes.
                 "clk": clk,
+                # How far this exposure sat from the second it was kept for. The frame-level
+                # evidence that two pods chose the same instant: subtract the pair. Offsets
+                # near +/-100 ms mean the grid's phase is at the edge of the decision
+                # window -- see _boundary_offset_ns.
+                "second_offset_us": round(offset_ns / 1000),
                 "exposure_us": metadata.get("ExposureTime"),
                 "analogue_gain": metadata.get("AnalogueGain"),
                 "digital_gain": metadata.get("DigitalGain"),
