@@ -31,9 +31,15 @@ export interface Session {
   frames: number;
   accel: string[];
   manifests: string[];
-  /** From the first and last sidecar. Null when a session has no frames at all. */
+  /** From the first and last sidecar. Null when a session has no frames at all, and the
+   * image's build epoch when the frames predate chrony's lock -- so neither can be sorted
+   * on. See last_activity_utc. */
   first_utc: string | null;
   last_utc: string | null;
+  /** THE FIELD TO CHOOSE BY: the newest mtime across the boot's captures and its collectd
+   * tree, so it is set for any session that exists and is a real clock for any boot that
+   * outlived chrony's lock. Null only for a session with no files at all. */
+  last_activity_utc: string | null;
 }
 
 /** What `package` reports: where the bundle is and what it should hash to. */

@@ -110,6 +110,48 @@ try:
     check("whose manifest hashes every file in it",
           open_summary["files"] > 0 and len(open_summary["sha256"]) == 64)
 
+    # 2a-bis. CHOOSING between sessions. The two failures this reproduces, both of which
+    #         picked the wrong session off a live pod: a frameless session reports null
+    #         first/last_utc, and a session whose frames predate the clock lock reports
+    #         the fake epoch. last_activity_utc has to beat both.
+    import os as _os
+    _frameless = captures / "campod-se" / "aaaaaaaa-f0f0"
+    (_frameless / "manifests").mkdir(parents=True)
+    (_frameless / "accel-arm.jsonl").write_text('{"t":"b"}\n' * 10)
+    _stale = make_session(captures, "campod-se", "bbbbbbbb-f1f1", 2)
+    # The fake pre-lock epoch the image boots with, which is what made "newest last_utc"
+    # choose a 23-second boot over a four-minute capture window.
+    _fake = 1776109116.0           # 2026-04-13, the image's build clock
+    _real = 1792070708.0           # 2026-10-15, after chrony locked
+    for _f in _stale.rglob("*"):
+        if _f.is_file():
+            _os.utime(_f, (_fake, _fake))
+    for _f in _frameless.rglob("*"):
+        if _f.is_file():
+            _os.utime(_f, (_real, _real))
+
+    _fl = cs.describe(_frameless, "campod-se", "nope")
+    _st = cs.describe(_stale, "campod-se", "nope")
+    check("a frameless session still reports a last_activity_utc",
+          _fl["last_activity_utc"] is not None and _fl["first_utc"] is None,
+          f'activity={_fl["last_activity_utc"]} first={_fl["first_utc"]}')
+    check("the pre-lock session's activity stamp is its fake mtime, not invented",
+          _st["last_activity_utc"].startswith("2026-04-13"), _st["last_activity_utc"])
+    check("sorting on last_activity_utc prefers the real session over the stale one",
+          max((_fl, _st), key=lambda s: s["last_activity_utc"])["session"] == "aaaaaaaa-f0f0")
+    # And it must see collectd, so a boot that captured nothing at all is still datable --
+    # that is the case a capture window with a broken camera produces.
+    _cd = root / "collectd-early" / "aaaaaaaa-f0f0" / "campod-se"
+    _cd.mkdir(parents=True)
+    _later = _real + 600
+    (_cd / "cpu").write_text("t,v\n")
+    _os.utime(_cd / "cpu", (_later, _later))
+    _saved_root, cs.COLLECTD_ROOT = cs.COLLECTD_ROOT, root / "collectd-early"
+    check("collectd's mtime carries the stamp when captures are older",
+          cs.describe(_frameless, "campod-se", "nope")["last_activity_utc"]
+          > _fl["last_activity_utc"])
+    cs.COLLECTD_ROOT = _saved_root
+
     # 2b. the bundle carries this boot's context, selected by boot id rather than by
     #     time. collectd's tree is keyed by boot id (roles/metrics) so it is a
     #     directory to name; the journal is indexed by boot id so the session id is
