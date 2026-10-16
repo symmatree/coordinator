@@ -23,7 +23,7 @@ WORKDIR /app
 # ansible-core and ansible-runner, plus the ssh client ansible shells out to. pipx-less venv
 # because Debian marks the system python externally-managed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3-venv openssh-client curl ca-certificates \
+      python3 python3-venv openssh-client curl ca-certificates unzip \
  && python3 -m venv /opt/ansible \
  && /opt/ansible/bin/pip install --no-cache-dir ansible-core==2.18.6 ansible-runner==2.4.3 \
  && rm -rf /var/lib/apt/lists/*
@@ -62,6 +62,11 @@ RUN printf '%s\n' \
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY containers/fleet-control/ui ./ui
+# The Argo Workflow step's body (#504). In this image because it needs the same ansible and
+# the same ssh client the server has, and because the step is this service's own code -- a
+# change to it rolls this pod, which does NOT disturb a workflow already running, since that
+# runs in a pod of its own. That is the whole point of the move.
+COPY containers/fleet-control/step/run-playbook.sh /usr/local/bin/run-playbook.sh
 COPY containers/fleet-control/package.json ./
 COPY host/ansible /app/ansible
 
