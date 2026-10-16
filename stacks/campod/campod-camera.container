@@ -68,6 +68,26 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # actually achieved.
 Environment=CAMPOD_FRAME_DURATION_US=200000
 Environment=CAMPOD_SYNC_LEADER=campod-sw
+# WHAT THE SYNC ALGORITHM COMPUTES, which is the one thing the data cannot show.
+#
+# Measured on 2026-10-16: both pods report sync_ready true on every frame and their
+# exposures sit 99.6 ms apart -- half a frame period -- drifting independently rather than
+# converging. SyncReady turns out to be a frame COUNTDOWN (`syncReady_` is set when the
+# frame count reaches readyFrame_, sync.cpp), so it never claimed alignment, and the
+# per-frame SyncTimer in the sidecar says how far off we are but not why.
+#
+# At Debug, sync.cpp prints serverFrameTimestamp, clientFrameTimestamp,
+# clientFrameTimestampNearest and the computed `correction` for every packet received, and
+# the server prints what it sends. That distinguishes the three live possibilities:
+# corrections not computed, computed but below minAdjustment (50 us, which 99.6 ms is not),
+# or computed and not taking effect at the sensor.
+#
+# Cheap: the client logs only on a received packet and the server only when it sends, which
+# is once per sync_period -- 30 frames, about 6 s. Not a per-frame firehose.
+#
+# Scoped to RPiSync rather than a global level, so the journal does not fill with pipeline
+# and IPA chatter on a box whose card is the thing being protected.
+Environment=LIBCAMERA_LOG_LEVELS=RPiSync:DEBUG
 # Capture is paused until something writes this file (#434, docs/pod-bus.md). Empty
 # disables gating and captures continuously.
 Environment=CAMPOD_CAPTURE_FLAG=/tmp/campod_capture
