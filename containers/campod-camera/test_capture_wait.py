@@ -251,6 +251,26 @@ with tempfile.TemporaryDirectory() as td:
 
     check("status disabled (None) is a no-op", capture._write_status(None, {"a": 1}) is None)
 
+# The sidecar's clock pair, which is what makes a pod-local exposure comparable to
+# another pod's. Asserted on the KEYS as much as the values: analysis joins on these
+# names, and a rename would silently produce a flight nobody can align.
+_clk = capture._clock_triple()
+check("clock triple carries boot_ns, mono_ns, wall_ns",
+      set(_clk) == {"boot_ns", "mono_ns", "wall_ns"}, ",".join(sorted(_clk)))
+check("all three are nanosecond-scale integers",
+      all(isinstance(v, int) and v > 0 for v in _clk.values()), repr(_clk))
+# Sampled back to back, so boot and mono differ by far less than a frame period. If this
+# ever fails the pair is being taken too far apart to convert a timestamp with.
+check("boot and mono agree to well under a frame period",
+      abs(_clk["boot_ns"] - _clk["mono_ns"]) < 200_000_000,
+      f'boot-mono = {_clk["boot_ns"] - _clk["mono_ns"]} ns')
+# Wall is an epoch time and the other two are since-boot, so wall must be far larger --
+# this catches the transposition that would make every conversion silently wrong.
+check("wall is an epoch stamp, not a since-boot one",
+      _clk["wall_ns"] > _clk["boot_ns"] * 10, repr(_clk))
+_clk2 = capture._clock_triple()
+check("successive samples advance", _clk2["mono_ns"] > _clk["mono_ns"])
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)

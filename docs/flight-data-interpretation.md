@@ -139,6 +139,24 @@ a few values it computes about its own link. That is why it shows things that lo
 logs: same data, different transport and different names, with the GCS-side link counters genuinely
 not observable from the vehicle.
 
+### Aligning two campods' frames
+
+A campod sidecar carries the shutter instant twice, in two clocks, and the choice matters
+because only one of them is comparable between pods:
+
+| field | clock | use |
+|---|---|---|
+| `sensor_timestamp_ns` | `CLOCK_BOOTTIME`, pod-local | "the time when the first row of the image sensor active array is exposed" -- frame START, and the quantity camera sync aligns. Not comparable across pods: boot clocks share no epoch |
+| `frame_wall_clock_ns` | `CLOCK_REALTIME` | the SAME instant as `sensor_timestamp_ns` (libcamera's `FrameWallClock`), and the field libcamera's own sync algorithm compares. "Being a wall clock measurement, it can be used to synchronise timing across different devices" |
+| `clk` = `boot_ns`/`mono_ns`/`wall_ns` | all three, sampled back to back | the device's own boot->wall conversion for that frame. Cross-checks the field above, and stands in if a device's libcamera predates it. Same keys as the accel reader's `t:"clk"` records |
+| `wall_clock_utc`, `monotonic_ns` | post-capture | when the loop stamped and finished the frame, NOT the shutter -- see below. Median 578 ms after exposure on campod-sw |
+
+So the acceptance test for camera sync is a subtraction between two pods' matched
+`frame_wall_clock_ns`, done off the device. Both pods' realtime clocks are chrony-disciplined
+off the same PPS edge, measured at ~12 us apart, so the comparison is meaningful at that
+scale. `SyncTimer` is not that number: on the server it is 0 by definition, and on the client
+it is how early it crossed its predicted ready time.
+
 ### Stills are stamped after they are compressed
 
 `monotonic_ns` and `wall_clock_unix` in a sidecar are taken inside `build_sidecar`, which for a
