@@ -256,6 +256,101 @@ shell on a pod.
     rather than the whole selection. The session is deleted after a verified transfer unless
     `keep=true`.
 
+### Running it: the chain, and what each wait is for
+
+`FC=https://fleet.tiles.symmatree.com`. Everything below is a fleet-control call except the
+two arm-file writes, which have no API verb.
+
+**Getting the code onto the pods.** Only needed when something changed; skip to the cycle
+otherwise.
+
+```sh
+# 1. the image for THIS commit must exist. A green run is not enough on its own:
+#    check the component's own job, because a skipped job counts as success (docs/ci.md).
+gh run list --workflow build-containers.yaml --limit 12 --json headSha,databaseId,conclusion
+gh run view <id> --json jobs --jq '.jobs[] | "\(.conclusion)\t\(.name)"'
+
+# 2. if host/ansible/** or containers/fleet-control/** changed, the service rebuilt too --
+#    wait until it is SERVING this revision. Converging through a pod mid-roll kills the run.
+curl -sS "$FC/build" | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])'
+
+# 3. converge ONE NODE AT A TIME. The API refuses a second: each run is an ansible
+#    interpreter in that pod's memory, so it caps at one playbook in flight.
+curl -sS -X POST "$FC/nodes/campod-se/converge"   # wait for it, then:
+curl -sS -X POST "$FC/nodes/campod-sw/converge"
+
+# 4. reboot. A converge installs and pulls but deliberately starts nothing, so the reboot is
+#    the apply step -- and it is what reactivates an NM profile too, if one changed.
+curl -sS -X POST "$FC/nodes/campod-se/reboot"
+curl -sS -X POST "$FC/nodes/campod-sw/reboot"
+
+# 5. wait for all three to publish on the bus. GET /pods is a subscribe to retained
+#    documents, so polling it costs the devices nothing -- unlike GET /status.
+curl -sS "$FC/pods"
+```
+
+**The cycle.**
+
+```sh
+# 6. stop the FC talker: on the coordinator the bus quiesce stops coordinator-mavlink,
+#    which is the process that owns the arm file. Without this it overwrites the value.
+curl -sS -X POST "$FC/nodes/coordinator/stop-capture"
+
+# 7. arm -- THE ONLY STEP THAT TOUCHES A DEVICE.
+ssh pi@<coordinator> "echo 1 | sudo tee /var/lib/coordinator/ipc/fc_armed"
+
+# 8. wait the window out and TOUCH NOTHING. No ssh, no GET /status, no log tailing: every
+#    command on a 417 MB board evicts the camera's working set, and the thing under test is
+#    timing. See the notes below -- a contaminated run is worse than no run.
+sleep 240
+
+# 9. disarm, then let the writers close out.
+ssh pi@<coordinator> "echo 0 | sudo tee /var/lib/coordinator/ipc/fc_armed"
+sleep 20
+
+# 10. reboot all three, wait for the bus, let them settle a further minute.
+#     The router's disarm-time sync() cannot run here -- it is the process stopped in step 6
+#     -- so this reboot is what makes the data durable.
+
+# 11. GET /status: versions for every node, and it pays a quiesce per node to ask, which is
+#     what stops collection before the offloads. Right after a run, wrong during one.
+curl -sS "$FC/status"
+
+# 12. choose each node's session by last_activity_utc and offload it. NOT by file count and
+#     NOT by first/last_utc -- see below.
+curl -sS "$FC/nodes/<node>/sessions"
+curl -sS -X POST "$FC/nodes/<node>/offload?session=<id>&flight=<name>"
+```
+
+**Then read the bundle off the NAS** (`/mnt/flights` in-cluster, `~/datasets/flights` from a
+workstation), in this order:
+
+1. `manifests/campod-camera` -- `ORG_OPENCONTAINERS_IMAGE_REVISION`. **First, every time.**
+   Analysing a bundle without checking which code wrote it produced two wrong conclusions in
+   one day, in both directions.
+2. `journal.log` -- whether the capturers started, and the tracebacks if they did not.
+3. the sidecars -- `sync_ready`, `second_offset_us`, `frame_wall_clock_ns`, `clk`.
+
+### Refinements from running it
+
+- **Pick the session by `last_activity_utc`.** `frames`/`files` picks the session with the
+  most junk in it, and `first_utc`/`last_utc` come from sidecar contents -- null when a
+  session has no frames, and the image's build epoch when the frames predate chrony's lock.
+  Three cycles were analysed from the wrong session before this field existed.
+- **Read the image revision before anything else.** See above.
+- **A green build run does not mean the component built.** Check the job.
+- **Converges are serial, and the API says so.** Fire two and the second gets a 409 naming
+  the first.
+- **The cycle cannot produce a tlog.** `coordinator-mavlink` writes it and step 6 stops it,
+  so its absence is the procedure working, not a fault. FC dataflash logs likewise.
+- **`sync_ready` does not reach the bus while a pod is disarmed**, because the metadata read
+  sits after the paused-path `continue`. Pod status says nothing about sync until capture is
+  actually running; the sidecars are where that answer lives.
+- **The camera's crash signature is an accel-only session.** The two are separate units, so
+  if the camera dies the accel keeps writing and the session has samples and no images.
+  Sizes alone tell you that before you open anything: on a pod with accelerometers, roughly
+  20 MB per minute of samples and ~1.8 MB per image.
+
 ### What each part is expected to show
 
 - The campods should hold a session of roughly four minutes: JPEGs with sidecars, and accel
