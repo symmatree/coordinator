@@ -22,6 +22,9 @@ import tempfile
 import threading
 import zipfile
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
 HERE = pathlib.Path(__file__).resolve().parent
 SCRIPT = HERE / "run-playbook.sh"
 REVISION = "a" * 40
@@ -111,10 +114,20 @@ def main():
         record = tmp / "ansible-invocation.json"
         stub_ansible(tmp / "bin", record)
 
+        # Written with `cryptography` rather than `ssh-keygen -t`: generating a key makes
+        # ssh-keygen look up the current uid to build the default comment, and CI runs as an
+        # unmapped uid ("No user exists for uid 1001"). Deriving the public half -- which is
+        # what the script under test actually does -- needs no such lookup, so that stays
+        # real ssh-keygen.
         key = tmp / "id_ed25519"
-        subprocess.run(
-            ["ssh-keygen", "-t", "ed25519", "-N", "", "-q", "-f", str(key)], check=True
+        key.write_bytes(
+            ed25519.Ed25519PrivateKey.generate().private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.OpenSSH,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
         )
+        key.chmod(0o600)
         expected_pub = subprocess.run(
             ["ssh-keygen", "-y", "-f", str(key)], capture_output=True, text=True, check=True
         ).stdout.strip()
