@@ -91,21 +91,20 @@ export function buildServer(
    * A fresh card, end to end -- `site.yaml`, provision then deploy, because a bare card needs
    * both. Reboots partway, at the hand-off between them.
    *
-   * `?reflashed=true` clears the recorded host key first. Only here: a reflashed card presents
-   * a changed key, which `accept-new` refuses, and a card that has just been written is the
-   * only thing that needs provisioning anyway.
+   * There used to be a `?reflashed=true` here to clear the recorded host key first, because a
+   * freshly written card presents a changed one. Nothing records host keys any more (ssh.ts),
+   * so there is nothing to clear and no reason to ask.
    */
-  app.post<{ Params: { name: string }; Querystring: { reflashed?: string } }>(
+  app.post<{ Params: { name: string } }>(
     '/nodes/:name/provision',
     async (req, reply) => {
       const node = findNode(cfg.inventory, req.params.name);
       if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-      const reflashed = req.query.reflashed === 'true';
       try {
         const run = runs.start('provision', node.name, (emit, runId) =>
-          converge(node, cfg.action, { runId, kind: 'provision', reflashed }, sinkFor(emit)),
+          converge(node, cfg.action, { runId, kind: 'provision' }, sinkFor(emit)),
         { playbook: true });
-        return reply.code(202).send({ id: run.id, action: run.action, node: run.node, reflashed });
+        return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
       } catch (err) {
         return reply.code(409).send({ error: (err as Error).message });
       }

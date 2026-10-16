@@ -7,7 +7,6 @@ const ctx = (over: Partial<ActionContext> = {}): ActionContext => ({
   inventory: { user: 'pi', nodes: [] },
   privateKeyPath: '/dev/null',
   sshTimeoutSec: 1,
-  knownHostsPath: '/tmp/probe-test-known-hosts',
   ...over,
 });
 

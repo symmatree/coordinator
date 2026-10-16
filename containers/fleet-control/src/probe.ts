@@ -5,9 +5,8 @@
 // scheduling policy (coordinator#326).
 //
 // Shells out to the ssh binary rather than using an SSH library, for the same reason Ansible
-// does: one trust policy. The host-key check, the known_hosts file and the key are the same
-// ones a converge uses, so there is not a second implementation with its own opinions about
-// which hosts are acceptable.
+// does: one set of connection options and one key, shared with a converge (src/ssh.ts), rather
+// than a second implementation with its own opinions about how to reach a device.
 
 import { execFile } from 'node:child_process';
 import { connect } from 'node:net';
@@ -15,6 +14,7 @@ import { promisify } from 'node:util';
 import { quiesce } from './quiesce.js';
 import { hostOf, type FleetNode } from './inventory.js';
 import { parseProbe, type Probe } from './manifest.js';
+import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import type { ActionContext } from './actions.js';
 
 const run = promisify(execFile);
@@ -138,8 +138,7 @@ export async function probeNode(node: FleetNode, ctx: ActionContext): Promise<No
       [
         '-i', ctx.privateKeyPath,
         '-o', 'BatchMode=yes',
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
+        ...SSH_NO_HOST_KEY_ARGS,
         '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
         `${ctx.inventory.user}@${host}`,
         PROBE_COMMAND,

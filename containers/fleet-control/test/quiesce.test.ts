@@ -47,7 +47,6 @@ async function bench(opts: {
     inventory: { user: 'pi', nodes: [] },
     privateKeyPath: '/dev/null',
     sshTimeoutSec: 2,
-    knownHostsPath: '/dev/null',
     bus: { url: `mqtt://127.0.0.1:${port}`, settleMs: 200 },
   } as ActionContext;
   return { ctx, node, reasons, stop: () => new Promise<void>((r) => server.close(() => aedes.close(() => r()))) };
@@ -133,7 +132,6 @@ test('no bus configured is a failure, not a silent skip', async () => {
     inventory: { user: 'pi', nodes: [] },
     privateKeyPath: '/dev/null',
     sshTimeoutSec: 2,
-    knownHostsPath: '/dev/null',
     bus: { url: '', settleMs: 200 },
   } as ActionContext;
   await assert.rejects(() => quiesce('campod-se', ctx, 'probe'), /^Error: campod-se: cannot quiesce, no pod bus configured/);
@@ -144,7 +142,6 @@ test('an unreachable broker fails rather than falling back to ssh', async () => 
     inventory: { user: 'pi', nodes: [] },
     privateKeyPath: '/dev/null',
     sshTimeoutSec: 2,
-    knownHostsPath: '/dev/null',
     // Nothing listens here. Port 1 is reserved and the connect is refused immediately.
     bus: { url: 'mqtt://127.0.0.1:1', settleMs: 200 },
   } as ActionContext;

@@ -20,6 +20,7 @@ import { rename } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { hostOf, type FleetNode } from './inventory.js';
 import { quiesce } from './quiesce.js';
+import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import type { ActionContext } from './actions.js';
 
 const run = promisify(execFile);
@@ -43,8 +44,7 @@ function sshArgs(node: FleetNode, ctx: ActionContext, command: string): string[]
   return [
     '-i', ctx.privateKeyPath,
     '-o', 'BatchMode=yes',
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
+        ...SSH_NO_HOST_KEY_ARGS,
     '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
     `${ctx.inventory.user}@${hostOf(node)}`,
     command,

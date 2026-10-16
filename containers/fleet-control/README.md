@@ -11,7 +11,6 @@ Live at `https://fleet.{cluster}.symmatree.com`; deployment lives in `tiles`.
 ```sh
 curl -sXPOST .../nodes/campod-se/converge                    # config, stacks, images
 curl -sXPOST .../nodes/campod-se/provision                   # a fresh card, end to end
-curl -sXPOST ".../nodes/campod-se/provision?reflashed=true"  # ...that was just written
 ```
 
 | | playbook |
@@ -67,28 +66,25 @@ Worth knowing if you ever drive the play by hand: a public key contains a space,
 `-e key=value` form stops at the first one -- it silently yields the string `ssh-ed25519`. Pass it
 as JSON. This service writes `env/extravars` as JSON and is unaffected.
 
-### Reflashed cards
+### Host keys are not checked
 
-`POST /nodes/<name>/provision?reflashed=true` clears the recorded SSH host key first.
+`StrictHostKeyChecking=no`, with both `known_hosts` files at `/dev/null`, for ssh and for
+Ansible alike (`src/ssh.ts`).
 
-A reflashed card presents a **new key for the same address**, which is a *changed* key rather
-than an unknown one — `StrictHostKeyChecking=accept-new` accepts unknown hosts and still
-refuses changed ones, and Ansible surfaces the refusal as a bare `UNREACHABLE` with the ssh
-error buried.
+These are physical devices on a private network that get **reflashed routinely**, and a
+reflashed card presents a new key for the same address — a *changed* key, which no amount of
+`accept-new` accepts. So checking produced exactly one outcome in practice: a bare
+`UNREACHABLE` from a card that had just been written.
 
-**Clearing it is a caller decision when only the caller knows.** Here, nothing on the device
-says the card was swapped -- the operator does, out of band, by passing `reflashed=true`. So
-it lives in this service.
+What grew around that was a whole mechanism to avoid the refusal: a module to forget a
+recorded key, a `?reflashed=true` query parameter and a second button to trigger it, a
+`reimage_known_hosts` variable so the reimage play could do the same from the other end, and a
+volume to keep the record on. All of it existed to stop ssh refusing to connect.
 
-That is a rule about *who knows*, not a rule that playbooks never touch `known_hosts`:
-`host/ansible/reimage.yaml` clears the key itself, because the play replaced the rootfs and so
-is recording the consequence of its own action rather than deciding to trust a stranger. It
-takes the `known_hosts` path as a variable and skips the step when it is not given.
-
-Host keys really are checked: `accept-new`, not disabled. Turning the check off while also
-clearing keys on reflash would be theatre — the clear only means anything if the check is real.
-Both ssh and the clear are pointed at one explicit `known_hosts` file rather than the account
-default, which in a container is neither predictable nor persistent.
+**Recording keys only to clear them on the one occasion they would ever differ is a check with
+no failure mode left.** The threat it would have caught is someone impersonating a campod to
+feed us camera frames and accelerometer samples, which is not on this fleet's radar. Removed
+rather than kept as a costume.
 
 ## Stop and reboot
 
@@ -325,7 +321,7 @@ ended and how long ago:
 ```
 [fleet-control] converge failed in 3s -- started 2026-10-13 12:10:53Z, 10m03s ago
 12:10:55  TASK Stop data collection for the duration of the deploy
-12:10:56  UNREACHABLE: 10.0.2.49 -- host key verification failed
+12:10:56  UNREACHABLE: 10.0.2.49 -- Failed to connect to the host via ssh
 ```
 
 The stamp was always on the wire -- `/runs/:id` returns a `t` per line and the event stream sends
@@ -441,7 +437,6 @@ The UI is one client of the routes; it has no private endpoints.
 
 ```sh
 curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/converge"
-curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/provision?reflashed=true"
 curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 ```
 
@@ -454,7 +449,7 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /pods` | what the devices say they are doing, off the bus. Costs them nothing |
 | `POST /nodes/:name/stack?desired=` | `running` or `stopped`, published retained to the bus |
 | `POST /nodes/:name/converge` | config, stacks and images -> `202 {id}` |
-| `POST /nodes/:name/provision[?reflashed=true]` | a fresh card, end to end -> `202 {id}` |
+| `POST /nodes/:name/provision` | a fresh card, end to end -> `202 {id}` |
 | `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
 | `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first, and abandons this node's in-flight runs |
 | `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |
@@ -495,7 +490,6 @@ either way, so a pod roll still kills it, and a roll is how every release arrive
 | `FLEET_INVENTORY` | *(required)* | path to the roster |
 | `FLEET_SSH_KEY` | `/secrets/ssh/id` | private key |
 | `FLEET_SSH_TIMEOUT_SEC` | `90` | Ansible's connect timeout, raised from its 10s default |
-| `FLEET_KNOWN_HOSTS` | `/state/known_hosts` | recorded host keys, shared by ssh and the clear-on-reflash path. On the `/state` volume so they survive a pod restart |
 | `FLEET_PLAYBOOK_DIR` | `/app/ansible` | where the image keeps `host/ansible/**` |
 | `FLEET_IMAGE_REPO` | `symmatree/dotfiles-symm` | where disk images are built |
 | `FLEET_IMAGE_WORKFLOW` | `build-pi-image.yaml` | the workflow that builds them |

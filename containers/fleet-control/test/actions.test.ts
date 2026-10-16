@@ -10,7 +10,6 @@ const ctx: ActionContext = {
   privateKeyPath: '/dev/null',
   // Short: the point is the ordering, not how patient ssh is.
   sshTimeoutSec: 2,
-  knownHostsPath: '/dev/null',
   // No broker. Reboot must not care; stop must say so rather than reach for ssh.
   bus: { url: '', settleMs: 10 },
 };

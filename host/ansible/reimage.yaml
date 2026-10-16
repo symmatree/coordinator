@@ -40,9 +40,6 @@
     # p1's ~1386 MiB usable.
     reimage_tmp_dir: /var/tmp
 
-    # known_hosts the driver connects with. Empty skips the clearing task.
-    reimage_known_hosts: ""
-
   pre_tasks:
     - name: Refuse check mode
       ansible.builtin.fail:
@@ -129,18 +126,6 @@
         checksum: "sha256:{{ reimage_image_sha256 }}"
         mode: "0644"
         timeout: 60
-
-    # Host keys are vendor default and regenerate on first boot, so the device
-    # comes back with a new key for the same address. Cleared here because this
-    # play caused it.
-    - name: Forget the outgoing host key
-      ansible.builtin.known_hosts:
-        path: "{{ reimage_known_hosts }}"
-        name: "{{ inventory_hostname }}"
-        state: absent
-      delegate_to: localhost
-      become: false
-      when: reimage_known_hosts | length > 0
 
     # tryboot is one-shot: if the flasher does not run, the next power cycle comes
     # back to the current system rather than looping.

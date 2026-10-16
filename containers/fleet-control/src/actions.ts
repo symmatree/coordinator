@@ -18,7 +18,7 @@
 import { hostOf, type FleetNode, type Inventory } from './inventory.js';
 import type { BusConfig } from './bus.js';
 import { converge as runPlaybook, type EventSink } from './ansible.js';
-import { forgetHostKey } from './knownhosts.js';
+import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import { stopCapture } from './sessions.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -31,7 +31,6 @@ export interface ActionContext {
   inventory: Inventory;
   privateKeyPath: string;
   sshTimeoutSec: number;
-  knownHostsPath: string;
   /**
    * The pod bus, because quiescing a device goes over it rather than over ssh.
    *
@@ -45,15 +44,6 @@ function note(sink: EventSink | undefined, msg: string): void {
   sink?.('stdout', `[fleet-control] ${msg}`);
 }
 
-/**
- * Converge a node to the merged state of the repo.
- *
- * `reflashed` clears the recorded SSH host key first. A reflashed card legitimately presents a
- * new key for the same address, which is a *changed* key rather than an unknown one --
- * `accept-new` does not help, and Ansible surfaces the refusal as a bare UNREACHABLE with the
- * ssh error buried. Clearing it is a caller decision, so it stays here and the playbook
- * encodes no trust policy.
- */
 /**
  * Two operations, not one at two sizes.
  *
@@ -75,17 +65,12 @@ const PLAYBOOK: Record<ConvergeKind, string> = {
 export async function converge(
   node: FleetNode,
   ctx: ActionContext,
-  opts: { runId: string; kind: ConvergeKind; reflashed?: boolean },
+  opts: { runId: string; kind: ConvergeKind },
   sink?: EventSink,
 ): Promise<void> {
   const host = hostOf(node);
   const playbook = PLAYBOOK[opts.kind];
   note(sink, `${opts.kind} on ${node.name} (${host}) as ${node.role} -- ${playbook}`);
-
-  if (opts.reflashed) {
-    const forgotten = await forgetHostKey(host, ctx.knownHostsPath);
-    note(sink, forgotten ? `cleared the recorded host key for ${host}` : `no recorded host key for ${host}`);
-  }
 
   const rc = await runPlaybook({
     runId: opts.runId,
@@ -93,7 +78,6 @@ export async function converge(
     user: ctx.inventory.user,
     privateKeyPath: ctx.privateKeyPath,
     sshTimeoutSec: ctx.sshTimeoutSec,
-    knownHostsPath: ctx.knownHostsPath,
     playbook,
     extraVars: { device_role: node.role },
     sink,
@@ -163,8 +147,7 @@ export async function reboot(node: FleetNode, ctx: ActionContext, sink?: EventSi
       [
         '-i', ctx.privateKeyPath,
         '-o', 'BatchMode=yes',
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
+        ...SSH_NO_HOST_KEY_ARGS,
         '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
         `${ctx.inventory.user}@${host}`,
         'sudo systemctl --no-block reboot',
@@ -225,14 +208,10 @@ export async function reimage(
     user: ctx.inventory.user,
     privateKeyPath: ctx.privateKeyPath,
     sshTimeoutSec: ctx.sshTimeoutSec,
-    knownHostsPath: ctx.knownHostsPath,
     extraVars: {
       device_role: node.role,
       reimage_image_url: image.url,
       reimage_image_sha256: image.sha256,
-      // The play clears the recorded host key itself, because reimaging is what changes it --
-      // it is recording the consequence of its own action rather than trusting a stranger.
-      reimage_known_hosts: ctx.knownHostsPath,
     },
     sink,
   });

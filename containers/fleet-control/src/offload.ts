@@ -17,6 +17,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { hostOf, type FleetNode } from './inventory.js';
+import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import type { ActionContext } from './actions.js';
 import { deleteSessions, packageSession, type Bundle } from './sessions.js';
 import { fcLogName, fetchLog } from './fclog.js';
@@ -65,8 +66,7 @@ async function fetchFile(
   const child = spawn('ssh', [
     '-i', ctx.privateKeyPath,
     '-o', 'BatchMode=yes',
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
+        ...SSH_NO_HOST_KEY_ARGS,
     '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
     `${ctx.inventory.user}@${hostOf(node)}`,
     // Quoted: the path comes from the device's own package output, but it is still a string
