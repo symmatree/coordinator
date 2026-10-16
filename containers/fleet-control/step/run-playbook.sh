@@ -21,6 +21,7 @@
 #   PLAYBOOK_REVISION      the commit the artifact must carry
 #   FLEET_GITHUB_TOKEN     credential for that fetch -- listing is public, download is not
 #   FLEET_SSH_KEY          path to the mounted private key
+#   FLEET_SSH_PUBLIC_KEY   its public half, for the play to install in authorized_keys
 #   FLEET_KNOWN_HOSTS      path to the shared recorded host keys
 # Optional:
 #   FLEET_SSH_USER         login account on the device (default pi)
@@ -35,6 +36,7 @@ device_role=${3:?usage: run-playbook.sh <playbook> <host> <device_role>}
 : "${PLAYBOOK_REVISION:?PLAYBOOK_REVISION is required}"
 : "${FLEET_GITHUB_TOKEN:?FLEET_GITHUB_TOKEN is required -- the artifact download needs it}"
 : "${FLEET_SSH_KEY:?FLEET_SSH_KEY is required}"
+: "${FLEET_SSH_PUBLIC_KEY:?FLEET_SSH_PUBLIC_KEY is required}"
 : "${FLEET_KNOWN_HOSTS:?FLEET_KNOWN_HOSTS is required}"
 
 work=$(mktemp -d)
@@ -84,35 +86,25 @@ export ANSIBLE_TIMEOUT=${FLEET_SSH_TIMEOUT_SEC:-90}
 # `--private-key` is deliberately not used: the inventory variable is the supported route and
 # is what the server passed, so the two invocations stay the same one.
 #
-# fleet_ssh_public_key is DERIVED from the key this step authenticates with, not passed in.
-# roles/ssh-access writes authorized_keys whole, so it has to be told every key it should
-# contain -- and deriving it here means what the device is told to trust is definitionally
-# what reached it. A passed-in copy is a second value that can go stale, which is how a
-# terraform literal and the cluster secret came to disagree and lock the service out of a
-# freshly flashed card (#482).
+# fleet_ssh_public_key IS PASSED IN, from the same 1Password item that holds the private
+# half. Terraform generates the keypair and writes both fields (tf/nodes/fleet-ssh-key.tf in
+# tiles), so the declared public key and the mounted private key are two fields of one
+# object, written together by one writer.
 #
-# Derived with `cryptography` rather than `ssh-keygen -y`, which is not a style choice:
-# ssh-keygen calls getpwuid() on the current uid before doing anything and exits 255 with
-# "No user exists for uid N" when there is no passwd entry. A pod given a runAsUser that is
-# not in /etc/passwd is an ordinary thing for a cluster to do. `cryptography` is already
-# here -- ansible-core requires it, and /opt/ansible/bin is first on PATH, so `python3` is
-# the venv's.
+# This used to be derived at run time, on the reasoning that a declared copy was a second
+# store that could drift -- and it had drifted. That diagnosis was wrong. The disagreement
+# came from TWO 1Password items sharing the title `fleet-ssh-key-managed`, written by two
+# terraform workspaces into one vault, so a name lookup was ambiguous. One writer, gated to
+# prod, fixed it at the cause. Deriving at run time was a workaround for a collision, not a
+# better way to know a public key.
 extra=$(
-	python3 - "$device_role" "${FLEET_SSH_USER:-pi}" "$FLEET_SSH_KEY" <<'PY'
+	python3 - "$device_role" "${FLEET_SSH_USER:-pi}" "$FLEET_SSH_KEY" "$FLEET_SSH_PUBLIC_KEY" <<'PY'
 import json, sys
-from cryptography.hazmat.primitives import serialization
-
-role, user, key = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(key, "rb") as fh:
-    private = serialization.load_ssh_private_key(fh.read(), password=None)
-pub = private.public_key().public_bytes(
-    encoding=serialization.Encoding.OpenSSH,
-    format=serialization.PublicFormat.OpenSSH,
-).decode()
+role, user, key, pub = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 print(json.dumps({
     "ansible_user": user,
     "ansible_ssh_private_key_file": key,
-    "fleet_ssh_public_key": pub,
+    "fleet_ssh_public_key": pub.strip(),
     "device_role": role,
 }))
 PY

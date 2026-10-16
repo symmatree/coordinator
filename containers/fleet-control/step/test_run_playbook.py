@@ -125,7 +125,10 @@ def main():
             )
         )
         key.chmod(0o600)
-        expected_pub = (
+        # Declared, not derived -- the value terraform wrote into the same 1Password item
+        # as the private half. Trailing whitespace on purpose: it arrives through a Secret
+        # and a workflow parameter, and a stray newline in authorized_keys is its own bug.
+        declared_pub = (
             serialization.load_ssh_private_key(key.read_bytes(), password=None)
             .public_key()
             .public_bytes(
@@ -144,6 +147,7 @@ def main():
             "PLAYBOOK_REVISION": REVISION,
             "FLEET_GITHUB_TOKEN": "t0ken",
             "FLEET_SSH_KEY": str(key),
+            "FLEET_SSH_PUBLIC_KEY": declared_pub + "\n",
             "FLEET_KNOWN_HOSTS": str(known_hosts),
         }
 
@@ -177,12 +181,13 @@ def main():
             extra.get("ansible_ssh_private_key_file") == str(key) and "--private-key" not in argv,
             str(argv),
         )
-        # The one that locked the service out of a freshly flashed card when it was a
-        # committed literal instead of a derivation.
+        # Passed in, from the same 1Password item that holds the private half. Stripped,
+        # because it arrives through a Secret and a workflow parameter and roles/ssh-access
+        # writes it straight into authorized_keys.
         check(
-            "fleet_ssh_public_key is derived from the key being authenticated with",
-            extra.get("fleet_ssh_public_key") == expected_pub,
-            str(extra.get("fleet_ssh_public_key")),
+            "fleet_ssh_public_key reaches the play, whitespace-stripped",
+            extra.get("fleet_ssh_public_key") == declared_pub,
+            repr(extra.get("fleet_ssh_public_key")),
         )
 
         # Host-key checking has to survive the move out of the server, and it is only real
@@ -216,7 +221,7 @@ def main():
         )
 
         for missing in ("PLAYBOOK_REVISION", "FLEET_GITHUB_TOKEN", "FLEET_SSH_KEY",
-                        "FLEET_KNOWN_HOSTS"):
+                        "FLEET_SSH_PUBLIC_KEY", "FLEET_KNOWN_HOSTS"):
             env_missing = {k: v for k, v in base.items() if k != missing}
             res = run(env_missing, tmp)
             check(
