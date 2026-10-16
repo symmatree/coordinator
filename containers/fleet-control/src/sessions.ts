@@ -13,6 +13,7 @@ import { quiesce } from './quiesce.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { hostOf, type FleetNode } from './inventory.js';
+import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import type { ActionContext } from './actions.js';
 
 const run = promisify(execFile);
@@ -83,8 +84,7 @@ async function coordSessions<T>(
       [
         '-i', ctx.privateKeyPath,
         '-o', 'BatchMode=yes',
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', `UserKnownHostsFile=${ctx.knownHostsPath}`,
+        ...SSH_NO_HOST_KEY_ARGS,
         '-o', `ConnectTimeout=${ctx.sshTimeoutSec}`,
         `${ctx.inventory.user}@${host}`,
         // sudo because the capture tree is written by containers running as root, so

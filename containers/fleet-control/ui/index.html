@@ -136,9 +136,6 @@
     provision:
       'A FRESH CARD, end to end. The first-run path \u2014 on a card that is already ' +
       'provisioned it is a slow way to get a converge.',
-    'provision?reflashed=true':
-      'As Full provision, and clears the recorded SSH host key first \u2014 a card that has ' +
-      'just been written presents a CHANGED key, which the host-key check refuses.',
     stop:
       'Asks the device over the pod bus to stop collecting, and waits until it reports the ' +
       'units are out. Nothing else -- packages, config and images are untouched. Needs ' +
@@ -253,7 +250,6 @@
       btns.append(
         mk('Converge', 'converge', true),
         mk('Full provision', 'provision', false),
-        mk('Full provision (reflashed)', 'provision?reflashed=true', false),
         mk('Stop', 'stop', false),
         mk('Reboot', 'reboot', false),
       );

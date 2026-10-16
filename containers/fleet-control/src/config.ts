@@ -55,9 +55,6 @@ export function loadConfig(): Config {
       // Ansible's own default is 10s, which a Zero under a converge misses; the handshake
       // failures on campod-se are what this number is sized against.
       sshTimeoutSec: Number(env('FLEET_SSH_TIMEOUT_SEC', '90')),
-      // On the /state volume so recorded keys survive a pod restart -- otherwise every
-      // restart is a fresh first contact and the check protects nothing.
-      knownHostsPath: env('FLEET_KNOWN_HOSTS', '/state/known_hosts'),
       // A device is quiesced over the bus, not over ssh, so reaching one needs this.
       bus,
     },
@@ -68,8 +65,8 @@ export function loadConfig(): Config {
       // Listing builds and artifacts is public; only downloading a zip needs this. Absent is
       // a working configuration -- the status screen does not touch it.
       token: process.env.FLEET_GITHUB_TOKEN || undefined,
-      // Large and rebuildable, so it wants its own space rather than sharing /state with
-      // known_hosts. Nothing evicts; it is wiped deliberately.
+      // Large and rebuildable, so it wants its own volume. Nothing evicts; it is wiped
+      // deliberately.
       cacheDir: env('FLEET_IMAGE_CACHE', '/images'),
       // Where a DEVICE can reach this service. It fetches the image itself with get_url, so
       // the in-cluster service name is no use to it.

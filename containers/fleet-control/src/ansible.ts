@@ -14,6 +14,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SSH_NO_HOST_KEY_ARGS_STR } from './ssh.js';
 
 /** Where the image keeps `host/ansible/**`. Only the playbook comes from here; see site.yaml. */
 export const PLAYBOOK_DIR = process.env.FLEET_PLAYBOOK_DIR ?? '/app/ansible';
@@ -52,8 +53,6 @@ export interface ConvergeOptions {
   extraVars: Record<string, string | boolean>;
   /** Ansible's own connect timeout. Its default is 10s, which a loaded Zero misses. */
   sshTimeoutSec?: number;
-  /** The known_hosts ssh should use. Shared with knownhosts.ts so a clear actually clears. */
-  knownHostsPath: string;
   sink?: EventSink;
 }
 
@@ -243,14 +242,10 @@ export async function converge(opts: ConvergeOptions): Promise<number> {
     const child = spawn('ansible-runner', args, {
       env: {
         ...process.env,
-        // Host keys are CHECKED. Turning this off while also clearing known_hosts on a reflash
-        // -- which the caller does -- would be theatre: the clear only means something if the
-        // check is real. `accept-new` records an unknown host and still refuses a CHANGED one,
-        // which is exactly the reflash case the caller handles explicitly.
-        ANSIBLE_HOST_KEY_CHECKING: 'True',
-        ANSIBLE_SSH_ARGS:
-          '-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=accept-new ' +
-          `-o UserKnownHostsFile=${opts.knownHostsPath}`,
+        // Host keys are not checked; see ssh.ts for why there is nothing left for the
+        // check to catch on this fleet.
+        ANSIBLE_HOST_KEY_CHECKING: 'False',
+        ANSIBLE_SSH_ARGS: `-o ControlMaster=auto -o ControlPersist=60s ${SSH_NO_HOST_KEY_ARGS_STR}`,
         ANSIBLE_TIMEOUT: String(opts.sshTimeoutSec ?? 90),
       },
     });
