@@ -14,7 +14,6 @@ import http.server
 import json
 import os
 import pathlib
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -105,8 +104,6 @@ def run(script_env, tmp, args=("site.yaml", "10.0.0.9", "campod")):
 def main():
     if not SCRIPT.exists():
         raise SystemExit(f"missing {SCRIPT}")
-    if shutil.which("ssh-keygen") is None:
-        raise SystemExit("ssh-keygen is required and is not on PATH")
 
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
@@ -128,9 +125,15 @@ def main():
             )
         )
         key.chmod(0o600)
-        expected_pub = subprocess.run(
-            ["ssh-keygen", "-y", "-f", str(key)], capture_output=True, text=True, check=True
-        ).stdout.strip()
+        expected_pub = (
+            serialization.load_ssh_private_key(key.read_bytes(), password=None)
+            .public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.OpenSSH,
+                format=serialization.PublicFormat.OpenSSH,
+            )
+            .decode()
+        )
         known_hosts = tmp / "known_hosts"
         known_hosts.touch()
 
