@@ -90,15 +90,29 @@ export ANSIBLE_TIMEOUT=${FLEET_SSH_TIMEOUT_SEC:-90}
 # what reached it. A passed-in copy is a second value that can go stale, which is how a
 # terraform literal and the cluster secret came to disagree and lock the service out of a
 # freshly flashed card (#482).
+#
+# Derived with `cryptography` rather than `ssh-keygen -y`, which is not a style choice:
+# ssh-keygen calls getpwuid() on the current uid before doing anything and exits 255 with
+# "No user exists for uid N" when there is no passwd entry. A pod given a runAsUser that is
+# not in /etc/passwd is an ordinary thing for a cluster to do. `cryptography` is already
+# here -- ansible-core requires it, and /opt/ansible/bin is first on PATH, so `python3` is
+# the venv's.
 extra=$(
 	python3 - "$device_role" "${FLEET_SSH_USER:-pi}" "$FLEET_SSH_KEY" <<'PY'
-import json, subprocess, sys
+import json, sys
+from cryptography.hazmat.primitives import serialization
+
 role, user, key = sys.argv[1], sys.argv[2], sys.argv[3]
-pub = subprocess.run(["ssh-keygen", "-y", "-f", key], capture_output=True, text=True, check=True)
+with open(key, "rb") as fh:
+    private = serialization.load_ssh_private_key(fh.read(), password=None)
+pub = private.public_key().public_bytes(
+    encoding=serialization.Encoding.OpenSSH,
+    format=serialization.PublicFormat.OpenSSH,
+).decode()
 print(json.dumps({
     "ansible_user": user,
     "ansible_ssh_private_key_file": key,
-    "fleet_ssh_public_key": pub.stdout.strip(),
+    "fleet_ssh_public_key": pub,
     "device_role": role,
 }))
 PY
