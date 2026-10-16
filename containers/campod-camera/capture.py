@@ -152,6 +152,25 @@ def _apply_focus(picam2, focus):
     return dioptres
 
 
+def _clock_triple():
+    """One boot/mono/wall sample, the three read back to back, microseconds apart.
+
+    Recorded ALONGSIDE FrameWallClock rather than instead of it, so the two cross-check:
+    FrameWallClock is libcamera's own realtime stamp for the frame, and this is the
+    device's boot->wall conversion at the moment the frame was saved. Either one converts
+    `sensor_timestamp_ns` into a fleet-wide instant; disagreeing is itself a finding, and
+    if the libcamera on the device has no FrameWallClock this is what is left.
+
+    Same three keys as the accel reader's `t:"clk"` records (accel/main.go), because
+    analysis should not need two conventions for one quantity.
+    """
+    return {
+        "boot_ns": time.clock_gettime_ns(time.CLOCK_BOOTTIME),
+        "mono_ns": time.monotonic_ns(),
+        "wall_ns": time.time_ns(),
+    }
+
+
 def _sync_mode_for(leader, node):
     """server on the leader, client on everyone else, off when no leader is named.
 
@@ -673,7 +692,8 @@ def main():
             jpeg_path = session_dir / f"{stem}.jpg"
 
             metadata = picam2.capture_file(str(jpeg_path), format="jpeg")
-            sidecar_mono = time.monotonic_ns()
+            clk = _clock_triple()
+            sidecar_mono = clk["mono_ns"]
 
             sidecar = {
                 "node": node,
@@ -683,8 +703,29 @@ def main():
                 "wall_clock_unix": wall.timestamp(),
                 "monotonic_ns": sidecar_mono,
                 # SensorTimestamp is CLOCK_BOOTTIME ns at exposure -- the field
-                # that anchors PPK-style interpolation against ArduPilot pose.
+                # that anchors PPK-style interpolation against ArduPilot pose. Per
+                # control_ids_core.yaml it is "the time when the first row of the image
+                # sensor active array is exposed", i.e. frame START, which is the quantity
+                # camera sync aligns.
                 "sensor_timestamp_ns": metadata.get("SensorTimestamp"),
+                # THE CROSS-POD FIELD. Same instant as SensorTimestamp, but CLOCK_REALTIME:
+                # "Being a wall clock measurement, it can be used to synchronise timing
+                # across different devices" (control_ids_core.yaml). It is also the exact
+                # value the sync algorithm compares -- ipa_base.cpp reads FrameWallClock
+                # into syncParams.wallClock, and sync.cpp aligns on that.
+                #
+                # Recorded because without it two pods' exposures cannot be compared at
+                # all: SensorTimestamp is CLOCK_BOOTTIME, which is pod-local, and
+                # wall_clock_utc below is stamped BEFORE a capture that takes ~580 ms
+                # (measured median on campod-sw), so it cannot resolve better than that.
+                # With this field the acceptance test for sync is a subtraction between
+                # two pods' matched frames, done off the device.
+                #
+                # Null if the libcamera on the device predates the control, which is worth
+                # seeing in the data rather than papering over with a reconstruction.
+                "frame_wall_clock_ns": metadata.get("FrameWallClock"),
+                # This device's own boot->wall conversion, sampled this frame.
+                "clk": clk,
                 "exposure_us": metadata.get("ExposureTime"),
                 "analogue_gain": metadata.get("AnalogueGain"),
                 "digital_gain": metadata.get("DigitalGain"),
