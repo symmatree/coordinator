@@ -28,6 +28,7 @@ TESTS=(
 	device-sw/tests/test_quadlet_units.py
 	host/ansible/test_notifies.py
 	packaging/test_build_ansible.py
+	containers/fleet-control/step/test_run_playbook.py
 	host/ansible/test_syntax.py
 	harness/test_input_replayer.py
 	harness/test_router_stack.py

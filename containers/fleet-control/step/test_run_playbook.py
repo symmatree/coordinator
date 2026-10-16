@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""`run-playbook.sh` end to end, with a fake artifact server and a stub ansible.
+
+Runs the real script: a real HTTP server serving a real zip of a real tarball, a real
+ssh-keygen against a real generated key, and a stub `ansible-playbook` that records what it
+was handed. No cluster, no device, no network.
+
+What that buys, and why it is worth the setup: every bug this script can have is in the
+seams -- the shape of the artifact, the version it claims, the extra vars the play receives,
+whether host-key checking survived the move out of the server. Reading the script shows none
+of those. The things NOT covered are named at the bottom.
+"""
+import http.server
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import zipfile
+
+HERE = pathlib.Path(__file__).resolve().parent
+SCRIPT = HERE / "run-playbook.sh"
+REVISION = "a" * 40
+
+failures = []
+
+
+def check(label, ok, detail=""):
+    print(f"  {'ok' if ok else 'FAIL'}: {label}" + (f" -- {detail}" if detail and not ok else ""))
+    if not ok:
+        failures.append(label)
+
+
+def make_artifact(tmp, revision=REVISION, ref="refs/heads/main"):
+    """A zip holding a tarball holding `ansible/`, the way the workflow publishes it."""
+    stage = tmp / "stage" / "ansible"
+    (stage / "roles").mkdir(parents=True)
+    (stage / "site.yaml").write_text("- hosts: all\n  tasks: []\n")
+    (stage / "VERSION").write_text(
+        f'ORG_OPENCONTAINERS_IMAGE_SOURCE="https://example.invalid/r.git"\n'
+        f'ORG_OPENCONTAINERS_IMAGE_REVISION="{revision}"\n'
+        f'FLEET_SOURCE_REF="{ref}"\n'
+    )
+    tarball = tmp / f"ansible-{revision}.tar.gz"
+    with tarfile.open(tarball, "w:gz") as tf:
+        tf.add(stage, arcname="ansible")
+    zip_path = tmp / "artifact.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.write(tarball, arcname=tarball.name)
+    return zip_path
+
+
+def serve(zip_path):
+    """Serve the zip, and record whether the request carried the token."""
+    seen = {}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen["authorization"] = self.headers.get("authorization")
+            body = zip_path.read_bytes()
+            self.send_response(200)
+            self.send_header("content-type", "application/zip")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, seen
+
+
+STUB = """#!/usr/bin/env python3
+import json, os, sys
+KEYS = ("ANSIBLE_HOST_KEY_CHECKING", "ANSIBLE_SSH_ARGS", "ANSIBLE_TIMEOUT")
+with open(RECORD, "w") as fh:
+    json.dump({"argv": sys.argv[1:], "env": {k: os.environ.get(k) for k in KEYS}}, fh)
+"""
+
+
+def stub_ansible(bin_dir, record):
+    """An `ansible-playbook` that writes down its argv and the env that matters."""
+    stub = bin_dir / "ansible-playbook"
+    stub.write_text(STUB.replace("RECORD", repr(str(record))))
+    stub.chmod(0o755)
+
+
+def run(script_env, tmp, args=("site.yaml", "10.0.0.9", "campod")):
+    env = dict(os.environ, **script_env)
+    env["PATH"] = f"{tmp / 'bin'}:{env['PATH']}"
+    return subprocess.run(
+        [str(SCRIPT), *args], capture_output=True, text=True, env=env, cwd=str(tmp)
+    )
+
+
+def main():
+    if not SCRIPT.exists():
+        raise SystemExit(f"missing {SCRIPT}")
+    if shutil.which("ssh-keygen") is None:
+        raise SystemExit("ssh-keygen is required and is not on PATH")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        (tmp / "bin").mkdir()
+        record = tmp / "ansible-invocation.json"
+        stub_ansible(tmp / "bin", record)
+
+        key = tmp / "id_ed25519"
+        subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-N", "", "-q", "-f", str(key)], check=True
+        )
+        expected_pub = subprocess.run(
+            ["ssh-keygen", "-y", "-f", str(key)], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        known_hosts = tmp / "known_hosts"
+        known_hosts.touch()
+
+        srv, seen = serve(make_artifact(tmp))
+        url = f"http://127.0.0.1:{srv.server_address[1]}/artifact.zip"
+        base = {
+            "PLAYBOOK_ARTIFACT_URL": url,
+            "PLAYBOOK_REVISION": REVISION,
+            "FLEET_GITHUB_TOKEN": "t0ken",
+            "FLEET_SSH_KEY": str(key),
+            "FLEET_KNOWN_HOSTS": str(known_hosts),
+        }
+
+        # --- the happy path -------------------------------------------------------------
+        out = run(base, tmp)
+        check("a well-formed artifact runs the play", out.returncode == 0, out.stderr[-300:])
+        check(
+            "the version it actually unpacked is printed, with its ref",
+            f"[step] playbook {REVISION} (refs/heads/main)" in out.stdout,
+            out.stdout[-300:],
+        )
+        check(
+            "the download is authenticated",
+            seen.get("authorization") == "Bearer t0ken",
+            str(seen),
+        )
+
+        got = json.loads(record.read_text())
+        argv, env = got["argv"], got["env"]
+        check("the named playbook is what runs", argv[0] == "site.yaml", str(argv))
+        check(
+            "the host becomes a one-entry inventory",
+            "-i" in argv and argv[argv.index("-i") + 1] == "10.0.0.9,",
+            str(argv),
+        )
+        extra = json.loads(argv[argv.index("-e") + 1])
+        check("device_role reaches the play", extra.get("device_role") == "campod", str(extra))
+        check("the login account reaches the play", extra.get("ansible_user") == "pi")
+        check(
+            "the key is passed as the inventory variable, not --private-key",
+            extra.get("ansible_ssh_private_key_file") == str(key) and "--private-key" not in argv,
+            str(argv),
+        )
+        # The one that locked the service out of a freshly flashed card when it was a
+        # committed literal instead of a derivation.
+        check(
+            "fleet_ssh_public_key is derived from the key being authenticated with",
+            extra.get("fleet_ssh_public_key") == expected_pub,
+            str(extra.get("fleet_ssh_public_key")),
+        )
+
+        # Host-key checking has to survive the move out of the server, and it is only real
+        # if the recorded keys persist -- hence the shared file rather than a fresh one.
+        check("host-key checking is on", env.get("ANSIBLE_HOST_KEY_CHECKING") == "True")
+        check(
+            "the shared known_hosts is used, with accept-new",
+            f"UserKnownHostsFile={known_hosts}" in (env.get("ANSIBLE_SSH_ARGS") or "")
+            and "StrictHostKeyChecking=accept-new" in (env.get("ANSIBLE_SSH_ARGS") or ""),
+            str(env.get("ANSIBLE_SSH_ARGS")),
+        )
+        check("the connect timeout is not ansible's 10s default", env.get("ANSIBLE_TIMEOUT") == "90")
+
+        # --- the refusals ---------------------------------------------------------------
+        record.unlink()
+        srv2, _ = serve(make_artifact(tmp / "other", revision="b" * 40))
+        (tmp / "other").mkdir(exist_ok=True)
+        wrong = run(
+            {**base, "PLAYBOOK_ARTIFACT_URL": f"http://127.0.0.1:{srv2.server_address[1]}/a.zip"},
+            tmp,
+        )
+        check(
+            "an artifact carrying another revision is refused, not run",
+            wrong.returncode != 0 and not record.exists(),
+            f"rc={wrong.returncode} stderr={wrong.stderr.strip()[-200:]}",
+        )
+        check(
+            "and it says both revisions",
+            "b" * 40 in wrong.stderr and REVISION in wrong.stderr,
+            wrong.stderr.strip()[-200:],
+        )
+
+        for missing in ("PLAYBOOK_REVISION", "FLEET_GITHUB_TOKEN", "FLEET_SSH_KEY",
+                        "FLEET_KNOWN_HOSTS"):
+            env_missing = {k: v for k, v in base.items() if k != missing}
+            res = run(env_missing, tmp)
+            check(
+                f"missing {missing} fails before anything runs",
+                res.returncode != 0 and missing in res.stderr,
+                res.stderr.strip()[-160:],
+            )
+
+    # NOT COVERED, so nobody reads more into a pass than is there: that ansible-core in the
+    # step image can actually run these playbooks (host/ansible/test_syntax.py), that the
+    # WorkflowTemplate passes these parameters correctly, and anything about a real device.
+    if failures:
+        print(f"\n{len(failures)} failed: {failures}")
+        return 1
+    print("\nall passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
