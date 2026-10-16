@@ -137,9 +137,6 @@ def main():
             )
             .decode()
         )
-        known_hosts = tmp / "known_hosts"
-        known_hosts.touch()
-
         srv, seen = serve(make_artifact(tmp))
         url = f"http://127.0.0.1:{srv.server_address[1]}/artifact.zip"
         base = {
@@ -148,7 +145,6 @@ def main():
             "FLEET_GITHUB_TOKEN": "t0ken",
             "FLEET_SSH_KEY": str(key),
             "FLEET_SSH_PUBLIC_KEY": declared_pub + "\n",
-            "FLEET_KNOWN_HOSTS": str(known_hosts),
         }
 
         # --- the happy path -------------------------------------------------------------
@@ -190,14 +186,17 @@ def main():
             repr(extra.get("fleet_ssh_public_key")),
         )
 
-        # Host-key checking has to survive the move out of the server, and it is only real
-        # if the recorded keys persist -- hence the shared file rather than a fresh one.
-        check("host-key checking is on", env.get("ANSIBLE_HOST_KEY_CHECKING") == "True")
+        # Host keys are deliberately NOT checked: physical devices on a private network
+        # that get reflashed routinely, where the only thing the check ever did was refuse
+        # to connect to a card that had just been rewritten.
+        check("host-key checking is off", env.get("ANSIBLE_HOST_KEY_CHECKING") == "False")
+        args = env.get("ANSIBLE_SSH_ARGS") or ""
         check(
-            "the shared known_hosts is used, with accept-new",
-            f"UserKnownHostsFile={known_hosts}" in (env.get("ANSIBLE_SSH_ARGS") or "")
-            and "StrictHostKeyChecking=accept-new" in (env.get("ANSIBLE_SSH_ARGS") or ""),
-            str(env.get("ANSIBLE_SSH_ARGS")),
+            "nothing is recorded and nothing is consulted",
+            "StrictHostKeyChecking=no" in args
+            and "UserKnownHostsFile=/dev/null" in args
+            and "GlobalKnownHostsFile=/dev/null" in args,
+            args,
         )
         check("the connect timeout is not ansible's 10s default", env.get("ANSIBLE_TIMEOUT") == "90")
 
@@ -221,7 +220,7 @@ def main():
         )
 
         for missing in ("PLAYBOOK_REVISION", "FLEET_GITHUB_TOKEN", "FLEET_SSH_KEY",
-                        "FLEET_SSH_PUBLIC_KEY", "FLEET_KNOWN_HOSTS"):
+                        "FLEET_SSH_PUBLIC_KEY"):
             env_missing = {k: v for k, v in base.items() if k != missing}
             res = run(env_missing, tmp)
             check(

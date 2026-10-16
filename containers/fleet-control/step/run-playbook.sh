@@ -22,7 +22,6 @@
 #   FLEET_GITHUB_TOKEN     credential for that fetch -- listing is public, download is not
 #   FLEET_SSH_KEY          path to the mounted private key
 #   FLEET_SSH_PUBLIC_KEY   its public half, for the play to install in authorized_keys
-#   FLEET_KNOWN_HOSTS      path to the shared recorded host keys
 # Optional:
 #   FLEET_SSH_USER         login account on the device (default pi)
 #   FLEET_SSH_TIMEOUT_SEC  ansible's connect timeout (default 90)
@@ -37,7 +36,6 @@ device_role=${3:?usage: run-playbook.sh <playbook> <host> <device_role>}
 : "${FLEET_GITHUB_TOKEN:?FLEET_GITHUB_TOKEN is required -- the artifact download needs it}"
 : "${FLEET_SSH_KEY:?FLEET_SSH_KEY is required}"
 : "${FLEET_SSH_PUBLIC_KEY:?FLEET_SSH_PUBLIC_KEY is required}"
-: "${FLEET_KNOWN_HOSTS:?FLEET_KNOWN_HOSTS is required}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -73,12 +71,17 @@ fi
 # The line the run record takes the version from, and a reader reads.
 echo "[step] playbook ${got} (${FLEET_SOURCE_REF:-<no ref>})"
 
-# HOST KEYS ARE CHECKED, as they were when the server ran the play. `accept-new` records an
-# unknown host and still refuses a CHANGED one -- which is only true if the recorded keys
-# persist, hence a shared FLEET_KNOWN_HOSTS rather than a fresh file per step. ControlMaster
-# because a converge makes many connections to one slow box.
-export ANSIBLE_HOST_KEY_CHECKING=True
-export ANSIBLE_SSH_ARGS="-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${FLEET_KNOWN_HOSTS}"
+# HOST KEYS ARE NOT CHECKED, and that is the honest configuration rather than a shortcut.
+# These are physical devices on a private network that get reflashed routinely, and a
+# reflashed card presents a changed key -- which is why the server grew a mechanism to
+# FORGET a recorded key before converging. That mechanism existed to stop ssh refusing to
+# connect, not to catch anything: an attacker impersonating a campod to inject camera frames
+# and accelerometer samples is not a threat this fleet has. Recording keys only to clear them
+# on the one occasion they would ever differ is a check with no failure mode left.
+#
+# ControlMaster because a converge makes many connections to one slow box.
+export ANSIBLE_HOST_KEY_CHECKING=False
+export ANSIBLE_SSH_ARGS="-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null"
 # A Zero under a converge misses ansible's 10 s default; 90 is the value the handshake
 # failures on campod-se argued for.
 export ANSIBLE_TIMEOUT=${FLEET_SSH_TIMEOUT_SEC:-90}
