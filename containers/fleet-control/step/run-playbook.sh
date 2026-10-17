@@ -42,6 +42,18 @@ device_role=${3:?usage: run-playbook.sh <playbook> <host> <device_role>}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
+# WHICH DRIVER RAN, which is a different question from which playbook ran and is answered
+# the same way: report what we got rather than pin what we ask for. The image tag floats on
+# :main, so a step runs whatever was last built -- fine, as long as the run says which that
+# was. /etc/container-image is written by the Dockerfile in the same vocabulary as the
+# playbook's VERSION, so both lines read alike and neither needs a second parser.
+if [[ -r /etc/container-image ]]; then
+	# shellcheck disable=SC1091
+	(. /etc/container-image && echo "[step] driver ${ORG_OPENCONTAINERS_IMAGE_REVISION:-<unknown>} (${FLEET_SOURCE_REF:-<no ref>})")
+else
+	echo "[step] driver <no /etc/container-image>"
+fi
+
 echo "[step] fetching the playbook artifact for ${PLAYBOOK_REVISION}"
 curl -fsSL --retry 3 --retry-delay 2 \
 	-H "authorization: Bearer ${FLEET_GITHUB_TOKEN}" \
