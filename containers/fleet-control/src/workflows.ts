@@ -189,6 +189,16 @@ export function isFinished(phase: string | undefined): boolean {
 }
 
 /**
+ * Whether the controller has acted on it at all.
+ *
+ * An unset phase is the telling one: Argo writes `Pending` when it first reconciles, so a
+ * workflow with no phase has not been looked at, rather than being looked at and queued.
+ */
+function hasStarted(phase: string | undefined): boolean {
+  return phase !== undefined && phase !== 'Pending';
+}
+
+/**
  * Follow a workflow to its end: its step's output into `sink`, then its phase.
  *
  * The log is the step's pod log, which Alloy also ships to Loki -- so this is the live view
@@ -199,9 +209,22 @@ export async function follow(
   cfg: WorkflowConfig,
   name: string,
   sink: (stream: 'stdout' | 'stderr', line: string) => void,
-  opts: { pollMs?: number; retryMs?: number; signal?: AbortSignal } = {},
+  opts: { pollMs?: number; retryMs?: number; startupMs?: number; signal?: AbortSignal } = {},
 ): Promise<WorkflowState> {
   const pollMs = opts.pollMs ?? 5_000;
+  // HOW LONG IT MAY TAKE TO START, which is a different question from how long it may take
+  // to RUN. There is deliberately no activeDeadlineSeconds on the template -- a converge is
+  // twenty minutes of apt, and an earlier version of this service killed one at sixty and
+  // reported a successful play as a failure. But "accepted and never scheduled" had no
+  // bound at all, and a controller that cannot reconcile leaves the object with NO PHASE,
+  // so this polled forever and the caller's run sat `running` with nothing to match on.
+  // That is what happened on 2026-10-17, when the controller could not list
+  // WorkflowTaskResult and therefore processed nothing.
+  //
+  // Generous on purpose: a pod schedules here in seconds, so five minutes means something
+  // is wrong rather than the cluster being busy.
+  const startupMs = opts.startupMs ?? 300_000;
+  const submittedAt = Date.now();
   // The phase decides when this is over, and the log stream is stopped rather than waited
   // for. Waiting on it instead meant a workflow that ended quickly -- a failed submit, a
   // step that exits in a second -- held the caller for the whole log-retry budget while
@@ -220,6 +243,19 @@ export async function follow(
         return { name, phase: 'Error', message: 'the workflow is no longer in the cluster' };
       }
       if (isFinished(state.phase)) return state;
+      // No phase, or still Pending, long after it was accepted: the controller is not
+      // acting on it. Terminal rather than patient, so the caller gets a status to branch
+      // on instead of a run that never ends.
+      if (!hasStarted(state.phase) && Date.now() - submittedAt > startupMs) {
+        return {
+          name,
+          phase: 'Error',
+          message:
+            `the workflow was accepted but never started -- ${Math.round(startupMs / 1000)}s ` +
+            `with phase ${state.phase ?? 'unset'}. The workflow controller is not acting on ` +
+            `it; its own log says why.`,
+        };
+      }
       await new Promise((r) => setTimeout(r, pollMs));
     }
   } finally {
@@ -244,6 +280,9 @@ function streamLogs(
 ): Promise<void> {
   return new Promise<void>((resolve) => {
     let attempts = 0;
+    // Outside `attach`, so it survives the retries -- scoped inside, every attempt reset it
+    // and said the same thing again, which is the twelve-line pile this exists to prevent.
+    let complained = false;
     const attach = (): void => {
       if (signal?.aborted === true) return resolve();
       attempts += 1;
@@ -271,8 +310,19 @@ function streamLogs(
         };
       };
       child.stdout.on('data', feed('stdout'));
-      // kubectl's own complaints, not the step's. Kept, because "no pod yet" shows up here.
-      child.stderr.on('data', feed('stderr'));
+      // KUBECTL'S OWN COMPLAINTS ARE NOT THE RUN'S OUTPUT, and putting them in the run log
+      // once per retry buried the three lines that mattered under twelve copies of
+      // `No resources found in fleet-control namespace.` -- which is what a watcher waiting
+      // on a pod that will never exist looks like. Said once, as ours rather than as the
+      // step's, and then dropped; the phase poll is what reports the actual outcome.
+      child.stderr.on('data', (chunk: Buffer) => {
+        if (complained) return;
+        complained = true;
+        const first = chunk.toString().split('\n').find((l) => l.trim() !== '');
+        if (first !== undefined) {
+          sink('stdout', `[fleet-control] waiting for the step's pod -- ${first.trim()}`);
+        }
+      });
       child.on('close', () => {
         // A workflow whose pod has not appeared yet: try again, a few times, then give up
         // and let the phase poll carry the run.

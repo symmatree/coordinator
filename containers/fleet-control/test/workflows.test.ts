@@ -169,6 +169,55 @@ else:
   assert.ok(lines.includes('PLAY [all] ****'), JSON.stringify(lines));
 });
 
+test('a workflow the controller never acts on fails, rather than running forever', async () => {
+  // The 2026-10-17 outage, reproduced: the controller could not list WorkflowTaskResult, so
+  // it reconciled nothing and the object sat with NO phase. The watch polled indefinitely,
+  // the caller's run stayed `running`, and no marker a client could match ever appeared --
+  // the failure was invisible to everyone except whoever read the controller's log.
+  const k = fakeKubectl(`
+if "logs" in argv:
+    sys.stderr.write("No resources found in fleet-control namespace.\\n")
+    sys.exit(1)
+print(json.dumps({"metadata": {"name": "stuck"}, "status": {}}))
+`);
+  const lines: string[] = [];
+  const state = await withPath(k.dir, () =>
+    follow(CFG, 'stuck', (_s, l) => lines.push(l), { pollMs: 10, retryMs: 5, startupMs: 60 }),
+  );
+  assert.equal(state.phase, 'Error');
+  assert.match(state.message ?? '', /accepted but never started/);
+  assert.match(state.message ?? '', /phase unset/);
+
+  // And kubectl's complaint about the pod that never appeared is said once, as ours, not
+  // once per retry as the step's output.
+  const waiting = lines.filter((l) => l.includes('waiting for the step'));
+  assert.equal(waiting.length, 1, JSON.stringify(lines));
+  assert.equal(lines.filter((l) => l.includes('No resources found')).length, 1, JSON.stringify(lines));
+});
+
+test('a slow start is not a failed one: Pending then Running survives the bound', async () => {
+  // The bound is on STARTING, not on running. A converge is twenty minutes of apt and must
+  // not be killed for taking them.
+  const k = fakeKubectl(`
+import os
+if "logs" in argv:
+    sys.exit(1)
+n = 0
+p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "polls")
+if os.path.exists(p):
+    n = int(open(p).read())
+open(p, "w").write(str(n + 1))
+phase = "Pending" if n < 2 else ("Running" if n < 6 else "Succeeded")
+print(json.dumps({"metadata": {"name": "slow"}, "status": {"phase": phase}}))
+`);
+  const state = await withPath(k.dir, () =>
+    // A startup bound shorter than the time spent Running: if it applied after the workflow
+    // had started, this would come back Error instead of Succeeded.
+    follow(CFG, 'slow', () => {}, { pollMs: 10, retryMs: 5, startupMs: 60 }),
+  );
+  assert.equal(state.phase, 'Succeeded');
+});
+
 test('a workflow that vanished mid-watch ends the run instead of polling forever', async () => {
   // Deleted by hand, or its TTL expired under us. Either way the watcher must stop.
   const k = fakeKubectl(`
