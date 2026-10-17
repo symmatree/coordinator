@@ -188,6 +188,7 @@ export function isFinished(phase: string | undefined): boolean {
   return phase === 'Succeeded' || phase === 'Failed' || phase === 'Error';
 }
 
+
 /**
  * Follow a workflow to its end: its step's output into `sink`, then its phase.
  *
@@ -202,6 +203,19 @@ export async function follow(
   opts: { pollMs?: number; retryMs?: number; signal?: AbortSignal } = {},
 ): Promise<WorkflowState> {
   const pollMs = opts.pollMs ?? 5_000;
+  // NO DEADLINE HERE, and that is deliberate twice over.
+  //
+  // A caller knows how long it expects a thing to take and how long it is prepared to wait;
+  // this does not. And a workflow sitting unscheduled is not a failed one -- on 2026-10-17
+  // a converge sat with no phase for an hour because the controller could not list
+  // WorkflowTaskResult, and when that was fixed the controller picked it up and ran it.
+  // Giving up at some guessed deadline would have marked the run failed while the converge
+  // went on to happen, which is a worse answer than a run that honestly says it is still
+  // waiting.
+  //
+  // The template has no activeDeadlineSeconds for the matching reason: a converge is twenty
+  // minutes of apt, an earlier version of this service killed one at sixty, and a play cut
+  // in half leaves a part-configured box.
   // The phase decides when this is over, and the log stream is stopped rather than waited
   // for. Waiting on it instead meant a workflow that ended quickly -- a failed submit, a
   // step that exits in a second -- held the caller for the whole log-retry budget while
@@ -244,6 +258,9 @@ function streamLogs(
 ): Promise<void> {
   return new Promise<void>((resolve) => {
     let attempts = 0;
+    // Outside `attach`, so it survives the retries -- scoped inside, every attempt reset it
+    // and said the same thing again, which is the twelve-line pile this exists to prevent.
+    let complained = false;
     const attach = (): void => {
       if (signal?.aborted === true) return resolve();
       attempts += 1;
@@ -271,8 +288,19 @@ function streamLogs(
         };
       };
       child.stdout.on('data', feed('stdout'));
-      // kubectl's own complaints, not the step's. Kept, because "no pod yet" shows up here.
-      child.stderr.on('data', feed('stderr'));
+      // KUBECTL'S OWN COMPLAINTS ARE NOT THE RUN'S OUTPUT, and putting them in the run log
+      // once per retry buried the three lines that mattered under twelve copies of
+      // `No resources found in fleet-control namespace.` -- which is what a watcher waiting
+      // on a pod that will never exist looks like. Said once, as ours rather than as the
+      // step's, and then dropped; the phase poll is what reports the actual outcome.
+      child.stderr.on('data', (chunk: Buffer) => {
+        if (complained) return;
+        complained = true;
+        const first = chunk.toString().split('\n').find((l) => l.trim() !== '');
+        if (first !== undefined) {
+          sink('stdout', `[fleet-control] waiting for the step's pod -- ${first.trim()}`);
+        }
+      });
       child.on('close', () => {
         // A workflow whose pod has not appeared yet: try again, a few times, then give up
         // and let the phase poll carry the run.

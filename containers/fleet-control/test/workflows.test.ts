@@ -169,6 +169,34 @@ else:
   assert.ok(lines.includes('PLAY [all] ****'), JSON.stringify(lines));
 });
 
+test("kubectl's complaints are said once, not once per retry", async () => {
+  // On 2026-10-17 a workflow sat unscheduled and the log-follower retried twelve times,
+  // putting twelve copies of `No resources found in fleet-control namespace.` into the run
+  // log and burying the three lines that said what was happening. The watch itself is right
+  // to keep waiting -- that workflow ran in the end -- but it should wait quietly.
+  const k = fakeKubectl(`
+import os
+if "logs" in argv:
+    sys.stderr.write("No resources found in fleet-control namespace.\\n")
+    sys.exit(1)
+n = 0
+p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "polls")
+if os.path.exists(p):
+    n = int(open(p).read())
+open(p, "w").write(str(n + 1))
+print(json.dumps({"metadata": {"name": "stuck"},
+                  "status": {} if n < 4 else {"phase": "Succeeded"}}))
+`);
+  const lines: string[] = [];
+  const state = await withPath(k.dir, () =>
+    follow(CFG, 'stuck', (_s, l) => lines.push(l), { pollMs: 10, retryMs: 5 }),
+  );
+  // It waited through the unscheduled stretch and reported what actually happened.
+  assert.equal(state.phase, 'Succeeded');
+  assert.equal(lines.filter((l) => l.includes('No resources found')).length, 1, JSON.stringify(lines));
+  assert.equal(lines.filter((l) => l.includes('waiting for the step')).length, 1, JSON.stringify(lines));
+});
+
 test('a workflow that vanished mid-watch ends the run instead of polling forever', async () => {
   // Deleted by hand, or its TTL expired under us. Either way the watcher must stop.
   const k = fakeKubectl(`
