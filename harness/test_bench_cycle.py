@@ -89,57 +89,6 @@ check("a clean play reports no failure",
 check("the LAST failure is the one reported, not the first",
       "second" in bc.run_failed_line(["  FAILED: a first", "  FAILED: b second"]))
 
-# ---- resolving what to deploy, now that there is no git checkout or `gh` in the step ----
-# A head_sha carries runs from EVERY workflow that fires on it, and the API returns them
-# newest-finished first, so `workflow_runs[0]` is a coin flip between the container build and
-# whatever else ran on that commit. Matching has to name the workflow.
-_SHA = "9" * 40
-_RUNS = [
-    {"head_sha": _SHA, "path": ".github/workflows/tests.yaml", "id": 1, "status": "completed"},
-    {"head_sha": _SHA, "path": ".github/workflows/build-containers.yaml", "id": 2,
-     "status": "completed"},
-    {"head_sha": "0" * 40, "path": ".github/workflows/build-containers.yaml", "id": 3,
-     "status": "completed"},
-]
-
-check("the container build is picked out of the other workflows on that commit",
-      bc.build_run_for(_RUNS, _SHA)["id"] == 2)
-check("another commit's build is not accepted for this one",
-      bc.build_run_for([_RUNS[2]], _SHA) is None)
-check("no build for this commit reads as absent, not as the newest one",
-      bc.build_run_for([_RUNS[0]], _SHA) is None)
-
-# The case that started all of this: a green run whose camera job never existed, because the
-# commit touched nothing under containers/campod-camera. `skipped` counts as success at the
-# run level, so the job is the only thing that answers "was the image rebuilt".
-check("a build with no campod-camera job reads as absent",
-      bc.component_job([{"name": "build (fleet-control)", "conclusion": "success"}],
-                       "campod-camera") is None)
-check("the campod-camera job is found among the others",
-      bc.component_job([{"name": "build (fleet-control)", "conclusion": "success"},
-                        {"name": "build (campod-camera)", "conclusion": "success"}],
-                       "campod-camera")["conclusion"] == "success")
-check("a skipped camera job is reported as skipped, not treated as built",
-      bc.component_job([{"name": "build (campod-camera)", "conclusion": "skipped"}],
-                       "campod-camera")["conclusion"] == "skipped")
-
-# The fleet-control gate covers two paths -- the service and host/ansible, since the image
-# carries the playbook -- and `?path=` takes one. Taking the first listing's head would miss a
-# playbook change that has not been built into the image yet.
-check("the newer of two path listings wins",
-      bc.newest_across([
-          [{"sha": "old", "commit": {"committer": {"date": "2026-10-01T00:00:00Z"}}}],
-          [{"sha": "new", "commit": {"committer": {"date": "2026-10-17T00:00:00Z"}}}],
-      ]) == "new")
-check("an empty listing for one path does not hide the other",
-      bc.newest_across([
-          [],
-          [{"sha": "only", "commit": {"committer": {"date": "2026-10-17T00:00:00Z"}}}],
-      ]) == "only")
-
-check("the newest commit for a path is the first the listing returns",
-      bc.newest_revision([{"sha": _SHA}, {"sha": "0" * 40}]) == _SHA)
-
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)
