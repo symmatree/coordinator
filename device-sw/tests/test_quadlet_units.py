@@ -97,6 +97,19 @@ for stack in sorted((REPO / "stacks").iterdir()):
         # unpinned frame duration makes libcamera log an error every frame and its
         # single-frame correction meaningless. Checked here rather than in
         # containers/campod-camera's build-time test, which cannot see stacks/.
+        # Both capture units must wait for the clock. Wall-clock stamps are the product:
+        # the camera's frames are paired across pods by FrameWallClock and the accel's clk
+        # records date its samples, and both ran ~74 s per boot off the image's build epoch
+        # before this ordering existed. It also keeps capture out of the boot's own I/O
+        # storm, which the warmup comment in capture.py measures at ~16-20 MiB/s of reads
+        # for the first minute and a half. Asserted on the generated unit, since a key in
+        # the wrong section generates cleanly and does nothing.
+        if name in ("campod-camera", "campod-accel"):
+            check(f"{name}: ordered after time-sync.target",
+                  "After=time-sync.target" in text, text[:200])
+            check(f"{name}: wants rather than requires it, so a timeout starts late",
+                  "Wants=time-sync.target" in text and "Requires=time-sync.target" not in text)
+
         if name == "campod-camera":
             # Camera sync is a network protocol between pods, so the client has to be
             # where the gadget link is. In podman's default namespace the multicast

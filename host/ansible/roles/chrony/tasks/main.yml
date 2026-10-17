@@ -58,6 +58,27 @@
   notify: Restart chronyd
 
 # Coordinator only: it is the device with the chip on SPI.
+# chrony ships this and nothing enables it by default. It runs
+# `chronyc waitsync 0 0.1 0.0 1` -- poll every second until the remaining correction is
+# under 0.1 s -- with TimeoutStartSec=180, and it is `Before=time-sync.target` and
+# `Wants=time-sync.target`, so enabling it is what makes that target mean anything on
+# these boxes. Before this, time-sync.target appeared in no boot's journal at all.
+#
+# WHY CAPTURE NEEDS IT. These boards have no RTC, so a boot starts on the image's build
+# epoch and chrony steps the clock ~186 days once the gadget link is up. Measured on
+# campod-se: capture started 74 s before that step, and libcamera's camera-sync -- which
+# is computed in WALL CLOCK -- ran through it. See the ordering on the campod capture
+# units, and roles/chrony's own notes on the time path.
+#
+# A 180 s timeout still activates time-sync.target, because `Before=` is ordering and not
+# a requirement. So the failure mode is capture starting late on an unsynchronised clock,
+# never capture not starting -- which is what a pod with a dead gadget link needs.
+- name: Enable chrony's wait-for-sync unit, which gates capture
+  ansible.builtin.systemd:
+    name: chrony-wait.service
+    enabled: true
+    daemon_reload: true
+
 - name: Install the DS3234 feed unit
   ansible.builtin.template:
     src: coord-rtc-feed.service.j2
