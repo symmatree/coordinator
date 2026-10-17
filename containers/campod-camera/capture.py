@@ -321,7 +321,12 @@ def _sync_mode_for(leader, node):
 
 
 def _pin_frame_duration(picam2, want_us):
-    """Fix the frame duration, which the sync algorithm needs and nothing else sets.
+    """Report what the pinned frame duration actually came out as, and re-assert it.
+
+    THE PIN ITSELF IS IN THE CONFIGURATION -- see create_still_configuration in main().
+    Setting it only here, after start(), reached the sensor but not the IPA's cached
+    min/max, which is what the sync algorithm reads. This remains because the mode clamps
+    the request and this is where we find out what we got.
 
     WHY SYNC NEEDS IT. From libcamera's `ipa_base.cpp`, in the block that runs the sync
     algorithm every frame:
@@ -683,7 +688,22 @@ def main():
 
     picam2 = Picamera2()
     size = (width, height) if width and height else picam2.sensor_resolution
-    config = picam2.create_still_configuration(main={"size": size})
+    # THE PIN GOES IN THE CONFIGURATION, not after start(). Measured 2026-10-17: with it
+    # applied by set_controls() after start, the sensor ran at the requested duration --
+    # the sidecars show it -- but the IPA kept the sensor mode's own range, logged
+    # "Sync algorithm enabled with variable framerate. 69669.35us 220535845.16us" every
+    # run, and the sync server broadcast frameDuration values of 52.7 s and 38.0 s. The
+    # client computes framePeriodErrors and its "nearest frame" from that number, so every
+    # correction was calculated against a frame period two orders of magnitude out.
+    #
+    # picamera2's create_still_configuration injects its own
+    # {"FrameDurationLimits": (100, 1000000000)} and then applies `| controls`, so a value
+    # passed here wins. rpicam-apps does the same thing -- it sets FrameDurationLimits in
+    # its control list before starting the camera, never after.
+    config = picam2.create_still_configuration(
+        main={"size": size},
+        controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
+    )
     picam2.configure(config)
     picam2.options["quality"] = quality
 
