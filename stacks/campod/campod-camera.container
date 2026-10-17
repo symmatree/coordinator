@@ -73,16 +73,17 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # sync needs the rate FIXED, not fast, and a Zero running its sensor flat out for a 1 Hz
 # stills job is heat for nothing. Clamped to what the mode allows; capture.py logs what it
 # actually achieved.
-# 10 Hz. Chosen between the two constraints that bracket it: the sync algorithm wants a
-# correction small relative to a frame period -- its reference app defaults to 30 fps -- and
-# measured, the oscillation was +-6 ms on a 200 ms period at 5 fps against +-145 ms on a
-# 1000 ms period at 1 Hz. Higher is more stable. The ceiling is the sensor mode's own
-# 69669 us floor, i.e. 14.35 fps at full resolution, so 15 Hz is not available.
+# 2 Hz, so every frame is seen. The copy-out that frees the camera's single buffer costs
+# 123-132 ms measured, which does not fit a 100 ms period -- at 10 Hz we saw only a subset
+# of frames, and the selection rule then skipped whole runs of seconds (holes of 44 s, 84 s
+# and 230 s in one run). At 500 ms the copy fits with room to spare.
 #
-# The keeper is copied out in ~36 ms, which fits a 100 ms period with room; the other nine
-# frames a second are a metadata read and an immediate release, so delivery stays at the
-# sensor rate rather than being set by our hold time.
-Environment=CAMPOD_FRAME_DURATION_US=100000
+# The sensor mode's own floor is 69669 us, so anything up to ~14 fps is legal; the limit
+# here is our copy, not the sensor. The sync algorithm's stability against frame rate is
+# still an open question -- every measurement of it before 2026-10-17 was taken with a
+# 52-second frame duration inside the protocol -- so this is chosen for frame visibility
+# rather than for the sync loop.
+Environment=CAMPOD_FRAME_DURATION_US=500000
 Environment=CAMPOD_SYNC_LEADER=campod-sw
 # WHAT THE SYNC ALGORITHM COMPUTES, which is the one thing the data cannot show.
 #
