@@ -30,6 +30,7 @@ TESTS=(
 	packaging/test_build_ansible.py
 	containers/fleet-control/step/test_run_playbook.py
 	host/ansible/test_syntax.py
+	harness/test_bench_cycle.py
 	harness/test_input_replayer.py
 	harness/test_router_stack.py
 	harness/test_router_telem.py
