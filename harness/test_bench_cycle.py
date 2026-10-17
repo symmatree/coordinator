@@ -89,6 +89,111 @@ check("a clean play reports no failure",
 check("the LAST failure is the one reported, not the first",
       "second" in bc.run_failed_line(["  FAILED: a first", "  FAILED: b second"]))
 
+# ---- every stage actually runs ---------------------------------------------------------
+# The first real workflow submission died on `NameError: name 'stage_deploy' is not defined`.
+# An edit had taken the `def` line with it, and because a column-0 comment does not end a
+# function body, the orphaned block became dead code after the previous function's `return`
+# -- so the file parsed, imported, and passed every check above, which only ever touched the
+# pure helpers. The onExit step then died on `api("/nodes")["nodes"]`, indexing a bare list:
+# that route serves the roster as a list and never had a "nodes" key, so that line could not
+# have worked on any run.
+#
+# So: drive main() for each stage against a stub that answers with the SHAPES THE SERVICE
+# ACTUALLY SERVES. Nothing here checks timing or policy -- only that the stage is reachable
+# and that what it does with each response is possible.
+
+_REAL_SHAPES = {
+    # app.get('/nodes', async () => cfg.inventory.nodes) -- a list, not an object.
+    "/nodes": [{"name": "coordinator", "address": "10.0.2.1", "role": "coordinator"},
+               {"name": "campod-se", "address": "10.0.5.237", "role": "campod"}],
+}
+
+
+class _FakeFleet:
+    """Records calls; answers in the service's shapes. Uptime falls on each /pods poll, so
+    `is_fresh` can see a reboot, and both cameras are ready from the start."""
+
+    def __init__(self):
+        self.calls = []
+        self._boot = 9000.0
+
+    def __call__(self, path, method="GET", timeout=300):
+        self.calls.append((method, path.split("?")[0]))
+        if path in _REAL_SHAPES:
+            return _REAL_SHAPES[path]
+        if path == "/pods":
+            self._boot -= 5000.0
+            return {"pods": [{"node": n, "raw": {"as_of_boot_s": max(self._boot, 20.0),
+                                                 "camera": {"ready": True,
+                                                            "ready_at_mono_s": 126.9}}}
+                             for n in bc.CAMPODS]}
+        if path.endswith("/converge") or path.endswith("/offload") or "offload?" in path:
+            return {"id": "11111111-2222-3333-4444-555555555555"}
+        if path.startswith("/runs/"):
+            return {"status": "succeeded", "lines": [{"line": "PLAY RECAP"},
+                                                     {"line": "ok=41 changed=4 failed=0"}]}
+        if path.endswith("/sessions"):
+            return {"sessions": [{"session": "aaaa", "open": False, "frames": 250,
+                                  "last_activity_utc": "2026-10-17T18:00:00Z"}]}
+        return {}
+
+
+def _drive(stage, extra=()):
+    """Run one stage with the fleet stubbed, ssh stubbed, and no sleeping."""
+    fleet = _FakeFleet()
+    sent = []
+    real_api, real_sleep, real_run, real_argv = bc.api, bc.time.sleep, bc.subprocess.run, sys.argv
+
+    class _Done:
+        returncode = 0
+        stdout = "1"
+
+    def fake_run(argv, **kw):
+        sent.append(argv[-1])
+        return _Done()
+
+    bc.api, bc.time.sleep, bc.subprocess.run = fleet, lambda *_: None, fake_run
+    sys.argv = ["bench-cycle", stage, *extra]
+    try:
+        rc = bc.main()
+    finally:
+        bc.api, bc.time.sleep, bc.subprocess.run, sys.argv = real_api, real_sleep, real_run, real_argv
+    return rc, fleet.calls, sent
+
+
+for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
+                     ("collect", ("--flight", "bench-test"))):
+    try:
+        rc, calls, sent = _drive(stage, extra)
+        check(f"stage {stage} runs end to end", rc == 0, f"returned {rc}")
+    except BaseException as exc:  # SystemExit included: a stage must not bail on good input
+        check(f"stage {stage} runs end to end", False, f"{type(exc).__name__}: {exc}")
+        continue
+
+    if stage == "deploy":
+        check("deploy converges both pods, serially",
+              [c for c in calls if c[1].endswith("/converge")]
+              == [("POST", f"/nodes/{n}/converge") for n in bc.CAMPODS])
+        check("deploy reboots both pods",
+              sorted(c[1] for c in calls if c[1].endswith("/reboot"))
+              == sorted(f"/nodes/{n}/reboot" for n in bc.CAMPODS))
+    if stage == "arm":
+        check("arm stops the FC talker before writing the file",
+              ("POST", "/nodes/coordinator/stop-capture") in calls
+              and calls.index(("POST", "/nodes/coordinator/stop-capture"))
+              < len(calls))
+        check("arm writes 1 to the arm file", any("echo 1 |" in c for c in sent), str(sent))
+    if stage == "disarm":
+        check("disarm writes 0 to the arm file", any("echo 0 |" in c for c in sent), str(sent))
+        check("disarm reads the roster as a list, which is what /nodes serves",
+              ("GET", "/nodes") in calls)
+    if stage == "collect":
+        check("collect reboots all three",
+              sorted(c[1] for c in calls if c[1].endswith("/reboot"))
+              == sorted(f"/nodes/{n}/reboot" for n in ("campod-se", "campod-sw", "coordinator")))
+        check("collect offloads the chosen session for each pod",
+              len([c for c in calls if "/offload" in c[1]]) == len(bc.CAMPODS))
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)

@@ -171,7 +171,7 @@ def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
 
 
 def ssh_coordinator(key: str, command: str) -> str:
-    host = next((n["address"] for n in api("/nodes", timeout=60)["nodes"]
+    host = next((n["address"] for n in api("/nodes", timeout=60)
                  if n["name"] == "coordinator" and n.get("address")), None)
     if not host:
         raise SystemExit("[bench] the coordinator has no address in the inventory")
@@ -184,6 +184,7 @@ def ssh_coordinator(key: str, command: str) -> str:
 
 # ---- the stages, one per workflow step --------------------------------------------------
 
+def stage_deploy() -> None:
     before = min((p.get("raw") or {}).get("as_of_boot_s") or 0 for p in campod_pods())
     for node in CAMPODS:
         run = api(f"/nodes/{node}/converge", method="POST", timeout=120)
