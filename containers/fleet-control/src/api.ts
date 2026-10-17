@@ -13,7 +13,6 @@ import { deleteSessions, listSessions, stopCapture } from './sessions.js';
 import { listLogs } from './fclog.js';
 import { offloadFcLog, offloadSession, readNotes, validFlightName, writeNotes } from './offload.js';
 import { enrich, LookupCache, repoFromUrl } from './status.js';
-import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
 import { collectGround, listTlogs } from './cluster.js';
 import { configured as busConfigured, readPods, setDesired } from './bus.js';
 import { build } from './build.js';
@@ -473,45 +472,6 @@ export function buildServer(
     },
   );
 
-  // ---- what ansible left behind -------------------------------------------------------
-  // Kept only for a play that did not exit 0 (#353), and only `job_events/`: the runner also
-  // writes a `command` file recording the WHOLE process environment it launched ansible with,
-  // which in this pod includes FLEET_GITHUB_TOKEN. So there is no "download the directory"
-  // route, and there should not be one.
-
-  /** The run's event files, or a reply saying why there are none. */
-  async function eventsFor(id: string): Promise<string[] | { error: string; code: 400 | 404 }> {
-    if (!isRunId(id)) return { error: `not a run id: ${id}`, code: 400 };
-    const files = await eventFiles(id);
-    if (files.length > 0) return files;
-    const run = runs.get(id);
-    if (!run) return { error: `nothing kept for ${id}; the pod may have restarted`, code: 404 };
-    if (run.status === 'succeeded') {
-      return { error: `run ${id} succeeded, so its ansible detail was not kept`, code: 404 };
-    }
-    return { error: `run ${id} ('${run.action}') has no ansible detail`, code: 404 };
-  }
-
-  /**
-   * Every ansible event for a run, one JSON object per line.
-   *
-   * This is the thing that says HOW a play ended -- each task's whole result object, an async
-   * timeout distinguishable from an UNREACHABLE from a lost connection. `curl ... > x.ndjson`
-   * and read it with `jq`.
-   */
-  app.get<{ Params: { id: string } }>('/runs/:id/events', async (req, reply) => {
-    const found = await eventsFor(req.params.id);
-    if ('error' in found) return reply.code(found.code).send({ error: found.error });
-    return reply.type('application/x-ndjson').send(Readable.from(eventLines(found)));
-  });
-
-  /** The same run as ansible printed it: the console output, colour codes and all. */
-  app.get<{ Params: { id: string } }>('/runs/:id/log', async (req, reply) => {
-    const found = await eventsFor(req.params.id);
-    if ('error' in found) return reply.code(found.code).send({ error: found.error });
-    return reply.type('text/plain; charset=utf-8').send(Readable.from(logChunks(found)));
-  });
-
   /**
    * What the ground-tlog share holds, so a caller can name what it wants.
    *
@@ -677,15 +637,7 @@ export function buildServer(
   );
 
   app.get('/runs', async () =>
-    Promise.all(
-      runs.list().map(async ({ lines, ...rest }) => ({
-        ...rest,
-        lineCount: lines.length,
-        // Whether the runner's detail is still on disk. A successful play leaves none, and a
-        // pod restart takes what was kept -- so this is asked, not remembered.
-        events: (await eventFiles(rest.id)).length,
-      })),
-    ),
+    runs.list().map(({ lines, ...rest }) => ({ ...rest, lineCount: lines.length })),
   );
 
   app.get<{ Params: { id: string } }>('/runs/:id', async (req, reply) => {

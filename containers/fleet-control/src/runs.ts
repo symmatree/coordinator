@@ -43,26 +43,22 @@ const MAX_LINES = 5_000;
 /**
  * How many playbook runs may be in flight at once, anywhere in the fleet.
  *
- * ONE, and this is a memory bound rather than a device one -- the per-node lock above already
- * covers "do not drive one box twice". `ansible-runner` spawns a full Python interpreter with
- * ansible-core loaded, INSIDE THIS POD'S CGROUP, and that is about 60 MB apiece.
+ * ONE, and THE REASON IS GONE. This was a memory bound: `ansible-runner` spawned a full
+ * Python interpreter with ansible-core loaded inside this pod's cgroup, about 60 MB apiece
+ * against a 256 MB limit -- idle 194 MB, one converge 247 MB, so one fitted and two did not.
+ * Three at once on 2026-10-13 OOM-killed the pod and took all three half-finished applies
+ * with it.
  *
- * Measured on the live pod against its 256 MB limit:
- *
- *     idle            anon  44 MB   page cache 142 MB   total 194/256
- *     one converge    anon 104 MB   page cache 124 MB   total 247/256
- *
- * So one fits with roughly 9 MB spare and two does not. Three were started at once on
- * 2026-10-13 and the pod was OOM-killed (exit 137), taking all three half-finished applies
- * with it -- the registry is in memory, so even the record of what died went too.
- *
- * This is a floor under that specific failure, not a fix for the shape of it: the apply is a
- * child of this process either way, so a pod roll still kills it. #280 is where that is being
- * weighed.
+ * A play runs in a pod of its own now (#504) and costs this one a `kubectl`. What is left
+ * with a reason is the per-node lock above: two plays against one device fight over the same
+ * box. Lifting this is its own change rather than a side effect of that one.
  */
 const MAX_PLAYBOOK_RUNS = 1;
 
 type Listener = (line: RunLine) => void;
+
+/** Where an action writes its output. Lived in ansible.ts until the plays moved out. */
+export type EventSink = (stream: 'stdout' | 'stderr', line: string) => void;
 
 /** Where run lines are echoed, in addition to the registry. */
 export type Echo = (run: Run, line: RunLine) => void;

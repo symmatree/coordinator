@@ -17,7 +17,7 @@
 
 import { hostOf, type FleetNode, type Inventory } from './inventory.js';
 import type { BusConfig } from './bus.js';
-import type { EventSink } from './ansible.js';
+import type { EventSink } from './runs.js';
 import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import { latestPlaybook } from './playbookartifact.js';
 import { follow, submitPlaybook, type WorkflowConfig } from './workflows.js';

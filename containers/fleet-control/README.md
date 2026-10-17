@@ -330,16 +330,20 @@ what it asked for.
 Walking back through recent builds rather than taking only the newest is deliberate: artifacts
 expire on a 90-day clock, so the newest *successful build* is not always a runnable one.
 
-**Reimage has not moved** and still spawns `ansible-runner` here, which is why this image still
-carries `host/ansible` and still rebuilds on a playbook merge. That is the remaining step.
+**Reimage goes the same way**, with its image URL and digest as `extra-vars`. `device_role`
+stays a parameter of its own: the step passes its own vars in a second `-e`, and ansible's
+later-wins merge means a caller cannot change which role's config a device gets.
 
-### Progress comes from events, not scraped text
+Nothing runs a play in this process any more, so what existed only to do that is gone:
+`ansible.ts`'s runner-event parsing and `renderEvent`, `runartifacts.ts`, the kept runner
+data directories and the `GET /runs/:id/events` and `/runs/:id/log` routes that served them.
 
-For the runs that still use `ansible-runner`. It emits a structured JSON event per task and per
-host, and the service renders those rather than parsing `-v` output, which is not a stable
-interface and prints each task's entire result object — one `docker.service` fact block is
-several kilobytes. A workflow's log is not rendered at all: it is what `ansible-playbook` prints,
-which is what the operator would see running it by hand.
+### The log is what ansible printed
+
+Not rendered. The service used to parse `ansible-runner`'s JSON event stream and print its own
+`TASK …` / `ok (changed): …` lines; that was never an agreed decision, and the log should be
+what you get running the play yourself, tuned at the playbook. Alloy collects the step pod's
+stdout into Loki, so that is the durable copy and `/runs/:id` is the live one.
 
 ### The log says when
 
@@ -377,26 +381,10 @@ Every line a run produces also goes to **the pod's own stdout/stderr**, tagged
 in memory, so a pod restart takes its whole history with it -- and that is exactly the run
 someone comes asking about afterwards. Log collection reads the pod's streams and outlives it.
 
-And **ansible-runner's private data directory is kept unless the play exited 0**, named after
-the run rather than `mkdtemp`'d, so two routes can serve it with no mapping to keep:
-
-```sh
-curl -s https://fleet.tiles.symmatree.com/runs/<id>/log    > converge.log     # as ansible printed it
-curl -s https://fleet.tiles.symmatree.com/runs/<id>/events > events.ndjson    # every task's result object
-```
-
-`/events` is the one that says *how* a play ended -- an async timeout is distinguishable from
-an `UNREACHABLE` from a lost connection -- and `GET /runs` reports an `events` count per run so
-you can see which ones kept anything.
-
-**Only `job_events/` is served, and that is a boundary rather than a convenience.** Beside it
-the runner writes a `command` file recording the **entire process environment** it launched
-ansible with, which in this pod includes `FLEET_GITHUB_TOKEN`. So there is no route that hands
-out the directory, and there should not be one.
-
-It is `/tmp` inside the container, so a kept directory still goes when the pod does -- the
-stdout echo is the half that survives that. Nothing evicts these, and a successful run leaves
-none.
+There used to be more: `ansible-runner`'s private data directory was kept for a failed play
+and served by `/runs/:id/events` and `/runs/:id/log`, which carried each task's whole result
+object. That went with the runner. A play's detail now lives where the play does — the step
+pod's stdout, in Loki — and the run carries the workflow's name so you can find it.
 
 ## The flight's description
 
@@ -486,8 +474,6 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `POST /flights/:flight/ground[?tlog=&tlog=&start=&end=]` | collect the tlogs named, over the range given -> `202 {id}` |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
-| `GET /runs/:id/log` | a failed play as ansible printed it |
-| `GET /runs/:id/events` | its ansible events, one JSON object per line |
 | `GET /images/builds` | recent successful builds on the tracked ref, newest first |
 | `GET /images/cached` | what the image cache holds |
 | `POST /images/:role/fetch[?sha=]` | put a build in the cache -- the only route needing a token |
@@ -497,19 +483,15 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 One action per node at a time; a second `POST` against a busy node is a `409`. **Except reboot**,
 which is the way out of a stuck box and so cannot be the thing a stuck box refuses.
 
-**And one playbook run at a time, fleet-wide.** The cap dates from when every run was an
-`ansible-runner` inside this pod's cgroup -- about 60 MB apiece against a 256 MB limit, so one
-fitted and two did not. Three were started at once on 2026-10-13 and the pod was OOM-killed,
-taking all three half-finished applies with it.
+**And one playbook run at a time, fleet-wide** -- for now. The cap dates from when every run
+was an `ansible-runner` inside this pod's cgroup, about 60 MB apiece against a 256 MB limit:
+three were started at once on 2026-10-13 and the pod was OOM-killed, taking all three
+half-finished applies with it.
 
-Converge and full provision no longer cost that: they run in a pod of their own (below), so the
-memory argument no longer applies to them. The cap is still here because lifting it is a
-separate decision and reimage has not moved yet. The cheap actions -- stop, reboot, offload, the
-FC pull -- cost a connection rather than an interpreter and are not capped.
-
-This is a floor under that failure, not a fix for its shape: the apply is a child of this process
-either way, so a pod roll still kills it, and a roll is how every release arrives.
-[#280](https://github.com/symmatree/coordinator/issues/280) is where that is being weighed.
+**That reason is gone.** A play runs in a pod of its own now and costs this one a `kubectl`.
+The cap stays only because lifting it is its own change; the per-node lock is the one with a
+reason left, since two plays against one device fight over the same box. The cheap actions --
+stop, reboot, offload, the FC pull -- were never capped.
 
 ## Configuration
 
