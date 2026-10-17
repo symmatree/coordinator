@@ -247,7 +247,7 @@ Also dropped:
 
 - **`mavproxy-console.log`** -- cluster debugging output, not flight data. Everything it said about
   the vehicle is derived from heartbeats that are in the tlog; what is only there is mavproxy's own
-  link and NTRIP state, and Alloy already ships pod logs to Loki.
+  link and NTRIP state, which is a pod's stdout like any other.
 - **`rtkbase-settings.conf`** -- `tiles/tanka/environments/ntrip/settings.conf` is in git and seeded
   into the pod, so the base position already has a history mechanism.
 
@@ -310,11 +310,13 @@ fleet unless somebody asked.
 ## Converge and full provision run in a pod of their own
 
 [#504](https://github.com/symmatree/coordinator/issues/504). The service submits an Argo
-`Workflow` against `fleet-control-playbook`, declared in
-[tiles](https://github.com/symmatree/tiles/tree/main/tanka/environments/fleet-control), and then
-watches it. Submitting and watching are different things: once the cluster has accepted the
-workflow the work is happening whether this process is still here or not, which is the point --
-a pod roll used to kill a converge, and a playbook-only merge *is* a pod roll.
+`Workflow` against the `fleet-control-playbook` template and then watches it. **The template,
+the service accounts and the RBAC are described where they are declared**, in
+[tiles `tanka/environments/fleet-control`](https://github.com/symmatree/tiles/tree/main/tanka/environments/fleet-control).
+
+Submitting and watching are different things: once the cluster has accepted the workflow the
+work is happening whether this process is still here or not, which is the point -- a pod roll
+used to kill a converge, and a playbook-only merge *is* a pod roll.
 
 **The run is findable without this process.** Each workflow carries
 `fleet-control.symmatree.com/run-id`, `/node` and `/action` as labels, so a restarted service can
@@ -344,16 +346,8 @@ Not rendered. The service used to parse `ansible-runner`'s JSON event stream and
 `TASK …` / `ok (changed): …` lines; that was never an agreed decision, and the log should be
 what you get running the play yourself, tuned at the playbook.
 
-**Do not expect the step's output in Loki.** This said it was the durable copy, which was
-wrong: `loki.source.file` is configured `tail_from_end = true`, a k8s-monitoring chart
-default, so Alloy seeks to EOF when it opens a newly matched file. A pod that writes
-everything in its first seconds has already written it by the time the file-match poll gets
-there, and the lines are never read. That is most workflow steps, and it is cluster-wide
-rather than ours — tiles-doctor reproduced it with a pair of pods differing only in how long
-they lived.
-
-So the run log is the copy, and the workflow link in it is the other way to look. A run that
-outlived its watcher has the link and nothing else.
+Every run carries a link to its workflow, said at submit before anything is waited on, so a
+run whose watcher died still has a handle.
 
 ### The log says when
 
@@ -389,16 +383,12 @@ rather than lost.
 Every line a run produces also goes to **the pod's own stdout/stderr**, tagged
 `[<action> <node> <run-id8>]`, as well as to `/runs/:id` and the event stream. The registry is
 in memory, so a pod restart takes its whole history with it -- and that is exactly the run
-someone comes asking about afterwards. Log collection reads the pod's streams and outlives it.
+someone comes asking about afterwards. Writing to the pod's streams is what makes a run
+legible to whatever collects them.
 
-That holds for *this* service's own lines, which it writes itself — this pod is long-lived,
-so Alloy has its file open well before anything is written to it.
-
-It does **not** hold for a step pod's output, for the reason above. There used to be more
-here too: `ansible-runner`'s private data directory was kept for a failed play and served by
-`/runs/:id/events` and `/runs/:id/log`, carrying each task's whole result object. That went
-with the runner, and nothing durable replaced it. What a run carries instead is a link to
-its workflow.
+There used to be more: `ansible-runner`'s private data directory was kept for a failed play
+and served by `/runs/:id/events` and `/runs/:id/log`, carrying each task's whole result
+object. That went with the runner. What a run carries instead is a link to its workflow.
 
 ## The flight's description
 
