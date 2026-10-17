@@ -123,6 +123,20 @@ check("a skipped camera job is reported as skipped, not treated as built",
       bc.component_job([{"name": "build (campod-camera)", "conclusion": "skipped"}],
                        "campod-camera")["conclusion"] == "skipped")
 
+# The fleet-control gate covers two paths -- the service and host/ansible, since the image
+# carries the playbook -- and `?path=` takes one. Taking the first listing's head would miss a
+# playbook change that has not been built into the image yet.
+check("the newer of two path listings wins",
+      bc.newest_across([
+          [{"sha": "old", "commit": {"committer": {"date": "2026-10-01T00:00:00Z"}}}],
+          [{"sha": "new", "commit": {"committer": {"date": "2026-10-17T00:00:00Z"}}}],
+      ]) == "new")
+check("an empty listing for one path does not hide the other",
+      bc.newest_across([
+          [],
+          [{"sha": "only", "commit": {"committer": {"date": "2026-10-17T00:00:00Z"}}}],
+      ]) == "only")
+
 check("the newest commit for a path is the first the listing returns",
       bc.newest_revision([{"sha": _SHA}, {"sha": "0" * 40}]) == _SHA)
 
