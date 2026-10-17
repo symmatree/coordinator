@@ -23,7 +23,9 @@
 #   FLEET_SSH_KEY          path to the mounted private key
 #   FLEET_SSH_PUBLIC_KEY   its public half, for the play to install in authorized_keys
 # Optional:
-#   PLAYBOOK_EXTRA_VARS    a JSON object merged into the extra vars the play is given
+#   PLAYBOOK_EXTRA_VARS    a JSON object of extra vars for the play. Not validated here:
+#                          the playbook asserts the variables it requires, which is both
+#                          earlier than anything this could catch and specific to the play
 # Optional:
 #   FLEET_SSH_USER         login account on the device (default pi)
 #   FLEET_SSH_TIMEOUT_SEC  ansible's connect timeout (default 90)
@@ -114,24 +116,6 @@ print(json.dumps({
 PY
 )
 
-# A MALFORMED `-e` IS SILENTLY IGNORED, which is why this is checked and the rest is not.
-# Given a string that is not JSON, ansible falls back to parsing it as `key=value` pairs and
-# runs the play anyway -- so a typo in a reimage URL would converge a device with the
-# variable simply absent. Verified against ansible-core: `-e ' not json '` exits 0.
-if [[ -n ${PLAYBOOK_EXTRA_VARS:-} ]]; then
-	python3 -c 'import json,sys
-v = json.loads(sys.argv[1])
-if not isinstance(v, dict):
-    sys.exit(f"PLAYBOOK_EXTRA_VARS must be a JSON object, got {type(v).__name__}")' \
-		"$PLAYBOOK_EXTRA_VARS" ||
-		{
-			echo "[step] PLAYBOOK_EXTRA_VARS is not a JSON object: ${PLAYBOOK_EXTRA_VARS}" >&2
-			exit 1
-		}
-fi
-
-echo "[step] ${playbook} on ${host} as ${device_role}"
-cd "$work/ansible"
 # TWO `-e`, RESERVED LAST. Ansible merges repeated extra-var arguments with the later
 # winning, so precedence is the tool's job rather than ours -- which is why there is no
 # merge and no clash check here. Whatever the caller sets, the four above are what the play

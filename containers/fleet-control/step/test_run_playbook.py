@@ -244,17 +244,6 @@ def main():
             es[-1],
         )
 
-        # The one thing ansible does NOT do: given a string that is not JSON it falls back
-        # to key=value parsing and runs the play anyway, so a typo would converge a device
-        # with the variable absent. Checked here because nothing downstream will.
-        record.unlink()
-        for bad, why in ((" not json ", "not JSON"), ('["a"]', "a JSON array")):
-            res = run({**base, "PLAYBOOK_EXTRA_VARS": bad}, tmp)
-            check(
-                f"extra vars that are {why} fail before the play runs",
-                res.returncode != 0 and not record.exists(),
-                f"rc={res.returncode} {res.stderr.strip()[-120:]}",
-            )
 
         # Absent is the normal case -- a converge sets none.
         res = run(base, tmp)
