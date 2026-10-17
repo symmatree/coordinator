@@ -530,6 +530,56 @@ else:
     check("the sidecar carries the fields analysis joins on", False, "no sidecars written")
 shutil.rmtree(_td2, ignore_errors=True)
 
+# ---- warmup has to end, or the camera is never ready -----------------------------------
+# bench-simflight-z8z2p waited 15 minutes for `ready` and timed out. Warmup ended on `seq`,
+# which counts frames WRITTEN, and nothing is written while `phase == "warmup"` because the
+# keep rule reads that as paused -- so warmup could not end and `ready` was unreachable on
+# every boot. The smoke run above sets CAMPOD_WARMUP_FRAMES=0, so it never touched this.
+#
+# Driven PAUSED (no arm file, so nothing is ever kept) to prove the transition does not
+# depend on keeping frames at all.
+_td3 = tempfile.mkdtemp(prefix="capture-warmup-")
+_cam3 = _FakeCam(list(_exposures))
+_FakeFactory.__new__ = lambda cls, *a, **k: _cam3
+_status3 = Path(_td3) / "status"
+_env3 = {"CAMPOD_CAPTURE_DIR": _td3, "CAMPOD_WARMUP_FRAMES": "3",
+         "CAMPOD_STATUS_FILE": str(_status3),
+         # A flag path that exists and says 0: armed is a decision, and this is "paused".
+         "CAMPOD_CAPTURE_FLAG": str(Path(_td3) / "armed"),
+         "CAMPOD_SYNC_LEADER": "", "CAMPOD_FRAME_DURATION_US": "200000"}
+(Path(_td3) / "armed").write_text("0\n")
+_old3 = {k: os.environ.get(k) for k in _env3}
+os.environ.update(_env3)
+capture._stop = False
+_buf3 = io.StringIO()
+try:
+    with redirect_stdout(_buf3):
+        _rc3 = capture.main()
+except BaseException as _exc:  # noqa: BLE001
+    _rc3 = f"raised {_exc!r}"
+finally:
+    for _k, _v in _old3.items():
+        if _v is None:
+            os.environ.pop(_k, None)
+        else:
+            os.environ[_k] = _v
+
+# The document read after the run is the SHUTDOWN state -- phase `stopped`, ready False --
+# so what proves warmup ended is `ready_at_mono_s` being stamped at all, plus the READY line
+# the process prints when it crosses. Both are absent entirely when warmup deadlocks.
+_doc3 = json.loads(_status3.read_text()) if _status3.exists() else {}
+_out3 = _buf3.getvalue()
+check("a paused pod finishes warmup and stamps when it went ready",
+      _doc3.get("ready_at_mono_s") is not None, f"rc={_rc3} status={_doc3}")
+check("it says so, and says it is paused rather than capturing",
+      "READY after" in _out3 and "paused" in _out3.split("READY after")[1][:80],
+      _out3[-300:])
+check("a paused pod writes nothing even so",
+      len(_cam3.saved) == 0, f"{len(_cam3.saved)} written while paused")
+check("and it reports every frame it retrieved",
+      _doc3.get("frames_seen", 0) >= len(_exposures),
+      f"frames_seen={_doc3.get('frames_seen')} of {len(_exposures)} offered")
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)

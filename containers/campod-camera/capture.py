@@ -784,14 +784,16 @@ def main():
     # though several frames fall inside the window when the grid is much faster.
     last_boundary = None
     unstamped = 0
-    # Warm up, then hold ready. The frames are real and are kept: capturing and
-    # writing them is what proves the path end to end and pays the allocations --
-    # the camera import is ~16-20 MiB/s of reads for the first minute and a half,
-    # and doing it when the operator is waiting to arm costs flight time he is
-    # paying for in battery.
+    # Warm up, then hold ready. The warmup frames are real and are RETRIEVED, which
+    # is what pays the camera's own allocations -- the import is ~16-20 MiB/s of reads
+    # for the first minute and a half, and doing that while the operator waits to arm
+    # costs flight time he is paying for in battery.
     #
-    # They are marked `phase` in the sidecar so analysis can drop them without
-    # guessing at a frame count.
+    # They are no longer WRITTEN. Nothing is written while disarmed, so the encode and
+    # the card write are first exercised by the first armed frame rather than during
+    # warmup, where they used to be. That is a real change in what warmup proves: it
+    # settles the sensor and allocates the buffers, and no longer demonstrates the
+    # write path end to end.
     phase = "warmup" if warmup_frames > 0 else "capture"
     capturing = True
     ready_logged = False
@@ -810,7 +812,15 @@ def main():
         while not _stop:
             now = time.monotonic()
 
-            if phase == "warmup" and seq >= warmup_frames:
+            # FRAMES SEEN, NOT FRAMES KEPT. Warmup is the sensor settling and the
+            # buffers being allocated, which happens per frame RETRIEVED -- and since
+            # every frame is now retrieved whatever the state, that is the count that
+            # moves. `seq` counts frames written, and nothing is written while
+            # `phase == "warmup"` because the keep rule below reads that as paused, so
+            # counting warmup in `seq` was a deadlock: warmup could not end, so `ready`
+            # was unreachable on every boot, armed or not. Both pods sat in warmup for
+            # 15 minutes on 2026-10-17 and the cycle timed out waiting for ready.
+            if phase == "warmup" and frames_seen >= warmup_frames:
                 phase = "capture"
                 state["phase"] = phase
 
@@ -820,7 +830,7 @@ def main():
                     # The device records its own time-to-ready. Reading it afterwards
                     # costs nothing; watching for it costs the thing being measured.
                     ready_at = time.monotonic()
-                    print(f"capture: READY after {seq} warmup frames at "
+                    print(f"capture: READY after {frames_seen} warmup frames at "
                           f"{ready_at:.1f}s since start, "
                           f"{'capturing' if wanted else 'paused'}", flush=True)
                     ready_logged = True
