@@ -116,6 +116,9 @@ print(json.dumps({
 PY
 )
 
+echo "[step] ${playbook} on ${host} as ${device_role}"
+cd "$work/ansible"
+
 # TWO `-e`, RESERVED LAST. Ansible merges repeated extra-var arguments with the later
 # winning, so precedence is the tool's job rather than ours -- which is why there is no
 # merge and no clash check here. Whatever the caller sets, the four above are what the play
