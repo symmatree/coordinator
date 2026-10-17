@@ -307,6 +307,61 @@ for _phase in (0, 37_000_000, 123_456_789, 199_999_999):
           len(_picked) == len(_seconds) and len(_seconds) >= 9,
           f"{len(_picked)} frames over {len(_seconds)} seconds")
 
+# ---- the serializer ----------------------------------------------------------------
+# The write left the sensor thread, so these are the properties the capture loop now
+# depends on and cannot see for itself: the bytes land, a slow write makes the next put
+# WAIT rather than drop, and close() drains instead of truncating the session.
+_sd = Path(tempfile.mkdtemp(prefix="serializer-"))
+_s = capture._Serializer()
+_s.put([(_sd / "a.jpg", b"\xff\xd8one"), (_sd / "a.json", b"{}")])
+_s.close()
+check("both files of a handoff land", (_sd / "a.jpg").read_bytes() == b"\xff\xd8one"
+      and (_sd / "a.json").read_bytes() == b"{}")
+check("close() drained rather than dropping", _s.errors == 0)
+
+# A write that blocks: the second put must wait for it, not overwrite it or drop it.
+_slow = Path(tempfile.mkdtemp(prefix="serializer-slow-"))
+_s2 = capture._Serializer()
+_orig = Path.write_bytes
+_gate = threading.Event()
+
+
+def _blocking_write(self, data):
+    if self.name == "slow.jpg":
+        _gate.wait(10)
+    return _orig(self, data)
+
+
+Path.write_bytes = _blocking_write
+try:
+    # One stalled write is ABSORBED: the slot frees when the writer picks a frame up, so
+    # the next handoff does not block. That is the property that keeps a 2.4 s card stall
+    # off the sensor thread.
+    _s2.put([(_slow / "slow.jpg", b"first")])
+    time.sleep(0.2)
+    _t2 = threading.Thread(target=lambda: _s2.put([(_slow / "second.jpg", b"second")]))
+    _t2.start(); _t2.join(2)
+    check("a stalled write does not block the next handoff",
+          not _t2.is_alive() and _s2.waits == 0, f"waits={_s2.waits}")
+    # A SECOND stall before the first clears does block -- bounded memory, no silent drop.
+    _t3 = threading.Thread(target=lambda: _s2.put([(_slow / "third.jpg", b"third")]))
+    _t3.start()
+    time.sleep(0.3)
+    check("but a second one does, rather than queueing without bound",
+          _t3.is_alive() and _s2.waits == 1, f"alive={_t3.is_alive()} waits={_s2.waits}")
+    _gate.set()
+    _t3.join(10)
+    _s2.close()
+finally:
+    Path.write_bytes = _orig
+check("and every frame was written once the writer caught up",
+      (_slow / "slow.jpg").exists() and (_slow / "second.jpg").read_bytes() == b"second"
+      and (_slow / "third.jpg").read_bytes() == b"third")
+check("no writes were lost or doubled", _s2.errors == 0)
+shutil.rmtree(_sd, ignore_errors=True)
+shutil.rmtree(_slow, ignore_errors=True)
+
+
 # ---- main() actually starts, and keeps one frame per second ------------------------
 # THE TEST THIS FILE SHIPPED WITHOUT. Everything above exercises helpers; nothing ran
 # main(), so #523 shipped a startup line referencing a variable defined below it. It
@@ -323,9 +378,15 @@ class _FakeRequest:
     def get_metadata(self):
         return self._md
 
-    def save(self, name, path):
-        Path(path).write_bytes(b"\xff\xd8\xff" + bytes(64))
-        self._saved.append(path)
+    def save(self, name, file_output, format=None):
+        # capture.py encodes into memory now and hands the bytes to the serializer, so
+        # this is called with a BytesIO and an explicit format rather than a path.
+        data = b"\xff\xd8\xff" + bytes(64)
+        if hasattr(file_output, "write"):
+            file_output.write(data)
+        else:
+            Path(file_output).write_bytes(data)
+        self._saved.append(file_output)
 
     def release(self):
         pass

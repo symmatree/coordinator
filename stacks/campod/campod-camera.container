@@ -73,7 +73,17 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # sync needs the rate FIXED, not fast, and a Zero running its sensor flat out for a 1 Hz
 # stills job is heat for nothing. Clamped to what the mode allows; capture.py logs what it
 # actually achieved.
-Environment=CAMPOD_FRAME_DURATION_US=200000
+# 1 Hz, so the frame the second gets is the only frame there is.
+#
+# At 5 fps the pipeline handed us a frame roughly every 400 ms -- one buffer, nothing
+# overlapping -- so each pod chose its keeper from every OTHER sensor frame, and whether
+# the two pods' subsets happened to be in phase decided the pairing. Measured: 99.6 ms
+# apart on 2026-10-16, 10.7 ms apart on 2026-10-17, same code both times. At 1 Hz there is
+# no subset to be out of phase, because there is one frame per second to keep.
+#
+# The sync parameters that go with this rate are patched into the tuning file at image
+# build time; see the Dockerfile.
+Environment=CAMPOD_FRAME_DURATION_US=1000000
 Environment=CAMPOD_SYNC_LEADER=campod-sw
 # WHAT THE SYNC ALGORITHM COMPUTES, which is the one thing the data cannot show.
 #
