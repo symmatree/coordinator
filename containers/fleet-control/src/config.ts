@@ -57,6 +57,22 @@ export function loadConfig(): Config {
       sshTimeoutSec: Number(env('FLEET_SSH_TIMEOUT_SEC', '90')),
       // A device is quiesced over the bus, not over ssh, so reaching one needs this.
       bus,
+      // Playbook runs happen in a pod of their own. The template is declared in tiles,
+      // tanka/environments/fleet-control; this is only where to submit against it.
+      workflows: {
+        // The namespace this pod runs in, which is where its workflows go. The default is
+        // the one the tanka environment deploys into; override it if that ever moves.
+        namespace: env('FLEET_NAMESPACE', 'fleet-control'),
+        template: env('FLEET_WORKFLOW_TEMPLATE', 'fleet-control-playbook'),
+      },
+      // Where the published playbooks come from. A different repo and workflow from the
+      // device images above, and the same token serves both.
+      github: {
+        repo: env('FLEET_PLAYBOOK_REPO', 'symmatree/coordinator'),
+        workflow: env('FLEET_PLAYBOOK_WORKFLOW', 'ansible-payload.yaml'),
+        ref: env('FLEET_PLAYBOOK_REF', 'main'),
+        token: process.env.FLEET_GITHUB_TOKEN || undefined,
+      },
     },
     images: {
       repo: env('FLEET_IMAGE_REPO', 'symmatree/dotfiles-symm'),
