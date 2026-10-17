@@ -484,7 +484,7 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `POST /nodes/:name/fc-log?id=&flight=` | stream one dataflash log into a flight dir -> `202 {id}` |
 | `GET /ground/tlogs` | what the ground-tlog share holds |
 | `POST /flights/:flight/ground[?tlog=&tlog=&start=&end=]` | collect the tlogs named, over the range given -> `202 {id}` |
-| `GET /runs` / `GET /runs/:id` | run list / one run with its log |
+| `GET /runs` / `GET /runs/:id` | run list / one run with its log, or `adopted: true` from the cluster if this pod never saw it |
 | `GET /runs/:id/stream` | live output, server-sent events |
 | `GET /runs/:id/log` | a failed play as ansible printed it |
 | `GET /runs/:id/events` | its ansible events, one JSON object per line |

@@ -16,6 +16,7 @@ import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { eventFiles, eventLines, isRunId, logChunks } from './runartifacts.js';
 import { collectGround, listTlogs } from './cluster.js';
 import { configured as busConfigured, readPods, setDesired } from './bus.js';
+import { findByRun, isFinished } from './workflows.js';
 import { build } from './build.js';
 import { notify, runEnded } from './notify.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
@@ -688,9 +689,47 @@ export function buildServer(
     ),
   );
 
+  /**
+   * Argo's phases in the registry's vocabulary. `Error` is Argo's for "the controller could
+   * not run this", which is a failure to the caller like any other.
+   */
+  function statusOfPhase(phase: string | undefined): 'running' | 'succeeded' | 'failed' {
+    if (phase === 'Succeeded') return 'succeeded';
+    if (isFinished(phase)) return 'failed';
+    return 'running';
+  }
+
+  /**
+   * One run, asking the cluster when this process has never heard of it.
+   *
+   * The registry is in memory, so a pod roll loses every run in it while the Workflow each
+   * one submitted carries on in a pod of its own. Without this a caller polling `/runs/<id>`
+   * gets a 404 for a converge that is quietly succeeding, which is worse to act on than one
+   * that failed loudly -- and the run id is the only handle they have, since the workflow's
+   * name was in the lines that died with the registry.
+   *
+   * The lines do not come back. They were this process's copy; the durable one is the step
+   * pod's stdout in Loki. What comes back is the workflow's own state, marked `adopted` so a
+   * reader can tell it from a run this process actually watched.
+   */
   app.get<{ Params: { id: string } }>('/runs/:id', async (req, reply) => {
     const run = runs.get(req.params.id);
-    return run ?? reply.code(404).send({ error: `no such run: ${req.params.id}` });
+    if (run) return run;
+
+    const found = await findByRun(cfg.action.workflows, req.params.id).catch(() => undefined);
+    if (found === undefined) {
+      return reply.code(404).send({ error: `no such run: ${req.params.id}` });
+    }
+    return {
+      id: req.params.id,
+      adopted: true,
+      workflow: found.name,
+      status: statusOfPhase(found.phase),
+      phase: found.phase,
+      error: found.message,
+      endedAt: found.finishedAt,
+      lines: [],
+    };
   });
 
   /** Server-sent events, so a run can be watched live rather than polled. */
