@@ -32,7 +32,8 @@
       "fleet-control": {
         "paths": [
           "containers/fleet-control/**",
-          "host/ansible/**"
+          "host/ansible/**",
+          "harness/bench_cycle.py"
         ],
         "image": "ghcr.io/symmatree/coordinator-fleet-control",
         "context": ".",
