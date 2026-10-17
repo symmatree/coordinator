@@ -159,6 +159,15 @@ def main():
             f"[step] playbook {REVISION} (refs/heads/main)" in out.stdout,
             out.stdout[-300:],
         )
+        # Which driver ran, the same shape as which playbook ran. On a developer box there
+        # is no /etc/container-image, and saying so is the point -- a run that cannot name
+        # its driver must not print a blank and look like it did.
+        check(
+            "the driver names itself, or says it cannot",
+            "[step] driver " in out.stdout
+            and ("<no /etc/container-image>" in out.stdout or "<unknown>" not in out.stdout),
+            [ln for ln in out.stdout.splitlines() if "driver" in ln],
+        )
         check(
             "the download is authenticated",
             seen.get("authorization") == "Bearer t0ken",
