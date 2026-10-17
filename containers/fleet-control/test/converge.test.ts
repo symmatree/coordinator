@@ -51,7 +51,11 @@ else:
     inventory: { user: 'pi', nodes: [] },
     privateKeyPath: '/dev/null',
     sshTimeoutSec: 2,
-    workflows: { namespace: 'fleet-control', template: 'fleet-control-playbook' },
+    workflows: {
+      namespace: 'fleet-control',
+      template: 'fleet-control-playbook',
+      uiUrl: 'https://argo.example.invalid',
+    },
     github: { repo: 'symmatree/coordinator', workflow: 'ansible-payload.yaml', ref: 'main' },
     bus: { url: '', settleMs: 10 },
   } as ActionContext;
@@ -84,7 +88,12 @@ test('the resolved artifact is what the workflow is told to run', async () => {
   } finally {
     b.restore();
   }
-  assert.ok(lines.some((l) => l.includes('workflow wf-1')), JSON.stringify(lines));
+  // A link, not a name: the UI is where someone goes to see what a workflow did, and a
+  // run that outlived its watcher has nothing else left to go on.
+  assert.ok(
+    lines.some((l) => l.includes('https://argo.example.invalid/workflows/fleet-control/wf-1')),
+    JSON.stringify(lines),
+  );
 });
 
 test('a failed workflow fails the run, naming the workflow to go and look at', async () => {

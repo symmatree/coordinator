@@ -20,7 +20,7 @@ import type { BusConfig } from './bus.js';
 import type { EventSink } from './runs.js';
 import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import { latestPlaybook } from './playbookartifact.js';
-import { follow, submitPlaybook, type WorkflowConfig } from './workflows.js';
+import { follow, submitPlaybook, workflowUrl, type WorkflowConfig } from './workflows.js';
 import type { GithubOptions } from './github.js';
 import { stopCapture } from './sessions.js';
 import { execFile } from 'node:child_process';
@@ -110,16 +110,17 @@ async function runPlaybookWorkflow(
     revision: artifact.revision,
     extraVars: opts.extraVars,
   });
-  // Said before anything is waited on, so a reader of a run that outlived its watcher can
-  // still find the workflow it became.
-  note(opts.sink, `workflow ${name}`);
+  // A LINK, SAID BEFORE ANYTHING IS WAITED ON. The workflow outlives this process, so a run
+  // whose watcher died still needs a handle -- and the UI is the thing that knows how to
+  // show a workflow and its logs, which is not a thing this service should be explaining.
+  const link = workflowUrl(ctx.workflows, name);
+  note(opts.sink, `workflow ${link}`);
 
   const state = await follow(ctx.workflows, name, (stream, line) => opts.sink?.(stream, line));
   if (state.phase !== 'Succeeded') {
     throw new ActionError(
       `${node.name}: ${opts.action} ${state.phase ?? 'ended with no phase'}` +
-        `${state.message !== undefined ? ` -- ${state.message}` : ''}. The step's output is ` +
-        `above and in Loki; the workflow is ${name}.`,
+        `${state.message !== undefined ? ` -- ${state.message}` : ''}. ${link}`,
     );
   }
 }

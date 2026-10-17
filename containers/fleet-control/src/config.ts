@@ -64,6 +64,9 @@ export function loadConfig(): Config {
         // the one the tanka environment deploys into; override it if that ever moves.
         namespace: env('FLEET_NAMESPACE', 'fleet-control'),
         template: env('FLEET_WORKFLOW_TEMPLATE', 'fleet-control-playbook'),
+        // Where a run links to when someone wants to see what a workflow did. The Argo
+        // server's own ingress -- on the internal network, same as this service.
+        uiUrl: env('FLEET_WORKFLOW_UI', 'https://argo.tiles.symmatree.com').replace(/\/$/, ''),
       },
       // Where the published playbooks come from. A different repo and workflow from the
       // device images above, and the same token serves both.
