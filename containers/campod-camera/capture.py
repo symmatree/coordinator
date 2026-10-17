@@ -213,6 +213,41 @@ def _boundary_offset_ns(wall_exposure_ns, period_ns=1_000_000_000):
     return second, wall_exposure_ns - second * period_ns
 
 
+class _FrameLedger:
+    """One line per frame RETRIEVED, with its times and what was decided about it.
+
+    WHY. The selection rule is the thing being tuned, and until now the only record was
+    the frames it KEPT -- so a run could not distinguish "the pod saw ten frames a second
+    and chose this one" from "the pod saw one frame a second and had no choice". Trial 10
+    ended on exactly that ambiguity: sw kept its frame at a rock-steady 204 ms into each
+    second while se's wandered from 540 to 868 ms, and nothing in the data said whether se
+    was dropping frames or never getting them.
+
+    Written on the capture thread with a buffered writer and never fsynced, the same
+    discipline as the accel reader (accel/writer.go): at a few hundred bytes a frame this
+    is ~2 KB/s, and a buffered append costs microseconds. A power cut loses the tail,
+    which is the right trade for a diagnostic.
+    """
+
+    def __init__(self, path):
+        self._fh = open(path, "a", buffering=1 << 16)
+        self.wrote = 0
+
+    def record(self, rec):
+        try:
+            self._fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
+            self.wrote += 1
+        except OSError as exc:
+            print(f"capture: frame ledger write failed: {exc}", flush=True)
+
+    def close(self):
+        try:
+            self._fh.flush()
+            self._fh.close()
+        except OSError:
+            pass
+
+
 class _Serializer:
     """Encodes and writes one kept frame at a time, on its own thread.
 
@@ -744,6 +779,7 @@ def main():
         return blob.getvalue()
 
     serializer = _Serializer(_encode_jpeg)
+    ledger = _FrameLedger(session_dir / "frames.jsonl")
     # The second we have already written a frame for, so a second gets one frame even
     # though several frames fall inside the window when the grid is much faster.
     last_boundary = None
@@ -764,6 +800,10 @@ def main():
     # paying a metadata retrieval per frame.
     sync_ready_seen = False
     sync_waits = 0
+    # Frames RETRIEVED, against `seq` which counts frames kept. The pair is the thing the
+    # selection rule has to be judged on: one per second out of ten seen and one per
+    # second out of one seen look identical in the captures and are not the same state.
+    frames_seen = 0
     state["phase"] = phase
     publish()
     try:
@@ -799,79 +839,92 @@ def main():
                           f"{time.monotonic():.1f}s ({seq} frames written)", flush=True)
                     state["capturing"] = capturing
                     publish()
-                if not capturing:
-                    # Camera stays started; we simply do not retrieve. No file I/O,
-                    # no encode, buffers held.
-                    time.sleep(0.5)
-                    last_boundary = None
-                    publish()
-                    continue
-
-                # RESPECT SyncReady, which is libcamera's instruction and not our policy:
-                # "While this control value is false, applications (on both client and
-                # server) should continue to wait, and not use the frames."
-                # (control_ids_rpi.yaml). Writing frames before it would produce images
-                # that look like a synchronised set and are not.
-                #
-                # capture_metadata() rather than capture_file(): the state arrives in frame
-                # metadata, and asking for metadata alone costs no encode and no card
-                # write, so waiting is cheap. Once true it stays true for the session, so
-                # this costs one extra retrieval per frame only until it flips.
-                if sync_active and not sync_ready_seen:
-                    md = picam2.capture_metadata()
-                    if md.get("SyncReady"):
-                        sync_ready_seen = True
-                        state["sync_ready"] = True
-                        # SyncTimer at the crossing is the headline number: at this moment
-                        # it "indicates how closely synchronised the client believes it is
-                        # with the server". Logged because it is the one frame where that
-                        # reading exists.
-                        print(f"capture: SYNC READY as {sync_active} after {sync_waits} "
-                              f"waiting frames; SyncTimer at the crossing is "
-                              f"{md.get('SyncTimer')} us", flush=True)
-                        publish()
-                    else:
-                        sync_waits += 1
-                        state["sync_ready"] = False
-                        # Said periodically rather than every frame: a pod that never
-                        # reaches sync must be visible in its own log, not merely absent
-                        # from the capture directory.
-                        if sync_waits == 1 or sync_waits % 50 == 0:
-                            print(f"capture: waiting for sync as {sync_active}, "
-                                  f"{sync_waits} frames so far, SyncTimer "
-                                  f"{md.get('SyncTimer')} us", flush=True)
-                        publish()
-                        continue
-
-            # ONE FRAME PER SECOND, CHOSEN BY ITS EXPOSURE, not by this loop's clock.
+            # EVERY FRAME IS RETRIEVED, EXAMINED AND RECORDED, including while paused.
             #
-            # capture_request() rather than capture_file(): the frame has to be inspected
-            # before it is kept, and capture_file() encodes whatever is current with no
-            # say in which frame that is. A request holds the image and its metadata
-            # together, so the decision is made on the frame that would be written.
+            # The old shape returned to the top of the loop without retrieving while
+            # paused, and ran the SyncReady wait BELOW that -- so sync only began
+            # negotiating once capture was armed, and spent the start of a window
+            # discarding frames. At 2 Hz with libcamera's 100-frame ready_frame default
+            # that is ~50 s of a window. It also meant `sync_ready` was null on the bus
+            # for any paused pod, so there was no way to know before arming whether the
+            # pair would sync at all.
             #
-            # Released in a finally for a reason specific to this board: the still
-            # configuration has buffer_count=1, so a held request is the camera's only
-            # buffer and leaking one stops capture outright rather than slowing it.
+            # So: one retrieval per frame, whatever the state. A metadata read and a
+            # release costs no encode and no card write, and it is what lets a paused pod
+            # reach sync while idle -- #434's idle-ready state -- and report it.
             request = picam2.capture_request()
+            keep = False
             try:
                 metadata = request.get_metadata()
                 exposure_boot_ns = metadata.get("SensorTimestamp")
+                clk = _clock_triple()
+                sync_ready_now = metadata.get("SyncReady")
+
+                if sync_active and not sync_ready_seen and sync_ready_now:
+                    sync_ready_seen = True
+                    state["sync_ready"] = True
+                    # SyncTimer at the crossing is the headline number: at this moment it
+                    # "indicates how closely synchronised the client believes it is with
+                    # the server". The one frame where that reading means anything.
+                    print(f"capture: SYNC READY as {sync_active} after {sync_waits} "
+                          f"waiting frames; SyncTimer at the crossing is "
+                          f"{metadata.get('SyncTimer')} us", flush=True)
+                    publish()
+                elif sync_active and not sync_ready_seen:
+                    sync_waits += 1
+                    state["sync_ready"] = False
+                    if sync_waits == 1 or sync_waits % 50 == 0:
+                        print(f"capture: waiting for sync as {sync_active}, "
+                              f"{sync_waits} frames so far, SyncTimer "
+                              f"{metadata.get('SyncTimer')} us", flush=True)
+                        publish()
+
                 if exposure_boot_ns is None:
-                    # No timestamp, no basis for choosing. Dropped rather than written,
-                    # because a frame whose instant is unknown cannot be paired with the
-                    # other pod's, which is the only reason this pod captures at all.
+                    # No timestamp, no basis for choosing, and nothing that could be
+                    # paired with the other pod's frame.
+                    decision = "no_timestamp"
                     unstamped += 1
                     if unstamped == 1 or unstamped % 50 == 0:
                         print(f"capture: {unstamped} frames with no SensorTimestamp, "
                               "dropped -- cannot place them in time", flush=True)
-                    continue
+                    exposure_wall_ns = boundary = offset_ns = None
+                else:
+                    exposure_wall_ns = exposure_boot_ns + (clk["wall_ns"] - clk["boot_ns"])
+                    boundary, offset_ns = _boundary_offset_ns(exposure_wall_ns)
+                    if phase != "capture" or not capturing:
+                        decision = "paused"
+                    elif sync_active and not sync_ready_seen:
+                        decision = "sync_wait"
+                    elif boundary == last_boundary:
+                        decision = "second_taken"
+                    else:
+                        decision = "kept"
+                        keep = True
 
-                clk = _clock_triple()
-                exposure_wall_ns = exposure_boot_ns + (clk["wall_ns"] - clk["boot_ns"])
-                boundary, offset_ns = _boundary_offset_ns(exposure_wall_ns)
-                if boundary == last_boundary:
-                    # This second already has its frame.
+                # THE LEDGER: every frame, its times, and what happened to it. Written
+                # before the keep, so a frame appears even if the encode later fails.
+                ledger.record({
+                    "t": "f",
+                    "seen": frames_seen,
+                    "decision": decision,
+                    "phase": phase,
+                    "capturing": bool(capturing),
+                    "sensor_timestamp_ns": exposure_boot_ns,
+                    "frame_wall_clock_ns": metadata.get("FrameWallClock"),
+                    "exposure_wall_ns": exposure_wall_ns,
+                    "second_offset_us": None if offset_ns is None else round(offset_ns / 1000),
+                    "clk": clk,
+                    "sync_ready": sync_ready_now,
+                    "sync_timer_us": metadata.get("SyncTimer"),
+                    "frame_duration_us": metadata.get("FrameDuration"),
+                    "kept_seq": seq if keep else None,
+                })
+                frames_seen += 1
+                state["frames_seen"] = frames_seen
+
+                if not keep:
+                    if decision == "paused":
+                        last_boundary = None
                     continue
                 last_boundary = boundary
 
@@ -982,6 +1035,7 @@ def main():
         # Drain before announcing a count, so the number logged is the number on the card.
         # SIGTERM gets 90 s here (--stop-timeout in the quadlet), and a drain is one write.
         serializer.close()
+        ledger.close()
         state["phase"] = "stopped"
         state["ready"] = False
         state["capturing"] = False
@@ -990,7 +1044,8 @@ def main():
         if serializer.waits or serializer.errors:
             extra = (f" ({serializer.waits} waited on the writer, "
                      f"{serializer.errors} write errors)")
-        print(f"capture: stopped after {seq} frames{extra}", flush=True)
+        print(f"capture: stopped after {seq} frames kept of {frames_seen} seen"
+              f"{extra}", flush=True)
 
 
 if __name__ == "__main__":
