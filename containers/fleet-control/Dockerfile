@@ -67,6 +67,12 @@ COPY containers/fleet-control/ui ./ui
 # change to it rolls this pod, which does NOT disturb a workflow already running, since that
 # runs in a pod of its own. That is the whole point of the move.
 COPY containers/fleet-control/step/run-playbook.sh /usr/local/bin/run-playbook.sh
+
+# The bench simulated-flight cycle's step body (coordinator#541). Same reason as above: it
+# needs this image's python and ssh client, and it drives this service's own API. The
+# procedure it implements is declared as the `bench-simflight` WorkflowTemplate in tiles;
+# this is the code those steps run, so the two version together.
+COPY harness/bench_cycle.py /usr/local/bin/bench-cycle
 COPY containers/fleet-control/package.json ./
 COPY host/ansible /app/ansible
 
