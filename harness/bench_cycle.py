@@ -140,10 +140,18 @@ def wait_for(what: str, check, timeout_s: int, every_s: int = 15):
     raise SystemExit(f"[bench] timed out waiting for {what} after {timeout_s}s")
 
 
-def watch_run(run_id: str, label: str) -> None:
+def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
     """Poll a run to completion. Branches on `status` only; the lines are for the operator
-    and for the failure marker."""
+    and for the failure marker.
+
+    The cap is not belt-and-braces. A converge whose workflow cannot be created at all --
+    on 2026-10-17, a missing resource CRD -- holds `status: running` indefinitely and
+    repeats `No resources found in fleet-control namespace.`, with no `fatal:`, `FAILED:`
+    or `UNREACHABLE` anywhere in it. Status plus markers cannot see that, so without a
+    wall clock this polls until someone notices.
+    """
     seen = 0
+    deadline = time.monotonic() + timeout_s
     while True:
         run = api(f"/runs/{run_id}", timeout=60)
         lines = [l["line"] for l in run.get("lines", [])]
@@ -154,6 +162,10 @@ def watch_run(run_id: str, label: str) -> None:
         seen = len(lines)
         status = run.get("status")
         if status == "running":
+            if time.monotonic() > deadline:
+                raise SystemExit(
+                    f"[bench] {label} still `running` after {timeout_s}s with no terminal "
+                    f"status; last line: {(lines or ['<none>'])[-1].strip()}")
             time.sleep(20)
             continue
         bad = run_failed_line(lines)
@@ -209,7 +221,7 @@ def stage_deploy() -> None:
     # its own memory and three at once OOM-killed it.
     for node in CAMPODS:
         run = api(f"/nodes/{node}/converge", method="POST", timeout=120)
-        log(f"{node}: converge {run['id'][:8]}")
+        log(f"{node}: converge {run['id']}")
         watch_run(run["id"], f"{node} converge")
     for node in CAMPODS:
         api(f"/nodes/{node}/reboot", method="POST", timeout=180)
