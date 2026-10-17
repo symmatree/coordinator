@@ -307,11 +307,39 @@ No persistent subscription and no poll loop: connect, subscribe, read, disconnec
 one subscribe gets the whole current picture, which keeps the rule that nothing here touches the
 fleet unless somebody asked.
 
-## Progress comes from events, not scraped text
+## Converge and full provision run in a pod of their own
 
-`ansible-runner` emits a structured JSON event per task and per host. The service renders those
-rather than parsing `-v` output, which is not a stable interface and prints each task's entire
-result object — one `docker.service` fact block is several kilobytes.
+[#504](https://github.com/symmatree/coordinator/issues/504). The service submits an Argo
+`Workflow` against `fleet-control-playbook`, declared in
+[tiles](https://github.com/symmatree/tiles/tree/main/tanka/environments/fleet-control), and then
+watches it. Submitting and watching are different things: once the cluster has accepted the
+workflow the work is happening whether this process is still here or not, which is the point --
+a pod roll used to kill a converge, and a playbook-only merge *is* a pod roll.
+
+**The run is findable without this process.** Each workflow carries
+`fleet-control.symmatree.com/run-id`, `/node` and `/action` as labels, so a restarted service can
+ask the cluster what is running on its behalf rather than having lost the mapping with its
+memory. `findByRun` is that lookup.
+
+**Which playbook it runs** is the newest published archive on `main`, resolved from the
+`ansible-payload.yaml` workflow's artifacts — not this service's own revision, which would go
+stale the moment `host/ansible/**` leaves this image's rebuild paths. The step then reads the
+archive's own `VERSION` and refuses a mismatch, so the run records what it unpacked rather than
+what it asked for.
+
+Walking back through recent builds rather than taking only the newest is deliberate: artifacts
+expire on a 90-day clock, so the newest *successful build* is not always a runnable one.
+
+**Reimage has not moved** and still spawns `ansible-runner` here, which is why this image still
+carries `host/ansible` and still rebuilds on a playbook merge. That is the remaining step.
+
+### Progress comes from events, not scraped text
+
+For the runs that still use `ansible-runner`. It emits a structured JSON event per task and per
+host, and the service renders those rather than parsing `-v` output, which is not a stable
+interface and prints each task's entire result object — one `docker.service` fact block is
+several kilobytes. A workflow's log is not rendered at all: it is what `ansible-playbook` prints,
+which is what the operator would see running it by hand.
 
 ### The log says when
 
@@ -469,15 +497,15 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 One action per node at a time; a second `POST` against a busy node is a `409`. **Except reboot**,
 which is the way out of a stuck box and so cannot be the thing a stuck box refuses.
 
-**And one playbook run at a time, fleet-wide.** Converge, full provision and reimage each spawn
-`ansible-runner`, which is a full Python interpreter with ansible-core loaded **inside this pod's
-cgroup** -- about 60 MB apiece. Measured against the 256 MB limit: idle is 194 MB, one converge is
-247 MB. So one fits and two do not. Three were started at once on 2026-10-13 and the pod was
-OOM-killed, taking all three half-finished applies with it.
+**And one playbook run at a time, fleet-wide.** The cap dates from when every run was an
+`ansible-runner` inside this pod's cgroup -- about 60 MB apiece against a 256 MB limit, so one
+fitted and two did not. Three were started at once on 2026-10-13 and the pod was OOM-killed,
+taking all three half-finished applies with it.
 
-The per-node lock does not cover that, because three converges against three nodes is three
-interpreters in one pod. The cheap actions -- stop, reboot, offload, the FC pull -- cost a
-connection rather than an interpreter and are not capped.
+Converge and full provision no longer cost that: they run in a pod of their own (below), so the
+memory argument no longer applies to them. The cap is still here because lifting it is a
+separate decision and reimage has not moved yet. The cheap actions -- stop, reboot, offload, the
+FC pull -- cost a connection rather than an interpreter and are not capped.
 
 This is a floor under that failure, not a fix for its shape: the apply is a child of this process
 either way, so a pod roll still kills it, and a roll is how every release arrives.

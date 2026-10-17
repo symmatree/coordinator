@@ -19,6 +19,9 @@ import { hostOf, type FleetNode, type Inventory } from './inventory.js';
 import type { BusConfig } from './bus.js';
 import { converge as runPlaybook, type EventSink } from './ansible.js';
 import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
+import { latestPlaybook } from './playbookartifact.js';
+import { follow, submitPlaybook, type WorkflowConfig } from './workflows.js';
+import type { GithubOptions } from './github.js';
 import { stopCapture } from './sessions.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -31,6 +34,13 @@ export interface ActionContext {
   inventory: Inventory;
   privateKeyPath: string;
   sshTimeoutSec: number;
+  /** Where playbook workflows are submitted. */
+  workflows: WorkflowConfig;
+  /**
+   * Which published playbook to run. Listing builds and artifacts is public; the token is
+   * only needed by the step that downloads the zip.
+   */
+  github: GithubOptions;
   /**
    * The pod bus, because quiescing a device goes over it rather than over ssh.
    *

@@ -12,6 +12,9 @@ const ctx: ActionContext = {
   sshTimeoutSec: 2,
   // No broker. Reboot must not care; stop must say so rather than reach for ssh.
   bus: { url: '', settleMs: 10 },
+  // Neither reboot nor stop submits a workflow, so these only have to exist.
+  workflows: { namespace: 'fleet-control', template: 'fleet-control-playbook' },
+  github: { repo: 'o/r', workflow: 'ansible-payload.yaml', ref: 'main' },
 };
 const node = { name: 'campod-se', role: 'campod', host: '203.0.113.9' };
 
