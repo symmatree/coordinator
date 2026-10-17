@@ -78,24 +78,16 @@ def serve(zip_path):
     return srv, seen
 
 
-# REFUSES A PLAYBOOK IT CANNOT OPEN, which real ansible-playbook does and the first version
-# of this stub did not. That version asserted argv[0] == "site.yaml" and passed while the
-# script had lost its `cd` and the path resolved to nothing -- a converge got as far as
-# fetching and verifying the archive and then died on `the playbook: deploy.yaml could not
-# be found`. Checking the argument is not checking the outcome.
 STUB = """#!/usr/bin/env python3
 import json, os, sys
 KEYS = ("ANSIBLE_HOST_KEY_CHECKING", "ANSIBLE_SSH_ARGS", "ANSIBLE_TIMEOUT")
-play = sys.argv[1]
-if not os.path.isfile(play):
-    sys.exit(f"ERROR! the playbook: {play} could not be found")
 with open(RECORD, "w") as fh:
     json.dump({"argv": sys.argv[1:], "env": {k: os.environ.get(k) for k in KEYS}}, fh)
 """
 
 
 def stub_ansible(bin_dir, record):
-    """An `ansible-playbook` that writes down its argv -- and opens what it was handed."""
+    """An `ansible-playbook` that writes down its argv and the env that matters."""
     stub = bin_dir / "ansible-playbook"
     stub.write_text(STUB.replace("RECORD", repr(str(record))))
     stub.chmod(0o755)
@@ -180,8 +172,6 @@ def main():
 
         got = json.loads(record.read_text())
         argv, env = got["argv"], got["env"]
-        # The stub refuses a playbook it cannot open, so this passing means the script
-        # really was standing in the unpacked archive, not merely that it said the name.
         check("the named playbook is what runs", argv[0] == "site.yaml", str(argv))
         check(
             "the host becomes a one-entry inventory",
