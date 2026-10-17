@@ -102,10 +102,18 @@ check("the LAST failure is the one reported, not the first",
 # ACTUALLY SERVES. Nothing here checks timing or policy -- only that the stage is reachable
 # and that what it does with each response is possible.
 
+# COPIED FROM THE LIVE SERVICE, not written from memory. The first version of this stub
+# invented an `address` field because that is what the code read; the roster calls it `host`
+# and never had `address`, so the test passed and the step failed on the device. A stub is a
+# claim about another system -- if it is not taken from that system it tests nothing but my
+# own assumption. `campod-ne` is in here with no host on purpose: the roster carries nodes
+# that have no address at all.
 _REAL_SHAPES = {
     # app.get('/nodes', async () => cfg.inventory.nodes) -- a list, not an object.
-    "/nodes": [{"name": "coordinator", "address": "10.0.2.1", "role": "coordinator"},
-               {"name": "campod-se", "address": "10.0.5.237", "role": "campod"}],
+    "/nodes": [{"name": "coordinator", "host": "10.0.99.75", "role": "coordinator"},
+               {"name": "campod-se", "host": "10.0.5.237", "role": "campod"},
+               {"name": "campod-sw", "host": "10.0.2.49", "role": "campod"},
+               {"name": "campod-ne", "role": "campod"}],
 }
 
 
@@ -149,7 +157,9 @@ def _drive(stage, extra=()):
         stdout = "1"
 
     def fake_run(argv, **kw):
-        sent.append(argv[-1])
+        # The WHOLE command line: the login target is an argument too, and asserting only
+        # on the trailing command is how an unreachable host goes unnoticed.
+        sent.append(" ".join(argv))
         return _Done()
 
     bc.api, bc.time.sleep, bc.subprocess.run = fleet, lambda *_: None, fake_run
@@ -187,6 +197,8 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
         check("disarm writes 0 to the arm file", any("echo 0 |" in c for c in sent), str(sent))
         check("disarm reads the roster as a list, which is what /nodes serves",
               ("GET", "/nodes") in calls)
+        check("it addresses the coordinator by the roster's own host field",
+              any("10.0.99.75" in c for c in sent), str(sent))
     if stage == "collect":
         check("collect reboots all three",
               sorted(c[1] for c in calls if c[1].endswith("/reboot"))
