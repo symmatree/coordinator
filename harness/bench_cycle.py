@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
 """Drive the bench simulated-flight cycle, start to finish, the same way every time.
 
-The cycle runs as one unit so that its waits are not optional. docs/campod.md carries the
-same sequence with the same reasons; this is the executable copy, and the one to use.
+THE WAY TO RUN THIS IS THE WORKFLOW, not this file by hand: the `bench-simflight`
+WorkflowTemplate in tiles (`tanka/environments/fleet-control/main.jsonnet`) is the declared
+copy of the procedure, and it calls the stages below in order. Running the stages by hand is
+how the cycle drifted trial to trial -- a wait skipped here, a different flight name there --
+which is the whole reason it is declared now.
+
+    argo submit --from workflowtemplate/bench-simflight -n fleet-control \
+        -p flight=bench-20261017-simflight-11
+
+Each stage is one step of that workflow, and each is a separate process that holds no state
+between them. The measurement window is the workflow's `suspend` step rather than a sleep in
+here: a suspended step has no pod, so nothing of ours is scheduled, logging or polling while
+the cameras are being timed.
 
 The waits that matter, and what each is for:
 
   fleet-control serving the newest commit touching its own paths -- a pending roll means
-    the converge runs the OLD image's playbooks, and today the roll also kills the run
+    the converge runs the OLD image's playbooks
   the campod-camera JOB's conclusion, not the run's -- a skipped job counts as success,
     so a green run says nothing about whether the image was rebuilt (docs/ci.md)
-  converges one at a time -- the service caps playbook runs at one, because each is an
-    ansible-runner in its own memory and three at once OOM-killed it
+  converges one at a time -- the API caps playbook runs at one fleet-wide and returns 409
+    rather than queueing, so serial is enforced, not a preference
   a reboot after converging -- a converge installs and pulls and starts nothing, so the
     reboot is the apply step
   uptime going backwards before trusting any pod state -- the bus documents are retained,
@@ -20,13 +31,14 @@ The waits that matter, and what each is for:
   nothing touched during the window -- every command on a 417 MiB board evicts the
     camera's working set, and timing is what is under test
 
-    harness/bench_cycle.py --flight bench-20261017-simflight-11
-    harness/bench_cycle.py --flight ... --stage deploy      # just converge + reboot
-    harness/bench_cycle.py --flight ... --stage window      # just arm/wait/disarm
-    harness/bench_cycle.py --flight ... --stage collect     # just reboot + offload
-
-Needs FLEET_URL (default below) and, for the window stage, an ssh key that reaches the
-coordinator: the arm file has no API verb, which is why that one step touches a device.
+Environment, all of which the fleet-control pod already has:
+  FLEET_URL             the API (default below)
+  FLEET_SSH_KEY         private key that reaches pi@coordinator -- the arm stage only,
+                        because the arm file has no API verb
+  FLEET_SSH_USER        login account on the device (default pi)
+  FLEET_GITHUB_TOKEN    optional: listing Actions runs is public, so preflight works without
+                        it and uses it when present
+  BENCH_REPO            which repo to resolve revisions against (default symmatree/coordinator)
 """
 from __future__ import annotations
 
@@ -40,8 +52,10 @@ import urllib.error
 import urllib.request
 
 FLEET_URL = os.environ.get("FLEET_URL", "https://fleet.tiles.symmatree.com")
+REPO = os.environ.get("BENCH_REPO", "symmatree/coordinator")
 CAMPODS = ("campod-se", "campod-sw")
 ARM_FILE = "/var/lib/coordinator/ipc/fc_armed"
+BUILD_WORKFLOW = "build-containers.yaml"
 
 
 def log(msg: str) -> None:
@@ -58,9 +72,22 @@ def api(path: str, method: str = "GET", timeout: int = 300):
         raise SystemExit(f"{method} {path} -> {exc.code}: {body}") from exc
 
 
-def git(*args: str) -> str:
-    return subprocess.run(["git", *args], capture_output=True, text=True,
-                          check=True).stdout.strip()
+def github(path: str, timeout: int = 60):
+    """One GitHub API call. There is no git checkout and no `gh` in the step's image, and
+    wanting either is what kept this script on my laptop."""
+    req = urllib.request.Request(
+        f"https://api.github.com{path}",
+        headers={"accept": "application/vnd.github+json"},
+    )
+    token = os.environ.get("FLEET_GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        req.add_header("authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as fh:
+            return json.loads(fh.read() or b"null")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")[:300]
+        raise SystemExit(f"GET {path} -> {exc.code}: {body}") from exc
 
 
 # ---- pure helpers, so the parts that decide things are testable without a fleet ---------
@@ -98,23 +125,43 @@ def cameras_ready(pods: list[dict]) -> bool:
     return len(cams) == len(CAMPODS) and all(c.get("ready") for c in cams)
 
 
-# Failure markers for BOTH line formats, because the run lines are changing under it.
-#
-# Today fleet-control renders them itself (src/ansible.ts): `  FAILED: <host> <task> --
-# <msg> (rc=N)` and `  UNREACHABLE: <host> -- <msg>`. There is no `fatal:` in that
-# renderer at all, so a grep for `fatal:` alone -- which is what my monitors used -- has
-# been matching nothing, and failures were reaching me only through `status`.
-#
-# Under coordinator#540 the lines become raw ansible, which prints `fatal: [host]: FAILED!
-# => {...}` and `UNREACHABLE!`. So: `fatal:` covers the new path, `FAILED:` the current
-# renderer, and the bare word UNREACHABLE both. The raw-ansible shapes are from
-# ground-platform's expectation rather than an observed run through that path, so they want
-# confirming against a real one once it is live.
+def newest_revision(commits: list[dict]) -> str:
+    """The sha from a `/commits?path=` listing, which GitHub returns newest first."""
+    if not commits:
+        raise SystemExit("[bench] no commits returned for that path")
+    return commits[0]["sha"]
+
+
+def build_run_for(runs: list[dict], revision: str) -> dict | None:
+    """The container build for exactly this commit.
+
+    Matched on `head_sha` AND on the workflow's own path: a head_sha has runs from every
+    workflow that fires on it, and `workflow_runs[0]` is whichever finished last.
+    """
+    for run in runs:
+        if run.get("head_sha") == revision and str(run.get("path", "")).endswith(BUILD_WORKFLOW):
+            return run
+    return None
+
+
+def component_job(jobs: list[dict], component: str) -> dict | None:
+    """That build's job for one component, or None if it never ran for this commit."""
+    for job in jobs:
+        if component in str(job.get("name", "")):
+            return job
+    return None
+
+
+# Failure markers, for a play that started and then failed. They are ansible's own words and
+# can only appear once a play is running: `fatal: [host]: FAILED! => {...}` and
+# `UNREACHABLE!`. They say NOTHING about a job that never ran -- that case produced no marker
+# at all and a `status` stuck on `running` (2026-10-17, a missing WorkflowTaskResult CRD), so
+# it is `watch_run`'s wall clock that catches it, not these.
 _FAILURE_MARKERS = ("fatal:", "FAILED:", "UNREACHABLE")
 
 
 def run_failed_line(lines: list[str]) -> str | None:
-    """The last line that says the play failed, in either format, or None."""
+    """The last line that says the play failed, or None."""
     for ln in reversed(lines):
         if any(m in ln for m in _FAILURE_MARKERS):
             return ln.strip()
@@ -141,14 +188,16 @@ def wait_for(what: str, check, timeout_s: int, every_s: int = 15):
 
 
 def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
-    """Poll a run to completion. Branches on `status` only; the lines are for the operator
-    and for the failure marker.
+    """Poll a run to completion. Branches on `status`; the lines are for the operator and
+    for the failure marker.
 
     The cap is not belt-and-braces. A converge whose workflow cannot be created at all --
     on 2026-10-17, a missing resource CRD -- holds `status: running` indefinitely and
     repeats `No resources found in fleet-control namespace.`, with no `fatal:`, `FAILED:`
     or `UNREACHABLE` anywhere in it. Status plus markers cannot see that, so without a
-    wall clock this polls until someone notices.
+    wall clock this polls until someone notices. coordinator#543 bounds it in the
+    submitter, which is the real fix; this stays as the guard for a direct `argo submit`,
+    which gets none of that.
     """
     seen = 0
     deadline = time.monotonic() + timeout_s
@@ -156,7 +205,7 @@ def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
         run = api(f"/runs/{run_id}", timeout=60)
         lines = [l["line"] for l in run.get("lines", [])]
         for ln in lines[seen:]:
-            # The three lines worth echoing whatever the path: they name what actually ran.
+            # The lines worth echoing whatever the path: they name what actually ran.
             if ln.startswith("[step]") or ln.startswith("[fleet-control]"):
                 log(f"  {label}: {ln.strip()}")
         seen = len(lines)
@@ -170,55 +219,61 @@ def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
             continue
         bad = run_failed_line(lines)
         if status != "succeeded" or bad:
-            raise SystemExit(f"[bench] {label} ended {status}: {bad or lines[-1:] }")
+            raise SystemExit(f"[bench] {label} ended {status}: {bad or lines[-1:]}")
         log(f"{label}: succeeded")
         return
 
 
+def ssh_coordinator(key: str, command: str) -> str:
+    host = next((n["address"] for n in api("/nodes", timeout=60)["nodes"]
+                 if n["name"] == "coordinator" and n.get("address")), None)
+    if not host:
+        raise SystemExit("[bench] the coordinator has no address in the inventory")
+    user = os.environ.get("FLEET_SSH_USER", "pi")
+    return subprocess.run(
+        ["ssh", "-i", key, "-o", "BatchMode=yes", "-o", "ConnectTimeout=20",
+         "-o", "StrictHostKeyChecking=accept-new", f"{user}@{host}", command],
+        capture_output=True, text=True, check=True).stdout.strip()
+
+
+# ---- the stages, one per workflow step --------------------------------------------------
+
 def preflight() -> None:
     """Both gates before a converge.
 
-    A pending fleet-control roll means the converge runs the OLD image's playbooks, and
-    today it also means the roll kills the run outright. A camera image that has not built
-    means the converge pulls the previous one and the trial measures last week's code.
+    A pending fleet-control roll means the converge runs the OLD image's playbooks. A camera
+    image that has not built means the converge pulls the previous one and the trial measures
+    last week's code.
     """
-    fc_rev = git("log", "-1", "--format=%H", "origin/main", "--",
-                 "containers/fleet-control", "host/ansible")
-    cam_rev = git("log", "-1", "--format=%H", "origin/main", "--", "containers/campod-camera")
+    fc_rev = newest_revision(github(
+        f"/repos/{REPO}/commits?sha=main&path=containers/fleet-control&per_page=1"))
+    cam_rev = newest_revision(github(
+        f"/repos/{REPO}/commits?sha=main&path=containers/campod-camera&per_page=1"))
     log(f"want fleet-control at {fc_rev[:7]}, camera image at {cam_rev[:7]}")
 
     def serving():
-        rev = api("/build", timeout=60).get("revision", "")
-        return rev == fc_rev
+        return api("/build", timeout=60).get("revision", "") == fc_rev
     wait_for(f"fleet-control serving {fc_rev[:7]}", serving, 2400, 30)
 
     # The COMPONENT's job, not the run's conclusion: a skipped job counts as success, so a
     # green run proves nothing about whether the camera image was rebuilt (docs/ci.md).
-    out = subprocess.run(
-        ["gh", "run", "list", "--workflow", "build-containers.yaml", "--limit", "15",
-         "--json", "headSha,databaseId,status,conclusion"],
-        capture_output=True, text=True, check=True).stdout
-    runs = [r for r in json.loads(out) if r["headSha"] == cam_rev]
-    if not runs:
-        raise SystemExit(f"[bench] no build-containers run for {cam_rev[:7]} yet")
-    if runs[0]["status"] != "completed":
-        raise SystemExit(f"[bench] build for {cam_rev[:7]} is {runs[0]['status']}; wait")
-    jobs = json.loads(subprocess.run(
-        ["gh", "run", "view", str(runs[0]["databaseId"]), "--json", "jobs"],
-        capture_output=True, text=True, check=True).stdout)["jobs"]
-    cam_jobs = [j for j in jobs if "campod-camera" in j["name"]]
-    if not cam_jobs or cam_jobs[0]["conclusion"] != "success":
-        raise SystemExit(
-            f"[bench] campod-camera job for {cam_rev[:7]} is "
-            f"{cam_jobs[0]['conclusion'] if cam_jobs else 'absent'}")
+    runs = github(f"/repos/{REPO}/actions/runs?head_sha={cam_rev}").get("workflow_runs", [])
+    build = build_run_for(runs, cam_rev)
+    if not build:
+        raise SystemExit(f"[bench] no {BUILD_WORKFLOW} run for {cam_rev[:7]} yet")
+    if build.get("status") != "completed":
+        raise SystemExit(f"[bench] build for {cam_rev[:7]} is {build.get('status')}; wait")
+    jobs = github(f"/repos/{REPO}/actions/runs/{build['id']}/jobs").get("jobs", [])
+    job = component_job(jobs, "campod-camera")
+    if not job or job.get("conclusion") != "success":
+        raise SystemExit(f"[bench] campod-camera job for {cam_rev[:7]} is "
+                         f"{job.get('conclusion') if job else 'absent'}")
     log(f"camera image for {cam_rev[:7]}: built")
 
 
 def stage_deploy() -> None:
     preflight()
     before = min((p.get("raw") or {}).get("as_of_boot_s") or 0 for p in campod_pods())
-    # SERIAL, because the service caps playbook runs at one: each is an ansible-runner in
-    # its own memory and three at once OOM-killed it.
     for node in CAMPODS:
         run = api(f"/nodes/{node}/converge", method="POST", timeout=120)
         log(f"{node}: converge {run['id']}")
@@ -234,26 +289,16 @@ def stage_deploy() -> None:
         log(f"  {p['node']}: ready at mono {cam.get('ready_at_mono_s')}s")
 
 
-def ssh_coordinator(key: str, command: str) -> str:
-    host = next((n["address"] for n in api("/nodes", timeout=60)["nodes"]
-                 if n["name"] == "coordinator" and n.get("address")), None)
-    if not host:
-        raise SystemExit("[bench] the coordinator has no address in the inventory")
-    return subprocess.run(
-        ["ssh", "-i", key, "-o", "BatchMode=yes", "-o", "ConnectTimeout=20",
-         f"pi@{host}", command],
-        capture_output=True, text=True, check=True).stdout.strip()
-
-
-def stage_window(key: str, window_s: int) -> None:
+def stage_arm(key: str) -> None:
     # The FC talker owns the arm file, so it has to stop or it overwrites what we write.
     # On the coordinator the bus quiesce stops exactly coordinator-mavlink.
     api("/nodes/coordinator/stop-capture", method="POST", timeout=180)
     log("coordinator: FC talker stopped")
     ssh_coordinator(key, f"echo 1 | sudo tee {ARM_FILE}")
-    log(f"armed; holding {window_s}s and touching NOTHING -- every command on a 417 MiB "
-        "board evicts the camera's working set, and timing is what is under test")
-    time.sleep(window_s)
+    log("armed; the window is the workflow's suspend step, so nothing of ours runs during it")
+
+
+def stage_disarm(key: str) -> None:
     ssh_coordinator(key, f"echo 0 | sudo tee {ARM_FILE}")
     log("disarmed; 20s for the writers to close out")
     time.sleep(20)
@@ -283,20 +328,26 @@ def stage_collect(flight: str) -> None:
         "wrote it, then journal.log, then the sidecars")
 
 
+STAGES = ("deploy", "arm", "disarm", "collect")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--flight", required=True, help="flight directory name for the bundles")
-    ap.add_argument("--stage", choices=("all", "deploy", "window", "collect"), default="all")
-    ap.add_argument("--window-s", type=int, default=240)
-    ap.add_argument("--ssh-key", default=os.path.expanduser("~/.ssh/OnePKey"),
-                    help="key that reaches pi@coordinator, for the arm file only")
+    ap.add_argument("stage", choices=STAGES, help="which step of the workflow to run")
+    ap.add_argument("--flight", help="flight directory name; required by `collect`")
+    ap.add_argument("--ssh-key", default=os.environ.get("FLEET_SSH_KEY", "/secrets/ssh/id"),
+                    help="key that reaches the coordinator, for the arm file only")
     args = ap.parse_args()
 
-    if args.stage in ("all", "deploy"):
+    if args.stage == "deploy":
         stage_deploy()
-    if args.stage in ("all", "window"):
-        stage_window(args.ssh_key, args.window_s)
-    if args.stage in ("all", "collect"):
+    elif args.stage == "arm":
+        stage_arm(args.ssh_key)
+    elif args.stage == "disarm":
+        stage_disarm(args.ssh_key)
+    elif args.stage == "collect":
+        if not args.flight:
+            ap.error("collect needs --flight")
         stage_collect(args.flight)
     return 0
 
