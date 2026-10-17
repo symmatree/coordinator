@@ -214,7 +214,7 @@ def _boundary_offset_ns(wall_exposure_ns, period_ns=1_000_000_000):
 
 
 class _Serializer:
-    """Writes finished bytes to the card on its own thread, one frame deep.
+    """Encodes and writes one kept frame at a time, on its own thread.
 
     WHY THE WRITE LEAVES THE SENSOR PATH. Measured 2026-10-16: 103 of 105 saves per pod
     took 412-422 ms, and two took 2399 ms and 708 ms. The long one matters more than its
@@ -222,22 +222,31 @@ class _Serializer:
     run inside the same window, so the card stalls everything on the box at once. Holding
     the capture thread across that costs a frame AND whatever the accel loses.
 
-    DEPTH IS ONE WAITING PLUS ONE IN FLIGHT -- about 3.6 MB of JPEG, not a queue. The slot
-    empties when the writer PICKS UP a frame rather than when it finishes, so one stalled
-    write is absorbed: the capture thread hands over the next frame and carries on. A
-    second stall before the first completes blocks the capture thread, which is the same
-    cost as the inline write it replaces and never a silent drop.
+    WHY THE ENCODE MOVED HERE TOO. The camera has ONE buffer (buffer_count=1, and the CMA
+    pool cannot hold another -- docs/os-and-driver-handoff.md measures a third set at
+    ~145 MiB against a 128 MB pool). So whatever the capture thread holds the request for,
+    the sensor has nowhere to put the next frame and that frame is lost. A ~395 ms encode
+    on the capture thread therefore halves the usable rate at ANY frame rate: measured at
+    5 fps as a 400 ms delivery lattice, and at 1 Hz as a dead-flat 2000 ms cadence.
 
-    Not deeper, deliberately. Depth past that buys nothing at 1 Hz against a ~50 ms write,
-    and on a 417 MiB board an unbounded queue is how a card stall becomes an OOM.
+    So the capture thread copies the frame out and releases: make_buffer() is
+    np.array(..., dtype=np.uint8), a real copy, about 36 ms for 35.8 MB. Encode and write
+    happen here, off the sensor path, which also keeps the card's occasional multi-second
+    stalls off it -- one such stall took 2399 ms and cost the accel reader, a separate
+    container, its only FIFO overrun of that run.
 
-    Compression stays on the capture thread: it is CPU, it does not stall unpredictably,
-    and encoding here means the bytes handed over are ~1.8 MB instead of a 35.8 MB frame
-    -- which is what keeps the slot cheap enough to exist on this board.
+    STRICTLY ONE FRAME. The slot is held until the work is DONE, not until it is picked
+    up, so exactly one 35.8 MB copy exists at a time. At 10 Hz we keep one frame a second
+    and the work takes ~400 ms, so the capture thread should never wait; if it does, it
+    waits rather than dropping, and the count is reported at shutdown.
     """
 
-    def __init__(self):
+    def __init__(self, encode):
+        # encode(buffer) -> jpeg bytes. Passed in rather than reaching for picamera2 here,
+        # so this class stays testable without a camera.
+        self._encode = encode
         self._slot = None
+        self._busy = False
         self._lock = threading.Lock()
         self._ready = threading.Condition(self._lock)
         self._done = threading.Condition(self._lock)
@@ -247,14 +256,14 @@ class _Serializer:
         self._thread = threading.Thread(target=self._run, name="serializer", daemon=True)
         self._thread.start()
 
-    def put(self, items):
-        """Hand over [(path, bytes), ...]; blocks only if a frame is still waiting to start."""
+    def put(self, buffer, jpeg_path, sidecar_path, sidecar):
+        """Hand over one kept frame. Blocks while the previous one is still being done."""
         with self._lock:
-            if self._slot is not None:
+            if self._slot is not None or self._busy:
                 self.waits += 1
-                while self._slot is not None and not self._stop:
+                while (self._slot is not None or self._busy) and not self._stop:
                     self._done.wait(30)
-            self._slot = items
+            self._slot = (buffer, jpeg_path, sidecar_path, sidecar)
             self._ready.notify()
 
     def _run(self):
@@ -264,19 +273,26 @@ class _Serializer:
                     self._ready.wait(1)
                 if self._slot is None and self._stop:
                     return
-                items, self._slot = self._slot, None
+                job, self._slot = self._slot, None
+                self._busy = True
+            buffer, jpeg_path, sidecar_path, sidecar = job
+            try:
+                jpeg_path.write_bytes(self._encode(buffer))
+                # The sidecar goes LAST: an image without one is unusable for pairing, so
+                # the sidecar's existence is what marks a frame complete.
+                sidecar_path.write_bytes(sidecar)
+            except Exception as exc:  # noqa: BLE001
+                self.errors += 1
+                print(f"capture: encoding or writing {jpeg_path.name} failed: {exc}",
+                      flush=True)
+            with self._lock:
+                self._busy = False
                 self._done.notify()
-            for path, blob in items:
-                try:
-                    path.write_bytes(blob)
-                except OSError as exc:
-                    self.errors += 1
-                    print(f"capture: write {path.name} failed: {exc}", flush=True)
 
     def close(self, timeout=30):
-        """Drain, then stop. Called on the way out so the last frame is not lost."""
+        """Finish the frame in hand, then stop, so the last one is not lost."""
         with self._lock:
-            while self._slot is not None:
+            while (self._slot is not None or self._busy) and not self._stop:
                 self._done.wait(timeout)
             self._stop = True
             self._ready.notify()
@@ -707,7 +723,17 @@ def main():
     )
 
     seq = 0
-    serializer = _Serializer()
+    # The encode the worker runs. Bound here because it needs the stream config, and kept
+    # out of _Serializer so that class is testable with no camera.
+    main_cfg = picam2.camera_configuration()["main"]
+
+    def _encode_jpeg(buffer):
+        blob = io.BytesIO()
+        picam2.helpers.save(picam2.helpers.make_image(buffer, main_cfg), {}, blob,
+                            format="jpeg")
+        return blob.getvalue()
+
+    serializer = _Serializer(_encode_jpeg)
     # The second we have already written a frame for, so a second gets one frame even
     # though several frames fall inside the window when the grid is much faster.
     last_boundary = None
@@ -845,13 +871,14 @@ def main():
                 wall = dt.datetime.fromtimestamp(exposure_wall_ns / 1e9, dt.timezone.utc)
                 stem = f"{node}_{seq:08d}_{wall.strftime('%Y%m%dT%H%M%S_%f')}Z"
                 jpeg_path = session_dir / f"{stem}.jpg"
-                # INTO MEMORY, not onto the card. An explicit format is required because
-                # picamera2 infers it from a filename and there is none here.
-                blob = io.BytesIO()
-                request.save("main", blob, format="jpeg")
+                # COPY OUT AND GET CLEAR. make_buffer is np.array(..., dtype=np.uint8) --
+                # a real copy, ~36 ms for 35.8 MB -- so the request can be released before
+                # the ~395 ms encode instead of after it. With one camera buffer, every
+                # millisecond held is a frame the sensor cannot deliver.
+                buffer = request.make_buffer("main")
             finally:
                 request.release()
-            # After the encode and before the write, which is now someone else's problem.
+            # The copy is done and the camera is free; the encode has not happened yet.
             sidecar_mono = time.monotonic_ns()
 
             sidecar = {
@@ -928,10 +955,11 @@ def main():
                 "sync_mode": sync_active or "off",
                 "phase": phase,
             }
-            # Both files in one handoff, so a frame's image and its sidecar cannot land
-            # in different seconds -- an image with no sidecar is unusable for pairing.
-            serializer.put([(jpeg_path, blob.getvalue()),
-                            (session_dir / f"{stem}.json", json.dumps(sidecar).encode())])
+            # One handoff per kept frame: the worker encodes, writes the image, then the
+            # sidecar. An image with no sidecar is unusable for pairing, so the sidecar
+            # landing is what marks the frame complete.
+            serializer.put(buffer, jpeg_path, session_dir / f"{stem}.json",
+                           json.dumps(sidecar).encode())
             seq += 1
             # Count plus the time of the last one. A count alone cannot distinguish
             # "capturing" from "stopped at 412", and a consumer must not have to

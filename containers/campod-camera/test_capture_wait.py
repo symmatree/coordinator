@@ -308,59 +308,44 @@ for _phase in (0, 37_000_000, 123_456_789, 199_999_999):
           f"{len(_picked)} frames over {len(_seconds)} seconds")
 
 # ---- the serializer ----------------------------------------------------------------
-# The write left the sensor thread, so these are the properties the capture loop now
-# depends on and cannot see for itself: the bytes land, a slow write makes the next put
-# WAIT rather than drop, and close() drains instead of truncating the session.
+# It now encodes as well as writes, and holds STRICTLY ONE frame, because the thing being
+# bounded is a 35.8 MB raw copy rather than 1.8 MB of JPEG. These are the properties the
+# capture loop depends on and cannot see for itself.
 _sd = Path(tempfile.mkdtemp(prefix="serializer-"))
-_s = capture._Serializer()
-_s.put([(_sd / "a.jpg", b"\xff\xd8one"), (_sd / "a.json", b"{}")])
+_s = capture._Serializer(lambda buf: b"\xff\xd8" + bytes(buf))
+_s.put(b"ONE", _sd / "a.jpg", _sd / "a.json", b"{}")
 _s.close()
-check("both files of a handoff land", (_sd / "a.jpg").read_bytes() == b"\xff\xd8one"
-      and (_sd / "a.json").read_bytes() == b"{}")
-check("close() drained rather than dropping", _s.errors == 0)
+check("the frame is encoded and written", (_sd / "a.jpg").read_bytes() == b"\xff\xd8ONE")
+check("and its sidecar lands too", (_sd / "a.json").read_bytes() == b"{}")
+check("close() finished the frame in hand", _s.errors == 0)
 
-# A write that blocks: the second put must wait for it, not overwrite it or drop it.
+# An encode or write that raises must not kill the thread or the session.
+_s2 = capture._Serializer(lambda buf: (_ for _ in ()).throw(ValueError("boom")))
+_s2.put(b"X", _sd / "bad.jpg", _sd / "bad.json", b"{}")
+_s2.put(b"Y", _sd / "good.jpg", _sd / "good.json", b"{}")
+_s2.close()
+check("a failed frame is counted, not fatal", _s2.errors == 2, f"errors={_s2.errors}")
+
+# STRICTLY ONE: the slot is held until the work COMPLETES, so a second put waits. That is
+# what bounds memory to a single raw copy.
 _slow = Path(tempfile.mkdtemp(prefix="serializer-slow-"))
-_s2 = capture._Serializer()
-_orig = Path.write_bytes
 _gate = threading.Event()
-
-
-def _blocking_write(self, data):
-    if self.name == "slow.jpg":
-        _gate.wait(10)
-    return _orig(self, data)
-
-
-Path.write_bytes = _blocking_write
-try:
-    # One stalled write is ABSORBED: the slot frees when the writer picks a frame up, so
-    # the next handoff does not block. That is the property that keeps a 2.4 s card stall
-    # off the sensor thread.
-    _s2.put([(_slow / "slow.jpg", b"first")])
-    time.sleep(0.2)
-    _t2 = threading.Thread(target=lambda: _s2.put([(_slow / "second.jpg", b"second")]))
-    _t2.start(); _t2.join(2)
-    check("a stalled write does not block the next handoff",
-          not _t2.is_alive() and _s2.waits == 0, f"waits={_s2.waits}")
-    # A SECOND stall before the first clears does block -- bounded memory, no silent drop.
-    _t3 = threading.Thread(target=lambda: _s2.put([(_slow / "third.jpg", b"third")]))
-    _t3.start()
-    time.sleep(0.3)
-    check("but a second one does, rather than queueing without bound",
-          _t3.is_alive() and _s2.waits == 1, f"alive={_t3.is_alive()} waits={_s2.waits}")
-    _gate.set()
-    _t3.join(10)
-    _s2.close()
-finally:
-    Path.write_bytes = _orig
-check("and every frame was written once the writer caught up",
-      (_slow / "slow.jpg").exists() and (_slow / "second.jpg").read_bytes() == b"second"
-      and (_slow / "third.jpg").read_bytes() == b"third")
-check("no writes were lost or doubled", _s2.errors == 0)
+_s3 = capture._Serializer(lambda buf: (_gate.wait(10), b"\xff\xd8" + bytes(buf))[1])
+_s3.put(b"FIRST", _slow / "first.jpg", _slow / "first.json", b"{}")
+time.sleep(0.3)
+_t = threading.Thread(target=lambda: _s3.put(b"SECOND", _slow / "second.jpg",
+                                             _slow / "second.json", b"{}"))
+_t.start()
+time.sleep(0.3)
+check("a second frame waits while the first is still being encoded",
+      _t.is_alive() and _s3.waits == 1, f"alive={_t.is_alive()} waits={_s3.waits}")
+_gate.set()
+_t.join(10)
+_s3.close()
+check("and both frames were written once it caught up",
+      (_slow / "first.jpg").exists() and (_slow / "second.json").read_bytes() == b"{}")
 shutil.rmtree(_sd, ignore_errors=True)
 shutil.rmtree(_slow, ignore_errors=True)
-
 
 # ---- main() actually starts, and keeps one frame per second ------------------------
 # THE TEST THIS FILE SHIPPED WITHOUT. Everything above exercises helpers; nothing ran
@@ -378,15 +363,11 @@ class _FakeRequest:
     def get_metadata(self):
         return self._md
 
-    def save(self, name, file_output, format=None):
-        # capture.py encodes into memory now and hands the bytes to the serializer, so
-        # this is called with a BytesIO and an explicit format rather than a path.
-        data = b"\xff\xd8\xff" + bytes(64)
-        if hasattr(file_output, "write"):
-            file_output.write(data)
-        else:
-            Path(file_output).write_bytes(data)
-        self._saved.append(file_output)
+    def make_buffer(self, name):
+        # The real one returns np.array(..., dtype=np.uint8): a COPY, which is what lets
+        # capture.py release the request before encoding. A bytes stand-in is enough here.
+        self._saved.append(name)
+        return b"RAWFRAME"
 
     def release(self):
         pass
@@ -425,6 +406,22 @@ class _FakeCam:
 
     def capture_metadata(self):
         return {"SyncReady": True, "SyncTimer": 0}
+
+    def camera_configuration(self):
+        return {"main": {"format": "BGR888", "size": (4608, 2592)}}
+
+    @property
+    def helpers(self):
+        cam = self
+
+        class _H:
+            def make_image(self, buffer, config):
+                return ("image", bytes(buffer))
+
+            def save(self, img, metadata, file_output, format=None):
+                file_output.write(b"\xff\xd8\xff" + img[1])
+
+        return _H()
 
     def stop(self):
         pass
