@@ -382,6 +382,9 @@ class _FakeCam:
         self.camera_controls = {"FrameDurationLimits": (69669, 220535845)}
 
     def create_still_configuration(self, main=None, **kw):
+        # Recorded because WHERE the frame duration is pinned is the thing under test: in
+        # the configuration it reaches the IPA, after start() it reaches only the sensor.
+        self.config_controls = kw.get("controls") or {}
         return {"main": main or {}}
 
     def configure(self, cfg):
@@ -478,6 +481,12 @@ _out = _buf.getvalue()
 
 # None is main()'s normal return -- `sys.exit(main())` makes that exit 0. The thing under
 # test is that it does not RAISE, which is what shipped broken.
+# THE PIN HAS TO BE IN THE CONFIGURATION. Set only after start(), it reached the sensor
+# but not the IPA's cached min/max -- which is what the sync algorithm divides by -- and the
+# server broadcast frame durations of 52.7 s and 38.0 s while the sidecars looked correct.
+check("the frame duration is pinned in the configuration, not just after start",
+      _cam.config_controls.get("FrameDurationLimits") == (200000, 200000),
+      repr(_cam.config_controls))
 check("main() starts and runs without raising", _rc in (0, None), f"rc={_rc}  {_out[-300:]}")
 check("it logs the selection rule it is running", "nearest the boundary" in _out,
       _out[:200])
