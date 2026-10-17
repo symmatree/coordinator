@@ -188,15 +188,6 @@ export function isFinished(phase: string | undefined): boolean {
   return phase === 'Succeeded' || phase === 'Failed' || phase === 'Error';
 }
 
-/**
- * Whether the controller has acted on it at all.
- *
- * An unset phase is the telling one: Argo writes `Pending` when it first reconciles, so a
- * workflow with no phase has not been looked at, rather than being looked at and queued.
- */
-function hasStarted(phase: string | undefined): boolean {
-  return phase !== undefined && phase !== 'Pending';
-}
 
 /**
  * Follow a workflow to its end: its step's output into `sink`, then its phase.
@@ -209,22 +200,22 @@ export async function follow(
   cfg: WorkflowConfig,
   name: string,
   sink: (stream: 'stdout' | 'stderr', line: string) => void,
-  opts: { pollMs?: number; retryMs?: number; startupMs?: number; signal?: AbortSignal } = {},
+  opts: { pollMs?: number; retryMs?: number; signal?: AbortSignal } = {},
 ): Promise<WorkflowState> {
   const pollMs = opts.pollMs ?? 5_000;
-  // HOW LONG IT MAY TAKE TO START, which is a different question from how long it may take
-  // to RUN. There is deliberately no activeDeadlineSeconds on the template -- a converge is
-  // twenty minutes of apt, and an earlier version of this service killed one at sixty and
-  // reported a successful play as a failure. But "accepted and never scheduled" had no
-  // bound at all, and a controller that cannot reconcile leaves the object with NO PHASE,
-  // so this polled forever and the caller's run sat `running` with nothing to match on.
-  // That is what happened on 2026-10-17, when the controller could not list
-  // WorkflowTaskResult and therefore processed nothing.
+  // NO DEADLINE HERE, and that is deliberate twice over.
   //
-  // Generous on purpose: a pod schedules here in seconds, so five minutes means something
-  // is wrong rather than the cluster being busy.
-  const startupMs = opts.startupMs ?? 300_000;
-  const submittedAt = Date.now();
+  // A caller knows how long it expects a thing to take and how long it is prepared to wait;
+  // this does not. And a workflow sitting unscheduled is not a failed one -- on 2026-10-17
+  // a converge sat with no phase for an hour because the controller could not list
+  // WorkflowTaskResult, and when that was fixed the controller picked it up and ran it.
+  // Giving up at some guessed deadline would have marked the run failed while the converge
+  // went on to happen, which is a worse answer than a run that honestly says it is still
+  // waiting.
+  //
+  // The template has no activeDeadlineSeconds for the matching reason: a converge is twenty
+  // minutes of apt, an earlier version of this service killed one at sixty, and a play cut
+  // in half leaves a part-configured box.
   // The phase decides when this is over, and the log stream is stopped rather than waited
   // for. Waiting on it instead meant a workflow that ended quickly -- a failed submit, a
   // step that exits in a second -- held the caller for the whole log-retry budget while
@@ -243,19 +234,6 @@ export async function follow(
         return { name, phase: 'Error', message: 'the workflow is no longer in the cluster' };
       }
       if (isFinished(state.phase)) return state;
-      // No phase, or still Pending, long after it was accepted: the controller is not
-      // acting on it. Terminal rather than patient, so the caller gets a status to branch
-      // on instead of a run that never ends.
-      if (!hasStarted(state.phase) && Date.now() - submittedAt > startupMs) {
-        return {
-          name,
-          phase: 'Error',
-          message:
-            `the workflow was accepted but never started -- ${Math.round(startupMs / 1000)}s ` +
-            `with phase ${state.phase ?? 'unset'}. The workflow controller is not acting on ` +
-            `it; its own log says why.`,
-        };
-      }
       await new Promise((r) => setTimeout(r, pollMs));
     }
   } finally {
