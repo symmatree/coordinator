@@ -87,6 +87,14 @@ for stack in sorted((REPO / "stacks").iterdir()):
             # these units too: being outside the target is the only difference.
             check(f"{name}: WantedBy multi-user.target", "WantedBy=multi-user.target" in text)
             check(f"{name}: NOT PartOf the stack target", f"PartOf={target}" not in text)
+            # AND NOT GATED ON THE CLOCK. The capture units wait for time-sync.target so
+            # their stamps are real; the control plane must not, or a pod spends its first
+            # couple of minutes silent -- unable to say it is alive, or to be told
+            # anything -- exactly when someone is watching a boot. It does not need a wall
+            # clock to be useful: its status document is keyed on as_of_boot_s, which is
+            # monotonic.
+            check(f"{name}: starts eagerly, not after time-sync.target",
+                  "time-sync.target" not in text)
         else:
             # WantedBy brings the stack up at boot; PartOf makes one stop take it down.
             check(f"{name}: WantedBy the stack target", f"WantedBy={target}" in text)
