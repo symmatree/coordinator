@@ -171,10 +171,14 @@ def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
 
 
 def ssh_coordinator(key: str, command: str) -> str:
-    host = next((n["address"] for n in api("/nodes", timeout=60)
-                 if n["name"] == "coordinator" and n.get("address")), None)
+    # `host`, which is what the roster calls it, defaulting to the node name -- the field is
+    # optional there and the name is also a usable address. This read `n["address"]`, a
+    # field the roster has never had, so every arm and disarm failed with "the coordinator
+    # has no address in the inventory".
+    host = next((n.get("host") or n["name"] for n in api("/nodes", timeout=60)
+                 if n["name"] == "coordinator"), None)
     if not host:
-        raise SystemExit("[bench] the coordinator has no address in the inventory")
+        raise SystemExit("[bench] the roster has no coordinator")
     user = os.environ.get("FLEET_SSH_USER", "pi")
     return subprocess.run(
         ["ssh", "-i", key, "-o", "BatchMode=yes", "-o", "ConnectTimeout=20",
