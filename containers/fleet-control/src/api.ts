@@ -15,6 +15,7 @@ import { offloadFcLog, offloadSession, readNotes, validFlightName, writeNotes } 
 import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { collectGround, listTlogs } from './cluster.js';
 import { configured as busConfigured, readPods, setDesired } from './bus.js';
+import { findByRun, workflowUrl } from './workflows.js';
 import { build } from './build.js';
 import { notify, runEnded } from './notify.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
@@ -640,9 +641,29 @@ export function buildServer(
     runs.list().map(({ lines, ...rest }) => ({ ...rest, lineCount: lines.length })),
   );
 
+  /**
+   * One run -- and when this process has never heard of it, where the work actually is.
+   *
+   * The registry is in memory, so a pod roll loses every run in it while the Workflow each
+   * one submitted carries on in a pod of its own. The run id is then the only handle a
+   * caller has left, because the link was in the lines that died with the registry.
+   *
+   * Still a 404: this service does not have that run. It does not invent one either --
+   * reporting a Workflow's state in the registry's vocabulary would be a second, worse
+   * account of something the workflow already describes. What it adds is the link, so the
+   * answer is "not here, and here is where it is" rather than "no".
+   */
   app.get<{ Params: { id: string } }>('/runs/:id', async (req, reply) => {
     const run = runs.get(req.params.id);
-    return run ?? reply.code(404).send({ error: `no such run: ${req.params.id}` });
+    if (run) return run;
+
+    const found = await findByRun(cfg.action.workflows, req.params.id).catch(() => undefined);
+    return reply.code(404).send({
+      error: `no such run: ${req.params.id}`,
+      ...(found === undefined
+        ? {}
+        : { workflow: workflowUrl(cfg.action.workflows, found.name) }),
+    });
   });
 
   /** Server-sent events, so a run can be watched live rather than polled. */
