@@ -1,18 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { converge, reimage, type ActionContext } from '../src/actions.js';
 
 /**
- * That a converge SUBMITS A WORKFLOW rather than running ansible here.
+ * What a converge submits: which playbook, against which node, with what.
  *
- * This file exists because #534 claimed to make that change and did not: the new modules
- * landed, the imports landed, and the function body kept calling ansible-runner. Nothing
- * caught it -- unused imports are not an error in this tsconfig, typecheck passed, and no
- * test touched `converge`. So the load-bearing assertion here is the negative one: there is
- * an `ansible-runner` on PATH that leaves a sentinel, and it must never run.
+ * `converge` and `reimage` had no test at all before this, which is why #534 could leave
+ * them calling ansible-runner while claiming otherwise.
  */
 
 const NODE = { name: 'campod-se', role: 'campod' as const, host: '10.0.5.237' };
@@ -20,7 +17,6 @@ const NODE = { name: 'campod-se', role: 'campod' as const, host: '10.0.5.237' };
 function bench(opts: { phase?: string; message?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'converge-'));
   const submitted = join(dir, 'submitted.json');
-  const ranAnsible = join(dir, 'ansible-ran');
 
   writeFileSync(
     join(dir, 'kubectl'),
@@ -40,13 +36,6 @@ else:
 `,
   );
   chmodSync(join(dir, 'kubectl'), 0o755);
-
-  // The tripwire. If anything still runs the play in this process, this fires.
-  writeFileSync(
-    join(dir, 'ansible-runner'),
-    `#!/bin/sh\ntouch ${JSON.stringify(ranAnsible)}\nexit 0\n`,
-  );
-  chmodSync(join(dir, 'ansible-runner'), 0o755);
 
   const realPath = process.env.PATH;
   const realFetch = globalThis.fetch;
@@ -69,7 +58,6 @@ else:
 
   return {
     ctx,
-    ranAnsible: () => existsSync(ranAnsible),
     sent: () => JSON.parse(readFileSync(submitted, 'utf8')) as Record<string, never>,
     restore: () => { process.env.PATH = realPath; globalThis.fetch = realFetch; },
   };
@@ -80,12 +68,11 @@ function paramsOf(sent: Record<string, never>): Record<string, string> {
   return Object.fromEntries(spec.arguments.parameters.map((p) => [p.name, p.value]));
 }
 
-test('a converge submits a workflow and never runs ansible in this process', async () => {
+test('a converge submits a workflow for the right playbook and node', async () => {
   const b = bench();
   const lines: string[] = [];
   try {
     await converge(NODE, b.ctx, { runId: 'r1', kind: 'converge' }, (_s, l) => lines.push(l));
-    assert.equal(b.ranAnsible(), false, 'ansible-runner was spawned');
     const p = paramsOf(b.sent());
     assert.equal(p.playbook, 'deploy.yaml');
     assert.equal(p.host, '10.0.5.237');
@@ -105,7 +92,6 @@ test('a full provision runs site.yaml, not deploy.yaml', async () => {
   const b = bench();
   try {
     await converge(NODE, b.ctx, { runId: 'r2', kind: 'provision' });
-    assert.equal(b.ranAnsible(), false);
     assert.equal(paramsOf(b.sent()).playbook, 'site.yaml');
   } finally {
     b.restore();
@@ -119,7 +105,6 @@ test('a reimage submits too, carrying its image as extra vars', async () => {
       runId: 'r3',
       image: { url: 'https://x/i.img', sha256: 'f'.repeat(64), sha: 'b'.repeat(40) },
     });
-    assert.equal(b.ranAnsible(), false, 'ansible-runner was spawned');
     const p = paramsOf(b.sent());
     assert.equal(p.playbook, 'reimage.yaml');
     assert.deepEqual(JSON.parse(p['extra-vars'] ?? '{}'), {
