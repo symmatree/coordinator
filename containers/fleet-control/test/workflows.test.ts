@@ -169,11 +169,11 @@ else:
   assert.ok(lines.includes('PLAY [all] ****'), JSON.stringify(lines));
 });
 
-test("kubectl's complaints are said once, not once per retry", async () => {
-  // On 2026-10-17 a workflow sat unscheduled and the log-follower retried twelve times,
-  // putting twelve copies of `No resources found in fleet-control namespace.` into the run
-  // log and burying the three lines that said what was happening. The watch itself is right
-  // to keep waiting -- that workflow ran in the end -- but it should wait quietly.
+test('the log command is in the run log, so what kubectl could not find is readable', async () => {
+  // On 2026-10-17 the run log carried twelve copies of `No resources found in fleet-control
+  // namespace.` and nothing said which selector had found nothing, so the line read as
+  // noise rather than as the first sign that the controller was not acting on the workflow.
+  // The gap was too little context, not too much output -- both are kept.
   const k = fakeKubectl(`
 import os
 if "logs" in argv:
@@ -193,8 +193,12 @@ print(json.dumps({"metadata": {"name": "stuck"},
   );
   // It waited through the unscheduled stretch and reported what actually happened.
   assert.equal(state.phase, 'Succeeded');
-  assert.equal(lines.filter((l) => l.includes('No resources found')).length, 1, JSON.stringify(lines));
-  assert.equal(lines.filter((l) => l.includes('waiting for the step')).length, 1, JSON.stringify(lines));
+  const cmd = lines.find((l) => l.includes('kubectl'));
+  assert.ok(cmd !== undefined, JSON.stringify(lines));
+  // The selector that matched nothing, next to the complaint that it matched nothing.
+  assert.match(cmd, /workflows\.argoproj\.io\/workflow=stuck/);
+  assert.match(cmd, /-n fleet-control/);
+  assert.ok(lines.some((l) => l.includes('No resources found')), JSON.stringify(lines));
 });
 
 test('a workflow that vanished mid-watch ends the run instead of polling forever', async () => {

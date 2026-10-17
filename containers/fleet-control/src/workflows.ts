@@ -258,25 +258,23 @@ function streamLogs(
 ): Promise<void> {
   return new Promise<void>((resolve) => {
     let attempts = 0;
-    // Outside `attach`, so it survives the retries -- scoped inside, every attempt reset it
-    // and said the same thing again, which is the twelve-line pile this exists to prevent.
-    let complained = false;
+    const args = kubectl(cfg, [
+      'logs', '-f',
+      '-l', `${WORKFLOW_LABEL}=${name}`,
+      '-c', 'main',
+      '--tail=-1',
+      '--max-log-requests=5',
+    ]);
+    // SAID ONCE, BEFORE THE FIRST ATTEMPT. `No resources found in fleet-control namespace.`
+    // repeated with no context is uninterpretable; with the selector next to it, it names
+    // exactly what does not exist. The gap was never too much output -- it was too little.
+    sink('stdout', `[fleet-control] kubectl ${args.join(' ')}`);
     const attach = (): void => {
       if (signal?.aborted === true) return resolve();
       attempts += 1;
-      const child = spawn(
-        'kubectl',
-        // stdin closed: kubectl logs reads none, and an open one makes anything that does
-        // wait forever on a pipe nobody writes to.
-        kubectl(cfg, [
-          'logs', '-f',
-          '-l', `${WORKFLOW_LABEL}=${name}`,
-          '-c', 'main',
-          '--tail=-1',
-          '--max-log-requests=5',
-        ]),
-        { stdio: ['ignore', 'pipe', 'pipe'] },
-      );
+      // stdin closed: kubectl logs reads none, and an open one makes anything that does
+      // wait forever on a pipe nobody writes to.
+      const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
       signal?.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
       const feed = (stream: 'stdout' | 'stderr') => {
         let buf = '';
@@ -288,19 +286,10 @@ function streamLogs(
         };
       };
       child.stdout.on('data', feed('stdout'));
-      // KUBECTL'S OWN COMPLAINTS ARE NOT THE RUN'S OUTPUT, and putting them in the run log
-      // once per retry buried the three lines that mattered under twelve copies of
-      // `No resources found in fleet-control namespace.` -- which is what a watcher waiting
-      // on a pod that will never exist looks like. Said once, as ours rather than as the
-      // step's, and then dropped; the phase poll is what reports the actual outcome.
-      child.stderr.on('data', (chunk: Buffer) => {
-        if (complained) return;
-        complained = true;
-        const first = chunk.toString().split('\n').find((l) => l.trim() !== '');
-        if (first !== undefined) {
-          sink('stdout', `[fleet-control] waiting for the step's pod -- ${first.trim()}`);
-        }
-      });
+      // kubectl's own complaints, kept. `No resources found` repeating is what a workflow
+      // the controller is not acting on looks like from here, and it was the first visible
+      // sign of the 2026-10-17 outage.
+      child.stderr.on('data', feed('stderr'));
       child.on('close', () => {
         // A workflow whose pod has not appeared yet: try again, a few times, then give up
         // and let the phase poll carry the run.
