@@ -17,10 +17,6 @@ the cameras are being timed.
 
 The waits that matter, and what each is for:
 
-  fleet-control serving the newest commit touching its own paths -- a pending roll means
-    the converge runs the OLD image's playbooks
-  the campod-camera JOB's conclusion, not the run's -- a skipped job counts as success,
-    so a green run says nothing about whether the image was rebuilt (docs/ci.md)
   converges one at a time -- the API caps playbook runs at one fleet-wide and returns 409
     rather than queueing, so serial is enforced, not a preference
   a reboot after converging -- a converge installs and pulls and starts nothing, so the
@@ -36,9 +32,6 @@ Environment, all of which the fleet-control pod already has:
   FLEET_SSH_KEY         private key that reaches pi@coordinator -- the arm stage only,
                         because the arm file has no API verb
   FLEET_SSH_USER        login account on the device (default pi)
-  FLEET_GITHUB_TOKEN    optional: listing Actions runs is public, so preflight works without
-                        it and uses it when present
-  BENCH_REPO            which repo to resolve revisions against (default symmatree/coordinator)
 """
 from __future__ import annotations
 
@@ -52,10 +45,8 @@ import urllib.error
 import urllib.request
 
 FLEET_URL = os.environ.get("FLEET_URL", "https://fleet.tiles.symmatree.com")
-REPO = os.environ.get("BENCH_REPO", "symmatree/coordinator")
 CAMPODS = ("campod-se", "campod-sw")
 ARM_FILE = "/var/lib/coordinator/ipc/fc_armed"
-BUILD_WORKFLOW = "build-containers.yaml"
 
 
 def log(msg: str) -> None:
@@ -70,24 +61,6 @@ def api(path: str, method: str = "GET", timeout: int = 300):
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")[:300]
         raise SystemExit(f"{method} {path} -> {exc.code}: {body}") from exc
-
-
-def github(path: str, timeout: int = 60):
-    """One GitHub API call. There is no git checkout and no `gh` in the step's image, and
-    wanting either is what kept this script on my laptop."""
-    req = urllib.request.Request(
-        f"https://api.github.com{path}",
-        headers={"accept": "application/vnd.github+json"},
-    )
-    token = os.environ.get("FLEET_GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if token:
-        req.add_header("authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as fh:
-            return json.loads(fh.read() or b"null")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", "replace")[:300]
-        raise SystemExit(f"GET {path} -> {exc.code}: {body}") from exc
 
 
 # ---- pure helpers, so the parts that decide things are testable without a fleet ---------
@@ -123,47 +96,6 @@ def cameras_ready(pods: list[dict]) -> bool:
     produced a window whose first frames were warmup frames on one pod only."""
     cams = [(p.get("raw") or {}).get("camera") or {} for p in pods]
     return len(cams) == len(CAMPODS) and all(c.get("ready") for c in cams)
-
-
-def newest_revision(commits: list[dict]) -> str:
-    """The sha from a `/commits?path=` listing, which GitHub returns newest first."""
-    if not commits:
-        raise SystemExit("[bench] no commits returned for that path")
-    return commits[0]["sha"]
-
-
-def newest_across(listings: list[list[dict]]) -> str:
-    """The newest commit across SEVERAL path listings, by committer date.
-
-    `?path=` takes one path, and the fleet-control gate covers two: the service's own
-    directory and `host/ansible`, because the image carries the playbook. Taking the first
-    listing's head would miss a playbook change that has not been built yet, which is the
-    case the gate exists for.
-    """
-    heads = [(c[0]["commit"]["committer"]["date"], c[0]["sha"]) for c in listings if c]
-    if not heads:
-        raise SystemExit("[bench] no commits returned for any of those paths")
-    return max(heads)[1]
-
-
-def build_run_for(runs: list[dict], revision: str) -> dict | None:
-    """The container build for exactly this commit.
-
-    Matched on `head_sha` AND on the workflow's own path: a head_sha has runs from every
-    workflow that fires on it, and `workflow_runs[0]` is whichever finished last.
-    """
-    for run in runs:
-        if run.get("head_sha") == revision and str(run.get("path", "")).endswith(BUILD_WORKFLOW):
-            return run
-    return None
-
-
-def component_job(jobs: list[dict], component: str) -> dict | None:
-    """That build's job for one component, or None if it never ran for this commit."""
-    for job in jobs:
-        if component in str(job.get("name", "")):
-            return job
-    return None
 
 
 # Failure markers, for a play that started and then failed. They are ansible's own words and
@@ -252,43 +184,6 @@ def ssh_coordinator(key: str, command: str) -> str:
 
 # ---- the stages, one per workflow step --------------------------------------------------
 
-def preflight() -> None:
-    """Both gates before a converge.
-
-    A pending fleet-control roll means the converge runs the OLD image's playbooks. A camera
-    image that has not built means the converge pulls the previous one and the trial measures
-    last week's code.
-    """
-    fc_rev = newest_across([
-        github(f"/repos/{REPO}/commits?sha=main&path={path}&per_page=1")
-        for path in ("containers/fleet-control", "host/ansible")
-    ])
-    cam_rev = newest_revision(github(
-        f"/repos/{REPO}/commits?sha=main&path=containers/campod-camera&per_page=1"))
-    log(f"want fleet-control at {fc_rev[:7]}, camera image at {cam_rev[:7]}")
-
-    def serving():
-        return api("/build", timeout=60).get("revision", "") == fc_rev
-    wait_for(f"fleet-control serving {fc_rev[:7]}", serving, 2400, 30)
-
-    # The COMPONENT's job, not the run's conclusion: a skipped job counts as success, so a
-    # green run proves nothing about whether the camera image was rebuilt (docs/ci.md).
-    runs = github(f"/repos/{REPO}/actions/runs?head_sha={cam_rev}").get("workflow_runs", [])
-    build = build_run_for(runs, cam_rev)
-    if not build:
-        raise SystemExit(f"[bench] no {BUILD_WORKFLOW} run for {cam_rev[:7]} yet")
-    if build.get("status") != "completed":
-        raise SystemExit(f"[bench] build for {cam_rev[:7]} is {build.get('status')}; wait")
-    jobs = github(f"/repos/{REPO}/actions/runs/{build['id']}/jobs").get("jobs", [])
-    job = component_job(jobs, "campod-camera")
-    if not job or job.get("conclusion") != "success":
-        raise SystemExit(f"[bench] campod-camera job for {cam_rev[:7]} is "
-                         f"{job.get('conclusion') if job else 'absent'}")
-    log(f"camera image for {cam_rev[:7]}: built")
-
-
-def stage_deploy() -> None:
-    preflight()
     before = min((p.get("raw") or {}).get("as_of_boot_s") or 0 for p in campod_pods())
     for node in CAMPODS:
         run = api(f"/nodes/{node}/converge", method="POST", timeout=120)
