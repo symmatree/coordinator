@@ -42,6 +42,10 @@ export interface PlaybookRequest {
   deviceRole: string;
   artifactUrl: string;
   revision: string;
+  /** Anything the playbook needs beyond device_role. The step cannot use these to displace
+   * what it sets itself: ansible merges repeated `-e` with the later winning, and the
+   * step's own go last. */
+  extraVars?: Record<string, string>;
 }
 
 /** What the cluster says about a submitted workflow. */
@@ -105,6 +109,7 @@ export async function submitPlaybook(
           { name: 'device-role', value: req.deviceRole },
           { name: 'artifact-url', value: req.artifactUrl },
           { name: 'revision', value: req.revision },
+          { name: 'extra-vars', value: JSON.stringify(req.extraVars ?? {}) },
         ],
       },
     },

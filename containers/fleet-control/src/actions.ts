@@ -17,7 +17,7 @@
 
 import { hostOf, type FleetNode, type Inventory } from './inventory.js';
 import type { BusConfig } from './bus.js';
-import { converge as runPlaybook, type EventSink } from './ansible.js';
+import type { EventSink } from './ansible.js';
 import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import { latestPlaybook } from './playbookartifact.js';
 import { follow, submitPlaybook, type WorkflowConfig } from './workflows.js';
@@ -72,33 +72,72 @@ const PLAYBOOK: Record<ConvergeKind, string> = {
   provision: 'site.yaml',
 };
 
+
+/**
+ * Submit one playbook run and watch it to its end.
+ *
+ * SUBMIT AND WATCH ARE DIFFERENT THINGS. Once the cluster has accepted the Workflow the
+ * work is happening whether this process is still here or not, which is the point. What
+ * follows is a watcher: it streams the step's log and waits for a phase. Losing it loses
+ * the live view, and `findByRun` in workflows.ts is how a later process gets it back.
+ */
+async function runPlaybookWorkflow(
+  node: FleetNode,
+  ctx: ActionContext,
+  opts: {
+    runId: string;
+    action: string;
+    playbook: string;
+    extraVars?: Record<string, string>;
+    sink?: EventSink;
+  },
+): Promise<void> {
+  const host = hostOf(node);
+  const artifact = await latestPlaybook(ctx.github);
+  note(
+    opts.sink,
+    `${opts.playbook} from ${artifact.revision.slice(0, 10)}, built ${artifact.createdAt}`,
+  );
+
+  const name = await submitPlaybook(ctx.workflows, {
+    runId: opts.runId,
+    node: node.name,
+    action: opts.action,
+    playbook: opts.playbook,
+    host,
+    deviceRole: node.role,
+    artifactUrl: artifact.url,
+    revision: artifact.revision,
+    extraVars: opts.extraVars,
+  });
+  // Said before anything is waited on, so a reader of a run that outlived its watcher can
+  // still find the workflow it became.
+  note(opts.sink, `workflow ${name}`);
+
+  const state = await follow(ctx.workflows, name, (stream, line) => opts.sink?.(stream, line));
+  if (state.phase !== 'Succeeded') {
+    throw new ActionError(
+      `${node.name}: ${opts.action} ${state.phase ?? 'ended with no phase'}` +
+        `${state.message !== undefined ? ` -- ${state.message}` : ''}. The step's output is ` +
+        `above and in Loki; the workflow is ${name}.`,
+    );
+  }
+}
+
 export async function converge(
   node: FleetNode,
   ctx: ActionContext,
   opts: { runId: string; kind: ConvergeKind },
   sink?: EventSink,
 ): Promise<void> {
-  const host = hostOf(node);
   const playbook = PLAYBOOK[opts.kind];
-  note(sink, `${opts.kind} on ${node.name} (${host}) as ${node.role} -- ${playbook}`);
-
-  const rc = await runPlaybook({
+  note(sink, `${opts.kind} on ${node.name} (${hostOf(node)}) as ${node.role} -- ${playbook}`);
+  await runPlaybookWorkflow(node, ctx, {
     runId: opts.runId,
-    host,
-    user: ctx.inventory.user,
-    privateKeyPath: ctx.privateKeyPath,
-    sshTimeoutSec: ctx.sshTimeoutSec,
+    action: opts.kind,
     playbook,
-    extraVars: { device_role: node.role },
     sink,
   });
-
-  if (rc !== 0) {
-    throw new ActionError(
-      `${node.name}: ${opts.kind} failed (ansible-runner exit ${rc}). See the output above; the ` +
-        `play recap names the failing task and host.`,
-    );
-  }
   note(sink, `${node.name} ${opts.kind === 'converge' ? 'converged' : 'provisioned'}`);
 }
 
@@ -211,26 +250,14 @@ export async function reimage(
   note(sink, `image built from ${image.sha.slice(0, 10)}`);
   note(sink, `device fetches ${image.url}`);
 
-  const rc = await runPlaybook({
+  await runPlaybookWorkflow(node, ctx, {
     runId: opts.runId,
+    action: 'reimage',
     playbook: 'reimage.yaml',
-    host,
-    user: ctx.inventory.user,
-    privateKeyPath: ctx.privateKeyPath,
-    sshTimeoutSec: ctx.sshTimeoutSec,
-    extraVars: {
-      device_role: node.role,
-      reimage_image_url: image.url,
-      reimage_image_sha256: image.sha256,
-    },
+    // The play asserts both of these before it quiesces anything, so a missing one fails
+    // there rather than part-way through a reflash.
+    extraVars: { reimage_image_url: image.url, reimage_image_sha256: image.sha256 },
     sink,
   });
-
-  if (rc !== 0) {
-    throw new ActionError(
-      `${node.name}: reimage failed (ansible-runner exit ${rc}). The device may still be on ` +
-        'its old image; probe it to see what it reports.',
-    );
-  }
   note(sink, `${node.name} armed; it will drop off the network and come back on the new image`);
 }
