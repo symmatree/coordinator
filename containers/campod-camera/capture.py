@@ -177,40 +177,40 @@ def _clock_triple():
 
 
 def _boundary_offset_ns(wall_exposure_ns, period_ns=1_000_000_000):
-    """Which boundary this exposure belongs to, and how far it is from it.
+    """Which second this exposure fell in, and how far into it.
 
-    Returns (boundary_index, signed_offset_ns), the offset being exposure minus boundary,
-    so it is negative for a frame just before the second and positive just after.
+    Returns (second_index, offset_ns) with the offset always >= 0 and < period: the second
+    is taken by FLOOR, so every exposure belongs to the second it actually happened in.
 
-    THE SELECTION RULE, and why it is this one. The sensor runs a fixed 200 ms grid and we
-    keep one frame a second, so something has to choose which of the five. The old code
-    chose by its own monotonic tick, which is phase-independent of the grid: measured over
-    run 3, the gaps between kept exposures were 141 at 800 ms and 129 at 1200 ms with only
-    6 at 1000 ms -- a 1 Hz tick beating against a 200 ms grid. Two pods doing that pick
-    different grid slots however well their sensors are synchronised.
+    THE SELECTION RULE: keep the first frame of each second, and nothing else.
 
-    Nearest-to-the-boundary instead, because both pods compute it from their own wall
-    clocks, and those agree: chrony on each is disciplined off the same PPS edge, measured
-    ~12 us apart. So the rule is a shared function of a shared clock, and both pods select
-    the same exposure.
+    What it replaced, and why that failed. The rule used to require the frame to be within
+    half a grid period of the second -- the "nearest" frame. That is correct only if every
+    frame is seen, and the copy-out costs 123-132 ms (measured), so at a 100 ms grid it is
+    not. Our visible subset then sat at a fixed offset, and when that offset fell outside
+    the window EVERY second was skipped until the grid drifted back inside. The sensor
+    achieves 99982 us against a 100000 us request, which is 180 us/s of drift, so crossing
+    a 50 ms window takes ~278 s: measured as holes of 44 s, 84 s and 230 s in one run, with
+    warmup alone taking 404 s because warmup frames go through the same rule.
 
-    Centred on the boundary rather than starting at it. "First frame at or after the
-    second" would put the decision edge exactly where a frame can sit, so two pods whose
-    clocks differ by 12 us would routinely bin the same frame into different seconds and
-    choose instants a full grid period apart. Centring moves the decision edge to half a
-    grid period away from where frames normally land.
+    FLOOR, NOT ROUND, and that distinction is the whole rule. Assigning each frame to the
+    NEAREST second means a frame in the back half of a second is "approaching" the next
+    one and gets skipped -- so at 1 Hz with the grid phase past the half-second mark,
+    nothing is ever kept at all, which is the hole failure again in a different form.
+    Flooring gives every frame the second it actually happened in, so the first frame of
+    each second is the keeper: one per second at any delivery rate of 1 Hz or faster, no
+    window, and the offset says how far into the second it sat.
 
-    THE RESIDUAL CASE, which this does not fix: if the grid's phase happens to put frames
-    at almost exactly half a period from the boundary -- 100 ms, on a 200 ms grid -- then
-    the edge is again where the frames are, and two pods can split a pair. The margin is
-    100 ms minus the frame's own offset, not a flat 100 ms. `second_offset_us` is in every
-    sidecar so that condition is visible in the data rather than inferred: offsets sitting
-    near +/-100 ms mean the phase is at the risky edge. Steering the grid onto the second
-    removes the case entirely by parking every frame at offset ~0, which is the maximally
-    safe phase; that is deliberately not done here.
+    THE RISK IT CARRIES, and how to see it: the decision edge now sits exactly where a
+    frame can land. If a frame falls within the two pods' grid-alignment error of a second,
+    one pod can bin it as before and the other as after, and they pick frames a whole
+    period apart. `second_offset_us` is in every sidecar, so that shows up as a
+    one-period outlier in the pairing rather than as a quiet error. The fix if it bites is
+    to hold a candidate copy and take the genuinely nearest frame, which costs a second
+    35.8 MB buffer; not done here, because one buffer was the constraint.
     """
-    boundary = (wall_exposure_ns + period_ns // 2) // period_ns
-    return boundary, wall_exposure_ns - boundary * period_ns
+    second = wall_exposure_ns // period_ns
+    return second, wall_exposure_ns - second * period_ns
 
 
 class _Serializer:
@@ -722,20 +722,10 @@ def main():
     exposure_cap = _apply_exposure_cap(picam2, max_exposure_us)
     focus_active = _apply_focus(picam2, focus)
     pinned_us = _pin_frame_duration(picam2, frame_duration_us)
-    # Half the sensor's frame period: with frames every 200 ms, exactly one lands within
-    # +/-100 ms of each second, so this window selects one and only one. Derived from what
-    # the sensor actually accepted rather than from what was asked for, so an unpinnable
-    # mode cannot silently widen it.
-    #
-    # Here, directly below the pin, because the startup log line reports it: defining it
-    # further down with the rest of the loop state made that line raise UnboundLocalError
-    # and killed capture.py on startup, on both pods, for a whole test cycle.
-    grid_us = pinned_us or frame_duration_us
-    boundary_window_ns = grid_us * 1000 // 2
 
     print(
         f"capture: node={node} dir={session_dir} size={size[0]}x{size[1]} "
-        f"one frame per second nearest the boundary (+/-{boundary_window_ns // 1000} us) "
+        f"one frame per second, the first of each "
         f"quality={quality} exposure_cap={exposure_cap or 'none'} "
         f"focus={focus_active} sync={sync_active or 'off'} "
         f"frame_duration={pinned_us or 'unpinned'}",
@@ -881,10 +871,7 @@ def main():
                 exposure_wall_ns = exposure_boot_ns + (clk["wall_ns"] - clk["boot_ns"])
                 boundary, offset_ns = _boundary_offset_ns(exposure_wall_ns)
                 if boundary == last_boundary:
-                    continue
-                if abs(offset_ns) > boundary_window_ns:
-                    # Not the nearest frame to any boundary we still owe a frame to. At a
-                    # 200 ms grid this is the common case -- four frames in five.
+                    # This second already has its frame.
                     continue
                 last_boundary = boundary
 

@@ -280,32 +280,56 @@ check("successive samples advance", _clk2["mono_ns"] > _clk["mono_ns"])
 
 # ---- the frame-selection rule ------------------------------------------------------
 # Pure arithmetic, so it is testable with no camera -- which matters because the rule is
-# what makes two pods choose the SAME exposure, and a wrong boundary is invisible in a
-# single pod's data.
+# what makes two pods choose the SAME exposure, and a wrong second is invisible in a single
+# pod's data.
 _S = 1_000_000_000
-check("a frame exactly on the second has zero offset",
+check("a frame exactly on the second is offset zero into that second",
       capture._boundary_offset_ns(5 * _S) == (5, 0))
-check("just after the second is a small positive offset",
-      capture._boundary_offset_ns(5 * _S + 1_000_000) == (5, 1_000_000))
-# The case the rule exists for: a frame BEFORE the boundary belongs to that boundary, not
-# to the previous second. "First frame at or after the second" would have binned this with
-# second 4 and chosen an instant 200 ms from the other pod's.
-check("just before the second belongs to that second, with a negative offset",
-      capture._boundary_offset_ns(6 * _S - 1_000_000) == (6, -1_000_000))
-check("the midpoint rounds up, consistently on both pods",
-      capture._boundary_offset_ns(5 * _S + 500_000_000)[0] == 6)
+check("a frame mid-second belongs to that second",
+      capture._boundary_offset_ns(5 * _S + 600_000_000) == (5, 600_000_000))
+# FLOOR, NOT ROUND. Rounding assigns a late frame to the NEXT second, and then the rule
+# skips it as "approaching" -- at 1 Hz with an unlucky phase that keeps nothing at all.
+check("a frame late in a second is NOT promoted to the next one",
+      capture._boundary_offset_ns(6 * _S - 1_000_000) == (5, 999_000_000))
+check("offsets are never negative", all(
+    capture._boundary_offset_ns(n)[1] >= 0 for n in (0, 1, _S - 1, _S, 7 * _S + 12345)))
 
-# On a 200 ms grid exactly one frame of five falls within +/-100 ms of a boundary, which is
-# the property that makes "one frame per second" fall out of the rule rather than be
-# enforced by a counter.
-_grid, _window = 200_000_000, 100_000_000
-for _phase in (0, 37_000_000, 123_456_789, 199_999_999):
-    _picked = [n for n in range(50)
-               if abs(capture._boundary_offset_ns(_phase + n * _grid)[1]) <= _window]
-    _seconds = {capture._boundary_offset_ns(_phase + n * _grid)[0] for n in _picked}
-    check(f"grid phase {_phase} ns: one frame per second, no second missed",
-          len(_picked) == len(_seconds) and len(_seconds) >= 9,
-          f"{len(_picked)} frames over {len(_seconds)} seconds")
+
+def _keepers(exposures):
+    """Apply the loop's rule to a list of exposure instants, returning what it keeps."""
+    kept, last = [], None
+    for t_ns in exposures:
+        b, off = capture._boundary_offset_ns(t_ns)
+        if b == last:
+            continue
+        last = b
+        kept.append((b, off))
+    return kept
+
+
+# ONE PER SECOND AT ANY RATE AND PHASE, which the window rule could not do: it required the
+# frame to be within half a grid period, so a visible subset sitting outside that skipped
+# every second until the grid drifted back -- measured as 44 s, 84 s and 230 s holes, with
+# warmup alone taking 404 s. Rates and phases are varied deliberately, including the 1 Hz
+# phase that broke the rounding version.
+for _grid, _label in ((500_000_000, "2 Hz"), (100_000_000, "10 Hz"), (_S, "1 Hz")):
+    for _phase in (0, 37_000_000, 499_999_999, 750_000_000, 999_999_999):
+        _exp = [_phase + n * _grid for n in range(40)]
+        _kept = _keepers(_exp)
+        _secs = [b for b, _ in _kept]
+        _span = _exp[-1] // _S - _exp[0] // _S
+        check(f"{_label}, phase {_phase // 1000000} ms: one per second, none skipped",
+              len(_secs) == len(set(_secs)) and len(_secs) >= _span,
+              f"{len(_secs)} kept over {_span} s")
+        check(f"{_label}, phase {_phase // 1000000} ms: offset is within the second",
+              all(0 <= off < _S for _, off in _kept))
+# And the keeper is the FIRST frame of its second, not just any of them: at 10 Hz a second
+# holds ten candidates and nine must be dropped.
+_ten = [37_000_000 + n * 100_000_000 for n in range(30)]
+check("at 10 Hz exactly the first frame of each second is kept",
+      [off for _, off in _keepers(_ten)] == [37_000_000] * len(_keepers(_ten)),
+      str([off // 1000000 for _, off in _keepers(_ten)]))
+
 
 # ---- the serializer ----------------------------------------------------------------
 # It now encodes as well as writes, and holds STRICTLY ONE frame, because the thing being
@@ -488,8 +512,7 @@ check("the frame duration is pinned in the configuration, not just after start",
       _cam.config_controls.get("FrameDurationLimits") == (200000, 200000),
       repr(_cam.config_controls))
 check("main() starts and runs without raising", _rc in (0, None), f"rc={_rc}  {_out[-300:]}")
-check("it logs the selection rule it is running", "nearest the boundary" in _out,
-      _out[:200])
+check("it logs the selection rule it is running", "the first of each" in _out, _out[:200])
 # Five seconds of grid in, one frame per second out. The count is the assertion: the old
 # tick-driven loop would have written whatever its own clock asked for.
 check("one frame kept per second of exposures", len(_cam.saved) == 5,
