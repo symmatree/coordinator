@@ -258,6 +258,16 @@ shell on a pod.
 
 ### Running it: the chain, and what each wait is for
 
+**`harness/bench_cycle.py` is this chain, and running it is how the cycle gets run.** The
+commands below are what it does and why -- worth reading once, not a second copy to keep in
+step, and not the thing to retype into a shell. Running the cycle by hand makes each wait
+optional, and the waits are what the results depend on.
+
+    harness/bench_cycle.py --flight bench-20261017-simflight-11
+    harness/bench_cycle.py --flight ... --stage deploy|window|collect
+
+#### What it does, step by step
+
 `FC=https://fleet.tiles.symmatree.com`. Everything below is a fleet-control call except the
 two arm-file writes, which have no API verb.
 
