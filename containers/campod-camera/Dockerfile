@@ -117,6 +117,39 @@ RUN printf '%s\n' \
       "FLEET_UNIT=\"campod-camera\"" \
       > /etc/container-image
 
+# SYNC PARAMETERS, SET IN TIME RATHER THAN IN FRAMES.
+#
+# libcamera's camera-sync counts frames, not seconds: sync_period defaults to 30 frames
+# between the server's broadcasts and ready_frame to 100 frames before a client will use
+# its output (src/ipa/rpi/controller/rpi/sync.cpp). At the 5 fps we used to run that was
+# 6 s and 20 s. At the 1 Hz this image now captures at, the same defaults would be 30 s
+# between corrections and 100 s before the first usable frame -- a minute and a half of a
+# flight spent waiting.
+#
+# 6 and 20 restore the old timings at the new rate. Patched into the installed tuning
+# file, whose `rpi.sync` block ships empty (all defaults), rather than vendoring a copy of
+# it: the file belongs to the libcamera version pinned above and a copy here would drift
+# from it silently. Fails the build if the block is missing, because the alternative is an
+# image that quietly captures nothing usable for 100 s.
+RUN python3 - <<'EOF'
+import glob, json, sys
+patched = []
+for path in sorted(glob.glob("/usr/share/libcamera/ipa/rpi/*/imx708*.json")):
+    with open(path) as fh:
+        doc = json.load(fh)
+    blocks = [a for a in doc.get("algorithms", []) if "rpi.sync" in a]
+    if not blocks:
+        continue
+    blocks[0]["rpi.sync"].update({"sync_period": 6, "ready_frame": 20})
+    with open(path, "w") as fh:
+        json.dump(doc, fh, indent=4)
+    patched.append(path)
+if not patched:
+    sys.exit("no imx708 tuning file with an rpi.sync block: libcamera's layout changed, "
+             "so sync would silently run on frame-counted defaults")
+print("patched rpi.sync in:", ", ".join(patched))
+EOF
+
 COPY capture.py /opt/campod/capture.py
 COPY --from=accel-build /out/campod-accel /opt/campod/campod-accel
 COPY test_capture_wait.py /opt/campod/test_capture_wait.py

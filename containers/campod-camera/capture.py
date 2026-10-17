@@ -31,12 +31,14 @@ Config via environment (all optional):
 """
 
 import datetime as dt
+import io
 import json
 import os
 import re
 import signal
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -209,6 +211,76 @@ def _boundary_offset_ns(wall_exposure_ns, period_ns=1_000_000_000):
     """
     boundary = (wall_exposure_ns + period_ns // 2) // period_ns
     return boundary, wall_exposure_ns - boundary * period_ns
+
+
+class _Serializer:
+    """Writes finished bytes to the card on its own thread, one frame deep.
+
+    WHY THE WRITE LEAVES THE SENSOR PATH. Measured 2026-10-16: 103 of 105 saves per pod
+    took 412-422 ms, and two took 2399 ms and 708 ms. The long one matters more than its
+    rarity: the accel reader, a separate container, logged its only FIFO overrun of the
+    run inside the same window, so the card stalls everything on the box at once. Holding
+    the capture thread across that costs a frame AND whatever the accel loses.
+
+    DEPTH IS ONE WAITING PLUS ONE IN FLIGHT -- about 3.6 MB of JPEG, not a queue. The slot
+    empties when the writer PICKS UP a frame rather than when it finishes, so one stalled
+    write is absorbed: the capture thread hands over the next frame and carries on. A
+    second stall before the first completes blocks the capture thread, which is the same
+    cost as the inline write it replaces and never a silent drop.
+
+    Not deeper, deliberately. Depth past that buys nothing at 1 Hz against a ~50 ms write,
+    and on a 417 MiB board an unbounded queue is how a card stall becomes an OOM.
+
+    Compression stays on the capture thread: it is CPU, it does not stall unpredictably,
+    and encoding here means the bytes handed over are ~1.8 MB instead of a 35.8 MB frame
+    -- which is what keeps the slot cheap enough to exist on this board.
+    """
+
+    def __init__(self):
+        self._slot = None
+        self._lock = threading.Lock()
+        self._ready = threading.Condition(self._lock)
+        self._done = threading.Condition(self._lock)
+        self._stop = False
+        self.errors = 0
+        self.waits = 0
+        self._thread = threading.Thread(target=self._run, name="serializer", daemon=True)
+        self._thread.start()
+
+    def put(self, items):
+        """Hand over [(path, bytes), ...]; blocks only if a frame is still waiting to start."""
+        with self._lock:
+            if self._slot is not None:
+                self.waits += 1
+                while self._slot is not None and not self._stop:
+                    self._done.wait(30)
+            self._slot = items
+            self._ready.notify()
+
+    def _run(self):
+        while True:
+            with self._lock:
+                while self._slot is None and not self._stop:
+                    self._ready.wait(1)
+                if self._slot is None and self._stop:
+                    return
+                items, self._slot = self._slot, None
+                self._done.notify()
+            for path, blob in items:
+                try:
+                    path.write_bytes(blob)
+                except OSError as exc:
+                    self.errors += 1
+                    print(f"capture: write {path.name} failed: {exc}", flush=True)
+
+    def close(self, timeout=30):
+        """Drain, then stop. Called on the way out so the last frame is not lost."""
+        with self._lock:
+            while self._slot is not None:
+                self._done.wait(timeout)
+            self._stop = True
+            self._ready.notify()
+        self._thread.join(timeout)
 
 
 def _sync_mode_for(leader, node):
@@ -635,6 +707,7 @@ def main():
     )
 
     seq = 0
+    serializer = _Serializer()
     # The second we have already written a frame for, so a second gets one frame even
     # though several frames fall inside the window when the grid is much faster.
     last_boundary = None
@@ -772,11 +845,13 @@ def main():
                 wall = dt.datetime.fromtimestamp(exposure_wall_ns / 1e9, dt.timezone.utc)
                 stem = f"{node}_{seq:08d}_{wall.strftime('%Y%m%dT%H%M%S_%f')}Z"
                 jpeg_path = session_dir / f"{stem}.jpg"
-                request.save("main", str(jpeg_path))
+                # INTO MEMORY, not onto the card. An explicit format is required because
+                # picamera2 infers it from a filename and there is none here.
+                blob = io.BytesIO()
+                request.save("main", blob, format="jpeg")
             finally:
                 request.release()
-            # Fresh, and after the save: clk above was sampled before it, and this field
-            # is documented as a post-save reading.
+            # After the encode and before the write, which is now someone else's problem.
             sidecar_mono = time.monotonic_ns()
 
             sidecar = {
@@ -853,7 +928,10 @@ def main():
                 "sync_mode": sync_active or "off",
                 "phase": phase,
             }
-            (session_dir / f"{stem}.json").write_text(json.dumps(sidecar))
+            # Both files in one handoff, so a frame's image and its sidecar cannot land
+            # in different seconds -- an image with no sidecar is unusable for pairing.
+            serializer.put([(jpeg_path, blob.getvalue()),
+                            (session_dir / f"{stem}.json", json.dumps(sidecar).encode())])
             seq += 1
             # Count plus the time of the last one. A count alone cannot distinguish
             # "capturing" from "stopped at 412", and a consumer must not have to
@@ -866,11 +944,18 @@ def main():
                 print(f"capture: {seq} frames -> {session_dir}", flush=True)
     finally:
         picam2.stop()
+        # Drain before announcing a count, so the number logged is the number on the card.
+        # SIGTERM gets 90 s here (--stop-timeout in the quadlet), and a drain is one write.
+        serializer.close()
         state["phase"] = "stopped"
         state["ready"] = False
         state["capturing"] = False
         publish()
-        print(f"capture: stopped after {seq} frames", flush=True)
+        extra = ""
+        if serializer.waits or serializer.errors:
+            extra = (f" ({serializer.waits} waited on the writer, "
+                     f"{serializer.errors} write errors)")
+        print(f"capture: stopped after {seq} frames{extra}", flush=True)
 
 
 if __name__ == "__main__":
