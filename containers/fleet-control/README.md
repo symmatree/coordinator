@@ -342,8 +342,18 @@ data directories and the `GET /runs/:id/events` and `/runs/:id/log` routes that 
 
 Not rendered. The service used to parse `ansible-runner`'s JSON event stream and print its own
 `TASK …` / `ok (changed): …` lines; that was never an agreed decision, and the log should be
-what you get running the play yourself, tuned at the playbook. Alloy collects the step pod's
-stdout into Loki, so that is the durable copy and `/runs/:id` is the live one.
+what you get running the play yourself, tuned at the playbook.
+
+**Do not expect the step's output in Loki.** This said it was the durable copy, which was
+wrong: `loki.source.file` is configured `tail_from_end = true`, a k8s-monitoring chart
+default, so Alloy seeks to EOF when it opens a newly matched file. A pod that writes
+everything in its first seconds has already written it by the time the file-match poll gets
+there, and the lines are never read. That is most workflow steps, and it is cluster-wide
+rather than ours — tiles-doctor reproduced it with a pair of pods differing only in how long
+they lived.
+
+So the run log is the copy, and the workflow link in it is the other way to look. A run that
+outlived its watcher has the link and nothing else.
 
 ### The log says when
 
@@ -381,10 +391,14 @@ Every line a run produces also goes to **the pod's own stdout/stderr**, tagged
 in memory, so a pod restart takes its whole history with it -- and that is exactly the run
 someone comes asking about afterwards. Log collection reads the pod's streams and outlives it.
 
-There used to be more: `ansible-runner`'s private data directory was kept for a failed play
-and served by `/runs/:id/events` and `/runs/:id/log`, which carried each task's whole result
-object. That went with the runner. A play's detail now lives where the play does — the step
-pod's stdout, in Loki — and the run carries the workflow's name so you can find it.
+That holds for *this* service's own lines, which it writes itself — this pod is long-lived,
+so Alloy has its file open well before anything is written to it.
+
+It does **not** hold for a step pod's output, for the reason above. There used to be more
+here too: `ansible-runner`'s private data directory was kept for a failed play and served by
+`/runs/:id/events` and `/runs/:id/log`, carrying each task's whole result object. That went
+with the runner, and nothing durable replaced it. What a run carries instead is a link to
+its workflow.
 
 ## The flight's description
 

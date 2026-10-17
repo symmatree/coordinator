@@ -30,6 +30,13 @@ export interface WorkflowConfig {
   namespace: string;
   /** The WorkflowTemplate to submit against. */
   template: string;
+  /** The Argo Workflows UI, for linking to a run rather than describing how to find it. */
+  uiUrl: string;
+}
+
+/** Where a person goes to look at one. */
+export function workflowUrl(cfg: WorkflowConfig, name: string): string {
+  return `${cfg.uiUrl}/workflows/${cfg.namespace}/${name}`;
 }
 
 export interface PlaybookRequest {
