@@ -2,6 +2,13 @@
 [Unit]
 Description=campod still capture
 PartOf=campod-stack.target
+# Wall-clock data is the deliverable, so wait for chrony to set the clock rather than
+# stamping the first ~74 s of a boot from the image's build epoch. time-sync.target is
+# reached by chrony's own chrony-wait.service, which roles/chrony enables; it is bounded
+# at 180 s and a timeout still activates the target, so this orders capture later and
+# never prevents it. Why it matters to camera sync: roles/chrony/tasks/main.yml.
+After=time-sync.target
+Wants=time-sync.target
 
 [Container]
 Image=ghcr.io/symmatree/coordinator-campod-camera:main
