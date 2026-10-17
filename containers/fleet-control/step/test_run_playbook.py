@@ -178,7 +178,9 @@ def main():
             "-i" in argv and argv[argv.index("-i") + 1] == "10.0.0.9,",
             str(argv),
         )
-        extra = json.loads(argv[argv.index("-e") + 1])
+        # The LAST -e: the caller's come first and the step's reserved four come after, so
+        # that ansible's later-wins merge puts ours on top.
+        extra = json.loads([argv[i + 1] for i, a in enumerate(argv) if a == "-e"][-1])
         check("device_role reaches the play", extra.get("device_role") == "campod", str(extra))
         check("the login account reaches the play", extra.get("ansible_user") == "pi")
         check(
@@ -213,32 +215,43 @@ def main():
         out = run({**base, "PLAYBOOK_EXTRA_VARS": json.dumps(
             {"reimage_image_url": "https://x/i.img", "reimage_image_sha256": "ab" * 32})}, tmp)
         check("a run with extra vars succeeds", out.returncode == 0, out.stderr[-200:])
-        extra = json.loads(json.loads(record.read_text())["argv"][
-            json.loads(record.read_text())["argv"].index("-e") + 1])
+        argv1 = json.loads(record.read_text())["argv"]
+        given = json.loads([argv1[i + 1] for i, a in enumerate(argv1) if a == "-e"][0])
+        ours = json.loads([argv1[i + 1] for i, a in enumerate(argv1) if a == "-e"][-1])
         check(
             "they reach the play alongside the ones the step sets",
-            extra.get("reimage_image_url") == "https://x/i.img"
-            and extra.get("device_role") == "campod"
-            and extra.get("ansible_user") == "pi",
-            str(extra),
+            given.get("reimage_image_url") == "https://x/i.img"
+            and ours.get("device_role") == "campod"
+            and ours.get("ansible_user") == "pi",
+            f"{given} / {ours}",
         )
 
         record.unlink()
-        # Anything that can overwrite how the play reaches the device, or what key it
-        # installs, is a way to write an authorized_keys nobody holds the key for.
-        for reserved in ("fleet_ssh_public_key", "ansible_ssh_private_key_file",
-                         "ansible_user", "device_role"):
-            res = run({**base, "PLAYBOOK_EXTRA_VARS": json.dumps({reserved: "x"})}, tmp)
-            check(
-                f"extra vars may not override {reserved}",
-                res.returncode != 0 and not record.exists() and reserved in res.stderr,
-                f"rc={res.returncode} {res.stderr.strip()[-120:]}",
-            )
+        # The reserved four are passed in a SECOND -e, after the caller's, and ansible
+        # merges repeated extra-var arguments with the later winning. So this asserts the
+        # ordering that makes that true, rather than a refusal the step no longer performs.
+        out = run({**base, "PLAYBOOK_EXTRA_VARS": json.dumps(
+            {"ansible_user": "attacker", "fleet_ssh_public_key": "ssh-ed25519 NOPE"})}, tmp)
+        check("a run that tries to override the reserved vars still succeeds",
+              out.returncode == 0, out.stderr[-200:])
+        argv2 = json.loads(record.read_text())["argv"]
+        es = [argv2[i + 1] for i, a in enumerate(argv2) if a == "-e"]
+        check("the caller's extra vars come first and ours last", len(es) == 2, str(es))
+        check(
+            "so the device's user and trusted key are ours, not the caller's",
+            json.loads(es[-1])["ansible_user"] == "pi"
+            and json.loads(es[-1])["fleet_ssh_public_key"] == declared_pub,
+            es[-1],
+        )
 
-        for bad, why in ((" not json ", "not JSON"), ('["a"]', "JSON object")):
+        # The one thing ansible does NOT do: given a string that is not JSON it falls back
+        # to key=value parsing and runs the play anyway, so a typo would converge a device
+        # with the variable absent. Checked here because nothing downstream will.
+        record.unlink()
+        for bad, why in ((" not json ", "not JSON"), ('["a"]', "a JSON array")):
             res = run({**base, "PLAYBOOK_EXTRA_VARS": bad}, tmp)
             check(
-                f"extra vars that are {why.lower()} fail before the play runs",
+                f"extra vars that are {why} fail before the play runs",
                 res.returncode != 0 and not record.exists(),
                 f"rc={res.returncode} {res.stderr.strip()[-120:]}",
             )

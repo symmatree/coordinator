@@ -96,48 +96,46 @@ export ANSIBLE_TIMEOUT=${FLEET_SSH_TIMEOUT_SEC:-90}
 # `--private-key` is deliberately not used: the inventory variable is the supported route and
 # is what the server passed, so the two invocations stay the same one.
 #
-# fleet_ssh_public_key IS PASSED IN, from the same 1Password item that holds the private
-# half. Terraform generates the keypair and writes both fields (tf/nodes/fleet-ssh-key.tf in
-# tiles), so the declared public key and the mounted private key are two fields of one
-# object, written together by one writer.
+# fleet_ssh_public_key is passed in, from the same 1Password item that holds the private
+# half -- terraform writes both fields, so they are two fields of one object with one writer.
 #
-# This used to be derived at run time, on the reasoning that a declared copy was a second
-# store that could drift -- and it had drifted. That diagnosis was wrong. The disagreement
-# came from TWO 1Password items sharing the title `fleet-ssh-key-managed`, written by two
-# terraform workspaces into one vault, so a name lookup was ambiguous. One writer, gated to
-# prod, fixed it at the cause. Deriving at run time was a workaround for a collision, not a
-# better way to know a public key.
-#
-# PLAYBOOK_EXTRA_VARS is merged last but cannot displace the four above. Those four are how
-# the play reaches the device and what it installs there; a caller that could overwrite
-# `fleet_ssh_public_key` or `ansible_ssh_private_key_file` from a workflow parameter could
-# write an authorized_keys nobody holds the key for.
-extra=$(
-	python3 - "$device_role" "${FLEET_SSH_USER:-pi}" "$FLEET_SSH_KEY" "$FLEET_SSH_PUBLIC_KEY" \
-		"${PLAYBOOK_EXTRA_VARS:-{\}}" <<'PY'
+# json.dumps rather than building the string here: the public key contains spaces, and
+# ansible's `-e key=value` form stops at the first one, silently yielding `ssh-ed25519`.
+reserved=$(
+	python3 - "${FLEET_SSH_USER:-pi}" "$FLEET_SSH_KEY" "$FLEET_SSH_PUBLIC_KEY" "$device_role" <<'PY'
 import json, sys
-role, user, key, pub, extra = sys.argv[1:6]
-
-reserved = {
+user, key, pub, role = sys.argv[1:5]
+print(json.dumps({
     "ansible_user": user,
     "ansible_ssh_private_key_file": key,
     "fleet_ssh_public_key": pub.strip(),
     "device_role": role,
-}
-try:
-    given = json.loads(extra or "{}")
-except json.JSONDecodeError as e:
-    sys.exit(f"PLAYBOOK_EXTRA_VARS is not JSON: {e}")
-if not isinstance(given, dict):
-    sys.exit(f"PLAYBOOK_EXTRA_VARS must be a JSON object, got {type(given).__name__}")
-clash = sorted(set(given) & set(reserved))
-if clash:
-    sys.exit(f"PLAYBOOK_EXTRA_VARS may not set {', '.join(clash)}")
-
-print(json.dumps({**given, **reserved}))
+}))
 PY
 )
 
+# A MALFORMED `-e` IS SILENTLY IGNORED, which is why this is checked and the rest is not.
+# Given a string that is not JSON, ansible falls back to parsing it as `key=value` pairs and
+# runs the play anyway -- so a typo in a reimage URL would converge a device with the
+# variable simply absent. Verified against ansible-core: `-e ' not json '` exits 0.
+if [[ -n ${PLAYBOOK_EXTRA_VARS:-} ]]; then
+	python3 -c 'import json,sys
+v = json.loads(sys.argv[1])
+if not isinstance(v, dict):
+    sys.exit(f"PLAYBOOK_EXTRA_VARS must be a JSON object, got {type(v).__name__}")' \
+		"$PLAYBOOK_EXTRA_VARS" ||
+		{
+			echo "[step] PLAYBOOK_EXTRA_VARS is not a JSON object: ${PLAYBOOK_EXTRA_VARS}" >&2
+			exit 1
+		}
+fi
+
 echo "[step] ${playbook} on ${host} as ${device_role}"
 cd "$work/ansible"
-exec ansible-playbook "$playbook" -i "${host}," -e "$extra"
+# TWO `-e`, RESERVED LAST. Ansible merges repeated extra-var arguments with the later
+# winning, so precedence is the tool's job rather than ours -- which is why there is no
+# merge and no clash check here. Whatever the caller sets, the four above are what the play
+# gets for reaching the device and for what it installs there.
+exec ansible-playbook "$playbook" -i "${host}," \
+	-e "${PLAYBOOK_EXTRA_VARS:-{\}}" \
+	-e "$reserved"
