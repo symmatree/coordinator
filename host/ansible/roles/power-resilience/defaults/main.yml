@@ -11,7 +11,21 @@ power_resilience_journal_max_use: 200M
 # logs at ERR; the mmc/bus messages around it are lower still. All in the deferred
 # set.
 #
-# 10s is not the dominant write term here: the campod accel writer already fsyncs at
-# 1 Hz (containers/campod-camera/adxl345.py) and the still path fsyncs per image, so
-# this is an order of magnitude below traffic the payload already generates.
-power_resilience_journal_sync_interval: 10s
+# WHAT THIS COSTS, corrected 2026-10-17. This used to say 10s was "not the dominant write
+# term" because the accel writer fsynced at 1 Hz and the still path fsynced per image.
+# Neither is true: the accel reader is Go now and `accel/writer.go` says in as many words
+# that it never fsyncs, buffering and kicking writeback instead; the still path has no fsync
+# either, in capture.py or in picamera2's save. The file that claim cited,
+# containers/campod-camera/adxl345.py, no longer exists.
+#
+# So this is plausibly the ONLY fsync on a campod, rather than an order of magnitude below
+# the payload's.
+#
+# 30s, set by Seth: a collection mission does not need this log to produce a map. The
+# journal is a diagnostic for when something unexpected happens, so the window of messages
+# a battery yank can take is worth trading against periodic writes to the card -- the
+# pods' only shared I/O path, and one where a stall is visible in the capture streams.
+#
+# The still path's missing fsync is a durability question, not a cost one, and is tracked:
+# docs/power-loss-filesystem.md, #89 (tmp -> fsync -> rename per file).
+power_resilience_journal_sync_interval: 30s
