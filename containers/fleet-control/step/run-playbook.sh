@@ -22,7 +22,8 @@
 #   FLEET_GITHUB_TOKEN     credential for that fetch -- listing is public, download is not
 #   FLEET_SSH_KEY          path to the mounted private key
 #   FLEET_SSH_PUBLIC_KEY   its public half, for the play to install in authorized_keys
-#   FLEET_KNOWN_HOSTS      path to the shared recorded host keys
+# Optional:
+#   PLAYBOOK_EXTRA_VARS    a JSON object merged into the extra vars the play is given
 # Optional:
 #   FLEET_SSH_USER         login account on the device (default pi)
 #   FLEET_SSH_TIMEOUT_SEC  ansible's connect timeout (default 90)
@@ -37,7 +38,6 @@ device_role=${3:?usage: run-playbook.sh <playbook> <host> <device_role>}
 : "${FLEET_GITHUB_TOKEN:?FLEET_GITHUB_TOKEN is required -- the artifact download needs it}"
 : "${FLEET_SSH_KEY:?FLEET_SSH_KEY is required}"
 : "${FLEET_SSH_PUBLIC_KEY:?FLEET_SSH_PUBLIC_KEY is required}"
-: "${FLEET_KNOWN_HOSTS:?FLEET_KNOWN_HOSTS is required}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -85,12 +85,10 @@ fi
 # The line the run record takes the version from, and a reader reads.
 echo "[step] playbook ${got} (${FLEET_SOURCE_REF:-<no ref>})"
 
-# HOST KEYS ARE CHECKED, as they were when the server ran the play. `accept-new` records an
-# unknown host and still refuses a CHANGED one -- which is only true if the recorded keys
-# persist, hence a shared FLEET_KNOWN_HOSTS rather than a fresh file per step. ControlMaster
-# because a converge makes many connections to one slow box.
-export ANSIBLE_HOST_KEY_CHECKING=True
-export ANSIBLE_SSH_ARGS="-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${FLEET_KNOWN_HOSTS}"
+# Host keys are not checked, matching src/ssh.ts, which says why. ControlMaster because a
+# converge makes many connections to one slow box.
+export ANSIBLE_HOST_KEY_CHECKING=False
+export ANSIBLE_SSH_ARGS="-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null"
 # A Zero under a converge misses ansible's 10 s default; 90 is the value the handshake
 # failures on campod-se argued for.
 export ANSIBLE_TIMEOUT=${FLEET_SSH_TIMEOUT_SEC:-90}
@@ -109,16 +107,34 @@ export ANSIBLE_TIMEOUT=${FLEET_SSH_TIMEOUT_SEC:-90}
 # terraform workspaces into one vault, so a name lookup was ambiguous. One writer, gated to
 # prod, fixed it at the cause. Deriving at run time was a workaround for a collision, not a
 # better way to know a public key.
+#
+# PLAYBOOK_EXTRA_VARS is merged last but cannot displace the four above. Those four are how
+# the play reaches the device and what it installs there; a caller that could overwrite
+# `fleet_ssh_public_key` or `ansible_ssh_private_key_file` from a workflow parameter could
+# write an authorized_keys nobody holds the key for.
 extra=$(
-	python3 - "$device_role" "${FLEET_SSH_USER:-pi}" "$FLEET_SSH_KEY" "$FLEET_SSH_PUBLIC_KEY" <<'PY'
+	python3 - "$device_role" "${FLEET_SSH_USER:-pi}" "$FLEET_SSH_KEY" "$FLEET_SSH_PUBLIC_KEY" \
+		"${PLAYBOOK_EXTRA_VARS:-{\}}" <<'PY'
 import json, sys
-role, user, key, pub = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-print(json.dumps({
+role, user, key, pub, extra = sys.argv[1:6]
+
+reserved = {
     "ansible_user": user,
     "ansible_ssh_private_key_file": key,
     "fleet_ssh_public_key": pub.strip(),
     "device_role": role,
-}))
+}
+try:
+    given = json.loads(extra or "{}")
+except json.JSONDecodeError as e:
+    sys.exit(f"PLAYBOOK_EXTRA_VARS is not JSON: {e}")
+if not isinstance(given, dict):
+    sys.exit(f"PLAYBOOK_EXTRA_VARS must be a JSON object, got {type(given).__name__}")
+clash = sorted(set(given) & set(reserved))
+if clash:
+    sys.exit(f"PLAYBOOK_EXTRA_VARS may not set {', '.join(clash)}")
+
+print(json.dumps({**given, **reserved}))
 PY
 )
 

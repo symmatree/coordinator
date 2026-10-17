@@ -137,9 +137,6 @@ def main():
             )
             .decode()
         )
-        known_hosts = tmp / "known_hosts"
-        known_hosts.touch()
-
         srv, seen = serve(make_artifact(tmp))
         url = f"http://127.0.0.1:{srv.server_address[1]}/artifact.zip"
         base = {
@@ -148,7 +145,6 @@ def main():
             "FLEET_GITHUB_TOKEN": "t0ken",
             "FLEET_SSH_KEY": str(key),
             "FLEET_SSH_PUBLIC_KEY": declared_pub + "\n",
-            "FLEET_KNOWN_HOSTS": str(known_hosts),
         }
 
         # --- the happy path -------------------------------------------------------------
@@ -199,16 +195,57 @@ def main():
             repr(extra.get("fleet_ssh_public_key")),
         )
 
-        # Host-key checking has to survive the move out of the server, and it is only real
-        # if the recorded keys persist -- hence the shared file rather than a fresh one.
-        check("host-key checking is on", env.get("ANSIBLE_HOST_KEY_CHECKING") == "True")
+        # Deliberately not checked: physical devices on a private network that get
+        # reflashed routinely, where the check only ever refused a freshly written card.
+        check("host-key checking is off", env.get("ANSIBLE_HOST_KEY_CHECKING") == "False")
+        args = env.get("ANSIBLE_SSH_ARGS") or ""
         check(
-            "the shared known_hosts is used, with accept-new",
-            f"UserKnownHostsFile={known_hosts}" in (env.get("ANSIBLE_SSH_ARGS") or "")
-            and "StrictHostKeyChecking=accept-new" in (env.get("ANSIBLE_SSH_ARGS") or ""),
-            str(env.get("ANSIBLE_SSH_ARGS")),
+            "nothing is recorded and nothing is consulted",
+            "StrictHostKeyChecking=no" in args
+            and "UserKnownHostsFile=/dev/null" in args
+            and "GlobalKnownHostsFile=/dev/null" in args,
+            args,
         )
         check("the connect timeout is not ansible's 10s default", env.get("ANSIBLE_TIMEOUT") == "90")
+
+        # --- extra vars -------------------------------------------------------------------
+        record.unlink()
+        out = run({**base, "PLAYBOOK_EXTRA_VARS": json.dumps(
+            {"reimage_image_url": "https://x/i.img", "reimage_image_sha256": "ab" * 32})}, tmp)
+        check("a run with extra vars succeeds", out.returncode == 0, out.stderr[-200:])
+        extra = json.loads(json.loads(record.read_text())["argv"][
+            json.loads(record.read_text())["argv"].index("-e") + 1])
+        check(
+            "they reach the play alongside the ones the step sets",
+            extra.get("reimage_image_url") == "https://x/i.img"
+            and extra.get("device_role") == "campod"
+            and extra.get("ansible_user") == "pi",
+            str(extra),
+        )
+
+        record.unlink()
+        # Anything that can overwrite how the play reaches the device, or what key it
+        # installs, is a way to write an authorized_keys nobody holds the key for.
+        for reserved in ("fleet_ssh_public_key", "ansible_ssh_private_key_file",
+                         "ansible_user", "device_role"):
+            res = run({**base, "PLAYBOOK_EXTRA_VARS": json.dumps({reserved: "x"})}, tmp)
+            check(
+                f"extra vars may not override {reserved}",
+                res.returncode != 0 and not record.exists() and reserved in res.stderr,
+                f"rc={res.returncode} {res.stderr.strip()[-120:]}",
+            )
+
+        for bad, why in ((" not json ", "not JSON"), ('["a"]', "JSON object")):
+            res = run({**base, "PLAYBOOK_EXTRA_VARS": bad}, tmp)
+            check(
+                f"extra vars that are {why.lower()} fail before the play runs",
+                res.returncode != 0 and not record.exists(),
+                f"rc={res.returncode} {res.stderr.strip()[-120:]}",
+            )
+
+        # Absent is the normal case -- a converge sets none.
+        res = run(base, tmp)
+        check("no extra vars at all is fine", res.returncode == 0, res.stderr[-200:])
 
         # --- the refusals ---------------------------------------------------------------
         record.unlink()
@@ -230,7 +267,7 @@ def main():
         )
 
         for missing in ("PLAYBOOK_REVISION", "FLEET_GITHUB_TOKEN", "FLEET_SSH_KEY",
-                        "FLEET_SSH_PUBLIC_KEY", "FLEET_KNOWN_HOSTS"):
+                        "FLEET_SSH_PUBLIC_KEY"):
             env_missing = {k: v for k, v in base.items() if k != missing}
             res = run(env_missing, tmp)
             check(
