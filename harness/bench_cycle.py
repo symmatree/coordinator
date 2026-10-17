@@ -132,6 +132,20 @@ def newest_revision(commits: list[dict]) -> str:
     return commits[0]["sha"]
 
 
+def newest_across(listings: list[list[dict]]) -> str:
+    """The newest commit across SEVERAL path listings, by committer date.
+
+    `?path=` takes one path, and the fleet-control gate covers two: the service's own
+    directory and `host/ansible`, because the image carries the playbook. Taking the first
+    listing's head would miss a playbook change that has not been built yet, which is the
+    case the gate exists for.
+    """
+    heads = [(c[0]["commit"]["committer"]["date"], c[0]["sha"]) for c in listings if c]
+    if not heads:
+        raise SystemExit("[bench] no commits returned for any of those paths")
+    return max(heads)[1]
+
+
 def build_run_for(runs: list[dict], revision: str) -> dict | None:
     """The container build for exactly this commit.
 
@@ -245,8 +259,10 @@ def preflight() -> None:
     image that has not built means the converge pulls the previous one and the trial measures
     last week's code.
     """
-    fc_rev = newest_revision(github(
-        f"/repos/{REPO}/commits?sha=main&path=containers/fleet-control&per_page=1"))
+    fc_rev = newest_across([
+        github(f"/repos/{REPO}/commits?sha=main&path={path}&per_page=1")
+        for path in ("containers/fleet-control", "host/ansible")
+    ])
     cam_rev = newest_revision(github(
         f"/repos/{REPO}/commits?sha=main&path=containers/campod-camera&per_page=1"))
     log(f"want fleet-control at {fc_rev[:7]}, camera image at {cam_rev[:7]}")
