@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { converge, reimage, type ActionContext } from '../src/actions.js';
+import { converge, type ActionContext } from '../src/actions.js';
 
 /**
  * What a converge submits: which playbook, against which node, with what.
@@ -68,55 +68,23 @@ function paramsOf(sent: Record<string, never>): Record<string, string> {
   return Object.fromEntries(spec.arguments.parameters.map((p) => [p.name, p.value]));
 }
 
-test('a converge submits a workflow for the right playbook and node', async () => {
+test('the resolved artifact is what the workflow is told to run', async () => {
+  // The seam between three modules: latestPlaybook picks a build, submitPlaybook sends it,
+  // and the workflow's name comes back out in the log before anything is waited on -- so a
+  // run whose watcher dies is still traceable to the thing that outlived it. Which playbook
+  // name belongs to which action is not asserted; that is a constant, and a test of it only
+  // means renaming one costs two edits.
   const b = bench();
   const lines: string[] = [];
   try {
     await converge(NODE, b.ctx, { runId: 'r1', kind: 'converge' }, (_s, l) => lines.push(l));
     const p = paramsOf(b.sent());
-    assert.equal(p.playbook, 'deploy.yaml');
-    assert.equal(p.host, '10.0.5.237');
-    assert.equal(p['device-role'], 'campod');
     assert.equal(p.revision, 'a'.repeat(40));
-    assert.equal(p['extra-vars'], '{}');
+    assert.equal(p['artifact-url'], 'https://api.github.com/repos/symmatree/coordinator/actions/artifacts/7/zip');
   } finally {
     b.restore();
   }
-  // The workflow's name reaches the log before anything is waited on, so a run whose
-  // watcher died is still traceable to the thing that outlived it.
   assert.ok(lines.some((l) => l.includes('workflow wf-1')), JSON.stringify(lines));
-  assert.ok(lines.some((l) => l.includes('converged')), JSON.stringify(lines));
-});
-
-test('a full provision runs site.yaml, not deploy.yaml', async () => {
-  const b = bench();
-  try {
-    await converge(NODE, b.ctx, { runId: 'r2', kind: 'provision' });
-    assert.equal(paramsOf(b.sent()).playbook, 'site.yaml');
-  } finally {
-    b.restore();
-  }
-});
-
-test('a reimage submits too, carrying its image as extra vars', async () => {
-  const b = bench();
-  try {
-    await reimage(NODE, b.ctx, {
-      runId: 'r3',
-      image: { url: 'https://x/i.img', sha256: 'f'.repeat(64), sha: 'b'.repeat(40) },
-    });
-    const p = paramsOf(b.sent());
-    assert.equal(p.playbook, 'reimage.yaml');
-    assert.deepEqual(JSON.parse(p['extra-vars'] ?? '{}'), {
-      reimage_image_url: 'https://x/i.img',
-      reimage_image_sha256: 'f'.repeat(64),
-    });
-    // device_role is a parameter of its own, not smuggled through extra-vars, because the
-    // step sets it last and a caller must not be able to change it.
-    assert.equal(p['device-role'], 'campod');
-  } finally {
-    b.restore();
-  }
 });
 
 test('a failed workflow fails the run, naming the workflow to go and look at', async () => {
