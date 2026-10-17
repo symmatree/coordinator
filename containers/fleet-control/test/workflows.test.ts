@@ -169,6 +169,31 @@ else:
   assert.ok(lines.includes('PLAY [all] ****'), JSON.stringify(lines));
 });
 
+test('a finished stream is not re-read, so the play appears once', async () => {
+  // campod-se's first successful record held the whole converge THREE times, on a clean
+  // 145-line stride. `kubectl logs -f` exits normally when the pod finishes and `--tail=-1`
+  // re-reads from the start, so retrying after a stream that worked appends another copy
+  // every retryMs until the phase poll aborts it.
+  const k = fakeKubectl(`
+import os
+p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "polls")
+n = int(open(p).read()) if os.path.exists(p) else 0
+if "logs" in argv:
+    print("PLAY [all] ****")
+    print("PLAY RECAP ****")
+else:
+    open(p, "w").write(str(n + 1))
+    print(json.dumps({"metadata": {"name": "w1"},
+                      "status": {} if n < 3 else {"phase": "Succeeded"}}))
+`);
+  const lines: string[] = [];
+  const state = await withPath(k.dir, () =>
+    follow(CFG, 'w1', (_s, l) => lines.push(l), { pollMs: 10, retryMs: 5 }),
+  );
+  assert.equal(state.phase, 'Succeeded');
+  assert.equal(lines.filter((l) => l.includes('PLAY RECAP')).length, 1, JSON.stringify(lines));
+});
+
 test('a workflow that vanished mid-watch ends the run instead of polling forever', async () => {
   // Deleted by hand, or its TTL expired under us. Either way the watcher must stop.
   const k = fakeKubectl(`

@@ -251,6 +251,9 @@ function streamLogs(
 ): Promise<void> {
   return new Promise<void>((resolve) => {
     let attempts = 0;
+    // Across attempts, not per attempt: once any output has come through, a close means the
+    // stream ended rather than that we were too early.
+    let delivered = false;
     const attach = (): void => {
       if (signal?.aborted === true) return resolve();
       attempts += 1;
@@ -277,13 +280,24 @@ function streamLogs(
           for (const l of lines) if (l.trim() !== '') sink(stream, l);
         };
       };
-      child.stdout.on('data', feed('stdout'));
+      const toSink = feed('stdout');
+      child.stdout.on('data', (chunk: Buffer) => {
+        delivered = true;
+        toSink(chunk);
+      });
       // kubectl's own complaints, not the step's. Kept, because "no pod yet" shows up here.
       child.stderr.on('data', feed('stderr'));
       child.on('close', () => {
-        // A workflow whose pod has not appeared yet: try again, a few times, then give up
-        // and let the phase poll carry the run.
-        if (attempts < 12 && signal?.aborted !== true) {
+        // RETRY ONLY IF NOTHING CAME THROUGH. `kubectl logs -f` exits normally when the pod
+        // finishes, and `--tail=-1` re-reads the whole log from the start -- so retrying
+        // after a stream that worked appends a second copy of the play, and a third five
+        // seconds later, until the phase poll aborts it. campod-se's first record held the
+        // whole converge three times on a 145-line stride.
+        //
+        // A close after output means the pod's log ended, which is the end of the stream.
+        // A close with nothing delivered means we were too early, which is what the retry
+        // is for.
+        if (!delivered && attempts < 12 && signal?.aborted !== true) {
           const timer = setTimeout(attach, retryMs);
           signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
           return;
