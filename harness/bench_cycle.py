@@ -109,7 +109,15 @@ def is_fresh(pods: list[dict], uptime_before: float) -> bool:
     Uptime going BACKWARDS, not "a document exists". The bus documents are retained, so a
     pod that is down still publishes its last state -- a check for presence declared the
     cameras up while the pods were mid-reboot, and the run started against stale data.
+
+    BOTH PODS, COUNTED. On 2026-10-18 this passed on one: collect reboots the coordinator
+    too, the broker runs there, and the retained documents are gone until each pod
+    republishes -- so campod-se came back and published while campod-sw, whose reboot had
+    actually failed, was simply absent. `all()` over one pod is true, and the stage reported
+    "a fresh boot on both campods: ok" while meaning one. cameras_ready counts; this did not.
     """
+    if len(pods) != len(CAMPODS):
+        return False
     ups = [(p.get("raw") or {}).get("as_of_boot_s") for p in pods]
     return bool(ups) and all(u is not None and u < uptime_before for u in ups)
 
