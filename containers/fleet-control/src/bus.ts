@@ -242,6 +242,29 @@ export async function quiesceNode(
   }
 }
 
+export async function requestReboot(cfg: BusConfig, node: string, reason: string): Promise<void> {
+  const client = mqtt.connect(cfg.url, {
+    connectTimeout: 5_000,
+    reconnectPeriod: 0,
+    clientId: `fleet-control-${Math.random().toString(16).slice(2, 10)}`,
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      client.once('connect', () => resolve());
+      client.once('error', (e) => reject(new Error(`${cfg.url}: ${e.message}`)));
+    });
+    await new Promise<void>((resolve, reject) => {
+      // NOT RETAINED, which pod-link enforces by refusing a retained reboot: the device
+      // comes back subscribed and would read the same instruction again, forever. QoS 1 so
+      // it is not lost on a link that is about to carry nothing else.
+      client.publish(`rekon/pod/${node}/reboot`, reason, { qos: 1, retain: false }, (e) =>
+        e ? reject(new Error(`publish failed: ${e.message}`)) : resolve());
+    });
+  } finally {
+    client.end(true);
+  }
+}
+
 export async function setDesired(
   cfg: BusConfig,
   node: string,

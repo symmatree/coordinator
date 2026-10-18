@@ -16,7 +16,7 @@
 // pod bus, not from anything this file believes about the play.
 
 import { hostOf, type FleetNode, type Inventory } from './inventory.js';
-import type { BusConfig } from './bus.js';
+import { configured as busConfigured, requestReboot, type BusConfig } from './bus.js';
 import type { EventSink } from './runs.js';
 import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import { latestPlaybook } from './playbookartifact.js';
@@ -171,22 +171,46 @@ export async function stop(node: FleetNode, ctx: ActionContext, sink?: EventSink
 /**
  * Reboot a device. One command, gated on nothing.
  *
+ * OVER THE BUS WHEN THERE IS ONE. pod-link is already connected and subscribed to
+ * `rekon/pod/<node>/reboot`, so the request costs a publish; the ssh path below costs an
+ * association, a TCP connection, an sshd fork, sudo and systemctl on a 512 MB board that
+ * has usually just finished writing a capture. It is also the path that fails when ssh
+ * fails: on 2026-10-18 campod-sw's ssh went dead 39 s after disarm, the reboot at the end
+ * of the run "gave up after 60s", and the box stayed up with a card that had not been
+ * cleanly flushed -- while it was publishing on the bus the whole time.
+ *
  * NO STOP FIRST. A reboot is the way out of a stuck box -- the thing that was being done by
  * hand over ssh, or by pulling power -- so it must not depend on anything else working. The
  * containers get systemd's shutdown signal on the way down; if you want them stopped on our
  * timeout instead, that is the Stop button, pressed first, deliberately.
  *
  * NOTHING WAITS for it to come back, the same as everything else here (#326): the device
- * answers again or it does not, and the status screen is the check. In the normal case the
- * run ends and the operator pulls the plug -- there is nothing after this in the UI.
+ * answers again or it does not, and the status screen is the check. That matters more over
+ * the bus than over ssh, because a publish succeeds whether or not anything acts on it --
+ * the caller's check is the node's uptime going backwards, not this function returning.
  *
- * `systemctl --no-block` queues the job and returns rather than blocking on the transition,
- * so ssh gets a real exit status instead of racing sshd's own shutdown. That race is not
- * fully closable from here, so a connection that drops is read as the reboot starting.
+ * ssh remains the fallback, for a box with no bus configured and for a pod-link that is not
+ * running. `systemctl --no-block` queues the job and returns rather than blocking on the
+ * transition, so ssh gets a real exit status instead of racing sshd's own shutdown. That
+ * race is not fully closable from here, so a connection that drops is read as the reboot
+ * starting.
  */
 export async function reboot(node: FleetNode, ctx: ActionContext, sink?: EventSink): Promise<void> {
   const host = hostOf(node);
   note(sink, `rebooting ${node.name} (${host})`);
+
+  if (busConfigured(ctx.bus)) {
+    try {
+      await requestReboot(ctx.bus, node.name, `fleet-control: reboot ${node.name}`);
+      note(sink, 'requested over the pod bus; uptime going backwards is the confirmation');
+      return;
+    } catch (err) {
+      // Fall through to ssh: the broker lives on the coordinator, so a coordinator that is
+      // already down or rebooting takes the bus with it, and that is exactly when a reboot
+      // of something else is being asked for.
+      note(sink, `bus reboot failed (${(err as Error).message}); falling back to ssh`);
+    }
+  }
 
   try {
     await run(

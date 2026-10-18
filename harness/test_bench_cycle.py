@@ -61,6 +61,13 @@ check("one pod still stale fails the whole check",
       not bc.is_fresh([_FRESH[0], _UP[0]], 7000.0))
 check("a document with no uptime is not fresh", not bc.is_fresh([{"raw": {}}], 7000.0))
 check("no documents at all is not fresh", not bc.is_fresh([], 7000.0))
+# A pod that is ABSENT is not a fresh boot either, and this is how it got through: collect
+# reboots the coordinator, the broker runs there, and the retained documents are gone until
+# each pod republishes -- so the pod whose reboot FAILED is the one that is missing, and
+# `all()` over the one that came back is true. 2026-10-18: "a fresh boot on both campods:
+# ok" with campod-sw still up on its old boot and its ssh dead.
+check("one pod missing is not a fresh boot, however fresh the other looks",
+      not bc.is_fresh([_FRESH[0]], 7000.0))
 
 # ---- camera readiness -----------------------------------------------------------------
 # Arming while a camera was still in warmup produced a window whose first frames were
