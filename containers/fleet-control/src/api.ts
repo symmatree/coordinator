@@ -11,11 +11,11 @@ import { ImageCache } from './imagecache.js';
 import { probeAll, probeNode } from './probe.js';
 import { deleteSessions, listSessions, stopCapture } from './sessions.js';
 import { listLogs } from './fclog.js';
-import { offloadFcLog, offloadSession, readNotes, validFlightName, writeNotes } from './offload.js';
+import { offloadFcLog, readNotes, validFlightName, writeNotes } from './offload.js';
 import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { collectGround, listTlogs } from './cluster.js';
 import { configured as busConfigured, readPods, setDesired } from './bus.js';
-import { findByRun, nodeBusyWith, workflowUrl } from './workflows.js';
+import { findByRun, nodeBusyWith, readWorkflow, submitCollect, workflowUrl, type CollectTarget } from './workflows.js';
 import { build } from './build.js';
 import { notify, runEnded } from './notify.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
@@ -270,40 +270,77 @@ export function buildServer(
   });
 
   /**
-   * Package, fetch, verify and delete one session into a named flight.
+   * Collect a flight: every named session fetched, verified and deleted, in parallel.
    *
-   * One session per call rather than a batch: each is minutes of zstd plus a transfer, and a
-   * failure should cost that session rather than the operator's whole selection. The caller
-   * loops, and the flight directory accumulates.
+   * SUBMITS, IT DOES NOT TRANSFER. The bytes move in the collect workflow's own step pods,
+   * one per node, so the two campods go at once instead of one after the other and nothing
+   * is bounded by this pod's lifetime. What comes back is the workflow, which is the thing
+   * that will still be true after a restart.
+   *
+   * Sessions are chosen by the caller rather than here: picking one is a judgement about
+   * which capture was the flight, and `GET /nodes/:name/sessions` is what that is made from.
    */
   app.post<{
-    Params: { name: string };
-    Querystring: { session?: string; flight?: string; keep?: string };
-  }>('/nodes/:name/offload', async (req, reply) => {
-    const node = findNode(cfg.inventory, req.params.name);
-    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-    const { session, flight } = req.query;
-    if (!session) return reply.code(400).send({ error: 'session is required' });
-    if (!flight || !validFlightName(flight)) {
+    Params: { flight: string };
+    Body: { targets?: CollectTarget[] };
+  }>('/flights/:flight/collect', async (req, reply) => {
+    const { flight } = req.params;
+    if (!validFlightName(flight)) {
       return reply.code(400).send({
         error: 'flight must be a single path segment of letters, digits, dot, dash, underscore',
       });
     }
-    try {
-      const run = await runs.start('offload', node.name, (emit) =>
-        offloadSession(node, cfg.action, session, flight, {
-          flightsDir: cfg.flightsDir,
-          // Kept by default is wrong for the flow this serves -- cards fill at ~6 GB/hour and
-          // there is no way to stop capture yet -- but `keep=true` exists for a first run
-          // where nobody wants the delete exercised at the same time as the transfer.
-          deleteAfter: req.query.keep !== 'true',
-          note: (l) => emit({ t: new Date().toISOString(), stream: 'stdout', line: l }),
-        }).then(() => undefined),
-      );
-      return reply.code(202).send({ id: run.id, action: run.action, node: run.node, flight });
-    } catch (err) {
-      return reply.code(409).send({ error: (err as Error).message });
+    const targets = req.body?.targets ?? [];
+    if (targets.length === 0) {
+      return reply.code(400).send({ error: 'targets is required: [{node, session}, ...]' });
     }
+    for (const t of targets) {
+      if (!t?.node || !t?.session) {
+        return reply.code(400).send({ error: 'every target needs a node and a session' });
+      }
+      if (!findNode(cfg.inventory, t.node)) {
+        return reply.code(404).send({ error: `no such node: ${t.node}` });
+      }
+    }
+
+    // Refused up front for every node, not per step: a collect that takes one campod and
+    // fails the other has already deleted nothing but has half a flight, and the operator
+    // would rather be told before it starts than find out from a step's log.
+    for (const t of targets) {
+      const busy = await nodeBusyWith(cfg.action.workflows, t.node);
+      if (busy !== undefined) {
+        return reply.code(409).send({
+          error: `${t.node} is already being driven by ${busy}. Wait for it, then collect.`,
+        });
+      }
+    }
+
+    try {
+      const name = await submitCollect(cfg.action.workflows, flight, targets);
+      return reply.code(202).send({
+        workflow: name,
+        url: workflowUrl(cfg.action.workflows, name),
+        flight,
+        targets,
+      });
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * One workflow's state, for a caller following something it submitted.
+   *
+   * Read from the cluster every time. This service holds no copy, which is the point: the
+   * workflow outlives the process, so asking is the only answer that stays true across a
+   * restart.
+   */
+  app.get<{ Params: { name: string } }>('/workflows/:name', async (req, reply) => {
+    const state = await readWorkflow(cfg.action.workflows, req.params.name);
+    if (state === undefined) {
+      return reply.code(404).send({ error: `no such workflow: ${req.params.name}` });
+    }
+    return { ...state, url: workflowUrl(cfg.action.workflows, state.name) };
   });
 
   /** Prune sessions that were not kept. Idempotent on the device; absent is not an error. */

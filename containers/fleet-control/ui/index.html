@@ -530,6 +530,37 @@
     });
   }
 
+  /**
+   * Follow a workflow to its end. Polled, not streamed.
+   *
+   * There is no run to stream: a collect's output is its step pods' logs, which go to Loki
+   * rather than through this service. What the page needs is the outcome and a link, and a
+   * phase every few seconds is that. Nothing here is lost if the page is closed -- the
+   * workflow is in the cluster and the Argo UI shows the same thing.
+   */
+  const FINISHED = ['Succeeded', 'Failed', 'Error'];
+  async function watchWorkflow(name, onLine) {
+    let said;
+    for (;;) {
+      let wf;
+      try {
+        wf = await j(`/workflows/${encodeURIComponent(name)}`);
+      } catch (e) {
+        // A 404 here is not "lost" the way a run is: the workflow may simply not be visible
+        // yet. Reported and retried rather than resolved, so a slow create is not a failure.
+        onLine(`cannot read the workflow yet (${e.message}); still waiting`);
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+      if (wf.phase !== said) {
+        onLine(wf.message ? `${wf.phase}: ${wf.message}` : String(wf.phase ?? 'pending'));
+        said = wf.phase;
+      }
+      if (FINISHED.includes(wf.phase)) return wf.phase;
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+
   /** The one status that needs explaining rather than reporting. */
   const lostNote = (status) => status !== 'lost' ? undefined
     : '[fleet-control] the service restarted; this run is lost and the node may be '
@@ -882,30 +913,51 @@
       } catch (e) { log(`ground: ${e.message}`); }
       renderSessions();
     }
-    for (const key of [...pf.picked].filter((k) => !k.startsWith('tlog:'))) {
-      // `fc:<node>/<id>` is an FC log; anything else is `<node>/<session>`. Different route,
-      // same loop, so one selection can span both and a failure still costs only its own item.
-      const isFc = key.startsWith('fc:');
-      const bare = isFc ? key.slice(3) : key;
-      const [node, session] = [bare.slice(0, bare.indexOf('/')), bare.slice(bare.indexOf('/') + 1)];
-      log(isFc ? `${node}: starting FC log ${session}` : `${node}: starting ${session.slice(0, 8)}`);
+    // FC LOGS STILL RUN IN THE SERVICE. One is a serial read off the FC's own card that holds
+    // /dev/ttyAMA0 with the stack down, so there is nothing for a second one to overlap with.
+    for (const key of [...pf.picked].filter((k) => k.startsWith('fc:'))) {
+      const bare = key.slice(3);
+      const [node, logId] = [bare.slice(0, bare.indexOf('/')), bare.slice(bare.indexOf('/') + 1)];
+      log(`${node}: starting FC log ${logId}`);
       try {
-        const url = isFc
-          ? `/nodes/${node}/fc-log?id=${session}&flight=${encodeURIComponent(flight)}`
-          : `/nodes/${node}/offload?session=${session}&flight=${encodeURIComponent(flight)}`;
+        const url = `/nodes/${node}/fc-log?id=${logId}&flight=${encodeURIComponent(flight)}`;
         const { id } = await j(url, { method: 'POST' });
         const status = await watchRun(id, (line) => log('  ' + line));
         // UNTICK ONLY ON SUCCESS. This used to untick whenever the stream ended for any
-        // reason, including a dropped connection -- so a session could be marked collected
+        // reason, including a dropped connection -- so an item could be marked collected
         // while its transfer was still running, or after the service restarted mid-transfer.
-        // A ticked session that was actually retrieved costs one retry; an unticked session
-        // that was not is a session "Delete the rest" then deletes.
-        if (status === 'succeeded') {
-          pf.picked.delete(key);
-        } else {
-          log(`  ${node}: ${lostNote(status) ?? `run ${status}`} -- leaving ${session.slice(0, 8)} ticked`);
-        }
+        if (status === 'succeeded') pf.picked.delete(key);
+        else log(`  ${node}: ${lostNote(status) ?? `run ${status}`} -- leaving ${logId} ticked`);
       } catch (e) { log(`${node}: ${e.message}`); }
+    }
+
+    // SESSIONS GO AS ONE COLLECT. Each is minutes of zstd on the device plus hundreds of MB
+    // on the wire, and one at a time left the second campod idle through the first -- 18:23
+    // and 18:30 on 2026-10-18, for 336 and 361 MB. The workflow runs a step per node at the
+    // same time and joins afterwards, and it is not bounded by this page staying open.
+    const sessionKeys = [...pf.picked].filter((k) => !k.startsWith('tlog:') && !k.startsWith('fc:'));
+    if (sessionKeys.length > 0) {
+      const targets = sessionKeys.map((k) => ({
+        node: k.slice(0, k.indexOf('/')),
+        session: k.slice(k.indexOf('/') + 1),
+      }));
+      log(`collecting ${targets.length} session(s): ${targets.map((t) => t.node).join(', ')}`);
+      try {
+        const { workflow, url } = await j(`/flights/${encodeURIComponent(flight)}/collect`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ targets }),
+        });
+        log(`  ${workflow}`);
+        log(`  ${url}`);
+        const phase = await watchWorkflow(workflow, (l) => log('  ' + l));
+        // ALL OR NONE, because the phase is the workflow's and not each step's. Unticking on
+        // less would mark a session collected on the strength of its neighbour, and an
+        // unticked session that never landed is one "Delete the rest" then deletes. One that
+        // did land and stayed ticked costs a retry, which is the safe direction to be wrong in.
+        if (phase === 'Succeeded') sessionKeys.forEach((k) => pf.picked.delete(k));
+        else log(`  collect ${phase} -- leaving all ${sessionKeys.length} ticked. ${url}`);
+      } catch (e) { log(`collect: ${e.message}`); }
     }
     renderSessions();
   };

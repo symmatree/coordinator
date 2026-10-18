@@ -462,8 +462,10 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `POST /nodes/:name/fc-log?id=&flight=` | stream one dataflash log into a flight dir -> `202 {id}` |
 | `GET /ground/tlogs` | what the ground-tlog share holds |
 | `POST /flights/:flight/ground[?tlog=&tlog=&start=&end=]` | collect the tlogs named, over the range given -> `202 {id}` |
+| `POST /flights/:flight/collect` | body `{targets:[{node,session}]}` -- submits the collect workflow -> `202 {workflow,url}` |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
+| `GET /workflows/:name` | one workflow's phase, read from the cluster each time |
 | `GET /images/builds` | recent successful builds on the tracked ref, newest first |
 | `GET /images/cached` | what the image cache holds |
 | `POST /images/:role/fetch[?sha=]` | put a build in the cache -- the only route needing a token |
@@ -473,16 +475,36 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 One action per node at a time; a second `POST` against a busy node is a `409`. **Except reboot**,
 which is the way out of a stuck box and so cannot be the thing a stuck box refuses.
 
-**And one playbook run at a time, fleet-wide** -- for now. It costs nothing to hold, since a
-play runs in a pod of its own, and lifting it is its own change. The per-node lock is the one
-with a reason behind it: two plays against one device fight over the same box.
-
 **That lock asks the cluster, not its own memory.** A workflow outlives this process, so a
 converge submitted before a restart is still driving its device while nothing here remembers
 it. `nodeBusyWith` looks for a non-terminal workflow carrying the node's label. Reboot skips
 the check, because busy is the case a reboot exists for.
 
-The cheap actions -- stop, offload, the FC pull -- are not capped.
+A collect drives both campods, which one `node` label cannot say, so every workflow also
+carries a `touches-<node>` label per device it will drive and the lock checks both forms.
+
+The cheap actions -- stop and the FC pull -- are not capped.
+
+## Collecting a flight
+
+A collect is a workflow, not a run here: a step per node, then a join. `POST
+/flights/:flight/collect` chooses nothing -- it takes the sessions it is given, refuses up
+front if any of those nodes is already being driven, and returns the workflow.
+
+**The bytes move in the step pods.** They used to move in this process, which made the
+campods serial and tied a transfer to this pod's lifetime: on 2026-10-18 the two bundles,
+336 and 361 MB, landed at 18:23:32 and 18:30:58. Nothing made the second wait except the
+first.
+
+**`flight.json` is derived.** Each offload writes its own file under `collected/`, and the
+summary is composed from them -- by each offload as it finishes, and by the join once both
+have stopped. A single manifest read-modify-written from two pods loses whichever entry was
+read before the other's write, which is a verified bundle on the share that nothing names.
+Per-contributor files have one writer each, so there is nothing to lose; a summary that is
+briefly behind is rebuilt by the next compose.
+
+The join runs on `offload.AnySucceeded`, so a flight short one campod still gets a summary
+naming what did land.
 
 ## Configuration
 
@@ -500,6 +522,7 @@ The cheap actions -- stop, offload, the FC pull -- are not capped.
 | `FLEET_PLAYBOOK_REF` | `main` | the ref a converge takes its playbook from |
 | `FLEET_NAMESPACE` | `fleet-control` | where workflows are submitted, which is this pod's own namespace |
 | `FLEET_WORKFLOW_TEMPLATE` | `fleet-control-playbook` | the template they are submitted against |
+| `FLEET_COLLECT_TEMPLATE` | `fleet-control-collect` | the template a collect is submitted against |
 | `FLEET_WORKFLOW_UI` | `https://argo.tiles.symmatree.com` | what a run links to |
 | `FLEET_PUBLIC_URL` | `https://fleet.tiles.symmatree.com` | where a DEVICE reaches this service, for `get_url` |
 | `FLEET_IMAGE_CACHE` | `/images` | where fetched images are kept |

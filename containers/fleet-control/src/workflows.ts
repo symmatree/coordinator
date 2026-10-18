@@ -22,14 +22,30 @@ const run = promisify(execFile);
 const RUN_LABEL = 'fleet-control.symmatree.com/run-id';
 const NODE_LABEL = 'fleet-control.symmatree.com/node';
 const ACTION_LABEL = 'fleet-control.symmatree.com/action';
+/**
+ * One per node a workflow drives. `NODE_LABEL` holds a single value, and a collect drives
+ * both campods at once, so the lock needs something that can say "these two".
+ *
+ * Set IN ADDITION to `NODE_LABEL` rather than replacing it, so a converge carries exactly
+ * the labels it carried before and nothing already in flight goes invisible to the lock
+ * while this rolls out.
+ */
+const TOUCHES_PREFIX = 'fleet-control.symmatree.com/touches-';
 /** Argo's own, for finding a workflow's pods. */
 const WORKFLOW_LABEL = 'workflows.argoproj.io/workflow';
+
+/** The per-node labels for everything a workflow will drive. */
+function touches(nodes: string[]): Record<string, string> {
+  return Object.fromEntries(nodes.map((n) => [`${TOUCHES_PREFIX}${n}`, 'true']));
+}
 
 export interface WorkflowConfig {
   /** Where workflows are submitted. The same namespace this service runs in. */
   namespace: string;
   /** The WorkflowTemplate to submit against. */
   template: string;
+  /** The WorkflowTemplate a collect is submitted against. */
+  collectTemplate: string;
   /** The Argo Workflows UI, for linking to a run rather than describing how to find it. */
   uiUrl: string;
 }
@@ -105,6 +121,7 @@ export async function submitPlaybook(
         [RUN_LABEL]: req.runId,
         [NODE_LABEL]: req.node,
         [ACTION_LABEL]: req.action,
+        ...touches([req.node]),
       },
     },
     spec: {
@@ -178,9 +195,68 @@ export async function nodeBusyWith(
   cfg: WorkflowConfig,
   node: string,
 ): Promise<string | undefined> {
-  const found = await listWorkflows(cfg, `${NODE_LABEL}=${node}`);
+  // Two selectors because label selectors have no OR, and a workflow may be labelled either
+  // way: single-node work sets `NODE_LABEL`, a collect sets one `touches-` label per campod.
+  const found = (await Promise.all([
+    listWorkflows(cfg, `${NODE_LABEL}=${node}`),
+    listWorkflows(cfg, `${TOUCHES_PREFIX}${node}=true`),
+  ])).flat();
   const live = found.find((w) => !isFinished(w.phase));
   return live === undefined ? undefined : `workflow ${live.name} (${live.phase ?? 'unset'})`;
+}
+
+/** One node's session, as a collect is told to fetch it. */
+export interface CollectTarget {
+  node: string;
+  session: string;
+}
+
+/**
+ * Submit a collect: one offload step per node, then a join that composes `flight.json`.
+ *
+ * ONE WORKFLOW RATHER THAN ONE PER NODE. The steps run at the same time either way, but a
+ * single workflow is a single thing to watch and to find again, and it gives the join
+ * somewhere to hang -- a last pass over `collected/` once both have stopped writing, which
+ * two independent workflows have no way to agree on.
+ */
+export async function submitCollect(
+  cfg: WorkflowConfig,
+  flight: string,
+  targets: CollectTarget[],
+): Promise<string> {
+  const manifest = {
+    apiVersion: 'argoproj.io/v1alpha1',
+    kind: 'Workflow',
+    metadata: {
+      // A flight name may carry uppercase, dots and underscores; an object name may not.
+      // Lowercased and squashed rather than rejected -- the flight is identified by the
+      // `flight` parameter, and this only has to be a legal, recognisable prefix.
+      generateName: `collect-${flight.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 40)}-`,
+      labels: {
+        [ACTION_LABEL]: 'collect',
+        ...touches(targets.map((t) => t.node)),
+      },
+    },
+    spec: {
+      workflowTemplateRef: { name: cfg.collectTemplate },
+      arguments: {
+        parameters: [
+          { name: 'flight', value: flight },
+          // The fan-out. The template spreads this with withParam, so one more campod is a
+          // longer list here and nothing else.
+          { name: 'targets', value: JSON.stringify(targets) },
+        ],
+      },
+    },
+  };
+
+  const stdout = await kubectlStdin(cfg, ['create', '-o', 'json', '-f', '-'], JSON.stringify(manifest));
+  const created = JSON.parse(stdout) as { metadata?: { name?: string } };
+  const name = created.metadata?.name;
+  if (name === undefined || name === '') {
+    throw new Error('kubectl created a collect workflow but reported no name');
+  }
+  return name;
 }
 
 export async function listWorkflows(

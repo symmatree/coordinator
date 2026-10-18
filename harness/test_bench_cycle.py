@@ -127,10 +127,12 @@ class _FakeFleet:
 
     def __init__(self):
         self.calls = []
+        self.bodies = []
         self._boot = 9000.0
 
-    def __call__(self, path, method="GET", timeout=300):
+    def __call__(self, path, method="GET", timeout=300, body=None):
         self.calls.append((method, path.split("?")[0]))
+        self.bodies.append(body)
         if path in _REAL_SHAPES:
             return _REAL_SHAPES[path]
         if path == "/pods":
@@ -139,7 +141,12 @@ class _FakeFleet:
                                                  "camera": {"ready": True,
                                                             "ready_at_mono_s": 126.9}}}
                              for n in bc.CAMPODS]}
-        if path.endswith("/converge") or path.endswith("/offload") or "offload?" in path:
+        if path.endswith("/collect"):
+            return {"workflow": "collect-f-abcde", "url": "https://argo/w/collect-f-abcde",
+                    "flight": "f", "targets": (body or {}).get("targets", [])}
+        if path.startswith("/workflows/"):
+            return {"name": path.rsplit("/", 1)[-1], "phase": "Succeeded"}
+        if path.endswith("/converge"):
             return {"id": "11111111-2222-3333-4444-555555555555"}
         if path.startswith("/runs/"):
             return {"status": "succeeded", "lines": [{"line": "PLAY RECAP"},
@@ -172,13 +179,13 @@ def _drive(stage, extra=()):
         rc = bc.main()
     finally:
         bc.api, bc.time.sleep, bc.subprocess.run, sys.argv = real_api, real_sleep, real_run, real_argv
-    return rc, fleet.calls, sent
+    return rc, fleet.calls, sent, fleet.bodies
 
 
 for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
                      ("collect", ("--flight", "bench-test"))):
     try:
-        rc, calls, sent = _drive(stage, extra)
+        rc, calls, sent, bodies = _drive(stage, extra)
         check(f"stage {stage} runs end to end", rc == 0, f"returned {rc}")
     except BaseException as exc:  # SystemExit included: a stage must not bail on good input
         check(f"stage {stage} runs end to end", False, f"{type(exc).__name__}: {exc}")
@@ -213,8 +220,16 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
         check("collect reboots all three",
               sorted(c[1] for c in calls if c[1].endswith("/reboot"))
               == sorted(f"/nodes/{n}/reboot" for n in ("campod-se", "campod-sw", "coordinator")))
-        check("collect offloads the chosen session for each pod",
-              len([c for c in calls if "/offload" in c[1]]) == len(bc.CAMPODS))
+        # ONE submission carrying BOTH campods, not one call per node: the offloads are
+        # steps of a single workflow, which is what lets them run at the same time.
+        submits = [c for c in calls if c[1].endswith("/collect")]
+        check("collect submits one workflow for the whole flight", len(submits) == 1, str(submits))
+        sent_targets = next(b for b in bodies if b and "targets" in b)["targets"]
+        check("and it names the chosen session for every campod",
+              sorted(t["node"] for t in sent_targets) == sorted(bc.CAMPODS)
+              and all(t["session"] == "aaaa" for t in sent_targets), str(sent_targets))
+        check("then follows the workflow rather than a run of its own",
+              any(c[1].startswith("/workflows/") for c in calls), str(calls))
 
 # ---- which build is running ------------------------------------------------------------
 # bench-simflight-g4pd2's step failed printing a message the fix under test had already
