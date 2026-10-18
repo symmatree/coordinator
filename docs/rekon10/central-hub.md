@@ -223,15 +223,33 @@ column, and bridges across to the connector, so no hole carries two inserted lea
 Position along the run does not matter electrically -- it is series either way -- so
 they are here rather than spliced into five cables.
 
+**What the LED tells you, and why it is the only thing that can tell you.** D1 is driven from SQW
+through a buffer with no software anywhere in the path, so it reads out the one thing SPI cannot.
+Three states:
+
+| LED | means |
+|-----|-------|
+| **blinking, 1 Hz** | chip powered, oscillator running, control register written. The whole chain to the first-tier buffer is good |
+| **solid on** | SQW is parked high and the pull-up is winning. Either the chip is unconfigured -- `INTCN` is 1 at power-on, so the square wave is off -- or the chip has lost VCC while the board still has 3V3. Datasheet bit 6: with `BBSQW = 0`, which our `0x00` sets, "the INT/SQW pin goes high impedance when VCC < VPF". Both look identical |
+| **dark** | the board has no 3V3 at all |
+
+The case this earned its keep on (2026-10-18): a DuPont came loose and **every DS3234 register read
+`0x00` over SPI**, which is indistinguishable from a working chip behind a broken bus. It is neither
+-- the datasheet "disables read and write access to the part when VCC drops below both VPF and
+VBAT", so the chip was not driving MISO and the reader was seeing its own idle line. The clock
+itself was fine and had the correct time when power came back, because VBAT keeps timekeeping
+running while the serial interface and, at `BBSQW = 0`, the square wave both stop.
+
 SQW and one buffer output come out to test points. Every edge-rate figure here is computed from
 worst-case datasheet capacitance, not measured.
 
 **Which legs are actually populated is not recorded here.** This section is the design --
 five buffered outputs and what each drives. Whether a given leg has a wire on it is
 deployment state, it changes when somebody solders rather than when the design does, and it
-is held in ansible as `coord_pps_wired`, which is read on every converge. Deliberately one
-answer in one place: the overlay presents `/dev/pps0` on an unconnected pin, so a populated
-leg is not detectable and a stale second copy here would be believed.
+is not tracked anywhere: coordinator#495 deleted `coord_pps_wired` and the software now
+configures every leg unconditionally, because an unwired one is inert. The overlay presents
+`/dev/pps0` on an unconnected pin either way, so a populated leg is not detectable from
+software and a copy of that state here would be a second answer nobody could check.
 
 #### Net list
 
