@@ -45,9 +45,12 @@ def _env(name, default):
     return v if v not in (None, "") else default
 
 
-# A pod whose last status is older than this is shown as absent. Two and a half
-# heartbeats: one missed publication is a slow tick or a reconnect, three is gone.
-STALE_AFTER_S = 150.0
+# A pod whose last status is older than this is shown as absent. Three heartbeats at the
+# 5 s cadence the campods publish at: one missed publication is a slow tick or a
+# reconnect, three in a row is a pod that is gone. This number is paired with
+# POD_LINK_STATUS_PERIOD_S in stacks/campod/pod-link.container -- raise that and a pod
+# will start showing as absent between its own publications.
+STALE_AFTER_S = 15.0
 
 # What the camera's own document calls ready. The bench cycle waits on this exact field
 # before it arms, which is the reason the panel shows it.

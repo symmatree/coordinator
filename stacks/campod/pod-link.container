@@ -36,8 +36,13 @@ Environment=POD_LINK_FLAG_FILE=/tmp/campod_capture
 Environment=POD_LINK_CAMERA_STATUS_FILE=/tmp/campod_camera_status
 Environment=POD_LINK_ACCEL_STATUS_FILE=/tmp/campod_accel_status
 Environment=POD_LINK_DATA_DIR=/captures
-# Seconds between reconciles. Raised on demand via desired/status_period.
-Environment=POD_LINK_STATUS_PERIOD_S=60
+# Seconds between reconciles, which is also how far behind the device a reader can be.
+# 60 was chosen to protect the camera's page residency, on a figure -- "136 ms against
+# 22 s" -- that measured `docker ps`: a fork and a 71 MiB CLI faulting in off a contended
+# card. A tick here is a resident ~8 MB Go process reading /proc/uptime, two tmpfs files,
+# one statfs and one D-Bus property, and nobody has ever measured it costing anything.
+# self_major_faults in the published document is what would show it if it did.
+Environment=POD_LINK_STATUS_PERIOD_S=5
 
 [Service]
 TimeoutStopSec=40
