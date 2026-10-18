@@ -15,10 +15,17 @@ from pathlib import Path
 # builder. This test needs neither -- _sync_mode_for is pure.
 _picam = types.ModuleType("picamera2")
 _picam.Picamera2 = type("Picamera2", (), {})
+# capture.py maps the camera buffer rather than copying per frame, so it imports
+# MappedArray; the stub only has to satisfy the import.
+_picam.MappedArray = type("MappedArray", (), {})
 sys.modules["picamera2"] = _picam
 _libcamera = types.ModuleType("libcamera")
 _libcamera.controls = types.SimpleNamespace()
 sys.modules["libcamera"] = _libcamera
+# NOT STUBBED. capture.py encodes with simplejpeg, so the test should check the call
+# against the real encoder -- argument order and colorspace string included. It is
+# python3-simplejpeg in the camera image, where these run during the build, and
+# simplejpeg in the notebook image for running them by hand.
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("capture_sync", HERE / "capture.py")
