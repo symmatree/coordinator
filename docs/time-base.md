@@ -322,6 +322,60 @@ oscillators, not a figure for the part. And they were taken on the **rising** ed
 curve. Nothing measured before a reflash carrying `assert_falling_edge=1` can become a
 calibration constant.
 
+### After the reflash, on the falling edge
+
+`assert_falling_edge=1` landed on both roles in dotfiles-symm#81 and the coordinator was
+reflashed. Two readings, a chrony restart apart:
+
+```
+2026-10-15   Reference ID 50505300 (PPS)   stratum 1   system time 33 ns fast
+             RMS offset 313 ns   skew 0.028 ppm   update interval 4.0 s
+             #- DS32  reach 377  -568ns  +/-   10us      sourcestats 30 samples / 114 s span, 1.3 us stdev
+             #* PPS   reach 377  -495ns  +/-  628ns
+
+2026-10-18   Reference ID 50505300 (PPS)   stratum 1   system time 390 ns slow
+             RMS offset 2.9 us   179 asserts this boot
+             #- DS32  reach 377  -155ns  +/-   10us
+             #* PPS   reach 377  -126ns  +/- 1194ns
+```
+
+So the lock is routine rather than a one-off, and it survives a reboot: the boot unit
+configures the chip unattended and chrony selects PPS without intervention. The pods are
+chrony clients of the coordinator over the gadget link -- stratum 2, 15.2 us slow and 16.9
+us fast, RMS 31 and 26 us, reach 377 on both. Their own PPS refclock was absent from the
+rendered config until coordinator#495 deleted the flag gating it, so no pod figure on the
+fraction exists yet.
+
+Capture-side pairing is flight-platform's measurement rather than this layer's: at
+`buffer_count=4` all 249 shared seconds pair within 52 us, against a median -76.7 ms at
+`buffer_count=1`, because libcamera runs the IPA once per queued application request and a
+single buffer let the frame-duration correction stand for every sensor frame in the gap.
+
+### How this fails, which no software reading can diagnose
+
+A DuPont came off the distribution board on 2026-10-18. The symptoms:
+
+```
+every DS3234 register    0x00
+coord-rtc status time    2000-00-00T00:00:00
+/sys/class/pps/pps0      zero asserts for the whole boot
+```
+
+**All registers reading `0x00` is the bus, not the chip's contents.** Status reads `0x48`
+when the chip is powered, so a zero there is an undriven MISO and carries no information --
+`osf=clear` in that state is not evidence about the battery. `2000-00-00` is not a value the
+part can hold either: the BCD day and month registers power up to `01`, never `00`, so
+all-zero date registers are themselves the tell.
+
+One cause covers both symptoms. With `BBSQW=0` the square wave stops on battery while
+timekeeping continues, so losing VCC gives a dead bus *and* zero edges -- and the chip's
+time was correct the moment power returned.
+
+**The 1 Hz LED on a spare buffer channel is the discriminator**, and it is the reason to
+fit one: "unpowered or not oscillating" and "chip fine, bus broken" are indistinguishable
+over SPI, and the LED is driven off SQW through a buffer with no software in the path.
+Look at it first.
+
 ## Not measured
 
 - **The duty cycle.** That the falling edge is *on* the second follows from the 500 ms

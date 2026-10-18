@@ -116,13 +116,17 @@ safely) are the next conversation.
 | WiFi AP / station / off | **host** (or D-Bus-mounted utility container later) | NetworkManager integration |
 | Docker Engine | **host** | Generic runtime |
 
-**PPS status (2026-10-11): first tier built, brought up, not yet complete.** A DS3234 and
-one SN74AHC125N are wired to the coordinator and producing 1 Hz on GPIO24. The fan-out for
-the pods is not built and no Pi Zero has a leg. [time-base.md](time-base.md) is the
-contract, what has been measured, and what has not; the board is
-[rekon10/central-hub.md](rekon10/central-hub.md).
+**PPS status (2026-10-18): locking routinely on the coordinator, pods on the network
+half.** The whole board is soldered and the coordinator times the falling edge on GPIO24,
+holding `Reference ID: PPS` at stratum 1. Both campods have their legs wired to header
+37/39 and carry `gpiopin=26`, and take the second from the coordinator over the gadget
+link; their own PPS refclock arrived when #495 removed the flag that was gating it.
+[time-base.md](time-base.md) is the contract, what has been measured, and what has not;
+the board is [rekon10/central-hub.md](rekon10/central-hub.md).
 
-Host time is still NTP-after-boot only, so timestamps must not be assumed PPS-aligned.
+Coordinator timestamps can be treated as PPS-aligned. Campod timestamps are
+network-aligned to the coordinator at tens of microseconds, which is the integer second
+and not the fraction, until their refclock has been measured in that role.
 
 ## Runtime paths (on Pi)
 
