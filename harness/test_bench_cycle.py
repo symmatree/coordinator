@@ -183,9 +183,15 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
         continue
 
     if stage == "deploy":
-        check("deploy converges both pods, serially",
-              [c for c in calls if c[1].endswith("/converge")]
+        # Both submitted before either is watched: the fleet-wide cap on playbook runs is
+        # gone, so the deploy costs one converge's wall time rather than two.
+        conv = [i for i, c in enumerate(calls) if c[1].endswith("/converge")]
+        first_watch = next(i for i, c in enumerate(calls) if c[1].startswith("/runs/"))
+        check("deploy converges both pods",
+              [calls[i] for i in conv]
               == [("POST", f"/nodes/{n}/converge") for n in bc.CAMPODS])
+        check("both converges are submitted before either is watched",
+              max(conv) < first_watch, f"converges at {conv}, first watch at {first_watch}")
         check("deploy reboots both pods",
               sorted(c[1] for c in calls if c[1].endswith("/reboot"))
               == sorted(f"/nodes/{n}/reboot" for n in bc.CAMPODS))
