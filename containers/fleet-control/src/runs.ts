@@ -136,9 +136,6 @@ export class RunRegistry {
    * concurrent `coord pull`s on the same device fight over the docker daemon and the checkout,
    * and the failure is confusing rather than loud.
    *
-   * `playbook: true` is now only a label: plays run in their own pods, so a second one
-   * elsewhere costs this process a submit and a watch. The per-node lock still applies.
-   *
    * `whateverIsRunning: true` skips both device checks. Only reboot sets it, because busy is
    * the case a reboot exists for and refusing it would block the one action that recovers a
    * stuck box (#424). `abandonFor` handles the half this process knows about; a workflow
@@ -149,7 +146,7 @@ export class RunRegistry {
     action: string,
     node: string,
     work: (emit: Listener, runId: string) => Promise<void>,
-    opts: { playbook?: boolean; whateverIsRunning?: boolean } = {},
+    opts: { whateverIsRunning?: boolean } = {},
   ): Promise<Run> {
     if (opts.whateverIsRunning !== true) {
       const busy = this.activeFor(node);
@@ -231,8 +228,6 @@ export class RunRegistry {
    */
   private end(run: Run, status: RunStatus, error?: string): void {
     if (run.endedAt !== undefined) return;
-    // Released here rather than in prune(): the interpreter is gone the moment the run ends,
-    // and the slot has to come back then rather than when the record is eventually evicted.
     run.status = status;
     if (error !== undefined) {
       run.error = error;

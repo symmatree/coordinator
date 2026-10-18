@@ -83,8 +83,7 @@ export function buildServer(
     if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
     try {
       const run = await runs.start('converge', node.name, (emit, runId) =>
-        converge(node, cfg.action, { runId, kind: 'converge' }, sinkFor(emit)),
-      { playbook: true });
+        converge(node, cfg.action, { runId, kind: 'converge' }, sinkFor(emit)));
       return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
     } catch (err) {
       return reply.code(409).send({ error: (err as Error).message });
@@ -102,8 +101,7 @@ export function buildServer(
       if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
       try {
         const run = await runs.start('provision', node.name, (emit, runId) =>
-          converge(node, cfg.action, { runId, kind: 'provision' }, sinkFor(emit)),
-        { playbook: true });
+          converge(node, cfg.action, { runId, kind: 'provision' }, sinkFor(emit)));
         return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
       } catch (err) {
         return reply.code(409).send({ error: (err as Error).message });
@@ -464,8 +462,7 @@ export function buildServer(
         // Counts against the playbook cap for the same reason converge does -- reimage.yaml
         // is a play, so it is an ansible interpreter in this pod.
         const run = await runs.start('reimage', node.name, (emit, runId) =>
-          reimage(node, cfg.action, { runId, image }, sinkFor(emit)),
-        { playbook: true });
+          reimage(node, cfg.action, { runId, image }, sinkFor(emit)));
         return reply.code(202).send({ id: run.id, action: run.action, node: run.node, image });
       } catch (err) {
         return reply.code(409).send({ error: (err as Error).message });
