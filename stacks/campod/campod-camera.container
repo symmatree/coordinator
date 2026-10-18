@@ -50,9 +50,12 @@ Volume=/tmp:/tmp
 
 # No capture rate: one frame per second is a consequence of the selection rule, not a
 # setting. capture.py keeps the frame nearest each second from the pinned grid below.
-# 0 = sensor full resolution, 4608x2592.
-Environment=CAMPOD_CAPTURE_WIDTH=0
-Environment=CAMPOD_CAPTURE_HEIGHT=0
+# 0 = sensor full resolution, 4608x2592. 2304x1296 is the binned mode: 13.36 us line time
+# and a 17.3 ms readout against 26.29 us and 68.1 ms (containers/campod-camera/README.md),
+# and a quarter of the pixels, so a buffer set is 12.7 MB rather than 50.7 MB. picamera2
+# defaults the raw stream to main's size, so this sets the sensor mode and both buffers.
+Environment=CAMPOD_CAPTURE_WIDTH=2304
+Environment=CAMPOD_CAPTURE_HEIGHT=1296
 Environment=CAMPOD_JPEG_QUALITY=90
 # Shutter cap in us; auto-exposure trades the rest to gain. 0 = uncapped.
 Environment=CAMPOD_STILL_MAX_EXPOSURE_US=5000
@@ -83,16 +86,11 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # still an open question -- every measurement of it before 2026-10-17 was taken with a
 # 52-second frame duration inside the protocol -- so this is chosen for frame visibility
 # rather than for the sync loop.
-#
-# 100000 FOR ONE RUN, TO MEASURE DELIVERY AGAINST THE SENSOR PERIOD. Three measurements so
-# far -- 200 ms, 500 ms and 1000 ms periods, at hold times of ~400 ms and ~36 ms -- all
-# retrieved exactly one frame per two sensor periods. If that halving is real at 100 ms too,
-# then no choice of period lets the IPA tick once per sensor frame, which is what the sync
-# correction's actuation needs (coordinator#557). If retrieval comes back at 100 ms instead,
-# the halving is not a property of the single buffer and the earlier readings need another
-# explanation. frames.jsonl records every retrieval, so this run can answer it; the 10 Hz
-# runs before 2026-10-17 could not, because only kept frames had sidecars.
 Environment=CAMPOD_FRAME_DURATION_US=100000
+# One buffer gives the IPA a tick every second sensor frame at best, and the sync client's
+# correction then stands for the whole gap. Four covers the worst gap measured at this
+# period (4x, after a frame we copied out).
+Environment=CAMPOD_BUFFER_COUNT=4
 Environment=CAMPOD_SYNC_LEADER=campod-sw
 # WHAT THE SYNC ALGORITHM COMPUTES, which is the one thing the data cannot show.
 #
