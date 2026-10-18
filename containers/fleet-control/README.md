@@ -324,10 +324,13 @@ ask the cluster what is running on its behalf rather than having lost the mappin
 memory. `findByRun` is that lookup.
 
 **Which playbook it runs** is the newest published archive on `main`, resolved from the
-`ansible-payload.yaml` workflow's artifacts — not this service's own revision, which would go
-stale the moment `host/ansible/**` leaves this image's rebuild paths. The step then reads the
-archive's own `VERSION` and refuses a mismatch, so the run records what it unpacked rather than
-what it asked for.
+`ansible-payload.yaml` workflow's artifacts — not this service's own revision, which no longer
+moves when a playbook changes. The step then reads the archive's own `VERSION` and refuses a
+mismatch, so the run records what it unpacked rather than what it asked for.
+
+**The playbooks are not in this image and `host/ansible/**` is not in its rebuild paths**, so
+a playbook merge no longer rebuilds it or rolls this pod. That was the point of the whole
+exercise: a merge and a killed converge used to be the same event.
 
 Walking back through recent builds rather than taking only the newest is deliberate: artifacts
 expire on a 90-day clock, so the newest *successful build* is not always a runnable one.
