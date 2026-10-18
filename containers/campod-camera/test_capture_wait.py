@@ -54,12 +54,10 @@ fake.Picamera2 = FakePicamera2
 # wants a mapped request, so _copy_out is replaced below and this only has to import.
 fake.MappedArray = object
 sys.modules["picamera2"] = fake
-_simplejpeg = types.ModuleType("simplejpeg")
-_simplejpeg.encode_jpeg = (
-    lambda buf, quality=90, colorspace="RGB", subsampling="420":
-    b"\xff\xd8\xff" + bytes(memoryview(buf).tobytes()[:16])
-)
-sys.modules["simplejpeg"] = _simplejpeg
+# NOT STUBBED. capture.py encodes with simplejpeg, so the test should check the call
+# against the real encoder -- argument order and colorspace string included. It is
+# python3-simplejpeg in the camera image, where these run during the build, and
+# simplejpeg in the notebook image for running them by hand.
 _libcamera = types.ModuleType("libcamera")
 _libcamera.controls = types.SimpleNamespace()
 sys.modules["libcamera"] = _libcamera
