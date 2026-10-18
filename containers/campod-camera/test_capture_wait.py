@@ -50,7 +50,16 @@ class FakePicamera2:
 
 
 fake.Picamera2 = FakePicamera2
+# capture.py maps the camera buffer rather than copying it per frame; the real MappedArray
+# wants a mapped request, so _copy_out is replaced below and this only has to import.
+fake.MappedArray = object
 sys.modules["picamera2"] = fake
+_simplejpeg = types.ModuleType("simplejpeg")
+_simplejpeg.encode_jpeg = (
+    lambda buf, quality=90, colorspace="RGB", subsampling="420":
+    b"\xff\xd8\xff" + bytes(memoryview(buf).tobytes()[:16])
+)
+sys.modules["simplejpeg"] = _simplejpeg
 _libcamera = types.ModuleType("libcamera")
 _libcamera.controls = types.SimpleNamespace()
 sys.modules["libcamera"] = _libcamera
@@ -388,8 +397,8 @@ class _FakeRequest:
         return self._md
 
     def make_buffer(self, name):
-        # The real one returns np.array(..., dtype=np.uint8): a COPY, which is what lets
-        # capture.py release the request before encoding. A bytes stand-in is enough here.
+        # Unused by capture.py now -- it copies into its own buffer through _copy_out --
+        # but kept so a stray call is visible rather than an AttributeError.
         self._saved.append(name)
         return b"RAWFRAME"
 
@@ -486,6 +495,25 @@ class _FakeFactory:
 
 capture.Picamera2 = _FakeFactory
 
+# The copy needs a mapped request. Stand in for it with one array reused exactly as the
+# real one is, so "allocated once and reused" is what the test exercises too.
+# Records what came OUT, and how many arrays were ever allocated. Asserting on the input
+# was vacuous: under "allocate per frame" the input is None every time, so every id matched.
+_copies = []
+_allocations = []
+
+
+def _fake_copy_out(request, dst):
+    import numpy as _np
+    if dst is None:
+        dst = _np.zeros((8, 8, 3), dtype=_np.uint8)
+        _allocations.append(id(dst))
+    _copies.append(id(dst))
+    return dst
+
+
+capture._copy_out = _fake_copy_out
+
 _env = {"CAMPOD_CAPTURE_DIR": _td2, "CAMPOD_WARMUP_FRAMES": "0",
         "CAMPOD_STATUS_FILE": str(Path(_td2) / "status"), "CAMPOD_CAPTURE_FLAG": "",
         "CAMPOD_SYNC_LEADER": "", "CAMPOD_FRAME_DURATION_US": "200000",
@@ -523,8 +551,18 @@ check("the buffer count reaches the configuration",
 check("it logs the selection rule it is running", "the first of each" in _out, _out[:200])
 # Five seconds of grid in, one frame per second out. The count is the assertion: the old
 # tick-driven loop would have written whatever its own clock asked for.
-check("one frame kept per second of exposures", len(_cam.saved) == 5,
-      f"{len(_cam.saved)} saved from {len(_exposures)} frames")
+_jpgs = sorted(Path(_td2).rglob("*.jpg"))
+check("one frame kept per second of exposures", len(_jpgs) == 5,
+      f"{len(_jpgs)} written from {len(_exposures)} frames")
+# THE POINT OF THE CHANGE: one buffer, allocated once and handed over again each time.
+# make_buffer allocated 35.8 MB per kept frame, which glibc mmap'd and returned on free,
+# so every kept frame first-touched it -- 8808 minor faults/s while armed.
+check("the raw buffer is allocated once and reused",
+      len(_allocations) == 1 and len(set(_copies)) == 1,
+      f"{len(_copies)} copies, {len(_allocations)} allocations, "
+      f"{len(set(_copies))} distinct buffers")
+check("and it was allocated during warmup, before anything was kept",
+      "warmup exercised the copy" in _out, _out[:200])
 _cards = sorted(Path(_td2).rglob("*.json"))
 _cards = [c for c in _cards if "manifests" not in str(c)]
 if _cards:
