@@ -30,6 +30,9 @@ Environment=POD_LINK_COLLECTION_UNITS=coordinator-mavlink
 Environment=POD_LINK_BROKER=tcp://127.0.0.1:1883
 Environment=POD_LINK_ARM_FILE=/ipc/fc_armed
 Environment=POD_LINK_PERIOD_S=2
+# Matching the campods, so the front panel is as current about this box as about them.
+# Nothing here is protecting a camera's residency: this is the 4-core Pi 4B.
+Environment=POD_LINK_STATUS_PERIOD_S=5
 Environment=POD_LINK_DATA_DIR=/captures
 # No capture processes on this box write status files.
 Environment=POD_LINK_CAMERA_STATUS_FILE=
