@@ -30,6 +30,7 @@ Config via environment (all optional):
                       empty disables (default: /tmp/campod_camera_status)
 """
 
+import collections
 import datetime as dt
 import io
 import json
@@ -270,29 +271,67 @@ class _Serializer:
     stalls off it -- one such stall took 2399 ms and cost the accel reader, a separate
     container, its only FIFO overrun of that run.
 
-    STRICTLY ONE FRAME. The slot is held until the work is DONE, not until it is picked
-    up, so exactly one 35.8 MB copy exists at a time. At 10 Hz we keep one frame a second
-    and the work takes ~400 ms, so the capture thread should never wait; if it does, it
-    waits rather than dropping, and the count is reported at shutdown.
+    TWO STAGES, BECAUSE THE ENCODE IS REPEATABLE AND THE WRITE IS NOT. Of 105 saves
+    measured, 103 took 412-422 ms -- ten milliseconds of spread across a hundred frames --
+    and the encode alone measures 389-422 ms, so a 1.7 MB write is normally ~10-20 ms and
+    the 2399 ms and 708 ms outliers are the card. With encode and write on one thread, that
+    stall held the raw slot, so `put` blocked, so the capture loop stopped retrieving
+    entirely: with buffer_count=1 the driver dropped those frames and the ledger has no
+    record they ever existed.
+
+    So the encode thread hands 1.7 MB of JPEG to a write thread and takes the next raw
+    frame. `put` then waits only on the ~395 ms encode, which is repeatable and well inside
+    a 1000 ms keep cadence, and a card stall is absorbed by compressed bytes in RAM.
+
+    STRICTLY ONE RAW FRAME, still: the slot is held until the encode is done, so exactly
+    one 35.8 MB copy exists at a time.
+
+    BACK-PRESSURE ARRIVES ONE FRAME AFTER THE CAP. `put` waits on the raw slot, and the
+    slot frees when the encoder picks a frame up -- so when the queue is full the encoder
+    blocks holding one frame, the next `put` still succeeds, and only the one after that
+    waits. The queue is bounded at the cap regardless; the raw copies in flight are the
+    one in the slot and the one the encoder holds, as before.
+
+    THE WRITE QUEUE IS CAPPED, because the board has 417 MiB. Compressed frames are 21:1
+    cheaper to hold than raw ones -- 1.7 MB against 35.8 MB -- which is what makes queueing
+    them affordable at all, not free. Four of them is ~7 MB and covers a stall of about
+    four seconds at one keep per second. Past that the encoder blocks and the wait is
+    counted: a shortfall should be a number, not frames that quietly never happened.
     """
 
-    def __init__(self, encode):
-        # encode(buffer) -> jpeg bytes. Passed in rather than reaching for picamera2 here,
-        # so this class stays testable without a camera.
+    # ~7 MB of compressed frames. See the cap note above.
+    WRITE_QUEUE_FRAMES = 4
+
+    def __init__(self, encode, write=None):
+        # encode(buffer) -> jpeg bytes, and write(path, bytes). Passed in rather than
+        # reaching for picamera2 or the filesystem here, so both stages stay testable
+        # without a camera and without a card.
         self._encode = encode
+        self._write = write or (lambda path, data: path.write_bytes(data))
         self._slot = None
         self._busy = False
+        self._queue = collections.deque()
         self._lock = threading.Lock()
         self._ready = threading.Condition(self._lock)
         self._done = threading.Condition(self._lock)
+        self._queued = threading.Condition(self._lock)
+        self._drained = threading.Condition(self._lock)
         self._stop = False
         self.errors = 0
+        # Waited to hand a RAW frame to the encoder: the encode could not keep up.
         self.waits = 0
-        self._thread = threading.Thread(target=self._run, name="serializer", daemon=True)
-        self._thread.start()
+        # Waited to hand COMPRESSED bytes to the writer: the card could not keep up. Two
+        # different problems, which one counter could not tell apart.
+        self.write_waits = 0
+        self.deepest_queue = 0
+        self._encoder = threading.Thread(target=self._encode_loop, name="encoder",
+                                         daemon=True)
+        self._writer = threading.Thread(target=self._write_loop, name="writer", daemon=True)
+        self._encoder.start()
+        self._writer.start()
 
     def put(self, buffer, jpeg_path, sidecar_path, sidecar):
-        """Hand over one kept frame. Blocks while the previous one is still being done."""
+        """Hand over one kept frame. Blocks while the previous one is still encoding."""
         with self._lock:
             if self._slot is not None or self._busy:
                 self.waits += 1
@@ -301,7 +340,7 @@ class _Serializer:
             self._slot = (buffer, jpeg_path, sidecar_path, sidecar)
             self._ready.notify()
 
-    def _run(self):
+    def _encode_loop(self):
         while True:
             with self._lock:
                 while self._slot is None and not self._stop:
@@ -312,26 +351,58 @@ class _Serializer:
                 self._busy = True
             buffer, jpeg_path, sidecar_path, sidecar = job
             try:
-                jpeg_path.write_bytes(self._encode(buffer))
-                # The sidecar goes LAST: an image without one is unusable for pairing, so
-                # the sidecar's existence is what marks a frame complete.
-                sidecar_path.write_bytes(sidecar)
+                data = self._encode(buffer)
             except Exception as exc:  # noqa: BLE001
                 self.errors += 1
-                print(f"capture: encoding or writing {jpeg_path.name} failed: {exc}",
-                      flush=True)
+                print(f"capture: encoding {jpeg_path.name} failed: {exc}", flush=True)
+                data = None
             with self._lock:
+                if data is not None:
+                    if len(self._queue) >= self.WRITE_QUEUE_FRAMES:
+                        self.write_waits += 1
+                        while (len(self._queue) >= self.WRITE_QUEUE_FRAMES
+                               and not self._stop):
+                            self._drained.wait(30)
+                    self._queue.append((jpeg_path, data, sidecar_path, sidecar))
+                    self.deepest_queue = max(self.deepest_queue, len(self._queue))
+                    self._queued.notify()
+                # The raw copy is released here, whatever happened to it: holding it
+                # through the write is the thing this split exists to stop.
                 self._busy = False
                 self._done.notify()
 
+    def _write_loop(self):
+        while True:
+            with self._lock:
+                while not self._queue and not self._stop:
+                    self._queued.wait(1)
+                if not self._queue:
+                    if self._stop:
+                        return
+                    continue
+                jpeg_path, data, sidecar_path, sidecar = self._queue.popleft()
+                self._drained.notify()
+            try:
+                self._write(jpeg_path, data)
+                # The sidecar goes LAST: an image without one is unusable for pairing, so
+                # the sidecar's existence is what marks a frame complete.
+                self._write(sidecar_path, sidecar)
+            except Exception as exc:  # noqa: BLE001
+                self.errors += 1
+                print(f"capture: writing {jpeg_path.name} failed: {exc}", flush=True)
+
     def close(self, timeout=30):
-        """Finish the frame in hand, then stop, so the last one is not lost."""
+        """Finish the frame in hand AND everything queued, so none is lost."""
         with self._lock:
             while (self._slot is not None or self._busy) and not self._stop:
                 self._done.wait(timeout)
+            while self._queue and not self._stop:
+                self._drained.wait(timeout)
             self._stop = True
             self._ready.notify()
-        self._thread.join(timeout)
+            self._queued.notify()
+        self._encoder.join(timeout)
+        self._writer.join(timeout)
 
 
 def _sync_mode_for(leader, node):
@@ -1051,9 +1122,13 @@ def main():
         state["capturing"] = False
         publish()
         extra = ""
-        if serializer.waits or serializer.errors:
-            extra = (f" ({serializer.waits} waited on the writer, "
-                     f"{serializer.errors} write errors)")
+        if (serializer.waits or serializer.write_waits or serializer.errors
+                or serializer.deepest_queue > 1):
+            extra = (f" ({serializer.waits} waited on the encoder, "
+                     f"{serializer.write_waits} waited on the card, "
+                     f"write queue reached {serializer.deepest_queue} of "
+                     f"{serializer.WRITE_QUEUE_FRAMES}, "
+                     f"{serializer.errors} errors)")
         print(f"capture: stopped after {seq} frames kept of {frames_seen} seen"
               f"{extra}", flush=True)
 
