@@ -112,7 +112,7 @@ that you can check every claim rather than inherit it.
 8. **`flight-platform-handoff.md`** and **`ground-platform-handoff.md`** -- for the
    boundaries, and to see how the other roles think.
 
-## Where the fleet actually is (2026-10-11)
+## Where the fleet actually is (2026-10-18)
 
 All three devices were reflashed from `53d9971` and verified on the metal:
 `gpu_mem=32` with full firmware, `/proc/pressure` present on the campods, the
@@ -132,6 +132,24 @@ Packages now come from the image (`APT_INSTALL`), and SPI plus PPS are in the
 coordinator role for #11. A converge of a freshly flashed card should no longer
 contain a cold apt fetch.
 
+Since then, and verified on the metal rather than inferred: all three devices
+were reflashed from `ffac9b4`, the claim checker passes 21/21 on both pods and
+15/15 on the coordinator, and the time base is live. The coordinator holds
+`Reference ID: PPS` at stratum 1; both pods carry `gpiopin=26` on header 37/39
+and are chrony clients of it at tens of microseconds. `chrony` and `pps-tools`
+now come from `APT_INSTALL`, so the converge installs no packages at all.
+
+Both pods carry a hand-patched `/boot/firmware/config.txt` -- `gpiopin` 24 to 26
+-- so their `disk_image` reads `current: false` against main by design, until
+they are next reflashed. That label is informational and gates nothing.
+
+The flash-time seed is now the **fleet** key as its single `authorized_keys`
+entry (dotfiles-symm#83), and operator keys arrive at converge from
+`roles/ssh-access`, which takes the fleet key from the driver rather than from a
+repo literal. Password login is on in the seed (dotfiles-symm#85) because a
+single-entry seed with a wrong value denies every principal at once and the
+coordinator role has no serial console.
+
 ## Established, with the check that would unseat it
 
 True when written (**2026-10-11**) and each cost a session or more to establish. None is
@@ -150,6 +168,10 @@ deferring to this table.
 | **The gadget network works, and when it does not, suspect the cable first.** 199 Mbit/s to one pod, 241 Mbit/s aggregate across two, ~0.35 ms. campod-sw was dark for days with every software layer correct -- `g_ether` bound, `/sys/class/udc` populated, the udev rule working, NM reporting `unavailable` (no carrier) -- because its lead was in the Zero's PWR jack and a charger was in the data jack. `lsusb | grep -c Gadget` on the coordinator is the one-line discriminator: software cannot make a device appear on the host's bus | `ping 10.55.0.1` from a pod; `ls /sys/class/net/br0/brif/` on the coordinator |
 | **Steady-state capture, camera only at 1 Hz:** ~128 refaults/s, <1 pgmajfault/s, 1.25 MB/s written, 0.45 MB/s read, Dirty flat ~12 MiB with Writeback 0, capture RSS 29 MiB flat. Turning WiFi off changes none of it | two `/proc` samples 120 s apart in one ssh session; difference them |
 | **Container uptime is not a duration.** No RTC, so a container's start is recorded under the pre-NTP clock while elapsed is computed against the post-step one. `boot_ns` and `monotonic_ns` in session files are honest | container uptime against `/proc/uptime` |
+| **The PPS chain locks routinely and survives a reboot.** Coordinator at `Reference ID: PPS`, stratum 1, 33 ns fast / 390 ns slow on two readings days apart, RMS 313 ns and 2.9 us, both sources reach `377`. The boot unit configures the chip unattended | `chronyc tracking` for the refid; `cat /sys/class/pps/pps0/assert` for a nonzero sequence |
+| **A DS3234 reading `0x00` in every register is the bus, not the chip.** Status reads `0x48` powered, so a zero there is an undriven MISO and `osf` carries no information. `2000-00-00` is impossible for the part -- BCD day and month power up to `01`. With `BBSQW=0` losing VCC stops SQW while timekeeping continues, so one disconnected wire gives a dead bus and zero edges at once | `sudo coord-rtc status`; if every register is zero, look at the 1 Hz LED rather than at software |
+| **Capture's footprint grows at arm time, and it tracks frame size rather than `buffer_count`.** 12 MP at one buffer: anon 45.5 -> 135.5 MiB, 8808 minflt/s, which is 35.8 MB per kept frame -- exactly `main`'s buffer. 3 MP at four buffers: anon 45.7 -> 77.8 MiB and minflt at its paused baseline. Four times the buffers produced 2.8x *less* growth | difference `vmpage_number-anon_pages` and `vmpage_faults` across the phase boundary in `frames.jsonl` |
+| **The limit on growing CMA is `dirty_background_threshold`, not free memory.** It is a fraction of free-plus-reclaimable, so it falls as capture eats the page cache -- 25 MiB paused to 16 MiB armed -- while dirty rises to 11.5. Armed at full resolution there is 67-71 MiB free with `vmscan_write`, `throttled_written` and writeback all zero and nothing ever blocked | `vmpage_number-{dirty,dirty_background_threshold}` from a 10 Hz bundle, per phase |
 | **`watchdog0/bootstatus` is always 0 here** -- `bcm2835_wdt.c` declares no `WDIOF_CARDRESET` and never assigns the field. Not "did not fire": not reported | grep `WDIOF_CARDRESET` and `bootstatus` in `drivers/watchdog/bcm2835_wdt.c` |
 | **NM will not manage a `DEVTYPE=gadget` interface.** Without the `90-` udev override the campod profile is inert and `usb0` stays DOWN with no error | `nmcli -f GENERAL.REASON device show usb0` -> reason 77 when the override is missing |
 | **NM keyfile list properties are `;`-separated.** A space-separated `match.driver` is one pattern matching nothing, and autoconnect falls back to a default DHCP profile silently | `nmcli connection up campod-bridge-port ifname usbN` names the mismatch |
@@ -176,7 +198,7 @@ Treat the state column as the part that rots; check `origin/main` and the issue'
 | **#447** `gpu_mem` | Answered: 32, measured, shipped. Close it or leave it as the record of the measurement -- that is Seth's |
 | **#452** the docs PR carrying the `gpu_mem` findings and the bare-OS baseline | Open last I looked |
 | **#434** warm up and hold idle-ready | The measurement that was mine is closed -- the camera holds its CMA across a pause. The rest is flight-platform's |
-| **#370** campod time | PPS is now in the coordinator image (`dtparam=spi=on`, `dtoverlay=pps-gpio,gpiopin=24`). The campod half is not: `roles/campod/config.append.txt` still has no `pps-gpio`, and it needs a reflash when the fan-out reaches a pod. The pod-side pin is now chosen -- header 37/39, so `gpiopin=26` ([campod.md](campod.md)) |
+| **#370** campod time | Built. Both roles carry the overlay on their own pin, the legs are wired, and the pods are chrony clients of the coordinator. What has no figure yet is the pods' own PPS refclock: the line was gated out of the rendered config until coordinator#495, so no pod has been measured on the fraction |
 | **#251** disarm RO snapshot of `@data` | A decision Seth has declined to make, twice. Do not re-raise it as a thing to settle; it is not costing anything |
 | **#90** bake container images into the image | Not built. Different and harder than baking packages: it needs the image store populated offline |
 | **#236**, **#261** provisioning service, fleet SSH key | Not started |

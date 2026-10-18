@@ -47,7 +47,7 @@ This writes `/etc/NetworkManager/system-connections/<SSID>.nmconnection` (autoco
 
 **Root cause:** the only saved NM WiFi profile was the one created manually; the Imager-provisioned network had **no persistent NetworkManager profile**, because of the cloud-init/netplan breakage above. It could associate once but never durably reconnect. Creating a proper NM keyfile (`nmtui`) resolved it.
 
-**Secondary finding — no reliable clock.** The Pi 4B has **no RTC**, and `fake-hwclock` was empty, so every boot starts with a stale clock until NTP corrects it (`timedatectl` shows sync only after network is up). This is why the journal timestamps were internally inconsistent (early-boot entries misdated ~18 h off). Relevant to log/capture timestamping and the broader time-sync work (chrony/PPS, coordinator #11), and it mirrors the FC's RTC-unset problem.
+**Secondary finding — no reliable clock. Since addressed, and the failure is worth keeping.** The Pi 4B has **no RTC of its own**, so before the DS3234 every boot started at whatever the image was built with until NTP corrected it, which is why early-boot journal entries were misdated by ~18 h. The chip now sets the clock at boot (`coord-rtc-clock`, ordered before `time-set.target`), so that window is closed on a healthy device — but it closes only while the chip answers. With the chip disconnected the box boots at the image epoch and chrony then *serves* that label at stratum 10, so the pods sync faithfully to a time months wrong and device `git fetch` fails on a certificate that is not yet valid. One loose connector therefore presents as "no device can converge". See [time-base.md](time-base.md).
 
 ## Headless recovery runbook
 

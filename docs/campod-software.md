@@ -309,7 +309,10 @@ across reboots, disable the unit (`systemctl disable --now campod-stack.service`
 # Software in flight
 
 
-Most of the below is forward looking, pending PPS hardware integration, and everything beyond simple capture on the software side.
+The time half of the below is built: the board is soldered, the coordinator locks to the
+falling edge, and both pods are chrony clients of it over the gadget link. What remains
+forward looking is the capture-sync half -- using the shared edge to make the shutters
+fire together. [time-base.md](time-base.md) carries the measurements.
 
 ### Time coordination
 
@@ -456,7 +459,7 @@ Each of these has to be agreed on both sides, and each is owned by a pair of iss
 | Contract | Campod side | Coordinator side | Must agree on |
 |----------|-------------|------------------|---------------|
 | Gadget-net reachability | [#24](https://github.com/symmatree/coordinator/issues/24) | [#12](https://github.com/symmatree/coordinator/issues/12) | subnet, static vs DHCP, per-node address (see the `g_ether` MAC note below) |
-| Time | [#24](https://github.com/symmatree/coordinator/issues/24) | [#11](https://github.com/symmatree/coordinator/issues/11) | NTP server address, shared epoch. No PPS is wired anywhere on this vehicle, so this is not on the path for #211 |
+| Time | [#24](https://github.com/symmatree/coordinator/issues/24) | [#11](https://github.com/symmatree/coordinator/issues/11) | NTP server address, shared epoch. PPS is now wired: the coordinator locks to it, and each pod has its own buffered leg on `GPIO26` |
 | Control + status | [#25](https://github.com/symmatree/coordinator/issues/25) | [#10](https://github.com/symmatree/coordinator/issues/10) | **settled: MQTT, contract in [pod-bus.md](pod-bus.md).** Capture intent, stack, radio and per-service start/stop as retained desired state; reboot not retained; one retained status document per device. Capture-while-disarmed is MAVLink's, not this bus's |
 
 ### Verified in passing: `g_ether` really does randomise its MAC every boot
