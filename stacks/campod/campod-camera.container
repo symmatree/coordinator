@@ -83,7 +83,16 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # still an open question -- every measurement of it before 2026-10-17 was taken with a
 # 52-second frame duration inside the protocol -- so this is chosen for frame visibility
 # rather than for the sync loop.
-Environment=CAMPOD_FRAME_DURATION_US=500000
+#
+# 100000 FOR ONE RUN, TO MEASURE DELIVERY AGAINST THE SENSOR PERIOD. Three measurements so
+# far -- 200 ms, 500 ms and 1000 ms periods, at hold times of ~400 ms and ~36 ms -- all
+# retrieved exactly one frame per two sensor periods. If that halving is real at 100 ms too,
+# then no choice of period lets the IPA tick once per sensor frame, which is what the sync
+# correction's actuation needs (coordinator#557). If retrieval comes back at 100 ms instead,
+# the halving is not a property of the single buffer and the earlier readings need another
+# explanation. frames.jsonl records every retrieval, so this run can answer it; the 10 Hz
+# runs before 2026-10-17 could not, because only kept frames had sidecars.
+Environment=CAMPOD_FRAME_DURATION_US=100000
 Environment=CAMPOD_SYNC_LEADER=campod-sw
 # WHAT THE SYNC ALGORITHM COMPUTES, which is the one thing the data cannot show.
 #
