@@ -17,8 +17,8 @@ the cameras are being timed.
 
 The waits that matter, and what each is for:
 
-  converges one at a time -- the API caps playbook runs at one fleet-wide and returns 409
-    rather than queueing, so serial is enforced, not a preference
+  both converges together -- a play runs in its own pod, so the fleet-wide cap on playbook
+    runs is gone and the deploy takes one converge's time rather than two
   a reboot after converging -- a converge installs and pulls and starts nothing, so the
     reboot is the apply step
   uptime going backwards before trusting any pod state -- the bus documents are retained,
@@ -232,10 +232,17 @@ def ssh_coordinator(key: str, command: str) -> str:
 
 def stage_deploy() -> None:
     before = min((p.get("raw") or {}).get("as_of_boot_s") or 0 for p in campod_pods())
+    # BOTH AT ONCE. A play runs in its own pod now, so the second converge costs this
+    # service a submit and a watch rather than a second ansible interpreter in its memory
+    # -- the reason the fleet-wide cap existed. Submitted together, then watched in turn;
+    # the second watch returns immediately if that run has already finished.
+    runs = {}
     for node in CAMPODS:
         run = api(f"/nodes/{node}/converge", method="POST", timeout=120)
+        runs[node] = run["id"]
         log(f"{node}: converge {run['id']}")
-        watch_run(run["id"], f"{node} converge")
+    for node, run_id in runs.items():
+        watch_run(run_id, f"{node} converge")
     for node in CAMPODS:
         api(f"/nodes/{node}/reboot", method="POST", timeout=180)
         log(f"{node}: rebooting")
