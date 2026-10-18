@@ -1,13 +1,10 @@
 // Which playbook a run should use, and where the step fetches it from.
 //
-// coordinator#504/#513. The playbooks used to be baked into this image, which clamped two
-// revisions together: one fact identified both. They are published per commit now, so the
-// version to run is a choice someone has to make.
+// The playbooks are published per commit (#513), so which one to run is a choice.
 //
-// NEWEST ON THE TRACKED REF, not this service's own revision. Pinning to our own would
-// reinstate the clamp in the worst form -- `host/ansible/**` is leaving this image's rebuild
-// paths, so our revision stops advancing on playbook merges, and a converge would run an
-// ever-staler playbook while reporting a current service.
+// NEWEST ON THE TRACKED REF, not this service's own revision: a playbook merge does not move
+// our revision, so pinning to it would run an ever-staler playbook while reporting a current
+// service.
 //
 // What keeps that honest is the other end: the step reads the archive's own VERSION and
 // refuses a mismatch, and prints what it actually unpacked. So this picks, and the run

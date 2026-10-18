@@ -80,7 +80,7 @@ test('a run this process is watching is served from memory, lines and all', asyn
   // Ordering matters: ask the cluster first and a live run is answered with a 404.
   const s = serve(RUNNING);
   try {
-    const run = s.runs.start('converge', 'campod-se', async (emit) => {
+    const run = await s.runs.start('converge', 'campod-se', async (emit) => {
       emit('stdout', 'PLAY [all] ****');
       await new Promise((r) => setTimeout(r, 50));
     });

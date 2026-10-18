@@ -61,9 +61,6 @@ function note(sink: EventSink | undefined, msg: string): void {
  * documented with them -- `host/ansible/` and docs/deployment-model.md. The difference that is
  * this service's business: converge is the routine one and the default, provision is for a card
  * that has just been written.
- *
- * Which playbook runs used to be neither, because this service ran `site.yaml` for everything
- * after the playbook split in two (#453) -- so a routine converge paid the fresh-card path.
  */
 export type ConvergeKind = 'converge' | 'provision';
 

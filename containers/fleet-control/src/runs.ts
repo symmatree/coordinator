@@ -43,15 +43,9 @@ const MAX_LINES = 5_000;
 /**
  * How many playbook runs may be in flight at once, anywhere in the fleet.
  *
- * ONE, and THE REASON IS GONE. This was a memory bound: `ansible-runner` spawned a full
- * Python interpreter with ansible-core loaded inside this pod's cgroup, about 60 MB apiece
- * against a 256 MB limit -- idle 194 MB, one converge 247 MB, so one fitted and two did not.
- * Three at once on 2026-10-13 OOM-killed the pod and took all three half-finished applies
- * with it.
- *
- * A play runs in a pod of its own now (#504) and costs this one a `kubectl`. What is left
- * with a reason is the per-node lock above: two plays against one device fight over the same
- * box. Lifting this is its own change rather than a side effect of that one.
+ * ONE, and it costs nothing to hold: a play runs in a pod of its own and this process only
+ * submits and watches. The per-node lock above is the one with a reason behind it -- two
+ * plays against one device fight over the same box. Lifting this is its own change.
  */
 const MAX_PLAYBOOK_RUNS = 1;
 
@@ -93,12 +87,22 @@ export class RunRegistry {
    * point: a notification must not depend on a browser being attached, which is the whole reason
    * it exists.
    */
+  /**
+   * `busyElsewhere` asks something other than this process whether a device is occupied.
+   *
+   * The registry is in memory and a workflow is not, so a converge submitted before a pod
+   * restart is still driving its device while nothing here remembers it -- and the lock
+   * would let a second one start against the same box. Injected rather than imported so
+   * this file keeps knowing nothing about workflows.
+   */
   constructor(
     private readonly echo: Echo = echoToProcess,
     private readonly onFinished: (run: Run) => void = () => {},
+    private readonly busyElsewhere: (node: string) => Promise<string | undefined> =
+      async () => undefined,
   ) {}
 
-  /** Is an action already running against this node? */
+  /** Is an action already running against this node, as far as this process knows? */
   activeFor(node: string): Run | undefined {
     for (const r of this.runs.values()) {
       if (r.node === node && r.status === 'running') return r;
@@ -144,19 +148,37 @@ export class RunRegistry {
    * and the failure is confusing rather than loud.
    *
    * `playbook: true` additionally refuses a second one ANYWHERE. See MAX_PLAYBOOK_RUNS.
+   *
+   * `whateverIsRunning: true` skips both device checks. Only reboot sets it, because busy is
+   * the case a reboot exists for and refusing it would block the one action that recovers a
+   * stuck box (#424). `abandonFor` handles the half this process knows about; a workflow
+   * still running against a device that is about to go down will fail when it does, which is
+   * the honest outcome rather than something to tidy up first.
    */
-  start(
+  async start(
     action: string,
     node: string,
     work: (emit: Listener, runId: string) => Promise<void>,
-    opts: { playbook?: boolean } = {},
-  ): Run {
-    const busy = this.activeFor(node);
-    if (busy) {
-      throw new Error(
-        `${node} already has '${busy.action}' running (run ${busy.id}). ` +
-          `Wait for it or look at why it is stuck; do not run two at once against one device.`,
-      );
+    opts: { playbook?: boolean; whateverIsRunning?: boolean } = {},
+  ): Promise<Run> {
+    if (opts.whateverIsRunning !== true) {
+      const busy = this.activeFor(node);
+      if (busy) {
+        throw new Error(
+          `${node} already has '${busy.action}' running (run ${busy.id}). ` +
+            `Wait for it or look at why it is stuck; do not run two at once against one device.`,
+        );
+      }
+
+      // Asked every time rather than cached: the answer lives in the cluster precisely so
+      // that it survives this process, and a cache of it would be the thing being avoided.
+      const elsewhere = await this.busyElsewhere(node);
+      if (elsewhere !== undefined) {
+        throw new Error(
+          `${node} is already being driven by ${elsewhere}, which this service did not start ` +
+            `or has forgotten. Wait for it or look at why it is stuck.`,
+        );
+      }
     }
 
     if (opts.playbook === true) {
