@@ -408,7 +408,10 @@ class _FakeCam:
     def create_still_configuration(self, main=None, **kw):
         # Recorded because WHERE the frame duration is pinned is the thing under test: in
         # the configuration it reaches the IPA, after start() it reaches only the sensor.
+        # buffer_count too: it decides how often libcamera runs the IPA, and therefore how
+        # many sensor frames one sync correction is applied across.
         self.config_controls = kw.get("controls") or {}
+        self.config_buffer_count = kw.get("buffer_count")
         return {"main": main or {}}
 
     def configure(self, cfg):
@@ -485,7 +488,8 @@ capture.Picamera2 = _FakeFactory
 
 _env = {"CAMPOD_CAPTURE_DIR": _td2, "CAMPOD_WARMUP_FRAMES": "0",
         "CAMPOD_STATUS_FILE": str(Path(_td2) / "status"), "CAMPOD_CAPTURE_FLAG": "",
-        "CAMPOD_SYNC_LEADER": "", "CAMPOD_FRAME_DURATION_US": "200000"}
+        "CAMPOD_SYNC_LEADER": "", "CAMPOD_FRAME_DURATION_US": "200000",
+        "CAMPOD_BUFFER_COUNT": "3"}
 _old_env = {k: os.environ.get(k) for k in _env}
 os.environ.update(_env)
 capture._stop = False
@@ -512,6 +516,10 @@ check("the frame duration is pinned in the configuration, not just after start",
       _cam.config_controls.get("FrameDurationLimits") == (200000, 200000),
       repr(_cam.config_controls))
 check("main() starts and runs without raising", _rc in (0, None), f"rc={_rc}  {_out[-300:]}")
+# One buffer gives the IPA a tick every second sensor frame at best, so the count has to
+# reach the configuration rather than being left at picamera2's default of 1.
+check("the buffer count reaches the configuration",
+      _cam.config_buffer_count == 3, repr(_cam.config_buffer_count))
 check("it logs the selection rule it is running", "the first of each" in _out, _out[:200])
 # Five seconds of grid in, one frame per second out. The count is the assertion: the old
 # tick-driven loop would have written whatever its own clock asked for.

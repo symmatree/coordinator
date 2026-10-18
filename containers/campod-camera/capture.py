@@ -736,6 +736,7 @@ def main():
     focus = (os.getenv("CAMPOD_STILL_FOCUS") or "infinity").strip().lower()
     sync_leader = (os.getenv("CAMPOD_SYNC_LEADER") or "").strip()
     frame_duration_us = _env_int("CAMPOD_FRAME_DURATION_US", 200_000)
+    buffer_count = _env_int("CAMPOD_BUFFER_COUNT", 1)
     warmup_frames = _env_int("CAMPOD_WARMUP_FRAMES", 10)
     flag_raw = os.getenv("CAMPOD_CAPTURE_FLAG", "/tmp/campod_capture")
     flag_path = Path(flag_raw) if flag_raw.strip() else None
@@ -806,8 +807,19 @@ def main():
     # {"FrameDurationLimits": (100, 1000000000)} and then applies `| controls`, so a value
     # passed here wins. rpicam-apps does the same thing -- it sets FrameDurationLimits in
     # its control list before starting the camera, never after.
+    # BUFFER COUNT IS WHAT THE IPA TICKS ON. libcamera runs the IPA -- and so the sync
+    # algorithm -- once per queued application request (`tryRunPipeline` returns early when
+    # `requestQueue_` is empty), not once per sensor frame. Measured at a 100 ms period: a
+    # retrieval every 2 sensor frames with nothing else running, 3 while an encode and a
+    # card write are in flight, 4 after a frame we copied out. The frame-duration offset the
+    # sync client writes stands for every frame in that gap, so its corrections moved the
+    # error by the gap multiple instead of cancelling it.
+    #
+    # picamera2 defaults the raw stream to main's size, so `size` sets the sensor mode and
+    # both buffer sizes with it.
     config = picam2.create_still_configuration(
         main={"size": size},
+        buffer_count=buffer_count,
         controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
     )
     picam2.configure(config)
@@ -834,7 +846,7 @@ def main():
         f"one frame per second, the first of each "
         f"quality={quality} exposure_cap={exposure_cap or 'none'} "
         f"focus={focus_active} sync={sync_active or 'off'} "
-        f"frame_duration={pinned_us or 'unpinned'}",
+        f"frame_duration={pinned_us or 'unpinned'} buffers={buffer_count}",
         flush=True,
     )
 
