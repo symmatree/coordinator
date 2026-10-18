@@ -8,7 +8,9 @@ the ones worth holding.
     python3 harness/test_bench_cycle.py
 """
 import importlib.util
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
@@ -205,6 +207,31 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
               == sorted(f"/nodes/{n}/reboot" for n in ("campod-se", "campod-sw", "coordinator")))
         check("collect offloads the chosen session for each pod",
               len([c for c in calls if "/offload" in c[1]]) == len(bc.CAMPODS))
+
+# ---- which build is running ------------------------------------------------------------
+# bench-simflight-g4pd2's step failed printing a message the fix under test had already
+# replaced, and nothing in the run record said which copy of the script ran -- the image tag
+# floats and the node had a cached one. The version has to be in the log, not deducible from
+# the wording of an error.
+_tdv = tempfile.mkdtemp(prefix="bench-manifest-")
+_manifest = Path(_tdv) / "container-image"
+_manifest.write_text(
+    '# fleet-control build manifest, written by its Dockerfile.\n'
+    'ORG_OPENCONTAINERS_IMAGE_SOURCE="https://github.com/symmatree/coordinator"\n'
+    'ORG_OPENCONTAINERS_IMAGE_REVISION="5b9643c0a929fef22cb9e2e30558e8c638a93933"\n'
+    'FLEET_SOURCE_REF="refs/heads/main"\n'
+    'FLEET_UNIT="fleet-control"\n')
+
+check("the build revision comes out of the image's own manifest",
+      bc.build_revision(str(_manifest)) == "5b9643c0a929fef22cb9e2e30558e8c638a93933",
+      str(bc.build_revision(str(_manifest))))
+check("a local run has no manifest, which is not an error",
+      bc.build_revision(str(Path(_tdv) / "absent")) is None)
+# A local build leaves the field empty rather than omitting it (see the Dockerfile).
+(Path(_tdv) / "empty").write_text('ORG_OPENCONTAINERS_IMAGE_REVISION=""\n')
+check("an empty revision reads as absent rather than as a build",
+      bc.build_revision(str(Path(_tdv) / "empty")) is None)
+shutil.rmtree(_tdv, ignore_errors=True)
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

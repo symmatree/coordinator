@@ -38,6 +38,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -51,6 +53,25 @@ ARM_FILE = "/var/lib/coordinator/ipc/fc_armed"
 
 def log(msg: str) -> None:
     print(f"[bench] {msg}", flush=True)
+
+
+# The image writes its own provenance here, in the #326 manifest format, because a process
+# cannot read its own image labels.
+CONTAINER_IMAGE = "/etc/container-image"
+
+
+def build_revision(path: str = CONTAINER_IMAGE) -> str | None:
+    """The commit this image was built from, or None if there is no manifest to read.
+
+    A local run has none, which is not an error -- it means "not from an image".
+    """
+    try:
+        text = pathlib.Path(path).read_text()
+    except OSError:
+        return None
+    match = re.search(r'^ORG_OPENCONTAINERS_IMAGE_REVISION="?([0-9a-f]{7,40})"?',
+                      text, re.MULTILINE)
+    return match.group(1) if match else None
 
 
 def api(path: str, method: str = "GET", timeout: int = 300):
@@ -254,6 +275,14 @@ def main() -> int:
     ap.add_argument("--ssh-key", default=os.environ.get("FLEET_SSH_KEY", "/secrets/ssh/id"),
                     help="key that reaches the coordinator, for the arm file only")
     args = ap.parse_args()
+
+    # WHICH BUILD IS RUNNING, first line, the way run-playbook.sh prints `[step] driver`.
+    # bench-simflight-g4pd2 failed printing an error message the fix under test had already
+    # replaced: the step image's tag floats, the node had a cached one, and nothing in the
+    # run record said which copy ran. A version that has to be deduced from the wording of
+    # an error message is not recorded at all.
+    rev = build_revision()
+    log(f"stage {args.stage}, from {rev or 'no image manifest -- a local run'}")
 
     if args.stage == "deploy":
         stage_deploy()
