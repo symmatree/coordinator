@@ -580,6 +580,93 @@ check("and it reports every frame it retrieved",
       _doc3.get("frames_seen", 0) >= len(_exposures),
       f"frames_seen={_doc3.get('frames_seen')} of {len(_exposures)} offered")
 
+# ---- the write queue absorbs a card stall ----------------------------------------------
+# The encode is repeatable (389-422 ms) and the write is not: 103 of 105 saves took
+# 412-422 ms and two took 2399 ms and 708 ms. With both on one thread the stall held the raw
+# slot, so `put` blocked, so the capture loop stopped retrieving and the driver dropped
+# frames nothing ever recorded. These checks are that the split actually decouples them, and
+# that the cap is real -- RAM is 417 MiB, so queueing compressed frames is affordable at
+# 1.7 MB each, not free.
+_tdq = tempfile.mkdtemp(prefix="capture-queue-")
+
+
+class _CapSerializer(capture._Serializer):
+    WRITE_QUEUE_FRAMES = 2
+
+
+_stalled = threading.Event()
+_written = []
+
+
+def _slow_write(path, data):
+    # Stands in for the card stalling on the image; the sidecar is let through so order is
+    # observable.
+    if path.suffix == ".jpg":
+        # Generous: if this expires the stall ends early and the checks below stop meaning
+        # anything, which is a flaky pass rather than a flaky failure.
+        _stalled.wait(120)
+    _written.append(path.name)
+
+
+_ser = _CapSerializer(encode=lambda b: b"J" + bytes(b), write=_slow_write)
+
+
+def _put(n):
+    _ser.put(bytearray(b"\x01"), Path(_tdq) / f"{n}.jpg", Path(_tdq) / f"{n}.json", b"{}")
+
+
+def _until(pred, timeout=5.0):
+    """Wait for a condition rather than assuming a thread has run. `put` returns when the
+    slot is ACCEPTED, not when the frame is encoded, so reading counters straight after it
+    races the encoder."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+# One frame reaches the blocked writer; two more fill the cap.
+for _n in range(3):
+    _put(_n)
+_filled = _until(lambda: _ser.deepest_queue >= _CapSerializer.WRITE_QUEUE_FRAMES)
+check("put does not wait on the card: three frames handed over, none written",
+      _filled and not _written, f"deepest={_ser.deepest_queue} written={_written}")
+check("the queue fills to its cap and no further",
+      _ser.deepest_queue == _CapSerializer.WRITE_QUEUE_FRAMES, str(_ser.deepest_queue))
+
+# The next frame fills the encoder's slot and then has nowhere to go, so the encoder blocks
+# on the cap. BACK-PRESSURE ARRIVES ONE FRAME LATER THAN THE CAP: `put` waits for the slot,
+# and the slot is free until the encoder takes this frame -- so put(3) returns and it is
+# put(4) that waits. Asserting on the counters rather than on whether a thread is still
+# alive, because that distinction is a race and it made this check flap.
+_blocked = threading.Thread(target=_put, args=(3,), daemon=True)
+_blocked.start()
+check("past the cap the encoder blocks rather than growing RAM",
+      _until(lambda: _ser.write_waits >= 1, 5.0), f"write_waits={_ser.write_waits}")
+check("the queue still never exceeds its cap",
+      _ser.deepest_queue == _CapSerializer.WRITE_QUEUE_FRAMES, str(_ser.deepest_queue))
+_next = threading.Thread(target=_put, args=(4,), daemon=True)
+_next.start()
+check("and then the capture thread waits, which is the backstop",
+      _until(lambda: _ser.waits >= 1, 5.0), f"waits={_ser.waits}")
+
+# Let the card go. Everything queued has to land, in order, sidecar after image.
+_stalled.set()
+_blocked.join(10)
+_next.join(10)
+_ser.close(timeout=10)
+check("a stall costs nothing once it clears: every frame is written",
+      sorted(_written) == sorted([f"{n}.jpg" for n in range(5)]
+                                 + [f"{n}.json" for n in range(5)]),
+      str(_written))
+check("the sidecar still lands after its image, which is what marks a frame complete",
+      all(_written.index(f"{n}.json") > _written.index(f"{n}.jpg") for n in range(5)),
+      str(_written))
+check("no errors were swallowed on the way", _ser.errors == 0, str(_ser.errors))
+shutil.rmtree(_tdq, ignore_errors=True)
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)
