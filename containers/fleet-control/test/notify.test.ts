@@ -59,7 +59,7 @@ test('the registry announces a run ending, server-side', async () => {
 
 test('a throwing notifier does not break the run it was reporting on', async () => {
   const runs = new RunRegistry(() => {}, () => { throw new Error('apprise exploded'); });
-  const run = runs.start('converge', 'campod-sw', async () => {});
+  const run = await runs.start('converge', 'campod-sw', async () => {});
   await settle();
   // The run still reached its terminal state and is still queryable.
   assert.equal(runs.get(run.id)?.status, 'succeeded');

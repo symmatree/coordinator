@@ -4,11 +4,10 @@
 # Local build:
 #   docker build -t fleet-control:local -f containers/fleet-control/Dockerfile .
 #
-# The build context is the REPO ROOT rather than this directory, for the step script below.
+# The build context is the REPO ROOT rather than this directory, for the step scripts below.
 #
-# THE PLAYBOOKS ARE NOT IN HERE (#504). They arrive as a published artifact the step fetches
-# at run time, which is what stops a playbook-only merge from rolling this pod. ansible-core
-# still is, because the step runs in this image.
+# Carries ansible-core because the workflow step runs in this image. It does not carry the
+# playbooks: the step fetches the published artifact at run time.
 
 FROM node:24-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS build
 WORKDIR /app

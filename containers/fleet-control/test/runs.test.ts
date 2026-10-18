@@ -17,7 +17,7 @@ describe('RunRegistry', () => {
   it('echoes every line, tagged with the run', async () => {
     const { lines, echo } = collector();
     const runs = new RunRegistry(echo);
-    const run = runs.start('converge', 'campod-se', async (emit) => {
+    const run = await runs.start('converge', 'campod-se', async (emit) => {
       sinkFor(emit)('stdout', 'TASK [Stop data collection] ok');
     });
     await settle();
@@ -31,7 +31,7 @@ describe('RunRegistry', () => {
   it('echoes HOW the run ended, which is the line worth having later', async () => {
     const { lines, echo } = collector();
     const runs = new RunRegistry(echo);
-    runs.start('converge', 'campod-se', async () => {
+    await runs.start('converge', 'campod-se', async () => {
       throw new Error('no answer within 120s');
     });
     await settle();
@@ -39,17 +39,23 @@ describe('RunRegistry', () => {
     assert.ok(lines.some((l) => l.endsWith('[fleet-control] run failed')), JSON.stringify(lines));
   });
 
-  it('returns immediately and finishes in the background', async () => {
+  it('returns before the work finishes, and finishes in the background', async () => {
+    // Work that is still going when start() returns, rather than one that resolves
+    // instantly: start awaits the device check, so an instant work function would already
+    // have completed by the time the caller resumes, and the test would be measuring the
+    // await rather than the property.
     const runs = new RunRegistry();
-    const run = runs.start('update', 'campod-sw', async () => {});
+    let release: () => void = () => {};
+    const run = await runs.start('update', 'campod-sw', () => new Promise<void>((r) => { release = r; }));
     assert.equal(run.status, 'running');
+    release();
     await settle();
     assert.equal(runs.get(run.id)?.status, 'succeeded');
   });
 
   it('captures the failure message rather than losing it', async () => {
     const runs = new RunRegistry();
-    const run = runs.start('update', 'campod-sw', async () => {
+    const run = await runs.start('update', 'campod-sw', async () => {
       throw new Error('coord pull failed (exit 1)');
     });
     await settle();
@@ -61,26 +67,52 @@ describe('RunRegistry', () => {
 
   it('REFUSES a second action against a node already running one', async () => {
     const runs = new RunRegistry();
-    runs.start('bootstrap', 'campod-sw', () => new Promise(() => {}));
-    assert.throws(() => runs.start('update', 'campod-sw', async () => {}), /already has 'bootstrap' running/);
+    await runs.start('bootstrap', 'campod-sw', () => new Promise(() => {}));
+    await assert.rejects(() => runs.start('update', 'campod-sw', async () => {}), /already has 'bootstrap' running/);
   });
 
   it('allows concurrent actions against DIFFERENT nodes', async () => {
     const runs = new RunRegistry();
-    runs.start('update', 'campod-sw', () => new Promise(() => {}));
-    assert.doesNotThrow(() => runs.start('update', 'coordinator', () => new Promise(() => {})));
+    await runs.start('update', 'campod-sw', () => new Promise(() => {}));
+    await runs.start('update', 'coordinator', () => new Promise(() => {}));
+  });
+
+  it('REFUSES when something outside this process is driving the node', async () => {
+    // The case the in-memory lock cannot see: a converge submitted before a restart is still
+    // running against the device while nothing here remembers it. Without this, a second one
+    // is accepted and two plays fight over the same box.
+    const runs = new RunRegistry(
+      () => {},
+      () => {},
+      async (node) => (node === 'campod-sw' ? 'workflow converge-campod-sw-5ps2h (Running)' : undefined),
+    );
+    await assert.rejects(
+      () => runs.start('converge', 'campod-sw', async () => {}),
+      /already being driven by workflow converge-campod-sw-5ps2h/,
+    );
+    // And only that node.
+    await runs.start('converge', 'coordinator', () => new Promise(() => {}));
+  });
+
+  it('a reboot is allowed anyway, because busy is what it is for', async () => {
+    // #424: a wedged converge is exactly when a reboot is wanted, and refusing it would
+    // block the one action that recovers the box. abandonFor handles the half this process
+    // knows about; the workflow fails when the device goes down, which is honest.
+    const runs = new RunRegistry(() => {}, () => {}, async () => 'workflow converge-campod-sw-5ps2h (Running)');
+    const reboot = await runs.start('reboot', 'campod-sw', async () => {}, { whateverIsRunning: true });
+    assert.ok(runs.get(reboot.id), 'the reboot was accepted');
   });
 
   it('allows a new action once the previous one finished', async () => {
     const runs = new RunRegistry();
-    runs.start('update', 'campod-sw', async () => {});
+    await runs.start('update', 'campod-sw', async () => {});
     await settle();
-    assert.doesNotThrow(() => runs.start('update', 'campod-sw', async () => {}));
+    await runs.start('update', 'campod-sw', async () => {});
   });
 
   it('records streamed lines in order, tagged by stream', async () => {
     const runs = new RunRegistry();
-    const run = runs.start('update', 'campod-sw', async (emit) => {
+    const run = await runs.start('update', 'campod-sw', async (emit) => {
       const sink = sinkFor(emit);
       sink('stdout', 'Already up to date.');
       sink('stderr', 'warning: something');
@@ -97,7 +129,7 @@ describe('RunRegistry', () => {
     const seen: string[] = [];
     let go: () => void = () => {};
     const gate = new Promise<void>((r) => (go = r));
-    const run = runs.start('update', 'campod-sw', async (emit) => {
+    const run = await runs.start('update', 'campod-sw', async (emit) => {
       await gate;
       sinkFor(emit)('stdout', 'pulling');
     });
@@ -113,7 +145,10 @@ describe('RunRegistry -- telling a watcher the run is over', () => {
     const runs = new RunRegistry();
     const seen: string[] = [];
     let ended = 0;
-    const run = runs.start('converge', 'campod-se', async (emit) => {
+    let go: () => void = () => {};
+    const gate = new Promise<void>((r) => (go = r));
+    const run = await runs.start('converge', 'campod-se', async (emit) => {
+      await gate;
       emit({ t: 'now', stream: 'stdout', line: 'working' });
     });
     runs.subscribe(
@@ -126,6 +161,7 @@ describe('RunRegistry -- telling a watcher the run is over', () => {
         assert.ok(seen.some((l) => l.includes('run succeeded')), 'last line arrived first');
       },
     );
+    go();
     await settle();
     assert.equal(ended, 1);
   });
@@ -133,10 +169,14 @@ describe('RunRegistry -- telling a watcher the run is over', () => {
   it('fires onEnd for a failed run too', async () => {
     const runs = new RunRegistry();
     let ended = 0;
-    const run = runs.start('converge', 'campod-se', async () => {
+    let go: () => void = () => {};
+    const gate = new Promise<void>((r) => (go = r));
+    const run = await runs.start('converge', 'campod-se', async () => {
+      await gate;
       throw new Error('converge failed (exit 2)');
     });
     runs.subscribe(run.id, () => {}, () => { ended += 1; });
+    go();
     await settle();
     assert.equal(ended, 1);
     assert.equal(runs.get(run.id)?.status, 'failed');
@@ -146,7 +186,7 @@ describe('RunRegistry -- telling a watcher the run is over', () => {
     const runs = new RunRegistry();
     let lines = 0;
     let ended = 0;
-    const run = runs.start('converge', 'campod-se', async (emit) => {
+    const run = await runs.start('converge', 'campod-se', async (emit) => {
       await settle();
       emit({ t: 'now', stream: 'stdout', line: 'late' });
     });
@@ -161,10 +201,14 @@ describe('RunRegistry -- telling a watcher the run is over', () => {
   it('a watcher attached with no onEnd still works', async () => {
     const runs = new RunRegistry();
     const seen: string[] = [];
-    const run = runs.start('converge', 'campod-se', async (emit) => {
+    let go: () => void = () => {};
+    const gate = new Promise<void>((r) => (go = r));
+    const run = await runs.start('converge', 'campod-se', async (emit) => {
+      await gate;
       emit({ t: 'now', stream: 'stdout', line: 'x' });
     });
     runs.subscribe(run.id, (l) => seen.push(l.line));
+    go();
     await settle();
     assert.ok(seen.length >= 1);
   });
@@ -176,8 +220,8 @@ describe('a reboot ends the runs it ends', () => {
     // the one thing the per-node lock refused (#424).
   const runs = new RunRegistry(() => {});
   let release: () => void = () => {};
-  const wedged = runs.start('converge', 'campod-sw', () => new Promise<void>((r) => { release = r; }));
-  assert.throws(() => runs.start('reboot', 'campod-sw', async () => {}), /already has 'converge'/);
+  const wedged = await runs.start('converge', 'campod-sw', () => new Promise<void>((r) => { release = r; }));
+  await assert.rejects(() => runs.start('reboot', 'campod-sw', async () => {}), /already has 'converge'/);
 
   const ended = runs.abandonFor('campod-sw', 'rebooting campod-sw');
   assert.deepEqual(ended.map((r) => r.id), [wedged.id]);
@@ -185,8 +229,8 @@ describe('a reboot ends the runs it ends', () => {
   assert.match(wedged.error ?? '', /rebooting campod-sw/);
 
     // And now the reboot starts, which is the whole point.
-  const reboot = runs.start('reboot', 'campod-sw', async () => {});
-  assert.equal(reboot.status, 'running');
+  const reboot = await runs.start('reboot', 'campod-sw', async () => {});
+  assert.ok(runs.get(reboot.id), 'the run was accepted');
   release();
   });
 
@@ -196,7 +240,7 @@ describe('a reboot ends the runs it ends', () => {
   const finished: string[] = [];
   const runs = new RunRegistry(() => {}, (r) => finished.push(`${r.action}:${r.status}`));
   let release: () => void = () => {};
-  const wedged = runs.start('converge', 'campod-sw', () => new Promise<void>((r) => { release = r; }));
+  const wedged = await runs.start('converge', 'campod-sw', () => new Promise<void>((r) => { release = r; }));
 
   runs.abandonFor('campod-sw', 'rebooting');
   assert.equal(wedged.status, 'failed');
@@ -212,8 +256,8 @@ describe('a reboot ends the runs it ends', () => {
   it('abandoning touches only that node, and only what is running', async () => {
   const runs = new RunRegistry(() => {});
   let release: () => void = () => {};
-  const other = runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }));
-  const done = runs.start('stop', 'campod-sw', async () => {});
+  const other = await runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }));
+  const done = await runs.start('stop', 'campod-sw', async () => {});
   await new Promise((r) => setImmediate(r));
   assert.equal(done.status, 'succeeded');
 
@@ -232,8 +276,8 @@ describe('one playbook run at a time', () => {
     // half-finished applies with it.
     const runs = new RunRegistry(() => {});
     let release: () => void = () => {};
-    runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
-    assert.throws(
+    await runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    await assert.rejects(
       () => runs.start('converge', 'campod-se', async () => {}, { playbook: true }),
       /only 1 playbook run can be in flight/,
     );
@@ -245,22 +289,22 @@ describe('one playbook run at a time', () => {
     // would make the fleet less usable for no memory gain.
     const runs = new RunRegistry(() => {});
     let release: () => void = () => {};
-    runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
-    const stop = runs.start('stop', 'campod-se', async () => {});
-    assert.equal(stop.status, 'running');
+    await runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    const stop = await runs.start('stop', 'campod-se', async () => {});
+    assert.ok(runs.get(stop.id), 'the run was accepted');
     release();
   });
 
   it('frees the slot when the run ends, not when its record is evicted', async () => {
     const runs = new RunRegistry(() => {});
     let release: () => void = () => {};
-    runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    await runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
     release();
     await new Promise((r) => setTimeout(r, 10));
     // The finished run is still in the registry -- that is the point of keeping it -- but it
     // no longer holds an interpreter, so it must not hold the slot.
-    const next = runs.start('converge', 'campod-se', async () => {}, { playbook: true });
-    assert.equal(next.status, 'running');
+    const next = await runs.start('converge', 'campod-se', async () => {}, { playbook: true });
+    assert.ok(runs.get(next.id), 'the run was accepted');
   });
 
   it('an abandoned run frees the slot too', async () => {
@@ -268,10 +312,10 @@ describe('one playbook run at a time', () => {
     // converge would lock out every other node's converge until the pod restarted.
     const runs = new RunRegistry(() => {});
     let release: () => void = () => {};
-    runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    await runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
     runs.abandonFor('coordinator', 'rebooting coordinator');
-    const next = runs.start('converge', 'campod-se', async () => {}, { playbook: true });
-    assert.equal(next.status, 'running');
+    const next = await runs.start('converge', 'campod-se', async () => {}, { playbook: true });
+    assert.ok(runs.get(next.id), 'the run was accepted');
     release();
   });
 });

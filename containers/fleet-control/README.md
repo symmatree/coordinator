@@ -228,9 +228,9 @@ reported, so a coarse answer is visible as one.
 
 ### Every source is a directory on the share
 
-**This service runs no `kubectl` at all**, and holds no Role anywhere in the cluster. It used to
-have pods get/list, `pods/log` and `pods/exec` in `mavproxy` and `ntrip` for four reads. One moved
-and two were dropped:
+**Nothing here reaches into another pod.** Every source is a file on a share plus one HTTP
+query to Mimir. The service's only cluster access is its own namespace, for the workflows it
+submits. Of the four reads this section once covered, one moved and two were dropped:
 
 - **`<date>_*.ubx`**, the base station's raw observations. **Nothing logs them any more.** In two
   months the only use was one 24 h session for the base's own survey-in, pulled by hand, and
@@ -315,8 +315,8 @@ the service accounts and the RBAC are described where they are declared**, in
 [tiles `tanka/environments/fleet-control`](https://github.com/symmatree/tiles/tree/main/tanka/environments/fleet-control).
 
 Submitting and watching are different things: once the cluster has accepted the workflow the
-work is happening whether this process is still here or not, which is the point -- a pod roll
-used to kill a converge, and a playbook-only merge *is* a pod roll.
+work is happening whether this process is still here or not, which is the point. A pod roll
+costs the watcher and nothing else.
 
 **The run is findable without this process.** Each workflow carries
 `fleet-control.symmatree.com/run-id`, `/node` and `/action` as labels, so a restarted service can
@@ -324,30 +324,23 @@ ask the cluster what is running on its behalf rather than having lost the mappin
 memory. `findByRun` is that lookup.
 
 **Which playbook it runs** is the newest published archive on `main`, resolved from the
-`ansible-payload.yaml` workflow's artifacts — not this service's own revision, which no longer
-moves when a playbook changes. The step then reads the archive's own `VERSION` and refuses a
+`ansible-payload.yaml` workflow's artifacts, rather than this service's own revision — which a
+playbook merge does not move. The step then reads the archive's own `VERSION` and refuses a
 mismatch, so the run records what it unpacked rather than what it asked for.
-
-**The playbooks are not in this image and `host/ansible/**` is not in its rebuild paths**, so
-a playbook merge no longer rebuilds it or rolls this pod. That was the point of the whole
-exercise: a merge and a killed converge used to be the same event.
 
 Walking back through recent builds rather than taking only the newest is deliberate: artifacts
 expire on a 90-day clock, so the newest *successful build* is not always a runnable one.
+
+The playbooks are not in this image and `host/ansible/**` is not in its rebuild paths, so a
+playbook merge does not rebuild it or roll this pod.
 
 **Reimage goes the same way**, with its image URL and digest as `extra-vars`. `device_role`
 stays a parameter of its own: the step passes its own vars in a second `-e`, and ansible's
 later-wins merge means a caller cannot change which role's config a device gets.
 
-Nothing runs a play in this process any more, so what existed only to do that is gone:
-`ansible.ts`'s runner-event parsing and `renderEvent`, `runartifacts.ts`, the kept runner
-data directories and the `GET /runs/:id/events` and `/runs/:id/log` routes that served them.
-
 ### The log is what ansible printed
 
-Not rendered. The service used to parse `ansible-runner`'s JSON event stream and print its own
-`TASK …` / `ok (changed): …` lines; that was never an agreed decision, and the log should be
-what you get running the play yourself, tuned at the playbook.
+Not rendered — it is what you get running the play yourself, tuned at the playbook.
 
 Every run carries a link to its workflow, said at submit before anything is waited on, so a
 run whose watcher died still has a handle.

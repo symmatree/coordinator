@@ -15,7 +15,7 @@ import { offloadFcLog, offloadSession, readNotes, validFlightName, writeNotes } 
 import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { collectGround, listTlogs } from './cluster.js';
 import { configured as busConfigured, readPods, setDesired } from './bus.js';
-import { findByRun, workflowUrl } from './workflows.js';
+import { findByRun, nodeBusyWith, workflowUrl } from './workflows.js';
 import { build } from './build.js';
 import { notify, runEnded } from './notify.js';
 import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
@@ -24,10 +24,14 @@ export function buildServer(
   cfg: Config,
   // A run's ending is announced from HERE, not from the page: the point of a notification is that
   // it reaches you when no browser is attached.
-  runs = new RunRegistry(echoToProcess, (run) => {
-    const [title, body] = runEnded(run.action, run.node, run.status, run.lines.at(-1)?.line);
-    void notify(cfg.notify, title, body);
-  }),
+  runs = new RunRegistry(
+    echoToProcess,
+    (run) => {
+      const [title, body] = runEnded(run.action, run.node, run.status, run.lines.at(-1)?.line);
+      void notify(cfg.notify, title, body);
+    },
+    (node) => nodeBusyWith(cfg.action.workflows, node),
+  ),
 ): FastifyInstance {
   const app = Fastify({ logger: true });
 
@@ -78,7 +82,7 @@ export function buildServer(
     const node = findNode(cfg.inventory, req.params.name);
     if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
     try {
-      const run = runs.start('converge', node.name, (emit, runId) =>
+      const run = await runs.start('converge', node.name, (emit, runId) =>
         converge(node, cfg.action, { runId, kind: 'converge' }, sinkFor(emit)),
       { playbook: true });
       return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
@@ -90,10 +94,6 @@ export function buildServer(
   /**
    * A fresh card, end to end -- `site.yaml`, provision then deploy, because a bare card needs
    * both. Reboots partway, at the hand-off between them.
-   *
-   * There used to be a `?reflashed=true` here to clear the recorded host key first, because a
-   * freshly written card presents a changed one. Nothing records host keys any more (ssh.ts),
-   * so there is nothing to clear and no reason to ask.
    */
   app.post<{ Params: { name: string } }>(
     '/nodes/:name/provision',
@@ -101,7 +101,7 @@ export function buildServer(
       const node = findNode(cfg.inventory, req.params.name);
       if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
       try {
-        const run = runs.start('provision', node.name, (emit, runId) =>
+        const run = await runs.start('provision', node.name, (emit, runId) =>
           converge(node, cfg.action, { runId, kind: 'provision' }, sinkFor(emit)),
         { playbook: true });
         return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
@@ -122,7 +122,7 @@ export function buildServer(
     const node = findNode(cfg.inventory, req.params.name);
     if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
     try {
-      const run = runs.start('stop', node.name, (emit) => stop(node, cfg.action, sinkFor(emit)));
+      const run = await runs.start('stop', node.name, (emit) => stop(node, cfg.action, sinkFor(emit)));
       return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
     } catch (err) {
       return reply.code(409).send({ error: (err as Error).message });
@@ -148,13 +148,13 @@ export function buildServer(
     // keep working: the runs are ended because the reboot is about to end them, which is true.
     const ended = runs.abandonFor(node.name, `[fleet-control] abandoned: rebooting ${node.name}`);
     try {
-      const run = runs.start('reboot', node.name, (emit) => {
+      const run = await runs.start('reboot', node.name, (emit) => {
         const say = sinkFor(emit);
         // Said in the reboot's own log, because that is the run someone reads afterwards when
         // wondering where the converge went.
         for (const r of ended) say('stderr', `abandoned ${r.action} (run ${r.id.slice(0, 8)}), which this reboot ends`);
         return reboot(node, cfg.action, say);
-      });
+      }, { whateverIsRunning: true });
       return reply.code(202).send({
         id: run.id, action: run.action, node: run.node,
         abandoned: ended.map((r) => ({ id: r.id, action: r.action })),
@@ -292,7 +292,7 @@ export function buildServer(
       });
     }
     try {
-      const run = runs.start('offload', node.name, (emit) =>
+      const run = await runs.start('offload', node.name, (emit) =>
         offloadSession(node, cfg.action, session, flight, {
           flightsDir: cfg.flightsDir,
           // Kept by default is wrong for the flow this serves -- cards fill at ~6 GB/hour and
@@ -463,7 +463,7 @@ export function buildServer(
       try {
         // Counts against the playbook cap for the same reason converge does -- reimage.yaml
         // is a play, so it is an ansible interpreter in this pod.
-        const run = runs.start('reimage', node.name, (emit, runId) =>
+        const run = await runs.start('reimage', node.name, (emit, runId) =>
           reimage(node, cfg.action, { runId, image }, sinkFor(emit)),
         { playbook: true });
         return reply.code(202).send({ id: run.id, action: run.action, node: run.node, image });
@@ -523,7 +523,7 @@ export function buildServer(
       ? []
       : Array.isArray(req.query.tlog) ? req.query.tlog : [req.query.tlog];
     try {
-      const run = runs.start('ground', flight, (emit) =>
+      const run = await runs.start('ground', flight, (emit) =>
         collectGround(cfg, flight, {
           flightsDir: cfg.flightsDir,
           tlogs,
@@ -624,7 +624,7 @@ export function buildServer(
         return reply.code(400).send({ error: `not a usable flight name: ${JSON.stringify(flight)}` });
       }
       try {
-        const run = runs.start('fc-log', node.name, (emit) =>
+        const run = await runs.start('fc-log', node.name, (emit) =>
           offloadFcLog(node, cfg.action, id, flight, {
             flightsDir: cfg.flightsDir,
             note: (line) => sinkFor(emit)('stdout', line),

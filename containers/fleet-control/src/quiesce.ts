@@ -6,21 +6,18 @@
 // a device is preceded by a quiesce, including the read-only ones. Stopping is a goal in
 // itself; it just must not take the control plane down with it.
 //
-// WHY OVER THE BUS. This used to be `sudo pkill -x -TERM dumb-init` plus a 40 s poll loop,
-// sent over ssh -- so to free memory on a thrashing box we first forked an sshd on it, and
-// then polled it from the far end of that connection. That is the paging cost arriving at
-// exactly the worst moment, which is the whole reason pod-link exists: resident control code
-// that does not have to be read off the card when the card is busy.
+// WHY OVER THE BUS. pod-link is resident and already connected, so stopping a device costs
+// a publish rather than an sshd fork and a shell faulted in off the card that is the thing
+// being contended for. That is what pod-link is for: control code that does not have to be
+// read off a busy card.
 //
-// `pkill -x dumb-init` was also too broad. It matches EVERY container init, so it stopped the
-// stack rather than the collection -- pod-link and the broker included, which is to say it
-// killed the thing that carries the instruction to undo it. The bus quiesce stops only the
-// units named in POD_LINK_COLLECTION_UNITS, and pod-link is deliberately never among them.
+// It stops only the units in POD_LINK_COLLECTION_UNITS, and pod-link is never among them --
+// a stop that took out pod-link would kill the thing carrying the instruction to undo it.
 //
 // AND THE WAIT IS THE DEVICE'S. `StopUnit` returns when the job is accepted, not when the
-// unit is gone -- the camera took 19.0 s to exit after the old command had already returned.
-// pod-link polls systemd until each unit is actually inactive and then publishes, so this
-// side waits for one message instead of round-tripping a busy box.
+// unit is gone; the camera takes around 19 s. pod-link polls systemd until each unit is
+// actually inactive and then publishes, so this side waits for one message instead of
+// round-tripping a busy box.
 
 import { quiesceNode } from './bus.js';
 import type { ActionContext } from './actions.js';

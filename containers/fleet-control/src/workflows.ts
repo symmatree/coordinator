@@ -5,8 +5,8 @@
 // follows it, and finds it again afterwards.
 //
 // WHY IT IS FOUND BY LABEL. The run that matters is the one in the cluster, not the entry in
-// this process's memory. A pod roll used to kill a converge; now it only loses the watcher,
-// and `findByRun` re-attaches. So nothing here may be the only record of a running workflow.
+// this process's memory -- which a pod roll takes with it while the workflow carries on. So
+// nothing here may be the only record of a running workflow.
 //
 // Shelling out to kubectl rather than using a Kubernetes client, for the reason the
 // Dockerfile gives about ansible and ssh: one credential path, and the automated steps are
@@ -164,6 +164,25 @@ export async function findByRun(
 }
 
 /** Every workflow this service submitted, newest first. */
+/**
+ * A workflow still driving this node, if there is one.
+ *
+ * The device lock's authority, because a workflow outlives the process that submitted it:
+ * after a restart nothing in memory knows a converge is still running, and without this a
+ * second one would be accepted against the same box.
+ *
+ * Returns a description for the refusal, not the state -- the caller is deciding whether to
+ * refuse, not reporting on the workflow.
+ */
+export async function nodeBusyWith(
+  cfg: WorkflowConfig,
+  node: string,
+): Promise<string | undefined> {
+  const found = await listWorkflows(cfg, `${NODE_LABEL}=${node}`);
+  const live = found.find((w) => !isFinished(w.phase));
+  return live === undefined ? undefined : `workflow ${live.name} (${live.phase ?? 'unset'})`;
+}
+
 export async function listWorkflows(
   cfg: WorkflowConfig,
   selector = RUN_LABEL,
