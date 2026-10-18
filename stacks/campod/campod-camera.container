@@ -87,10 +87,10 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # 52-second frame duration inside the protocol -- so this is chosen for frame visibility
 # rather than for the sync loop.
 Environment=CAMPOD_FRAME_DURATION_US=100000
-# One buffer gives the IPA a tick every second sensor frame at best, and the sync client's
-# correction then stands for the whole gap. Four covers the worst gap measured at this
-# period (4x, after a frame we copied out).
-Environment=CAMPOD_BUFFER_COUNT=4
+# libcamera runs the IPA, and so the sync algorithm, once per queued application request --
+# so this sets how many sensor frames one sync correction is applied across. At one, that
+# was 2 to 4 frames and the client never converged.
+Environment=CAMPOD_BUFFER_COUNT=2
 Environment=CAMPOD_SYNC_LEADER=campod-sw
 # WHAT THE SYNC ALGORITHM COMPUTES, which is the one thing the data cannot show.
 #
