@@ -74,8 +74,10 @@ def build_revision(path: str = CONTAINER_IMAGE) -> str | None:
     return match.group(1) if match else None
 
 
-def api(path: str, method: str = "GET", timeout: int = 300):
-    req = urllib.request.Request(f"{FLEET_URL}{path}", method=method)
+def api(path: str, method: str = "GET", timeout: int = 300, body: dict | None = None):
+    data = None if body is None else json.dumps(body).encode()
+    headers = {} if data is None else {"Content-Type": "application/json"}
+    req = urllib.request.Request(f"{FLEET_URL}{path}", method=method, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as fh:
             return json.loads(fh.read() or b"null")
@@ -207,6 +209,38 @@ def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
         return
 
 
+def watch_workflow(name: str, label: str, timeout_s: int = 3600) -> None:
+    """Poll a workflow to completion. Branches on `phase`, which Argo owns.
+
+    No line scanning, unlike `watch_run`: the steps' output is their pods' logs, collected
+    into Loki rather than routed through the service, and a step that fails fails the
+    workflow. So the phase IS the answer here, and the failure marker heuristics that
+    `watch_run` needs for an in-service run have nothing to add.
+
+    The wall clock is longer than a converge's because this moves the flight's data -- 336
+    and 361 MB took about seven minutes each on 2026-10-18, and a full card is larger.
+    """
+    finished = {"Succeeded", "Failed", "Error"}
+    said = None
+    deadline = time.monotonic() + timeout_s
+    while True:
+        wf = api(f"/workflows/{name}", timeout=60)
+        phase = wf.get("phase")
+        if phase != said:
+            log(f"  {label}: {phase}{': ' + wf['message'] if wf.get('message') else ''}")
+            said = phase
+        if phase in finished:
+            if phase != "Succeeded":
+                raise SystemExit(f"[bench] {label} ended {phase}: {wf.get('message') or ''} "
+                                 f"{wf.get('url') or ''}")
+            log(f"{label}: succeeded")
+            return
+        if time.monotonic() > deadline:
+            raise SystemExit(
+                f"[bench] {label} still {phase} after {timeout_s}s; {wf.get('url') or ''}")
+        time.sleep(20)
+
+
 def ssh_coordinator(key: str, command: str) -> str:
     # `host`, which is what the roster calls it, defaulting to the node name -- the field is
     # optional there and the name is also a usable address. This read `n["address"]`, a
@@ -298,17 +332,28 @@ def stage_collect(flight: str) -> None:
     wait_for("a fresh boot on both campods",
              lambda: is_fresh(campod_pods(), before) and campod_pods(), 900)
     time.sleep(60)
+    targets = []
     for node in CAMPODS:
         sessions = api(f"/nodes/{node}/sessions", timeout=300).get("sessions", [])
         best = pick_session(sessions)
         if not best:
             log(f"{node}: no closed session with an activity stamp")
             continue
-        log(f"{node}: offloading {best['session'][:8]} "
+        log(f"{node}: {best['session'][:8]} "
             f"(activity {best['last_activity_utc']}, frames {best.get('frames')})")
-        run = api(f"/nodes/{node}/offload?session={best['session']}&flight={flight}",
-                  method="POST", timeout=180)
-        watch_run(run["id"], f"{node} offload")
+        targets.append({"node": node, "session": best["session"]})
+    if not targets:
+        raise SystemExit("[bench] no campod had a closed session to collect")
+
+    # ONE WORKFLOW, A STEP PER CAMPOD. The transfers are this stage's long pole and they used
+    # to run one after the other because the service moved the bytes itself -- 336 and 361 MB
+    # landing at 18:23 and 18:30 on 2026-10-18. In pods of their own they go at once, and a
+    # join step composes flight.json after both have stopped writing.
+    sub = api(f"/flights/{flight}/collect", method="POST",
+              body={"targets": targets}, timeout=180)
+    log(f"collect {sub['workflow']}")
+    log(f"  {sub['url']}")
+    watch_workflow(sub["workflow"], "collect")
     log(f"collected into {flight}; read manifests/campod-camera FIRST to see which image "
         "wrote it, then journal.log, then the sidecars")
 

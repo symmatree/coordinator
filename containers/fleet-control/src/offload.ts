@@ -10,10 +10,10 @@
 // means the directory either has every node's contribution or is visibly short one.
 
 import { quiesce } from './quiesce.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { hostOf, type FleetNode } from './inventory.js';
@@ -162,7 +162,7 @@ export async function offloadSession(
     collectedAt: new Date().toISOString(),
     sourceDeleted,
   };
-  await recordCollected(dir, flight, collected);
+  await recordCollected(opts.flightsDir, flight, collected);
   return collected;
 }
 
@@ -203,7 +203,7 @@ export async function offloadFcLog(
     collectedAt: new Date().toISOString(),
     sourceDeleted: false,
   };
-  await recordCollected(dir, flight, collected);
+  await recordCollected(opts.flightsDir, flight, collected);
   return collected;
 }
 
@@ -238,23 +238,64 @@ export async function readNotes(flightsDir: string, flight: string): Promise<str
   }
 }
 
+/** Where each contributor's own record goes. `flight.json` is composed from these. */
+export function collectedDir(flightsDir: string, flight: string): string {
+  return join(flightsDir, flight, 'collected');
+}
+
 /**
- * Append to the flight's record.
+ * Record one contribution, then recompose the flight's summary.
  *
- * Rewritten after each session rather than once at the end: a run that dies half way leaves a
- * directory that says what is in it, which is the difference between a short flight and an
- * unlabelled pile of tarballs.
+ * ONE WRITER PER FILE, which is the reason this is not a single manifest any more. Two
+ * campods now offload at once in pods of their own, and a shared `flight.json`
+ * read-modify-written from both loses whichever entry was read before the other's write --
+ * a verified bundle on the share that nothing names, which is silent.
+ *
+ * So `flight.json` is derived and `collected/` is the record. Two composes racing can leave
+ * the summary one contribution behind; the next contribution and the join step at the end of
+ * a collect both rebuild it. A stale summary over a complete set of parts is recoverable. A
+ * dropped entry was not.
  */
-async function recordCollected(dir: string, flight: string, entry: Collected): Promise<void> {
-  const path = join(dir, 'flight.json');
-  let record: FlightRecord;
-  try {
-    record = JSON.parse(await readFile(path, 'utf8')) as FlightRecord;
-  } catch {
-    record = { flight, createdAt: new Date().toISOString(), collected: [] };
+export async function recordCollected(
+  flightsDir: string,
+  flight: string,
+  entry: Collected,
+): Promise<void> {
+  const dir = collectedDir(flightsDir, flight);
+  await mkdir(dir, { recursive: true });
+  const key = `${entry.node}_${entry.session}`.replace(/[^A-Za-z0-9._-]/g, '_');
+  await writeFile(join(dir, `${key}.json`), `${JSON.stringify(entry, null, 2)}\n`);
+  await composeFlight(flightsDir, flight);
+}
+
+/**
+ * Rebuild `flight.json` from `collected/`.
+ *
+ * Renamed into place so a reader never sees a half-written summary, and ordered so a
+ * recompose that changes nothing produces the same bytes.
+ */
+export async function composeFlight(flightsDir: string, flight: string): Promise<FlightRecord> {
+  const dir = collectedDir(flightsDir, flight);
+  const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith('.json'));
+  const collected: Collected[] = [];
+  for (const name of names.sort()) {
+    collected.push(JSON.parse(await readFile(join(dir, name), 'utf8')) as Collected);
   }
-  record.collected = record.collected
-    .filter((c) => !(c.node === entry.node && c.session === entry.session))
-    .concat(entry);
-  await writeFile(path, `${JSON.stringify(record, null, 2)}\n`);
+  collected.sort((a, b) => `${a.node}${a.session}`.localeCompare(`${b.node}${b.session}`));
+
+  const path = join(flightsDir, flight, 'flight.json');
+  // Kept if it is already there: when the directory was named is a fact about the flight,
+  // not about the last time this ran.
+  const createdAt = await readFile(path, 'utf8')
+    .then((t) => (JSON.parse(t) as FlightRecord).createdAt)
+    .catch(() => collected[0]?.collectedAt ?? new Date().toISOString());
+
+  const record: FlightRecord = { flight, createdAt, collected };
+  // The temp name is this writer's alone. Two composes sharing one meant the first rename
+  // moved the file the second was about to rename, and that one died on ENOENT -- in
+  // production two step pods writing into the same NFS directory, not just a test.
+  const tmp = `${path}.${randomUUID().slice(0, 8)}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`);
+  await rename(tmp, path);
+  return record;
 }
