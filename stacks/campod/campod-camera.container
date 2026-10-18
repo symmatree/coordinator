@@ -50,12 +50,11 @@ Volume=/tmp:/tmp
 
 # No capture rate: one frame per second is a consequence of the selection rule, not a
 # setting. capture.py keeps the frame nearest each second from the pinned grid below.
-# 0 = sensor full resolution, 4608x2592. 2304x1296 is the binned mode: 13.36 us line time
-# and a 17.3 ms readout against 26.29 us and 68.1 ms (containers/campod-camera/README.md),
-# and a quarter of the pixels, so a buffer set is 12.7 MB rather than 50.7 MB. picamera2
-# defaults the raw stream to main's size, so this sets the sensor mode and both buffers.
-Environment=CAMPOD_CAPTURE_WIDTH=2304
-Environment=CAMPOD_CAPTURE_HEIGHT=1296
+# 0 = sensor full resolution, 4608x2592. picamera2 defaults the raw stream to main's size,
+# so this sets the sensor mode and both buffer sizes: a set is 50.7 MB here against 12.7 MB
+# at the 2304x1296 binned mode.
+Environment=CAMPOD_CAPTURE_WIDTH=0
+Environment=CAMPOD_CAPTURE_HEIGHT=0
 Environment=CAMPOD_JPEG_QUALITY=90
 # Shutter cap in us; auto-exposure trades the rest to gain. 0 = uncapped.
 Environment=CAMPOD_STILL_MAX_EXPOSURE_US=5000
@@ -72,21 +71,14 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # the bus instead is coordinator#501.
 # Fixed frame duration, which the camera-sync algorithm requires -- without it libcamera
 # logs an error every frame and its single-frame correction has nothing stable to correct
-# against. 5 fps rather than the sensor mode's floor (~14.4 fps measured on campod-se):
-# sync needs the rate FIXED, not fast, and a Zero running its sensor flat out for a 1 Hz
-# stills job is heat for nothing. Clamped to what the mode allows; capture.py logs what it
-# actually achieved.
-# 2 Hz, so every frame is seen. The copy-out that frees the camera's single buffer costs
-# 123-132 ms measured, which does not fit a 100 ms period -- at 10 Hz we saw only a subset
-# of frames, and the selection rule then skipped whole runs of seconds (holes of 44 s, 84 s
-# and 230 s in one run). At 500 ms the copy fits with room to spare.
+# against. Clamped to what the mode allows; capture.py logs what it achieved.
 #
-# The sensor mode's own floor is 69669 us, so anything up to ~14 fps is legal; the limit
-# here is our copy, not the sensor. The sync algorithm's stability against frame rate is
-# still an open question -- every measurement of it before 2026-10-17 was taken with a
-# 52-second frame duration inside the protocol -- so this is chosen for frame visibility
-# rather than for the sync loop.
-Environment=CAMPOD_FRAME_DURATION_US=100000
+# 2 Hz at full resolution. The sensor mode's floor is 69669 us, so up to ~14 fps is legal;
+# the limit is the work each frame costs here -- a 35.8 MB copy out of the camera buffer
+# and a JPEG encode of it -- against 8.96 MB at the binned mode, where 10 Hz delivered
+# every frame. A Zero running its sensor fast for a 1 Hz stills job is also heat for
+# nothing.
+Environment=CAMPOD_FRAME_DURATION_US=500000
 # libcamera runs the IPA, and so the sync algorithm, once per queued application request --
 # so this sets how many sensor frames one sync correction is applied across. At one, that
 # was 2 to 4 frames and the client never converged.
