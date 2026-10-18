@@ -233,6 +233,75 @@ check("an empty revision reads as absent rather than as a build",
       bc.build_revision(str(Path(_tdv) / "empty")) is None)
 shutil.rmtree(_tdv, ignore_errors=True)
 
+# ---- a failing poll is not a failed wait -----------------------------------------------
+# bench-simflight-4mkp7 completed its window and then died in collect on
+# `GET /pods -> 502: mqtt://10.0.99.75:1883: connack timeout`. collect reboots the
+# coordinator, the broker runs there, so /pods is down for the middle of the stage by
+# design -- and api() raises SystemExit for any HTTP error, which killed the wait.
+_attempts = []
+
+
+def _down_then_up():
+    _attempts.append(1)
+    if len(_attempts) <= 3:
+        raise SystemExit("GET /pods -> 502: {\"error\":\"mqtt://10.0.99.75:1883: connack timeout\"}")
+    return "back"
+
+
+_real_sleep = bc.time.sleep
+bc.time.sleep = lambda *_: None
+try:
+    check("a wait rides out the broker being down and returns when it comes back",
+          bc.wait_for("the bus", _down_then_up, 60, 1) == "back", str(len(_attempts)))
+    check("it polled through every failure rather than stopping at the first",
+          len(_attempts) == 4, str(len(_attempts)))
+
+    # And a wait that never comes good still fails -- carrying the reason, which is the
+    # thing a bare timeout message threw away.
+    def _always_down():
+        raise SystemExit("GET /pods -> 502: connack timeout")
+
+    try:
+        bc.wait_for("the bus", _always_down, 2, 1)
+        _timed_out = None
+    except SystemExit as exc:
+        _timed_out = str(exc)
+    check("a wait that never succeeds times out and says what it last saw",
+          _timed_out is not None and "connack timeout" in _timed_out, str(_timed_out))
+finally:
+    bc.time.sleep = _real_sleep
+
+# ---- disarm has to land even on a rebooting coordinator --------------------------------
+# It is also the onExit handler, and the failure it most has to survive is a cycle that died
+# in `collect` -- which reboots the coordinator. 4mkp7's onExit disarm tried once, got
+# `ssh: connect to host ... port 22: No route to host`, and reported the cycle as failed on
+# top of the failure it was cleaning up after.
+_tries = []
+
+
+def _ssh_down_then_up(key, command):
+    _tries.append(command)
+    if len(_tries) <= 2:
+        raise SystemExit("[bench] ssh pi@10.0.99.75 failed (255): No route to host")
+    return "0"
+
+
+_real_ssh, _real_sleep2 = bc.ssh_coordinator, bc.time.sleep
+bc.ssh_coordinator, bc.time.sleep = _ssh_down_then_up, lambda *_: None
+try:
+    try:
+        bc.stage_disarm("/secrets/ssh/id")
+        _disarmed = True
+    except SystemExit as exc:
+        _disarmed = f"gave up: {exc}"
+finally:
+    bc.ssh_coordinator, bc.time.sleep = _real_ssh, _real_sleep2
+
+check("disarm waits for a rebooting coordinator instead of failing the cycle",
+      _disarmed is True, str(_disarmed))
+check("and it wrote 0 to the arm file when the box came back",
+      _tries and _tries[-1].startswith("echo 0 |"), str(_tries[-1:]))
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)

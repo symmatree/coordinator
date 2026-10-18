@@ -144,14 +144,29 @@ def campod_pods() -> list[dict]:
 
 
 def wait_for(what: str, check, timeout_s: int, every_s: int = 15):
+    """Poll until the check passes, or the time is up.
+
+    A FAILING POLL IS NOT A FAILED WAIT. `collect` reboots the coordinator, which is where
+    the pod bus broker runs, and then waits for the campods to come back -- so /pods answers
+    502 `connack timeout` for as long as the broker's own host is down. That is the expected
+    middle of this stage, and treating it as fatal killed a cycle whose window had already
+    completed. The last error is carried into the timeout message instead, so a wait that
+    really never came good still says why.
+    """
     deadline = time.monotonic() + timeout_s
+    last_error = None
     while time.monotonic() < deadline:
-        got = check()
+        try:
+            got = check()
+        except SystemExit as exc:  # api() raises this for any HTTP error
+            last_error = str(exc)
+            got = None
         if got:
             log(f"{what}: ok")
             return got
         time.sleep(every_s)
-    raise SystemExit(f"[bench] timed out waiting for {what} after {timeout_s}s")
+    raise SystemExit(f"[bench] timed out waiting for {what} after {timeout_s}s"
+                     + (f"; last error was {last_error}" if last_error else ""))
 
 
 def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
@@ -201,10 +216,16 @@ def ssh_coordinator(key: str, command: str) -> str:
     if not host:
         raise SystemExit("[bench] the roster has no coordinator")
     user = os.environ.get("FLEET_SSH_USER", "pi")
-    return subprocess.run(
+    done = subprocess.run(
         ["ssh", "-i", key, "-o", "BatchMode=yes", "-o", "ConnectTimeout=20",
          "-o", "StrictHostKeyChecking=accept-new", f"{user}@{host}", command],
-        capture_output=True, text=True, check=True).stdout.strip()
+        capture_output=True, text=True)
+    if done.returncode != 0:
+        # A SystemExit rather than a CalledProcessError: this is a reachability fact, and a
+        # python traceback in the run record buries it under twelve lines of frames.
+        raise SystemExit(f"[bench] ssh {user}@{host} failed ({done.returncode}): "
+                         f"{(done.stderr or '').strip()[:200]}")
+    return done.stdout.strip()
 
 
 # ---- the stages, one per workflow step --------------------------------------------------
@@ -236,7 +257,12 @@ def stage_arm(key: str) -> None:
 
 
 def stage_disarm(key: str) -> None:
-    ssh_coordinator(key, f"echo 0 | sudo tee {ARM_FILE}")
+    # RETRIED, because this also runs as the workflow's onExit handler -- and the thing it
+    # most needs to survive is a cycle that failed during `collect`, which reboots the
+    # coordinator. Disarming has to actually land, so it waits for the box rather than
+    # reporting that a rebooting machine would not answer.
+    wait_for("the coordinator to take the disarm",
+             lambda: ssh_coordinator(key, f"echo 0 | sudo tee {ARM_FILE}") or True, 300, 20)
     log("disarmed; 20s for the writers to close out")
     time.sleep(20)
 
