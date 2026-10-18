@@ -73,18 +73,11 @@ Ansible alike (`src/ssh.ts`).
 
 These are physical devices on a private network that get **reflashed routinely**, and a
 reflashed card presents a new key for the same address — a *changed* key, which no amount of
-`accept-new` accepts. So checking produced exactly one outcome in practice: a bare
-`UNREACHABLE` from a card that had just been written.
+`accept-new` accepts. So checking has exactly one outcome in practice: a bare `UNREACHABLE`
+from a card that has just been written.
 
-What grew around that was a whole mechanism to avoid the refusal: a module to forget a
-recorded key, a `?reflashed=true` query parameter and a second button to trigger it, a
-`reimage_known_hosts` variable so the reimage play could do the same from the other end, and a
-volume to keep the record on. All of it existed to stop ssh refusing to connect.
-
-**Recording keys only to clear them on the one occasion they would ever differ is a check with
-no failure mode left.** The threat it would have caught is someone impersonating a campod to
-feed us camera frames and accelerometer samples, which is not on this fleet's radar. Removed
-rather than kept as a costume.
+The threat it would catch is someone impersonating a campod to feed us camera frames and
+accelerometer samples, which is not on this fleet's radar.
 
 ## Stop and reboot
 
@@ -331,8 +324,6 @@ mismatch, so the run records what it unpacked rather than what it asked for.
 Walking back through recent builds rather than taking only the newest is deliberate: artifacts
 expire on a 90-day clock, so the newest *successful build* is not always a runnable one.
 
-The playbooks are not in this image and `host/ansible/**` is not in its rebuild paths, so a
-playbook merge does not rebuild it or roll this pod.
 
 **Reimage goes the same way**, with its image URL and digest as `extra-vars`. `device_role`
 stays a parameter of its own: the step passes its own vars in a second `-e`, and ansible's
@@ -382,9 +373,8 @@ in memory, so a pod restart takes its whole history with it -- and that is exact
 someone comes asking about afterwards. Writing to the pod's streams is what makes a run
 legible to whatever collects them.
 
-There used to be more: `ansible-runner`'s private data directory was kept for a failed play
-and served by `/runs/:id/events` and `/runs/:id/log`, carrying each task's whole result
-object. That went with the runner. What a run carries instead is a link to its workflow.
+A run also carries a link to its workflow, which is where to look for anything this process
+did not keep.
 
 ## The flight's description
 
@@ -483,15 +473,16 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 One action per node at a time; a second `POST` against a busy node is a `409`. **Except reboot**,
 which is the way out of a stuck box and so cannot be the thing a stuck box refuses.
 
-**And one playbook run at a time, fleet-wide** -- for now. The cap dates from when every run
-was an `ansible-runner` inside this pod's cgroup, about 60 MB apiece against a 256 MB limit:
-three were started at once on 2026-10-13 and the pod was OOM-killed, taking all three
-half-finished applies with it.
+**And one playbook run at a time, fleet-wide** -- for now. It costs nothing to hold, since a
+play runs in a pod of its own, and lifting it is its own change. The per-node lock is the one
+with a reason behind it: two plays against one device fight over the same box.
 
-**That reason is gone.** A play runs in a pod of its own now and costs this one a `kubectl`.
-The cap stays only because lifting it is its own change; the per-node lock is the one with a
-reason left, since two plays against one device fight over the same box. The cheap actions --
-stop, reboot, offload, the FC pull -- were never capped.
+**That lock asks the cluster, not its own memory.** A workflow outlives this process, so a
+converge submitted before a restart is still driving its device while nothing here remembers
+it. `nodeBusyWith` looks for a non-terminal workflow carrying the node's label. Reboot skips
+the check, because busy is the case a reboot exists for.
+
+The cheap actions -- stop, offload, the FC pull -- are not capped.
 
 ## Configuration
 
@@ -500,11 +491,17 @@ stop, reboot, offload, the FC pull -- were never capped.
 | `FLEET_INVENTORY` | *(required)* | path to the roster |
 | `FLEET_SSH_KEY` | `/secrets/ssh/id` | private key |
 | `FLEET_SSH_TIMEOUT_SEC` | `90` | Ansible's connect timeout, raised from its 10s default |
-| `FLEET_PLAYBOOK_DIR` | `/app/ansible` | where the image keeps `host/ansible/**` |
 | `FLEET_IMAGE_REPO` | `symmatree/dotfiles-symm` | where disk images are built |
 | `FLEET_IMAGE_WORKFLOW` | `build-pi-image.yaml` | the workflow that builds them |
 | `FLEET_IMAGE_REF` | `main` | the ref the fleet tracks |
 | `FLEET_GITHUB_TOKEN` | *(unset)* | needed **only** to download an artifact; see below |
+| `FLEET_PLAYBOOK_REPO` | `symmatree/coordinator` | where the playbook archive is published |
+| `FLEET_PLAYBOOK_WORKFLOW` | `ansible-payload.yaml` | the workflow that publishes it |
+| `FLEET_PLAYBOOK_REF` | `main` | the ref a converge takes its playbook from |
+| `FLEET_NAMESPACE` | `fleet-control` | where workflows are submitted, which is this pod's own namespace |
+| `FLEET_WORKFLOW_TEMPLATE` | `fleet-control-playbook` | the template they are submitted against |
+| `FLEET_WORKFLOW_UI` | `https://argo.tiles.symmatree.com` | what a run links to |
+| `FLEET_PUBLIC_URL` | `https://fleet.tiles.symmatree.com` | where a DEVICE reaches this service, for `get_url` |
 | `FLEET_IMAGE_CACHE` | `/images` | where fetched images are kept |
 | `FLEET_MQTT_URL` / `FLEET_MQTT_SETTLE_MS` | *(empty)* / `1500` | the pod bus; see above. Required -- empty disables every device command, not just the bus reads |
 | `FLEET_FLIGHTS_DIR` | `/mnt/flights` | where flight directories are assembled |
@@ -539,39 +536,15 @@ nothing is reconstructed afterwards.
 every PR and almost none matter; the ones actually pushed are exactly the ones worth keeping,
 and one image to five machines is one fetch and five local reads.
 
-## The image carries the playbook
-
-The build context is the **repo root**, and `host/ansible/**` is copied in — the playbook ships
-with the service that runs it, so the service cannot invoke a playbook it was never built
-against. That coupling is the one that bit us when this shelled `one_time.sh` and the script
-changed underneath it.
-
-The build then runs `ansible-playbook --syntax-check -i localhost, --connection=local`, using
-the local-connection property `site.yaml` documents, over **every playbook this service can
-invoke** -- `site.yaml`, `provision.yaml`, `deploy.yaml`, `reimage.yaml`. A broken playbook fails
-CI rather than a provisioning run.
-
-All four are named rather than relying on `site.yaml` importing two of them: `import_playbook` is
-static, so parsing `site.yaml` does parse them today and stops doing so the moment anything
-changes what it imports.
-
-**It does not resolve handlers**, which is the limit worth knowing: six orphaned `notify`s
-survived the [#453](https://github.com/symmatree/coordinator/pull/453) split and failed a real
-first-time converge. `host/ansible/test_notifies.py` is that check, and it runs in `tests` --
-gating the merge rather than this rebuild, which is the better end of the chain.
-
 ## Known limitations
 
-**The run lives in this process.** If the pod dies mid-converge, the playbook dies with it and
-the node is left part-converged. Moving Ansible to the control node did not fix that — it was
-equally true when this drove SSH directly. A converge is re-runnable, so recovery is to run it
-again, but nothing resumes on its own.
+**The run record lives in this process, though the run does not.** A pod restart loses the
+registry; the workflow carries on in its own pod. `GET /runs/:id` for a run this process never
+saw answers 404 with a link to the workflow, which is where its state and its log are.
 
 **There is no overall ceiling on a converge.** Ansible's own timeouts bound it, and that is
-deliberate: the previous version had a 60-minute ceiling, hit it on a slow node, and reported
-a *successful* converge as a failure while the play was still running. Killing a running play
-is worse than waiting — it leaves a half-configured box. The cost is that a genuinely wedged
-run holds that node's slot until the pod restarts.
+deliberate: a 60-minute ceiling once reported a *successful* converge as a failure while the
+play was still running, and killing a play half-way leaves a part-configured box.
 
 **Nothing reaches a device without pod-link.** Every command here quiesces first and the
 quiesce goes over the bus, so a device whose pod-link is down or that has never been
@@ -579,8 +552,8 @@ provisioned cannot be probed, stopped, enumerated or pulled from. There is no ss
 purpose; see **Stop and reboot** above.
 
 **Dry runs are not available.** The playbook refuses `--check`, for reasons recorded with the
-playbook. `--syntax-check` validates structure without connecting, and the image build already
-runs it.
+playbook. `--syntax-check` validates structure without connecting, and `host/ansible/test_syntax.py`
+runs it over every playbook in the `tests` suite.
 
 ## Develop
 
