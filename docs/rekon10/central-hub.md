@@ -76,6 +76,23 @@ pull-up arithmetic, and which edge is the second. What software does with it -- 
 reference, when the chip is written, what a correction looks like where it arrives -- is in
 [time-base.md](../time-base.md).
 
+**As built, 2026-10-18.** The board is soldered, powered from the Coordinator and running: chrony
+holds `Reference ID: PPS` at stratum 1, 2.9 us RMS offset, with both campods synced over the gadget
+link. The chip, the SPI link, the first-tier buffer and the falling-edge capture are confirmed on
+hardware.
+
+Open on the hardware side:
+
+- **Two of the five pigtail legs do not pass a signal.** The adapters are excluded -- swapping the
+  mini-connector-to-DuPont adapters between legs moved nothing, so the fault follows the leg.
+  Candidates are that channel's `OE` tie to the GND bus, its input tie, the series resistor or its
+  joints, the pigtail solder, or the connector pins. Neither package is dead: the Coordinator runs
+  off U2 and the LED off U3.
+- **The board is not mounted.** It needs taping up and a location.
+- **The Coordinator connector is a 2x4 block on solid-core wire, and it has been knocked off once.**
+  Solid core transmits any load on the harness straight into the header rather than flexing, so the
+  block backs off as a unit. Kapton tape over it for flight; the connector itself is sound.
+
 **Buffer:** 3.3 V quad 3-state buffer, **SN74AHC125N** (PDIP-14), powered from the Coordinator's
 3.3 V rail. **AHC, not AHCT** -- the AHCT part shares the package and pinout but is specified for
 VCC 4.5-5.5 V and is out of spec on this rail.
