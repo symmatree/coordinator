@@ -487,24 +487,32 @@ The cheap actions -- stop and the FC pull -- are not capped.
 
 ## Collecting a flight
 
-A collect is a workflow, not a run here: a step per node, then a join. `POST
-/flights/:flight/collect` chooses nothing -- it takes the sessions it is given, refuses up
-front if any of those nodes is already being driven, and returns the workflow.
+A collect is a workflow, not a run here: one offload step per node, and nothing after them.
+`POST /flights/:flight/collect` chooses nothing -- it takes the sessions it is given,
+refuses up front if any of those nodes is already being driven, and returns the workflow.
 
 **The bytes move in the step pods.** They used to move in this process, which made the
 campods serial and tied a transfer to this pod's lifetime: on 2026-10-18 the two bundles,
 336 and 361 MB, landed at 18:23:32 and 18:30:58. Nothing made the second wait except the
 first.
 
-**`flight.json` is derived.** Each offload writes its own file under `collected/`, and the
-summary is composed from them -- by each offload as it finishes, and by the join once both
-have stopped. A single manifest read-modify-written from two pods loses whichever entry was
-read before the other's write, which is a verified bundle on the share that nothing names.
-Per-contributor files have one writer each, so there is nothing to lose; a summary that is
-briefly behind is rebuilt by the next compose.
+**There is no manifest.** A flight directory holds the bundles and a `collected/` directory
+with one small JSON per contribution -- node, session, file, bytes, sha256, whether the
+source was deleted. A reader globs it:
 
-The join runs on `offload.AnySucceeded`, so a flight short one campod still gets a summary
-naming what did land.
+```sh
+jq -s . flights/rekon10/<flight>/collected/*.json
+```
+
+This used to be a single `flight.json` appended to after each session. That is
+read-modify-write, and with the campods offloading at the same time in pods of their own,
+whichever entry was read before the other's write was dropped -- a verified bundle on the
+share that nothing named, with no error anywhere. One file per contribution does not fix
+that race; it removes the thing that had to be coordinated. Nobody merges, so there is no
+merge to get wrong and no join step to need.
+
+A flight short one campod is therefore visible as a directory with one file in it, which is
+what being short one looks like.
 
 ## Configuration
 

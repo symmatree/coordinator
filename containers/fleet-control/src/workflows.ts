@@ -212,12 +212,14 @@ export interface CollectTarget {
 }
 
 /**
- * Submit a collect: one offload step per node, then a join that composes `flight.json`.
+ * Submit a collect: one offload step per node, and nothing after them.
  *
- * ONE WORKFLOW RATHER THAN ONE PER NODE. The steps run at the same time either way, but a
- * single workflow is a single thing to watch and to find again, and it gives the join
- * somewhere to hang -- a last pass over `collected/` once both have stopped writing, which
- * two independent workflows have no way to agree on.
+ * ONE WORKFLOW RATHER THAN ONE PER NODE. The steps run at the same time either way; the
+ * difference is that a collect is then a single thing to submit, follow and find again,
+ * and "did this flight collect" has one answer rather than two to reconcile.
+ *
+ * Nothing joins at the end because nothing needs to: each step writes its own file under
+ * the flight's `collected/`, so there is no manifest to merge.
  */
 export async function submitCollect(
   cfg: WorkflowConfig,

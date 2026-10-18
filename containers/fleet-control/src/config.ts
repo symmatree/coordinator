@@ -64,8 +64,8 @@ export function loadConfig(): Config {
         // the one the tanka environment deploys into; override it if that ever moves.
         namespace: env('FLEET_NAMESPACE', 'fleet-control'),
         template: env('FLEET_WORKFLOW_TEMPLATE', 'fleet-control-playbook'),
-        // A collect fans out over the campods and then joins, so it is a template of its
-        // own rather than a parameterisation of the playbook one.
+        // A collect fans out a step per campod, so it is a template of its own rather
+        // than a parameterisation of the playbook one.
         collectTemplate: env('FLEET_COLLECT_TEMPLATE', 'fleet-control-collect'),
         // Where a run links to when someone wants to see what a workflow did. The Argo
         // server's own ingress -- on the internal network, same as this service.
