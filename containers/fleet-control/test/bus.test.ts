@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:net';
 import { Aedes } from 'aedes';
-import { configured, nodeOfTopic, readPods, setDesired, type BusConfig } from '../src/bus.js';
+import { configured, nodeOfTopic, readPods, requestReboot, setDesired, type BusConfig } from '../src/bus.js';
 
 /** A real broker on a real socket: the client under test does a real connect and subscribe. */
 async function broker(retained: Record<string, string>): Promise<{
@@ -115,4 +115,29 @@ test('a desired state is published retained, as a bare word', async () => {
 
 test('a publish to a broker that is not there rejects rather than reporting success', async () => {
   await assert.rejects(() => setDesired({ url: 'mqtt://127.0.0.1:1', settleMs: 100 }, 'campod-se', 'stack', 'stopped'));
+});
+
+test('a reboot request is published unretained, which is what pod-link accepts', async () => {
+  // pod-link refuses a RETAINED reboot and says so: the device comes back subscribed and
+  // would read the same instruction on every boot. So the flag is the contract, not a
+  // detail -- a retained publish here is a boot loop on the device.
+  const b = await broker({});
+  try {
+    await requestReboot(b.cfg, 'campod-sw', 'because the card needs flushing');
+    const sent = b.seen.filter((m) => m.topic === 'rekon/pod/campod-sw/reboot');
+    assert.equal(sent.length, 1, JSON.stringify(b.seen));
+    assert.equal(sent[0]?.retain, false, 'retained would re-apply on every boot');
+    assert.equal(sent[0]?.payload, 'because the card needs flushing');
+  } finally {
+    await b.stop();
+  }
+});
+
+test('a reboot request fails loudly when there is no broker to take it', async () => {
+  // The broker runs on the coordinator, so this is the real case of rebooting a pod while
+  // the coordinator is down -- the caller needs to know to use the other path.
+  await assert.rejects(
+    () => requestReboot({ url: 'mqtt://127.0.0.1:1', settleMs: 10 }, 'campod-sw', 'x'),
+    /127\.0\.0\.1:1/,
+  );
 });
