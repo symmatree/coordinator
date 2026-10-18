@@ -17,8 +17,8 @@ the cameras are being timed.
 
 The waits that matter, and what each is for:
 
-  converges one at a time -- the API caps playbook runs at one fleet-wide and returns 409
-    rather than queueing, so serial is enforced, not a preference
+  both converges together -- a play runs in its own pod, so the fleet-wide cap on playbook
+    runs is gone and the deploy takes one converge's time rather than two
   a reboot after converging -- a converge installs and pulls and starts nothing, so the
     reboot is the apply step
   uptime going backwards before trusting any pod state -- the bus documents are retained,
@@ -177,9 +177,10 @@ def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
     on 2026-10-17, a missing resource CRD -- holds `status: running` indefinitely and
     repeats `No resources found in fleet-control namespace.`, with no `fatal:`, `FAILED:`
     or `UNREACHABLE` anywhere in it. Status plus markers cannot see that, so without a
-    wall clock this polls until someone notices. coordinator#543 bounds it in the
-    submitter, which is the real fix; this stays as the guard for a direct `argo submit`,
-    which gets none of that.
+    wall clock this polls until someone notices. This IS the bound, not a backstop behind
+    one: coordinator#543 would have failed such a run in the submitter after five minutes
+    and was withdrawn, because the converge it was written for did eventually run when the
+    CRD landed -- so the deadline would have recorded a success as a failure.
     """
     seen = 0
     deadline = time.monotonic() + timeout_s
@@ -232,10 +233,31 @@ def ssh_coordinator(key: str, command: str) -> str:
 
 def stage_deploy() -> None:
     before = min((p.get("raw") or {}).get("as_of_boot_s") or 0 for p in campod_pods())
+    # BOTH AT ONCE. A play runs in its own pod now, so the second converge costs this
+    # service a submit and a watch rather than a second ansible interpreter in its memory
+    # -- the reason the fleet-wide cap existed. Submitted together, then watched in turn;
+    # the second watch returns immediately if that run has already finished.
+    runs = {}
     for node in CAMPODS:
         run = api(f"/nodes/{node}/converge", method="POST", timeout=120)
+        runs[node] = run["id"]
         log(f"{node}: converge {run['id']}")
-        watch_run(run["id"], f"{node} converge")
+    for node, run_id in runs.items():
+        try:
+            watch_run(run_id, f"{node} converge")
+        except SystemExit:
+            # Submitting both means a failure here leaves the other one RUNNING and
+            # unwatched -- serial never submitted it at all. Name it and say what it is
+            # doing, so the operator is not left to find a converge nobody mentioned.
+            for other, other_id in runs.items():
+                if other == node:
+                    continue
+                try:
+                    status = api(f"/runs/{other_id}", timeout=60).get("status")
+                except SystemExit:
+                    status = "unknown -- the API did not answer"
+                log(f"{other} converge {other_id} is {status} and no longer watched")
+            raise
     for node in CAMPODS:
         api(f"/nodes/{node}/reboot", method="POST", timeout=180)
         log(f"{node}: rebooting")

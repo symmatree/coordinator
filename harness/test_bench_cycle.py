@@ -8,9 +8,11 @@ the ones worth holding.
     python3 harness/test_bench_cycle.py
 """
 import importlib.util
+import io
 import shutil
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
@@ -183,9 +185,15 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
         continue
 
     if stage == "deploy":
-        check("deploy converges both pods, serially",
-              [c for c in calls if c[1].endswith("/converge")]
+        # Both submitted before either is watched: the fleet-wide cap on playbook runs is
+        # gone, so the deploy costs one converge's wall time rather than two.
+        conv = [i for i, c in enumerate(calls) if c[1].endswith("/converge")]
+        first_watch = next(i for i, c in enumerate(calls) if c[1].startswith("/runs/"))
+        check("deploy converges both pods",
+              [calls[i] for i in conv]
               == [("POST", f"/nodes/{n}/converge") for n in bc.CAMPODS])
+        check("both converges are submitted before either is watched",
+              max(conv) < first_watch, f"converges at {conv}, first watch at {first_watch}")
         check("deploy reboots both pods",
               sorted(c[1] for c in calls if c[1].endswith("/reboot"))
               == sorted(f"/nodes/{n}/reboot" for n in bc.CAMPODS))
@@ -301,6 +309,47 @@ check("disarm waits for a rebooting coordinator instead of failing the cycle",
       _disarmed is True, str(_disarmed))
 check("and it wrote 0 to the arm file when the box came back",
       _tries and _tries[-1].startswith("echo 0 |"), str(_tries[-1:]))
+
+# ---- a failed converge names the one still running ------------------------------------
+# Submitting both before watching either means a failure on the first leaves the second
+# RUNNING and unwatched; serial never submitted it. Ground-platform flagged it on #563: the
+# operator should not have to discover a converge nobody mentioned.
+_fail_calls = []
+
+
+class _FailingFleet(_FakeFleet):
+    """campod-se's run fails; campod-sw's is still running when it does."""
+
+    def __call__(self, path, method="GET", timeout=300):
+        _fail_calls.append(path)
+        if path.startswith("/runs/"):
+            run_id = path.split("/")[2]
+            if run_id.endswith("se"):
+                return {"status": "failed",
+                        "lines": [{"line": "fatal: [10.0.5.237]: FAILED! => {}"}]}
+            return {"status": "running", "lines": []}
+        if path.endswith("/converge"):
+            return {"id": f"run-for-{path.split('/')[2]}"}
+        return super().__call__(path, method, timeout)
+
+
+_fleet = _FailingFleet()
+_buf = io.StringIO()
+_real_api, _real_sleep3 = bc.api, bc.time.sleep
+bc.api, bc.time.sleep = _fleet, lambda *_: None
+try:
+    with redirect_stdout(_buf):
+        bc.stage_deploy()
+    _result = "returned"
+except SystemExit as exc:
+    _result = str(exc)
+finally:
+    bc.api, bc.time.sleep = _real_api, _real_sleep3
+_said = _buf.getvalue()
+
+check("a failed converge stops the stage", _result != "returned", _result)
+check("and it names the other converge and its state",
+      "run-for-campod-sw is running" in _said, _said[-300:])
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
