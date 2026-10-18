@@ -298,6 +298,10 @@ def stage_collect(flight: str) -> None:
     wait_for("a fresh boot on both campods",
              lambda: is_fresh(campod_pods(), before) and campod_pods(), 900)
     time.sleep(60)
+    # Both at once: the slow part is zstd on the campod itself, so the two overlap almost
+    # perfectly and the stage costs one transfer instead of two. They write separate,
+    # device-named bundles into the one flight directory.
+    runs = {}
     for node in CAMPODS:
         sessions = api(f"/nodes/{node}/sessions", timeout=300).get("sessions", [])
         best = pick_session(sessions)
@@ -308,7 +312,21 @@ def stage_collect(flight: str) -> None:
             f"(activity {best['last_activity_utc']}, frames {best.get('frames')})")
         run = api(f"/nodes/{node}/offload?session={best['session']}&flight={flight}",
                   method="POST", timeout=180)
-        watch_run(run["id"], f"{node} offload")
+        runs[node] = run["id"]
+    # EVERY offload is watched to its end before this stage fails, which is where this
+    # differs from `deploy` -- there a failure reports what the other run is doing and
+    # bails, because a dead cycle is not worth waiting out a converge for. Here the run
+    # still going is moving the flight's data and will DELETE it from the card once it
+    # verifies, so "did the other one land, and is that card now empty" is the question the
+    # operator is left with. Waiting costs only time the transfer was spending anyway.
+    failed = []
+    for node, run_id in runs.items():
+        try:
+            watch_run(run_id, f"{node} offload")
+        except SystemExit as exc:
+            failed.append(str(exc))
+    if failed:
+        raise SystemExit("\n".join(failed))
     log(f"collected into {flight}; read manifests/campod-camera FIRST to see which image "
         "wrote it, then journal.log, then the sidecars")
 

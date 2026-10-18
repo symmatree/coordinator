@@ -245,7 +245,32 @@ export async function readNotes(flightsDir: string, flight: string): Promise<str
  * directory that says what is in it, which is the difference between a short flight and an
  * unlabelled pile of tarballs.
  */
-async function recordCollected(dir: string, flight: string, entry: Collected): Promise<void> {
+export async function recordCollected(dir: string, flight: string, entry: Collected): Promise<void> {
+  return oneAtATime(() => updateManifest(dir, flight, entry));
+}
+
+/** Tail of the chain of manifest updates. See `oneAtATime`. */
+let manifestChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Run `fn` only once every earlier call has finished.
+ *
+ * Both campods offload into ONE flight directory at the same time, and the update below is a
+ * read-modify-write with an await in the middle: interleaved, the second read happens before
+ * the first write and that entry is dropped -- leaving a bundle on disk with nothing in
+ * flight.json naming it, which is silent. One replica and `Recreate`, so this process is the
+ * only writer and a chain is enough; a lock file would be guarding against a second pod that
+ * cannot exist.
+ */
+function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
+  const done = manifestChain.then(fn, fn);
+  // Swallowed on the CHAIN only, so one failed update does not reject every later one. The
+  // caller still sees its own failure, through `done`.
+  manifestChain = done.then(() => undefined, () => undefined);
+  return done;
+}
+
+async function updateManifest(dir: string, flight: string, entry: Collected): Promise<void> {
   const path = join(dir, 'flight.json');
   let record: FlightRecord;
   try {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { validFlightName, type FlightRecord } from '../src/offload.js';
+import { recordCollected, validFlightName, type Collected, type FlightRecord } from '../src/offload.js';
 
 test('a flight name has to be one safe path segment', () => {
   // It becomes a directory under the datasets share, so this is the only thing standing
@@ -41,4 +41,30 @@ test('the flight record survives being read back', () => {
   assert.equal(back.collected[0]?.sourceDeleted, true);
   // The session id is the boot id and must round-trip exactly -- it is what delete is given.
   assert.equal(back.collected[0]?.session, 'a0760391-8e43-49f2-98fb-9d9e9fe15595');
+});
+
+test('two campods offloading into one flight both end up in the manifest', async () => {
+  // The reason this stage can run both at once. flight.json is read-modify-write with an
+  // await in the middle, so interleaved updates would have the second read land before the
+  // first write and silently drop that entry -- a bundle on disk the manifest never names.
+  const dir = mkdtempSync(join(tmpdir(), 'flight-'));
+  const entry = (node: string): Collected => ({
+    node,
+    session: `${node}-session`,
+    file: `${node}_session.tar.zst`,
+    bytes: 1_000,
+    sha256: 'a'.repeat(64),
+    collectedAt: '2026-10-18T00:00:00Z',
+    sourceDeleted: true,
+  });
+
+  // Started together and deliberately not awaited in turn: serialising here would be
+  // testing the test rather than the code.
+  await Promise.all([
+    recordCollected(dir, 'f', entry('campod-sw')),
+    recordCollected(dir, 'f', entry('campod-se')),
+  ]);
+
+  const back = JSON.parse(readFileSync(join(dir, 'flight.json'), 'utf8')) as FlightRecord;
+  assert.deepEqual(back.collected.map((c) => c.node).sort(), ['campod-se', 'campod-sw']);
 });
