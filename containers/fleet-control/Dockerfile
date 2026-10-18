@@ -1,12 +1,14 @@
-# fleet-control: converges the rekon10 fleet by running the Ansible playbook against it.
+# fleet-control: converges the rekon10 fleet, by submitting a workflow that runs the play.
 # Runs in the cluster, on linux/amd64.
 #
 # Local build:
 #   docker build -t fleet-control:local -f containers/fleet-control/Dockerfile .
 #
-# NOTE the build context is the REPO ROOT, not this directory: the image carries
-# host/ansible/** so the playbook ships with the service that runs it. Only the playbook comes
-# from here; everything else it installs is copied from the target's own checkout (site.yaml).
+# The build context is the REPO ROOT rather than this directory, for the step script below.
+#
+# THE PLAYBOOKS ARE NOT IN HERE (#504). They arrive as a published artifact the step fetches
+# at run time, which is what stops a playbook-only merge from rolling this pod. ansible-core
+# still is, because the step runs in this image.
 
 FROM node:24-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS build
 WORKDIR /app
@@ -74,28 +76,6 @@ COPY containers/fleet-control/step/run-playbook.sh /usr/local/bin/run-playbook.s
 # this is the code those steps run, so the two version together.
 COPY harness/bench_cycle.py /usr/local/bin/bench-cycle
 COPY containers/fleet-control/package.json ./
-COPY host/ansible /app/ansible
-
-# The playbook runs local-connection on purpose so the same recipes work inside an image build
-# (see site.yaml). Use that here: a syntax error fails CI rather than a provisioning run.
-#
-# EVERY playbook the service can invoke, each named. reimage.yaml was reachable from a button
-# with nothing checking it, which is the case this guard exists for.
-#
-# provision.yaml and deploy.yaml are named even though site.yaml imports both (#453), because
-# `import_playbook` is static -- so parsing site.yaml does parse them today, and stops doing so
-# the moment anything changes what site.yaml imports. A guard that covers a file only by
-# accident of another file's contents is one edit away from covering nothing, silently.
-#
-# What this does NOT catch: a notify with no matching handler. `--syntax-check` does not resolve
-# handlers, which is how six orphaned ones survived the #453 split and failed a real converge.
-# `host/ansible/test_notifies.py` is that check and runs in `tests`, so it gates the merge rather
-# than the rebuild -- the better end, since this build is the thing that would ship the bug.
-RUN ansible-playbook --syntax-check -i localhost, --connection=local \
-      /app/ansible/site.yaml \
-      /app/ansible/provision.yaml \
-      /app/ansible/deploy.yaml \
-      /app/ansible/reimage.yaml
 
 USER node
 EXPOSE 8080
