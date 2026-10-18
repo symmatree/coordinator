@@ -32,7 +32,6 @@ Config via environment (all optional):
 
 import collections
 import datetime as dt
-import io
 import json
 import os
 import re
@@ -43,7 +42,9 @@ import threading
 import time
 from pathlib import Path
 
-from picamera2 import Picamera2
+import numpy as np
+import simplejpeg
+from picamera2 import MappedArray, Picamera2
 
 _stop = False
 
@@ -247,6 +248,38 @@ class _FrameLedger:
             self._fh.close()
         except OSError:
             pass
+
+
+# libcamera's own name for our pixel order. picamera2 maps the same way in
+# CompletedRequest.save: the format is called BGR888 and simplejpeg is told "RGB".
+_SIMPLEJPEG_COLORSPACE = {"BGR888": "RGB", "RGB888": "BGR",
+                          "XBGR8888": "RGBX", "XRGB8888": "BGRX"}
+
+
+def _copy_out(request, dst):
+    """Copy the main stream into `dst`, allocating it the first time, and return it.
+
+    ONE BUFFER, REUSED. `request.make_buffer()` allocates a fresh array per call, and at
+    35.8 MB glibc serves that with mmap and returns it to the kernel on free -- so every
+    kept frame first-touched ~8738 new pages, measured as 8808 minor faults/s while armed
+    against 55/s while paused, and the whole footprint arrived at arm time rather than
+    during warmup.
+
+    Reuse is safe because exactly one raw frame is in flight by construction: _Serializer
+    holds its slot until the encode COMPLETES, and `put` blocks while it is held, so the
+    encoder is never reading this buffer while the capture thread writes it. Pooling would
+    be needed to make the raw hand-off deeper than one.
+
+    MappedArray is _MappedBuffer plus a reshape that never copies, so `m.array` is the
+    camera's own memory shaped (h, w, 3) with the stride accounted for; np.copyto is the
+    same single memcpy make_buffer was doing. Injected as a module attribute because it
+    needs a mapped request, which a fake camera cannot provide.
+    """
+    with MappedArray(request, "main", write=False) as m:
+        if dst is None or dst.shape != m.array.shape:
+            dst = np.empty(m.array.shape, dtype=np.uint8)
+        np.copyto(dst, m.array)
+    return dst
 
 
 class _Serializer:
@@ -851,15 +884,20 @@ def main():
     )
 
     seq = 0
+    # The one raw buffer, allocated by the warmup exercise below and reused for every kept
+    # frame after it. See _copy_out.
+    scratch = None
     # The encode the worker runs. Bound here because it needs the stream config, and kept
     # out of _Serializer so that class is testable with no camera.
     main_cfg = picam2.camera_configuration()["main"]
 
+    # simplejpeg straight off the buffer, which is what CompletedRequest.save does under
+    # FASTER_JPEG. The path it replaces built a PIL image over the frame, encoded into a
+    # BytesIO and copied the result out again with getvalue().
+    colorspace = _SIMPLEJPEG_COLORSPACE[main_cfg["format"]]
+
     def _encode_jpeg(buffer):
-        blob = io.BytesIO()
-        picam2.helpers.save(picam2.helpers.make_image(buffer, main_cfg), {}, blob,
-                            format="jpeg")
-        return blob.getvalue()
+        return simplejpeg.encode_jpeg(buffer, quality, colorspace, "420")
 
     serializer = _Serializer(_encode_jpeg)
     ledger = _FrameLedger(session_dir / "frames.jsonl")
@@ -1015,6 +1053,22 @@ def main():
                 frames_seen += 1
                 state["frames_seen"] = frames_seen
 
+                # WARMUP PAYS FOR THE FIRST ARMED FRAME. One full copy, encode and card
+                # write, on the first frame we are handed, with the file removed again --
+                # so the allocation, the encoder's own first-touch and the first write
+                # into a fresh session directory all happen before anyone can arm.
+                # Arming then changes behaviour, not footprint. Measured without it: the
+                # process grew ~79 MiB at arm and faulted 8808 pages/s doing it.
+                if scratch is None:
+                    scratch = _copy_out(request, scratch)
+                    probe = session_dir / ".warmup-probe.jpg"
+                    probe.write_bytes(_encode_jpeg(scratch))
+                    size_kb = probe.stat().st_size // 1024
+                    probe.unlink()
+                    print(f"capture: warmup exercised the copy, the encode and a card "
+                          f"write ({scratch.nbytes // 1024} kB in, {size_kb} kB out)",
+                          flush=True)
+
                 if not keep:
                     if decision == "paused":
                         last_boundary = None
@@ -1024,11 +1078,11 @@ def main():
                 wall = dt.datetime.fromtimestamp(exposure_wall_ns / 1e9, dt.timezone.utc)
                 stem = f"{node}_{seq:08d}_{wall.strftime('%Y%m%dT%H%M%S_%f')}Z"
                 jpeg_path = session_dir / f"{stem}.jpg"
-                # COPY OUT AND GET CLEAR. make_buffer is np.array(..., dtype=np.uint8) --
-                # a real copy, ~36 ms for 35.8 MB -- so the request can be released before
-                # the ~395 ms encode instead of after it. With one camera buffer, every
-                # millisecond held is a frame the sensor cannot deliver.
-                buffer = request.make_buffer("main")
+                # COPY OUT AND GET CLEAR, into the buffer allocated during warmup, so
+                # the request is released before the encode rather than after it. See
+                # _copy_out for why one buffer can be reused.
+                scratch = _copy_out(request, scratch)
+                buffer = scratch
             finally:
                 request.release()
             # The copy is done and the camera is free; the encode has not happened yet.
