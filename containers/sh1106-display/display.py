@@ -1,24 +1,36 @@
 #!/usr/bin/env python3
 """Coordinator front-panel status display on the SH1106 OLED (coordinator #115).
 
-Drives the SH1106 (128x64) on the Pi's I2C (0x3C, /dev/i2c-1) with a compact status
-screen. This first cut shows the coordinator's own *observable* state -- node, UTC
-clock, OAK-D id, and capture activity -- with no dependency on data the coordinator
-does not yet expose. Layout is modeled on ArduPilot's onboard OLED; the richer
-FC/VIO fields (flight mode, GPS, battery via the MAVLink router) and the alternating
-screens are the documented follow-up in #115.
+AN ECHO OF THE POD BUS, AND NOTHING ELSE. It subscribes to `rekon/pod/+/status` and
+`rekon/capture/intent` and draws what is there. It used to walk the coordinator's own
+`captures/` tree and infer "recording" from file mtimes, which made the panel a second
+opinion about the fleet's state -- one that could disagree with the bus every other
+component reads, and one that knew nothing about the campods at all.
 
-The render path (`draw_status`) is pure and hardware-free, unit-tested in
-`test_display.py` (which the Docker build runs), so a broken layout fails the build.
-The luma/I2C device is only touched in `main`.
+WHAT THE CAMPOD TOKENS MEAN. `se`/`sw` lower case: that pod is publishing. Upper case:
+its camera reports `ready`, which is the same field the bench cycle waits on before it
+arms. `--`: no fresh document, which includes a pod that is off and a pod whose last
+message has aged out -- the documents are RETAINED, so one that exists is not evidence
+anything is alive.
+
+THE LAG IS THE HEARTBEAT. pod-link publishes status every POD_LINK_STATUS_PERIOD_S,
+60 by default and deliberately slow -- every wake-up on a campod is a chance to fault
+the camera's pages back in. So readiness here can be up to a minute behind the device.
+Raising it is `desired/status_period` on the bus (docs/pod-bus.md), which is an
+operator's decision about a pod's residency rather than something this panel should do
+on its own.
+
+The render path (`draw_status`) and the state it renders (`status_from_bus`) are pure
+and hardware-free, unit-tested in `test_display.py` (which the Docker build runs), so a
+broken layout fails the build. The luma/I2C device and the MQTT client are only touched
+in `main`.
 """
 
 import datetime as dt
+import json
 import os
 import signal
-import socket
 import time
-from pathlib import Path
 
 _stop = False
 
@@ -33,79 +45,135 @@ def _env(name, default):
     return v if v not in (None, "") else default
 
 
-def gather_status(captures_dir, node):
-    """Collect the coordinator's observable state (no hardware, no FC). Returns a dict.
+# A pod whose last status is older than this is shown as absent. Two and a half
+# heartbeats: one missed publication is a slow tick or a reconnect, three is gone.
+STALE_AFTER_S = 150.0
 
-    Capture activity is inferred from the newest file under `captures_dir`
-    (`captures/<oak-mxid>/<session>/...`, #32): a fresh file means the tracker is
-    actively writing, i.e. recording.
+# What the camera's own document calls ready. The bench cycle waits on this exact field
+# before it arms, which is the reason the panel shows it.
+CAMPODS = ("campod-se", "campod-sw")
+
+
+def pod_token(node, doc, age):
+    """`SE` ready, `se` publishing, `--` absent or stale. Short, because the panel is
+    128 px wide and two pods have to fit beside the coordinator's own state."""
+    short = node.replace("campod-", "")
+    if doc is None or age is None or age > STALE_AFTER_S:
+        return "--"
+    camera = doc.get("camera") or {}
+    return short.upper() if camera.get("ready") is True else short.lower()
+
+
+def status_from_bus(docs, received, now, intent=None):
+    """The screen's state, from bus documents alone.
+
+    `docs` and `received` are keyed by node: the last document and the monotonic time it
+    arrived. Age comes from arrival rather than from anything in the document, because
+    `as_of_boot_s` is device uptime -- there is no RTC on a campod and no wall clock in
+    the message to compare against ours.
     """
-    now = dt.datetime.now(dt.timezone.utc)
-    status = {"node": node, "time": now.strftime("%H:%M:%SZ"),
-              "cam": None, "capturing": False, "cap_age": None}
-    root = Path(captures_dir)
-    newest_mtime, newest_cam = None, None
-    if root.is_dir():
-        for cam in root.iterdir():
-            if not cam.is_dir():
-                continue
-            files = [f for f in cam.rglob("*") if f.is_file()]
-            if not files:
-                continue
-            f = max(files, key=lambda p: p.stat().st_mtime)
-            m = f.stat().st_mtime
-            if newest_mtime is None or m > newest_mtime:
-                newest_mtime, newest_cam = m, cam.name
-    if newest_mtime is not None:
-        age = max(0.0, time.time() - newest_mtime)
-        status["cam"] = newest_cam
-        status["cap_age"] = age
-        status["capturing"] = age < 5.0
-    return status
+    pods = []
+    for node in CAMPODS:
+        age = None if received.get(node) is None else now - received[node]
+        pods.append(pod_token(node, docs.get(node), age))
+    coord = docs.get("coordinator") or {}
+    coord_age = received.get("coordinator")
+    capture = None
+    if intent is not None:
+        capture = bool(intent.get("capture"))
+    elif coord:
+        capture = bool(coord.get("capture"))
+    return {
+        "time": dt.datetime.now(dt.timezone.utc).strftime("%H:%M:%SZ"),
+        "pods": pods,
+        "capture": capture,
+        "reason": (intent or {}).get("reason"),
+        # The coordinator's own line comes from its pod-link document too, so every field
+        # on this screen has one source.
+        "coord_state": (coord.get("state") if coord else None),
+        "coord_stale": coord_age is None or (now - coord_age) > STALE_AFTER_S,
+        "free_gb": (round(coord["data_free_bytes"] / 1e9, 1)
+                    if isinstance(coord.get("data_free_bytes"), (int, float)) else None),
+    }
 
 
 def draw_status(draw, width, height, status):
     """Render the status screen onto a PIL ImageDraw. Pure -- no hardware, no I/O."""
     draw.rectangle((0, 0, width - 1, height - 1), outline="white")
     draw.text((4, 1), "COORDINATOR", fill="white")
-    draw.text((4, 15), f"{status['node'][:10]:<10} {status['time']}", fill="white")
-    draw.text((4, 30), f"cam {(status['cam'] or '--')[:14]}", fill="white")
-    if status["capturing"]:
-        cap = "REC"
-    elif status["cap_age"] is not None:
-        cap = f"idle {int(status['cap_age'])}s"
+    coord = status["coord_state"] or "--"
+    if status["coord_stale"]:
+        coord = "stale"
+    draw.text((4, 15), f"{coord[:9]:<9} {status['time']}", fill="white")
+    draw.text((4, 30), f"pods {' '.join(status['pods'])}", fill="white")
+    if status["capture"] is True:
+        cap = "ARMED"
+    elif status["capture"] is False:
+        cap = f"idle {status['reason'][:9]}" if status.get("reason") else "idle"
     else:
-        cap = "idle"
-    draw.text((4, 45), f"cap {cap}", fill="white")
+        cap = "cap --"
+    free = "" if status["free_gb"] is None else f"  {status['free_gb']:.0f}G"
+    draw.text((4, 45), f"{cap[:14]}{free}", fill="white")
 
 
 def main():
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
 
-    node = _env("SH1106_NODE", socket.gethostname())
     port = int(_env("SH1106_I2C_PORT", "1"))
     addr = int(_env("SH1106_I2C_ADDR", "0x3C"), 0)
-    captures = _env("SH1106_CAPTURES_DIR", "/captures")
     refresh = float(_env("SH1106_REFRESH_SEC", "1.0"))
+    broker = _env("SH1106_MQTT_URL", "mqtt://127.0.0.1:1883")
 
-    # Imported here so the render path (draw_status) stays testable without luma/I2C.
+    # Imported here so the render path stays testable without luma, I2C or a broker.
+    import paho.mqtt.client as mqtt
     from luma.core.interface.serial import i2c
     from luma.core.render import canvas
     from luma.oled.device import sh1106
 
+    docs, received, intent = {}, {}, {}
+
+    def on_message(_client, _userdata, msg):
+        try:
+            doc = json.loads(msg.payload)
+        except ValueError:
+            return  # a message we cannot read is not state; leave the last one up
+        if msg.topic == "rekon/capture/intent":
+            intent.clear()
+            intent.update(doc)
+            return
+        node = doc.get("node") or msg.topic.split("/")[2]
+        docs[node] = doc
+        received[node] = time.monotonic()
+
+    host = broker.split("//")[-1]
+    hostname, _, portstr = host.partition(":")
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sh1106-display")
+    client.on_message = on_message
+    # SUBSCRIBE ON EVERY CONNECT, not once: the broker runs on this same box, so it comes
+    # and goes with a converge, and a panel that subscribed only at startup would freeze
+    # on whatever it last saw and look like a healthy fleet.
+    client.on_connect = lambda c, *_: (c.subscribe("rekon/pod/+/status", qos=0),
+                                       c.subscribe("rekon/capture/intent", qos=0))
+    client.connect_async(hostname, int(portstr or "1883"), keepalive=30)
+    client.loop_start()
+
     device = sh1106(i2c(port=port, address=addr))
     device.persist = True  # leave the last frame up on SIGTERM instead of blanking
-    print(f"sh1106-display: node={node} i2c={port}@{hex(addr)} refresh={refresh}s", flush=True)
+    print(f"sh1106-display: i2c={port}@{hex(addr)} bus={broker} refresh={refresh}s",
+          flush=True)
 
     while not _stop:
-        status = gather_status(captures, node)
+        status = status_from_bus(docs, received, time.monotonic(),
+                                 intent if intent else None)
         with canvas(device) as draw:
             draw_status(draw, device.width, device.height, status)
         end = time.monotonic() + refresh
         while not _stop and time.monotonic() < end:
             time.sleep(min(0.2, max(0.0, end - time.monotonic())))
 
+    client.loop_stop()
+    client.disconnect()
     print("sh1106-display: stopped", flush=True)
 
 

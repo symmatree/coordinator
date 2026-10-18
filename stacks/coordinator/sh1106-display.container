@@ -1,5 +1,11 @@
 # Front-panel status OLED, SH1106 on /dev/i2c-1 (#115). Separate bus from the FC's
-# compass. display.py's defaults are all correct, so it takes no environment.
+# compass.
+#
+# AN ECHO OF THE POD BUS. It subscribes to rekon/pod/+/status and rekon/capture/intent
+# and draws what it finds: the coordinator's own state from its own pod-link document,
+# and se/sw per campod -- lower case publishing, upper case camera ready, -- absent.
+# It reads no files and infers nothing, so the panel cannot disagree with what every
+# other consumer of the bus sees.
 [Unit]
 Description=Coordinator front-panel OLED
 PartOf=coordinator-stack.target
@@ -10,7 +16,12 @@ ContainerName=coordinator_sh1106_display
 Pull=never
 PodmanArgs=--stop-timeout=10
 AddDevice=/dev/i2c-1
-Volume=/var/lib/coordinator/captures:/captures:ro
+# HOST NETWORKING, for the same reason pod-link has it: the broker listens on this box's
+# loopback, and 127.0.0.1 inside a container namespace is the container.
+Network=host
+# The panel needs the broker's address and nothing else. The captures mount is gone with
+# the mtime-walking it was for.
+Environment=SH1106_MQTT_URL=mqtt://127.0.0.1:1883
 
 [Service]
 TimeoutStopSec=30
