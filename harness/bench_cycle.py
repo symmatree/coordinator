@@ -177,9 +177,10 @@ def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
     on 2026-10-17, a missing resource CRD -- holds `status: running` indefinitely and
     repeats `No resources found in fleet-control namespace.`, with no `fatal:`, `FAILED:`
     or `UNREACHABLE` anywhere in it. Status plus markers cannot see that, so without a
-    wall clock this polls until someone notices. coordinator#543 bounds it in the
-    submitter, which is the real fix; this stays as the guard for a direct `argo submit`,
-    which gets none of that.
+    wall clock this polls until someone notices. This IS the bound, not a backstop behind
+    one: coordinator#543 would have failed such a run in the submitter after five minutes
+    and was withdrawn, because the converge it was written for did eventually run when the
+    CRD landed -- so the deadline would have recorded a success as a failure.
     """
     seen = 0
     deadline = time.monotonic() + timeout_s
@@ -242,7 +243,21 @@ def stage_deploy() -> None:
         runs[node] = run["id"]
         log(f"{node}: converge {run['id']}")
     for node, run_id in runs.items():
-        watch_run(run_id, f"{node} converge")
+        try:
+            watch_run(run_id, f"{node} converge")
+        except SystemExit:
+            # Submitting both means a failure here leaves the other one RUNNING and
+            # unwatched -- serial never submitted it at all. Name it and say what it is
+            # doing, so the operator is not left to find a converge nobody mentioned.
+            for other, other_id in runs.items():
+                if other == node:
+                    continue
+                try:
+                    status = api(f"/runs/{other_id}", timeout=60).get("status")
+                except SystemExit:
+                    status = "unknown -- the API did not answer"
+                log(f"{other} converge {other_id} is {status} and no longer watched")
+            raise
     for node in CAMPODS:
         api(f"/nodes/{node}/reboot", method="POST", timeout=180)
         log(f"{node}: rebooting")

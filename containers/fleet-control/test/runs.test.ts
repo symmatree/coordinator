@@ -277,8 +277,8 @@ describe('playbook runs are not capped fleet-wide', () => {
     // process holds a submit and a watch per run and the cap bought nothing.
     const runs = new RunRegistry(() => {});
     let release: () => void = () => {};
-    await runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
-    const second = await runs.start('converge', 'campod-se', async () => {}, { playbook: true });
+    await runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }));
+    const second = await runs.start('converge', 'campod-se', async () => {});
     assert.ok(runs.get(second.id), 'the second run was accepted');
     release();
   });
@@ -287,9 +287,9 @@ describe('playbook runs are not capped fleet-wide', () => {
     // Two plays against one box fight over the same checkout and the same package manager.
     const runs = new RunRegistry(() => {});
     let release: () => void = () => {};
-    await runs.start('converge', 'campod-se', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    await runs.start('converge', 'campod-se', () => new Promise<void>((r) => { release = r; }));
     await assert.rejects(
-      () => runs.start('converge', 'campod-se', async () => {}, { playbook: true }),
+      () => runs.start('converge', 'campod-se', async () => {}),
       /already has 'converge' running/,
     );
     release();
@@ -298,10 +298,9 @@ describe('playbook runs are not capped fleet-wide', () => {
   it('does not block the cheap actions, which are ssh rather than ansible', async () => {
     const runs = new RunRegistry(() => {});
     let release: () => void = () => {};
-    await runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }), { playbook: true });
+    await runs.start('converge', 'coordinator', () => new Promise<void>((r) => { release = r; }));
     const stop = await runs.start('stop', 'campod-se', async () => {});
     assert.ok(runs.get(stop.id), 'the run was accepted');
     release();
   });
-});
 });
