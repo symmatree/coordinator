@@ -5,15 +5,17 @@
 // than a hope. Nothing is deleted that has not been read back and hashed.
 //
 // The flight directory is named BEFORE anything is selected, and every node's contribution
-// lands in the same one. The alternative -- copy per node, join afterwards -- makes "a
-// partially assembled flight" a state something has to detect and clean up; naming first
-// means the directory either has every node's contribution or is visibly short one.
+// lands in the same one. The alternative -- a directory per node, joined afterwards --
+// makes "a partially assembled flight" a state something has to detect and clean up;
+// naming first means the directory either has every node's contribution or is visibly
+// short one. Within it each contribution is its own file, which is what lets the campods
+// write at the same time without anything having to merge; see `recordCollected`.
 
 import { quiesce } from './quiesce.js';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { hostOf, type FleetNode } from './inventory.js';
@@ -32,13 +34,6 @@ export interface Collected {
   collectedAt: string;
   /** Whether the source was removed from the device afterwards. */
   sourceDeleted: boolean;
-}
-
-/** `flight.json`: what this directory is supposed to contain, so short is visible. */
-export interface FlightRecord {
-  flight: string;
-  createdAt: string;
-  collected: Collected[];
 }
 
 /** A flight name has to be a single safe path segment -- it becomes a directory. */
@@ -238,23 +233,22 @@ export async function readNotes(flightsDir: string, flight: string): Promise<str
   }
 }
 
-/** Where each contributor's own record goes. `flight.json` is composed from these. */
+/** Where each contribution's own record goes: one file per thing collected. */
 export function collectedDir(flightsDir: string, flight: string): string {
   return join(flightsDir, flight, 'collected');
 }
 
 /**
- * Record one contribution, then recompose the flight's summary.
+ * Record one contribution, as a file of its own.
  *
- * ONE WRITER PER FILE, which is the reason this is not a single manifest any more. Two
- * campods now offload at once in pods of their own, and a shared `flight.json`
- * read-modify-written from both loses whichever entry was read before the other's write --
- * a verified bundle on the share that nothing names, which is silent.
+ * ONE FILE PER CONTRIBUTION, AND NOTHING SHARED. The campods offload at the same time, in
+ * pods of their own, so anything they both write has to be coordinated -- and a single
+ * appended manifest is read-modify-write, which silently drops whichever entry was read
+ * before the other's write and leaves a verified bundle on the share that nothing names.
  *
- * So `flight.json` is derived and `collected/` is the record. Two composes racing can leave
- * the summary one contribution behind; the next contribution and the join step at the end of
- * a collect both rebuild it. A stale summary over a complete set of parts is recoverable. A
- * dropped entry was not.
+ * A file each is not a lock around that problem; it is the absence of it. Nobody merges,
+ * so there is no merge to get wrong and no join step to need. `collected/` IS the record:
+ * the reader globs it.
  */
 export async function recordCollected(
   flightsDir: string,
@@ -265,37 +259,4 @@ export async function recordCollected(
   await mkdir(dir, { recursive: true });
   const key = `${entry.node}_${entry.session}`.replace(/[^A-Za-z0-9._-]/g, '_');
   await writeFile(join(dir, `${key}.json`), `${JSON.stringify(entry, null, 2)}\n`);
-  await composeFlight(flightsDir, flight);
-}
-
-/**
- * Rebuild `flight.json` from `collected/`.
- *
- * Renamed into place so a reader never sees a half-written summary, and ordered so a
- * recompose that changes nothing produces the same bytes.
- */
-export async function composeFlight(flightsDir: string, flight: string): Promise<FlightRecord> {
-  const dir = collectedDir(flightsDir, flight);
-  const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith('.json'));
-  const collected: Collected[] = [];
-  for (const name of names.sort()) {
-    collected.push(JSON.parse(await readFile(join(dir, name), 'utf8')) as Collected);
-  }
-  collected.sort((a, b) => `${a.node}${a.session}`.localeCompare(`${b.node}${b.session}`));
-
-  const path = join(flightsDir, flight, 'flight.json');
-  // Kept if it is already there: when the directory was named is a fact about the flight,
-  // not about the last time this ran.
-  const createdAt = await readFile(path, 'utf8')
-    .then((t) => (JSON.parse(t) as FlightRecord).createdAt)
-    .catch(() => collected[0]?.collectedAt ?? new Date().toISOString());
-
-  const record: FlightRecord = { flight, createdAt, collected };
-  // The temp name is this writer's alone. Two composes sharing one meant the first rename
-  // moved the file the second was about to rename, and that one died on ENOENT -- in
-  // production two step pods writing into the same NFS directory, not just a test.
-  const tmp = `${path}.${randomUUID().slice(0, 8)}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`);
-  await rename(tmp, path);
-  return record;
 }

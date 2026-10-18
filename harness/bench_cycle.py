@@ -347,8 +347,8 @@ def stage_collect(flight: str) -> None:
 
     # ONE WORKFLOW, A STEP PER CAMPOD. The transfers are this stage's long pole and they used
     # to run one after the other because the service moved the bytes itself -- 336 and 361 MB
-    # landing at 18:23 and 18:30 on 2026-10-18. In pods of their own they go at once, and a
-    # join step composes flight.json after both have stopped writing.
+    # landing at 18:23 and 18:30 on 2026-10-18. In pods of their own they go at once, and
+    # each writes its own record into the flight's collected/, so nothing has to be merged.
     sub = api(f"/flights/{flight}/collect", method="POST",
               body={"targets": targets}, timeout=180)
     log(f"collect {sub['workflow']}")
