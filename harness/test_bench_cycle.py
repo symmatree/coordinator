@@ -82,6 +82,29 @@ check("a camera with no document is not ready", not bc.cameras_ready(
 check("one pod reporting is not both", not bc.cameras_ready(
     [{"raw": {"camera": {"ready": True}}}]))
 
+# ---- and synced, which is a second wait -----------------------------------------------
+# The window of 2026-10-18T22:40 opened 18.5 s before the pair was aligned: 38 frames on
+# each pod recorded `sync_wait` and were thrown away, so that run kept 232 where its
+# neighbours kept 248 and 250. #542 exists so a PAUSED pod reaches sync before arming;
+# the gate simply never looked at the field.
+def _cam(ready=True, sync=True):
+    return {"raw": {"camera": {"ready": ready, "sync_ready": sync}}}
+
+
+check("ready and synced is ready", bc.cameras_ready([_cam(), _cam()]))
+check("ready but still counting is NOT ready",
+      not bc.cameras_ready([_cam(), _cam(sync=False)]))
+# null is sync switched off, not sync pending: with no leader configured there is nothing
+# to wait for, and blocking on it would hang the stage until the 900 s timeout.
+check("sync off on both pods does not block",
+      bc.cameras_ready([_cam(sync=None), _cam(sync=None)]))
+# A MIXTURE is a pod that has not evaluated yet. Reading that as "off" is exactly how a
+# gate passes early, which is the bug being fixed.
+check("one pod not yet reporting sync is not synced",
+      not bc.cameras_ready([_cam(sync=True), _cam(sync=None)]))
+check("sync true cannot rescue a camera that is not ready",
+      not bc.cameras_ready([_cam(), _cam(ready=False)]))
+
 # ---- failure detection, in both line formats ------------------------------------------
 # fleet-control renders FAILED:/UNREACHABLE: today and has no `fatal:` at all, so a grep
 # for `fatal:` alone was inert. #540 switches the lines to raw ansible, which prints

@@ -24,6 +24,8 @@ The waits that matter, and what each is for:
   uptime going backwards before trusting any pod state -- the bus documents are retained,
     so a pod that is down still publishes its last reading
   both cameras `ready`, not merely present -- warmup frames are not capture frames
+  and both `sync_ready` -- warmup finishing does not mean the pair is aligned, and a
+    window that opens early spends its head discarding frames
   nothing touched during the window -- every command on a 417 MiB board evicts the
     camera's working set, and timing is what is under test
 
@@ -123,10 +125,30 @@ def is_fresh(pods: list[dict], uptime_before: float) -> bool:
 
 
 def cameras_ready(pods: list[dict]) -> bool:
-    """Both cameras past warmup. `ready` and not merely a phase: arming during warmup
-    produced a window whose first frames were warmup frames on one pod only."""
+    """Both cameras past warmup AND synchronised, which are two different waits.
+
+    `ready` and not merely a phase: arming during warmup produced a window whose first
+    frames were warmup frames on one pod only.
+
+    AND `sync_ready`, because warmup finishing does not mean the pair is aligned. #542 made
+    a paused pod negotiate sync while idle precisely so this wait could be over before
+    arming -- but the gate never looked, and got away with it until the window of
+    2026-10-18T22:40 opened 18.5 s early: 38 frames on each pod recorded `sync_wait` and
+    were discarded, so that run kept 232 frames where its neighbours kept 248 and 250.
+
+    THE THREE-VALUED FIELD. `sync_ready` is null when sync is off (no leader configured),
+    false while a client is still counting, true once achieved. So: all null means there is
+    no sync to wait for and this must not block; anything else means wait for all of them
+    to be true. A mixture -- one null, one false -- is a pod that has not evaluated yet, and
+    treating that as "off" is how a gate passes early.
+    """
     cams = [(p.get("raw") or {}).get("camera") or {} for p in pods]
-    return len(cams) == len(CAMPODS) and all(c.get("ready") for c in cams)
+    if len(cams) != len(CAMPODS) or not all(c.get("ready") for c in cams):
+        return False
+    syncs = [c.get("sync_ready") for c in cams]
+    if all(s is None for s in syncs):
+        return True
+    return all(s is True for s in syncs)
 
 
 # Failure markers, for a play that started and then failed. They are ansible's own words and
@@ -305,7 +327,7 @@ def stage_deploy() -> None:
         log(f"{node}: rebooting")
     wait_for("a fresh boot on both campods",
              lambda: is_fresh(campod_pods(), before) and campod_pods(), 900)
-    wait_for("both cameras ready", lambda: cameras_ready(campod_pods()), 900)
+    wait_for("both cameras ready and synced", lambda: cameras_ready(campod_pods()), 900)
     for p in campod_pods():
         cam = (p.get("raw") or {}).get("camera") or {}
         log(f"  {p['node']}: ready at mono {cam.get('ready_at_mono_s')}s")
