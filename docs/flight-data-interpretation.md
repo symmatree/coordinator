@@ -488,11 +488,15 @@ separates a process-level stall from a device-level one. That is a measurement, 
   API -- a graceful SIGTERM -- and shows no stall at the stop, 381 s after its last one. One capture
   is one capture, but the teardown path has not been observed to cost samples.
 
-### A hole is a WRITE-path event, and the capture says so without anyone logging in
+### Classifying a hole from the counters -- and the one class that records nothing
 
-The reader's own counters settle what a hole is, which matters because the alternatives -- the part
-ceasing to deliver, the SPI read failing, the process restarting -- would each need a different
-response. Measured on 20261015 campod-sw, over 28 holes on the camera channel:
+The reader's own counters mostly settle what a hole is, which matters because the alternatives --
+the part ceasing to deliver, the SPI read failing, the process restarting, the writer blocking --
+each need a different response. Two captures have shown two *different* mechanisms, so classify
+rather than assume.
+
+**Case A, the writer blocked: `dropped_samples` rises and accounts for the hole.** Measured on
+20261015 campod-sw, over 28 holes on the camera channel:
 
 * **`dropped_samples` accounts for the hole.** It grew by 80726 across exactly the stall batches,
   against 81273 the part would have produced during those gaps at the fitted rate -- **99.3%** (arm
@@ -517,16 +521,63 @@ What this does *not* identify is the cause of the write stall. A card going busy
 message, and the journal over that window carries no mmc error, no I/O error and no blocked-task
 warning -- so their absence discriminates nothing.
 
+**Case B, the reader stopped polling: every counter stays flat and ~1600 samples vanish
+unrecorded.** This is the dangerous one, and the header's rule gets it wrong. That rule says
+"neither rising means the device had nothing to give." On 20261019 campod-sw both devices show a
+single hole -- 514.7 ms on `arm`, 513.4 ms on `camera`, within 1.3 ms of each other, so
+process-level by the classifier above -- and across it:
+
+```
+i=  440545  n= 1  ovr=False  drain=   36.6us  gap=    0.3ms  dropped=0  errs=0
+i=  440577  n=32  ovr=True   drain= 1317.6us  gap=  514.7ms  dropped=0  errs=0   <- ends the hole
+```
+
+`dropped_samples` 0, `errs` 0, and the part was fine: at the fitted rate it produced **~1630
+samples** (arm) and **~1671** (camera) during those gaps. The reader recovered **32** -- one FIFO --
+and recorded no loss, because the pool-empty path that increments `dropped_samples` only runs when
+the reader is actually draining. It was not draining; it was not there.
+
+So "neither rising" means **the reader was not polling**, not that the device was idle. In that
+state the loss is `gap_ns x fitted_rate - 32`, computable from the record but counted nowhere, and
+the only positive trace is `ovr` true with `n`=32 on the batch that ends the hole.
+
+**And `i` does not help.** It steps 440545 -> 440577, exactly 32, across 514.7 ms in which the part
+made 1630 samples. The cumulative index counts what was *read*, so it advances smoothly however
+much was discarded -- the point `docs/rekon10/vibration-testing.md` makes in the abstract, here as
+a measurement.
+
+| | Case A (20261015, 28 holes) | Case B (20261019, 1 hole) |
+|---|---|---|
+| reader | draining at full rate | not polling |
+| `dropped_samples` | +80726, 99.3% of expected | **0** |
+| `errs` | 0 | 0 |
+| `ovr` on the ending batch | 1 of 28 | **set, with `n`=32** |
+| loss recoverable from the file | yes, from the counter | only as `gap x rate - 32` |
+
+**Both cases need `gap_ns` to find the hole in the first place**, and then the counters to say which
+it was. A pipeline that trusts `dropped_samples` alone sees Case B as a clean capture.
+
 **And collectd cannot see it.** The disk plugin samples at `metrics_interval`, so a device blocking
 for ~1 s once per interval contributes a steady ~1000 to `disk_io_time` in every sample and reads as
 light load. For a sub-interval event the accel stream is the better instrument: its own per-batch
 `gap_ns` is ~1 ms-resolution on the write path, at ~1300 batches/s.
 
-**Stalls have stayed early-capture.** On 20261019, with four parts across two pods over 248 s, the
-only gaps above 20 ms are at **+15.1, +18.4 and +24.8 s** and there are none afterwards --
-simultaneous across both channels on a pod, so process-level by the classifier above. Same shape as
-260923 (+80.5 s) and 260924 (+13.8 s): a validity window that starts ~30 s in has been clean on
-every capture so far.
+**Stalls have stayed early-capture, on every capture so far.** Last gap above 20 ms, capture-relative:
+
+| capture | campod-se | campod-sw |
+|---|---|---|
+| 260923 flight | -- | +80.5 s |
+| 260924 tumble | -- | +13.8 s |
+| 20261019 cycle 19 | +18.4 s | +15.1, +24.8 s |
+| 20261019 cycle 20 | **none at all** (worst gap 12 ms) | +17.7 s |
+
+Every one is simultaneous across that pod's two channels, so process-level by the classifier above.
+**A validity window starting 90 s in has been clean on every capture to date**, which costs nothing
+on this vehicle: the pods get a settle window on the order of 120 s before the vehicle is armed, so
+the validity and regime windows nest (see below) rather than competing.
+
+One capture now exists with no hole over 12 ms anywhere in 250 s -- cycle 20's campod-se -- so the
+early stalls are not an invariant of the platform.
 
 ### Two windows, two reasons
 
@@ -585,16 +636,31 @@ So: cut the span at every `gap_ns` above a couple of fill times, fit each remain
 report the scatter across segments as the error bar. A single number over a span containing a
 hole is a lower bound on the rate, not a measurement of it.
 
+**The size of the bias is exactly the dark fraction, checked on eight streams.** Across the four
+devices in each of bench cycles 19 and 20, `1 - span_rate/segment_rate` matches the dark time's
+share of the span to within 86 ppm every time -- and on the two cycle-20 campod-se streams, which
+have no hole over 20 ms at all, the two methods agree to 18 ppm and 1 ppm. So the correction is
+arithmetic, not an estimate: a span-based rate can be repaired if the dark time is known, and the
+two methods are interchangeable only on a capture with no holes.
+
+A trap that follows: two captures with *different* dark fractions compared span-to-span will appear
+to differ by the difference of their biases. On campod-sw that bias was 1266-1434 ppm in cycle 19
+and 2008-2059 ppm in cycle 20, so a span-to-span comparison understates the real change between
+those boots by about 700 ppm.
+
 ### As of 20261019 the rates are absolute, because the pods are PPS-disciplined
 
 Four parts, two pods, one 248 s window, stall-free segment fit:
 
-| pod | label | rate | vs nominal |
-|---|---|---|---|
-| campod-se | *(unconfirmed, see below)* | 3280.14 Hz | +2.50% |
-| campod-se | *(unconfirmed, see below)* | 3156.38 Hz | -1.36% |
-| campod-sw | arm | 3163.47 Hz | -1.14% |
-| campod-sw | camera | 3251.75 Hz | +1.62% |
+Four parts, two pods, two independent boots eight hours apart (bench cycles 19 and 20), stall-free
+segment fit on each:
+
+| pod | label | cycle 19 | cycle 20 | delta |
+|---|---|---|---|---|
+| campod-se | *(unconfirmed, see below)* | 3280.14 Hz | 3281.95 Hz | +552 ppm |
+| campod-se | *(unconfirmed, see below)* | 3156.38 Hz | 3159.29 Hz | +923 ppm |
+| campod-sw | arm | 3163.47 Hz | 3166.54 Hz | +971 ppm |
+| campod-sw | camera | 3251.75 Hz | 3255.29 Hz | +1087 ppm |
 
 Read from each bundle's own `collectd/<node>/chrony/` at the end of the window: both pods
 stratum 1, `time_offset` 0.000, `clock_skew_ppm` 0.026 (se) and 0.247 (sw), PPS reachability 255.
@@ -604,10 +670,23 @@ denominator.
 **Four parts, four different rates, spanning 3.8%.** The two on one pod differ by 2.0% (sw) and
 3.8% (se), which is the figure that matters for putting two streams on a shared grid.
 
-**Across captures, three points support nothing.** campod-sw's camera part reads 3247.52 (260924),
-3247.08 (20261015) and 3251.75 (20261019): one pair agreeing to 135 ppm and a third 1440 ppm away.
-With the denominators now known to be sound (below), that spread is in the part -- but two draws
-landing near each other out of three is not evidence that a rate is reusable. **Fit per capture.**
+**All four moved the same direction between the two boots**, by 552 to 1087 ppm, with the clocks
+PPS-disciplined on both. Four independent MEMS oscillators do not drift together by chance, so the
+shift is common-mode and the candidates are a shared one: the parts' temperature, or the rate of
+the pulse all four are ultimately measured against. **Neither is established, and this is two
+points.** The correlate available is the SoC temperature in each bundle's own collectd -- campod-se
+mean 41.2 C in cycle 19 against a single sample of 43.5 C in cycle 20, campod-sw 43.6 C against
+46.2 C, so both pods ran 2-3 C warmer on the second boot, same direction as the rates. That is a
+proxy twice over: the SoC sensor is not the ADXL die, and cycle 20's collectd holds **one sample
+per series**, so no slope can be fitted from it. The ADXL345 publishes no ODR tolerance and no ODR
+tempco, so there is no datasheet number to check it against either.
+
+**Across captures, a reused rate is still not safe.** campod-sw's camera part reads 3247.52
+(260924), 3247.08 (20261015), 3251.75 (cycle 19) and 3255.29 (cycle 20) -- 2460 ppm end to end,
+with the two closest 135 ppm apart. **Fit per capture**, and per segment within it.
+
+Scale for spectra: 1000 ppm moves a 250 Hz line by 0.25 Hz, so a rate carried over from the
+previous boot costs about that much on a line the vibration work is trying to resolve.
 
 **That within-capture movement is not undetected sample loss.** Over those stall-free windows the
 largest single read gap is 5.4-9.2 ms against a 9.8-10.1 ms fill time, and the summed excess over
