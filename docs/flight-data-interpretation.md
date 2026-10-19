@@ -488,6 +488,46 @@ separates a process-level stall from a device-level one. That is a measurement, 
   API -- a graceful SIGTERM -- and shows no stall at the stop, 381 s after its last one. One capture
   is one capture, but the teardown path has not been observed to cost samples.
 
+### A hole is a WRITE-path event, and the capture says so without anyone logging in
+
+The reader's own counters settle what a hole is, which matters because the alternatives -- the part
+ceasing to deliver, the SPI read failing, the process restarting -- would each need a different
+response. Measured on 20261015 campod-sw, over 28 holes on the camera channel:
+
+* **`dropped_samples` accounts for the hole.** It grew by 80726 across exactly the stall batches,
+  against 81273 the part would have produced during those gaps at the fitted rate -- **99.3%** (arm
+  99.1%). The reader counted them, which means it drained the FIFO and discarded the batches, so
+  the part was delivering throughout. **This is the test for "did the sensor stop".** It did not.
+* **`errs` separates a failed SPI read from an empty pool**, and was 0 across all 380402 batches.
+  So the bus was never the mechanism either.
+* **`i`, `dropped_samples` and `errs` are cumulative and were all monotonic**, so the reader never
+  restarted. A reset would break the sequence; nothing did.
+* **`ovr` was set on 2 of 380402 batches and on only 1 of the 28 batches that end a hole**, so the
+  FIFO was not sitting full waiting to be read -- consistent with continuous draining rather than a
+  device that went away and came back.
+* **`drain_ns` shows no ramp.** 38 us on the batch before a hole and 214 us on the batch after,
+  against a 39.5 us baseline, with the preceding 200 batches statistically identical to baseline.
+  It blocks hard and releases hard, which is the shape of a write that does not return rather than
+  throughput falling away.
+* **The co-recorded camera stalls in the same windows** -- 24 of its 25 inter-frame gaps over 1.5 s
+  overlap an accel hole. Two ADXL345s on separate chip selects and a CSI camera do not fail
+  together, so the common element is the card and the processes writing to it.
+
+What this does *not* identify is the cause of the write stall. A card going busy produces no kernel
+message, and the journal over that window carries no mmc error, no I/O error and no blocked-task
+warning -- so their absence discriminates nothing.
+
+**And collectd cannot see it.** The disk plugin samples at `metrics_interval`, so a device blocking
+for ~1 s once per interval contributes a steady ~1000 to `disk_io_time` in every sample and reads as
+light load. For a sub-interval event the accel stream is the better instrument: its own per-batch
+`gap_ns` is ~1 ms-resolution on the write path, at ~1300 batches/s.
+
+**Stalls have stayed early-capture.** On 20261019, with four parts across two pods over 248 s, the
+only gaps above 20 ms are at **+15.1, +18.4 and +24.8 s** and there are none afterwards --
+simultaneous across both channels on a pod, so process-level by the classifier above. Same shape as
+260923 (+80.5 s) and 260924 (+13.8 s): a validity window that starts ~30 s in has been clean on
+every capture so far.
+
 ### Two windows, two reasons
 
 Two separate reasons to restrict an analysis to part of a capture, answering different questions:
@@ -527,20 +567,75 @@ Fitted over the stall-free part of each capture, same two physical parts both ti
   ppm and arm +1811 ppm across the flight, camera -549 ppm and arm -161 ppm across the tumble. Both
   streams move the same direction within a capture, and the opposite direction between captures.
 
+### Fit over stall-free SEGMENTS, not over a window that looks stall-free
+
+Half-splitting a window is confounded by any stall inside it, and the size of that confound is
+larger than the effect being measured. On 20261015 campod-sw, half-splitting the whole capture
+reads **-15682 ppm** (camera) and **-23936 ppm** (arm). Fitting each of the 27 inter-stall
+segments separately instead gives **+276** and **+334 ppm**, and the per-segment rates scatter by
+0.13 and 0.08 Hz -- 40 and 25 ppm -- with no trend across the capture. The apparent drift was the
+holes leaking into the fit.
+
+The arithmetic is the same one the rate itself needs: emitted rate is `(true ODR) x (1 - loss)`,
+so a hole inside the fitted span depresses the slope in proportion to the dark time it
+contributes. On that capture the dark time was 8.6% of the window. Whether the 260923 and 260924
+windows above were clean enough for the half-split to mean what it says has not been re-examined.
+
+So: cut the span at every `gap_ns` above a couple of fill times, fit each remaining segment, and
+report the scatter across segments as the error bar. A single number over a span containing a
+hole is a lower bound on the rate, not a measurement of it.
+
+### As of 20261019 the rates are absolute, because the pods are PPS-disciplined
+
+Four parts, two pods, one 248 s window, stall-free segment fit:
+
+| pod | label | rate | vs nominal |
+|---|---|---|---|
+| campod-se | *(unconfirmed, see below)* | 3280.14 Hz | +2.50% |
+| campod-se | *(unconfirmed, see below)* | 3156.38 Hz | -1.36% |
+| campod-sw | arm | 3163.47 Hz | -1.14% |
+| campod-sw | camera | 3251.75 Hz | +1.62% |
+
+Read from each bundle's own `collectd/<node>/chrony/` at the end of the window: both pods
+stratum 1, `time_offset` 0.000, `clock_skew_ppm` 0.026 (se) and 0.247 (sw), PPS reachability 255.
+Sub-ppm against parts sitting 1.1-2.5% off nominal, so these are the parts and not the
+denominator.
+
+**Four parts, four different rates, spanning 3.8%.** The two on one pod differ by 2.0% (sw) and
+3.8% (se), which is the figure that matters for putting two streams on a shared grid.
+
+**Across captures, three points support nothing.** campod-sw's camera part reads 3247.52 (260924),
+3247.08 (20261015) and 3251.75 (20261019): one pair agreeing to 135 ppm and a third 1440 ppm away.
+With the denominators now known to be sound (below), that spread is in the part -- but two draws
+landing near each other out of three is not evidence that a rate is reusable. **Fit per capture.**
+
 **That within-capture movement is not undetected sample loss.** Over those stall-free windows the
 largest single read gap is 5.4-9.2 ms against a 9.8-10.1 ms fill time, and the summed excess over
 fill is 0.0 ms -- the FIFO had no opportunity to discard anything. The one exception is the 260924
 arm's second half, 5.4 ms of excess over 188 s (29 ppm of elapsed time) against a -161 ppm rate
 change.
 
-**The measurement has no absolute reference, so the movement cannot be attributed.** The fit is
-samples divided by elapsed `boot_ns`, and `boot_ns` is the Pi's `CLOCK_BOOTTIME`. What comes out is
-the ADXL's rate divided by the Pi's clock rate, and nothing in the capture separates the two. The
-pod's own `clk` records do not help: `wall_ns - boot_ns` held constant to 0.1 ms over the 315 s of
-260923, 0.3 ppm, so NTP was not slewing and wall time is boot time plus a constant. So "the rate
-drifted" currently means "the rate drifted relative to this Pi", and the Pi is one of the candidates.
-A GPS-disciplined clock on the pod ([#11](https://github.com/symmatree/coordinator/issues/11)) would
-break the degeneracy.
+### The Pi was never a candidate for a thousand-ppm effect
+
+An earlier version of this section said the fit divides by `CLOCK_BOOTTIME` and so cannot separate
+the ADXL's rate from the Pi's, leaving the two degenerate. That is true as algebra and was never
+true as a magnitude, which is the part that decides anything.
+
+**`chronyd` logs the free-running crystal's offset at startup**, read from
+`/var/lib/chrony/chrony.drift` -- what it learned while last disciplined. On 20261019 that is
+**0.698 +/- 0.051 ppm** on campod-se and **-1.049 +/- 0.269 ppm** on campod-sw. About 1 ppm,
+against the thousands of ppm being attributed. So an *undisciplined* pod still measures elapsed
+time to roughly 1 ppm even when its wall clock is days out -- on that boot both were stepped by
+16304264 s, 188.7 days, and the rate was never the thing that was wrong. Offset and rate fail
+differently and only the offset was ever bad.
+
+That also means the pre-PPS captures' denominators were sound, so their rate figures are the
+parts, not their Pis. The fit still has to divide by *something*, and `boot_ns` is the right
+choice; it just carries a ~1 ppm error rather than an unbounded one.
+
+PPS ([#11](https://github.com/symmatree/coordinator/issues/11)) is live as of 20261019 and makes
+the reference explicit rather than inferred, which is worth having -- but it closes a gap that was
+three orders of magnitude smaller than the effect.
 
 Whether the movement is thermal is testable from the FC side without resolving that: `IMU.T` (per-IMU
 die), `BARO.Temp` and `GndTemp`, `ESC.Temp` and `MotTemp` per motor, `MCU.MTemp`, and `BARO.Press`.
@@ -555,6 +650,14 @@ rate over the window being transformed rather than over the whole capture.
 ADXL345 reports, and `separation_m` is present in the header and empty on both captures. The only
 identity a file carries is `label` (camera / arm) plus `node`; which part sits in which pod is
 operator knowledge, stated when parts move, and the rate fit is the cross-check if it goes unstated.
+
+**And the rate fit cannot resolve a label within one pod.** It separates the two parts easily --
+2.0% apart on campod-sw, 3.8% on campod-se, against a 30-70 ppm within-capture scatter -- but it
+carries no prior for which rate belongs to which end of the arm, so it cannot say whether `camera`
+and `arm` are the right way round. Only putting a tap on a known sensor and finding it in that
+stream does that. As of 20261019 campod-sw's pair is confirmed that way and campod-se's is not: se's
+labels were assigned by tracing pins and chip selects, so a swap of its two is not ruled out, which
+is why its two rates are listed above without positions.
 
 ---
 
@@ -580,8 +683,10 @@ Things it would be reasonable to assume and that are **not** established:
   100.8% and 99.6% of expected throughout) were `entries()` returning 0, `entries()` erroring, or the
   camera batch pool running dry. All three leave the same trace in the capture file, and the counter
   that would separate the third -- `pool.drops` -- is printed to stdout at exit only.
-* Whether the within-capture rate movement is the ADXL oscillator or the Pi crystal. The fit divides
-  by `CLOCK_BOOTTIME` and there is no absolute reference on the pod, so the two are degenerate.
+* ~~Whether the within-capture rate movement is the ADXL oscillator or the Pi crystal. The fit
+  divides by `CLOCK_BOOTTIME` and there is no absolute reference on the pod, so the two are
+  degenerate.~~ **Closed 20261019**: `chrony.drift` puts the free-running crystal at ~1 ppm on both
+  pods, three orders of magnitude under the effect, so the Pi was never a candidate. See above.
 * Whether the graceful-stop path costs samples. 260924 stopped via `quiesced` with no stall in its
   last 381 s; that is one observation of one stop.
 * Whether log naming is fully deterministic on GPS-time-at-file-creation, or whether a marginal race
