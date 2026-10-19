@@ -196,7 +196,7 @@ one contiguous 2x5 block on the Zero's 40-pin header:
 | **19** | GPIO10 MOSI -> `SDA` | **20** | Ground |
 | **21** | GPIO9 MISO -> `SDO` | **22** | GPIO25 (spare -- INT) |
 | **23** | GPIO11 SCLK -> `SCL` | **24** | GPIO8 CE0 -> camera `CS` |
-| **25** | Ground | **26** | GPIO7 CE1 -> arm `CS` |
+| **25** | n/c | **26** | GPIO7 CE1 -> arm `CS` |
 
 Power the breakout from **3V3 (pin 17)**, not 5 V: the ADXL345 draws 145 uA, where an LDO's
 dropout is millivolts, so the regulator passes 3.3 V straight through and nothing on the
