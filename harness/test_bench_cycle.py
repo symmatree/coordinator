@@ -257,7 +257,8 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
         sent_targets = next(b for b in bodies if b and "targets" in b)["targets"]
         check("and it names the chosen session for every campod",
               sorted(t["node"] for t in sent_targets) == sorted(bc.CAMPODS)
-              and all(t["session"] == "aaaa" for t in sent_targets), str(sent_targets))
+              and all(t["kind"] == "session" and t["id"] == "aaaa" for t in sent_targets),
+              str(sent_targets))
         check("then follows the workflow rather than a run of its own",
               any(c[1].startswith("/workflows/") for c in calls), str(calls))
 

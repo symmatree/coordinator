@@ -459,10 +459,9 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
 | `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first, and abandons this node's in-flight runs |
 | `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |
-| `POST /nodes/:name/fc-log?id=&flight=` | stream one dataflash log into a flight dir -> `202 {id}` |
 | `GET /ground/tlogs` | what the ground-tlog share holds |
 | `POST /flights/:flight/ground[?tlog=&tlog=&start=&end=]` | collect the tlogs named, over the range given -> `202 {id}` |
-| `POST /flights/:flight/collect` | body `{targets:[{node,session}]}` -- submits the collect workflow -> `202 {workflow,url}` |
+| `POST /flights/:flight/collect` | body `{targets:[{node,kind,id}]}`, kind `session` or `fc-log` -- submits the collect workflow -> `202 {workflow,url}` |
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
 | `GET /workflows/:name` | one workflow's phase, read from the cluster each time |
@@ -483,18 +482,28 @@ the check, because busy is the case a reboot exists for.
 A collect drives both campods, which one `node` label cannot say, so every workflow also
 carries a `touches-<node>` label per device it will drive and the lock checks both forms.
 
-The cheap actions -- stop and the FC pull -- are not capped.
+Stop is not capped; it signals and waits and holds nothing.
 
 ## Collecting a flight
 
-A collect is a workflow, not a run here: one offload step per node, and nothing after them.
-`POST /flights/:flight/collect` chooses nothing -- it takes the sessions it is given,
+A collect is a workflow, not a run here: one step per thing retrieved, and nothing after
+them. `POST /flights/:flight/collect` chooses nothing -- it takes the targets it is given,
 refuses up front if any of those nodes is already being driven, and returns the workflow.
 
-**The bytes move in the step pods.** They used to move in this process, which made the
-campods serial and tied a transfer to this pod's lifetime: on 2026-10-18 the two bundles,
-336 and 361 MB, landed at 18:23:32 and 18:30:58. Nothing made the second wait except the
-first.
+A target is `{node, kind, id}`, where `kind` is `session` (a capture off a campod, by uuid)
+or `fc-log` (a dataflash log off the FC, by number). **Both go in one call.** They are
+different devices, so queuing one behind the other bought nothing: the slowest retrieval
+now sets what a collect costs, rather than their sum.
+
+**The bytes move in the step pods.** They used to move in this process, one after another.
+On 2026-10-18 the two campod bundles, 336 and 361 MB, landed at 18:23:32 and 18:30:58 --
+and an FC log is worse, about 30 minutes for 148 MB at the measured 84 KiB/s, holding
+`/dev/ttyAMA0` with the stack down throughout. A transfer also died with the pod:
+`fc-log-50.bin.part`, zero bytes, has been on the share since 2026-09-26.
+
+Measured after the move: both campod steps started at 22:47:27 on 2026-10-18 and finished
+at 22:55:52 and 22:56:46 -- 9m29s for the pair, against about 17m45s of transfer taken end
+to end.
 
 **There is no manifest.** A flight directory holds the bundles and a `collected/` directory
 with one small JSON per contribution -- node, session, file, bytes, sha256, whether the
