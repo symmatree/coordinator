@@ -132,11 +132,42 @@
     dest: /etc/systemd/journald@pps.conf
     mode: "0644"
 
+# The tag that makes dev-pps0.device exist at all, which the unit below depends on and
+# is enabled by. The rule file says why systemd does not ship one.
+- name: Tag PPS devices for systemd
+  ansible.builtin.copy:
+    src: 99-pps-systemd.rules
+    dest: /etc/udev/rules.d/99-pps-systemd.rules
+    mode: "0644"
+  register: coord_pps_udev_rule
+
+# A rule file is read when udev starts and on reload, so without this the tag arrives
+# next boot -- and the unit below is enabled against a device unit that does not exist
+# yet, which `systemctl enable` accepts and which would then do nothing until a reboot.
+- name: Reload udev rules and retag the pps subsystem
+  when: coord_pps_udev_rule.changed
+  ansible.builtin.command:
+    cmd: "{{ item }}"
+  changed_when: true
+  loop:
+    - udevadm control --reload-rules
+    - udevadm trigger --subsystem-match=pps --action=add
+
 - name: Install the PPS arrival recorder
   ansible.builtin.template:
     src: coord-pps-log.service.j2
     dest: /etc/systemd/system/coord-pps-log.service
     mode: "0644"
+
+# WantedBy moved from multi-user.target to dev-pps0.device, and `systemctl enable` does
+# not clean up the symlink an earlier Install section left behind: it reads the CURRENT
+# unit file, so it adds the new link and leaves the old one. A stale
+# multi-user.target.wants link would go on queuing this unit at boot independently of
+# the device, which is the whole failure being fixed.
+- name: Drop the pre-device enablement of the PPS recorder
+  ansible.builtin.file:
+    path: /etc/systemd/system/multi-user.target.wants/coord-pps-log.service
+    state: absent
 
 - name: Enable the PPS arrival recorder
   ansible.builtin.systemd:
