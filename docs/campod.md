@@ -411,6 +411,11 @@ diagnosed by logging into a pod.
 - **`campod-se` has no working accelerometers.** `DEVID 0x00, expected 0xE5` on both chip
   selects, so the reader exits 1 and `Restart=no` leaves it down for the boot. Not a software
   gate, and not new -- se has no `accel-*.jsonl` in any session on the card.
+  **Resolved 2026-10-19: wiring.** `CE1` was landed on header pin 25 rather than 26. Pin 25 is
+  a ground, so that module's `CS` sat low permanently, leaving it selected for every
+  transaction and driving MISO through the other module's reads -- which is why *both* chip
+  selects read `0x00` when only one was miswired. Re-landed on 26. Both pods now report all
+  four devices `present`, `self_test: pass`, 0 dropped and 0 errs.
 - **Collect worked end to end** for all three nodes: package, transfer, verify, delete, into
   one flight directory. 1123 MB, 36 MB and 150 MB freed on device.
 
