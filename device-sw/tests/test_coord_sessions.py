@@ -379,6 +379,57 @@ check("the pps journal asks for its namespace by name",
 check("both strip the dashes from the session id",
       all("11111111aaaabbbbccccdddddddddddd" in c for c in _calls), str(_calls))
 
+# ---- the journal is read BEFORE the archive stream ------------------------------------
+# It used to be read after every session file and the whole collectd tree had gone through
+# tar into zstd -- 300+ MB off the same card -- and journalctl then hit its 120 s timeout on
+# three bundles of four, always campod-sw, whose session is the bigger one because it
+# carries the accel. Capture is quiesced before packaging, so the contention was our own
+# pass. Ordering is the fix, and ordering is what this holds: the call has to happen before
+# the zstd process exists.
+_order = []
+_real_popen, _real_run = cs.subprocess.Popen, cs.subprocess.run
+
+
+class _NoopPopen:
+    def __init__(self, *a, **k):
+        _order.append("zstd")
+        self.stdin = open("/dev/null", "wb")
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
+
+
+def _spy_run(cmd, **kw):
+    if cmd and cmd[0] == "journalctl":
+        _order.append("journalctl")
+        class _P:
+            returncode, stdout, stderr = 0, b"body\n", b""
+        return _P()
+    return _real_run(cmd, **kw)
+
+
+cs.subprocess.Popen, cs.subprocess.run = _NoopPopen, _spy_run
+try:
+    cs.journal_for("11111111-aaaa-bbbb-cccc-dddddddddddd")
+    _order_snapshot = list(_order)
+finally:
+    cs.subprocess.Popen, cs.subprocess.run = _real_popen, _real_run
+check("journal_for is callable without an archive in flight",
+      _order_snapshot == ["journalctl"], str(_order_snapshot))
+# The ordering itself, read off the source: the two journal reads must appear before the
+# Popen that starts zstd. Asserting on the text is weak, but packaging a real session in a
+# unit test is not available and the alternative is asserting nothing.
+_src = (CLI / "coord-sessions").read_text()
+# This harness prints `detail` whether the check passed or not, so it says what was
+# compared rather than what would be wrong.
+check("both journals are read before zstd starts",
+      _src.index("jrn, jrn_error = journal_for(session)") < _src.index('"zstd", "-q"'),
+      f"journal_for at {_src.index('jrn, jrn_error = journal_for(session)')}, "
+      f"zstd at {_src.index(chr(34) + 'zstd' + chr(34) + ', ' + chr(34) + '-q' + chr(34))}")
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")
     sys.exit(1)
