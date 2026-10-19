@@ -4,8 +4,7 @@
 // service these ran one after another, bounded by that pod's lifetime and recorded only in
 // its memory -- two campod sessions at 18:23 and 18:30 on 2026-10-18 for 336 and 361 MB,
 // and an FC log that is worse: 148 MB took about 30 minutes on 2026-09-23, holding
-// /dev/ttyAMA0 with the stack down the whole time. `fc-log-50.bin.part`, zero bytes, has
-// been on the share since 2026-09-26 -- a pull that went away with whatever was running it.
+// /dev/ttyAMA0 with the stack down the whole time.
 //
 // In a step pod each goes at the same time as the others, the log is the pod's own and
 // outlives it, and a service restart does not reach into a transfer.

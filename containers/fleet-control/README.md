@@ -498,8 +498,8 @@ now sets what a collect costs, rather than their sum.
 **The bytes move in the step pods.** They used to move in this process, one after another.
 On 2026-10-18 the two campod bundles, 336 and 361 MB, landed at 18:23:32 and 18:30:58 --
 and an FC log is worse, about 30 minutes for 148 MB at the measured 84 KiB/s, holding
-`/dev/ttyAMA0` with the stack down throughout. A transfer also died with the pod:
-`fc-log-50.bin.part`, zero bytes, has been on the share since 2026-09-26.
+`/dev/ttyAMA0` with the stack down throughout. Half an hour is a long time to be a thing
+that ends when this pod is replaced.
 
 Measured after the move: both campod steps started at 22:47:27 on 2026-10-18 and finished
 at 22:55:52 and 22:56:46 -- 9m29s for the pair, against about 17m45s of transfer taken end
