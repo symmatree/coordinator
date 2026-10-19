@@ -11,7 +11,7 @@ import { ImageCache } from './imagecache.js';
 import { probeAll, probeNode } from './probe.js';
 import { deleteSessions, listSessions, stopCapture } from './sessions.js';
 import { listLogs } from './fclog.js';
-import { offloadFcLog, readNotes, validFlightName, writeNotes } from './offload.js';
+import { readNotes, validFlightName, writeNotes } from './offload.js';
 import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { collectGround, listTlogs } from './cluster.js';
 import { configured as busConfigured, readPods, setDesired } from './bus.js';
@@ -270,15 +270,20 @@ export function buildServer(
   });
 
   /**
-   * Collect a flight: every named session fetched, verified and deleted, in parallel.
+   * Collect a flight: everything named for it fetched and verified, all at once.
    *
    * SUBMITS, IT DOES NOT TRANSFER. The bytes move in the collect workflow's own step pods,
-   * one per node, so the two campods go at once instead of one after the other and nothing
-   * is bounded by this pod's lifetime. What comes back is the workflow, which is the thing
+   * so the retrievals go at the same time instead of one after another and nothing is
+   * bounded by this pod's lifetime. What comes back is the workflow, which is the thing
    * that will still be true after a restart.
    *
-   * Sessions are chosen by the caller rather than here: picking one is a judgement about
-   * which capture was the flight, and `GET /nodes/:name/sessions` is what that is made from.
+   * SESSIONS AND FC LOGS IN ONE CALL. They used to be separate routes run in sequence,
+   * which put a 30-minute dataflash pull behind the campods for no reason -- they are
+   * different devices. One list of targets means the slowest retrieval sets the cost of a
+   * collect rather than the sum of them.
+   *
+   * What to fetch is the caller's judgement, not this route's: which capture was the
+   * flight is read off `GET /nodes/:name/sessions` and `GET /nodes/:name/fc-logs`.
    */
   app.post<{
     Params: { flight: string };
@@ -292,11 +297,15 @@ export function buildServer(
     }
     const targets = req.body?.targets ?? [];
     if (targets.length === 0) {
-      return reply.code(400).send({ error: 'targets is required: [{node, session}, ...]' });
+      return reply.code(400).send({
+        error: 'targets is required: [{node, kind, id}, ...] with kind session or fc-log',
+      });
     }
     for (const t of targets) {
-      if (!t?.node || !t?.session) {
-        return reply.code(400).send({ error: 'every target needs a node and a session' });
+      if (!t?.node || !t?.id || (t.kind !== 'session' && t.kind !== 'fc-log')) {
+        return reply.code(400).send({
+          error: 'every target needs a node, an id, and kind of session or fc-log',
+        });
       }
       if (!findNode(cfg.inventory, t.node)) {
         return reply.code(404).send({ error: `no such node: ${t.node}` });
@@ -306,11 +315,11 @@ export function buildServer(
     // Refused up front for every node, not per step: a collect that takes one campod and
     // fails the other has already deleted nothing but has half a flight, and the operator
     // would rather be told before it starts than find out from a step's log.
-    for (const t of targets) {
-      const busy = await nodeBusyWith(cfg.action.workflows, t.node);
+    for (const node of new Set(targets.map((t) => t.node))) {
+      const busy = await nodeBusyWith(cfg.action.workflows, node);
       if (busy !== undefined) {
         return reply.code(409).send({
-          error: `${t.node} is already being driven by ${busy}. Wait for it, then collect.`,
+          error: `${node} is already being driven by ${busy}. Wait for it, then collect.`,
         });
       }
     }
@@ -640,36 +649,6 @@ export function buildServer(
       return reply.code(502).send({ error: (err as Error).message });
     }
   });
-
-  /**
-   * Pull one log into a flight directory. Its own run, because it holds the serial port with
-   * the stack down for as long as it takes -- ~30 min for 148 MB at the measured 84 KiB/s --
-   * which is a different operational state from the minutes everything else takes.
-   */
-  app.post<{ Params: { name: string }; Querystring: { id?: string; flight?: string } }>(
-    '/nodes/:name/fc-log',
-    async (req, reply) => {
-      const node = findNode(cfg.inventory, req.params.name);
-      if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-      const id = Number(req.query.id);
-      if (!Number.isInteger(id) || id < 0) return reply.code(400).send({ error: 'id must be a log id' });
-      const flight = req.query.flight ?? '';
-      if (!validFlightName(flight)) {
-        return reply.code(400).send({ error: `not a usable flight name: ${JSON.stringify(flight)}` });
-      }
-      try {
-        const run = await runs.start('fc-log', node.name, (emit) =>
-          offloadFcLog(node, cfg.action, id, flight, {
-            flightsDir: cfg.flightsDir,
-            note: (line) => sinkFor(emit)('stdout', line),
-          }).then(() => undefined),
-        );
-        return reply.code(202).send({ id: run.id, action: run.action, node: run.node, log: id, flight });
-      } catch (err) {
-        return reply.code(409).send({ error: (err as Error).message });
-      }
-    },
-  );
 
   app.get('/runs', async () =>
     runs.list().map(({ lines, ...rest }) => ({ ...rest, lineCount: lines.length })),

@@ -913,35 +913,24 @@
       } catch (e) { log(`ground: ${e.message}`); }
       renderSessions();
     }
-    // FC LOGS STILL RUN IN THE SERVICE. One is a serial read off the FC's own card that holds
-    // /dev/ttyAMA0 with the stack down, so there is nothing for a second one to overlap with.
-    for (const key of [...pf.picked].filter((k) => k.startsWith('fc:'))) {
-      const bare = key.slice(3);
-      const [node, logId] = [bare.slice(0, bare.indexOf('/')), bare.slice(bare.indexOf('/') + 1)];
-      log(`${node}: starting FC log ${logId}`);
-      try {
-        const url = `/nodes/${node}/fc-log?id=${logId}&flight=${encodeURIComponent(flight)}`;
-        const { id } = await j(url, { method: 'POST' });
-        const status = await watchRun(id, (line) => log('  ' + line));
-        // UNTICK ONLY ON SUCCESS. This used to untick whenever the stream ended for any
-        // reason, including a dropped connection -- so an item could be marked collected
-        // while its transfer was still running, or after the service restarted mid-transfer.
-        if (status === 'succeeded') pf.picked.delete(key);
-        else log(`  ${node}: ${lostNote(status) ?? `run ${status}`} -- leaving ${logId} ticked`);
-      } catch (e) { log(`${node}: ${e.message}`); }
-    }
-
-    // SESSIONS GO AS ONE COLLECT. Each is minutes of zstd on the device plus hundreds of MB
-    // on the wire, and one at a time left the second campod idle through the first -- 18:23
-    // and 18:30 on 2026-10-18, for 336 and 361 MB. The workflow runs a step per node at the
-    // same time and joins afterwards, and it is not bounded by this page staying open.
-    const sessionKeys = [...pf.picked].filter((k) => !k.startsWith('tlog:') && !k.startsWith('fc:'));
-    if (sessionKeys.length > 0) {
-      const targets = sessionKeys.map((k) => ({
-        node: k.slice(0, k.indexOf('/')),
-        session: k.slice(k.indexOf('/') + 1),
-      }));
-      log(`collecting ${targets.length} session(s): ${targets.map((t) => t.node).join(', ')}`);
+    // EVERYTHING PICKED GOES AS ONE COLLECT -- sessions and FC logs together. They are
+    // different devices and have no reason to queue behind each other: a session is minutes
+    // of zstd plus hundreds of MB (336 and 361 MB on 2026-10-18), and an FC log is worse,
+    // ~30 min for 148 MB while holding /dev/ttyAMA0 with the stack down. Run in sequence the
+    // flight cost their sum; as steps of one workflow it costs the slowest of them, and it
+    // is not bounded by this page staying open.
+    const pickedKeys = [...pf.picked].filter((k) => !k.startsWith('tlog:'));
+    if (pickedKeys.length > 0) {
+      const targets = pickedKeys.map((k) => {
+        const isFc = k.startsWith('fc:');
+        const bare = isFc ? k.slice(3) : k;
+        return {
+          node: bare.slice(0, bare.indexOf('/')),
+          kind: isFc ? 'fc-log' : 'session',
+          id: bare.slice(bare.indexOf('/') + 1),
+        };
+      });
+      log(`collecting ${targets.length}: ${targets.map((t) => `${t.node} ${t.kind}`).join(', ')}`);
       try {
         const { workflow, url } = await j(`/flights/${encodeURIComponent(flight)}/collect`, {
           method: 'POST',
@@ -955,8 +944,8 @@
         // less would mark a session collected on the strength of its neighbour, and an
         // unticked session that never landed is one "Delete the rest" then deletes. One that
         // did land and stayed ticked costs a retry, which is the safe direction to be wrong in.
-        if (phase === 'Succeeded') sessionKeys.forEach((k) => pf.picked.delete(k));
-        else log(`  collect ${phase} -- leaving all ${sessionKeys.length} ticked. ${url}`);
+        if (phase === 'Succeeded') pickedKeys.forEach((k) => pf.picked.delete(k));
+        else log(`  collect ${phase} -- leaving all ${pickedKeys.length} ticked. ${url}`);
       } catch (e) { log(`collect: ${e.message}`); }
     }
     renderSessions();

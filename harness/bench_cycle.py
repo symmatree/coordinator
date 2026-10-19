@@ -371,7 +371,7 @@ def stage_collect(flight: str) -> None:
             continue
         log(f"{node}: {best['session'][:8]} "
             f"(activity {best['last_activity_utc']}, frames {best.get('frames')})")
-        targets.append({"node": node, "session": best["session"]})
+        targets.append({"node": node, "kind": "session", "id": best["session"]})
     if not targets:
         raise SystemExit("[bench] no campod had a closed session to collect")
 

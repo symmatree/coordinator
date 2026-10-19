@@ -205,14 +205,22 @@ export async function nodeBusyWith(
   return live === undefined ? undefined : `workflow ${live.name} (${live.phase ?? 'unset'})`;
 }
 
-/** One node's session, as a collect is told to fetch it. */
+/**
+ * One thing to retrieve, as a collect is told to fetch it.
+ *
+ * Uniform across kinds on purpose: the fan-out spreads these into identical steps, so
+ * `{node, kind, id}` for everything means one step template rather than one per kind.
+ */
 export interface CollectTarget {
   node: string;
-  session: string;
+  /** A capture session off the device, or a dataflash log off the FC. */
+  kind: 'session' | 'fc-log';
+  /** The session's uuid, or the FC log's number. */
+  id: string;
 }
 
 /**
- * Submit a collect: one offload step per node, and nothing after them.
+ * Submit a collect: one step per thing retrieved, and nothing after them.
  *
  * ONE WORKFLOW RATHER THAN ONE PER NODE. The steps run at the same time either way; the
  * difference is that a collect is then a single thing to submit, follow and find again,
