@@ -73,12 +73,17 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # logs an error every frame and its single-frame correction has nothing stable to correct
 # against. Clamped to what the mode allows; capture.py logs what it achieved.
 #
-# 2 Hz at full resolution. The sensor mode's floor is 69669 us, so up to ~14 fps is legal;
-# the limit is the work each frame costs here -- a 35.8 MB copy out of the camera buffer
-# and a JPEG encode of it -- against 8.96 MB at the binned mode, where 10 Hz delivered
-# every frame. A Zero running its sensor fast for a 1 Hz stills job is also heat for
-# nothing.
-Environment=CAMPOD_FRAME_DURATION_US=500000
+# 1 Hz at full resolution, AND THIS IS NOW THE CAPTURE RATE. capture.py keeps every frame
+# it is handed, so the pin is the only control over how much is written: there is no
+# selection rule to thin a faster grid any more. Raising this raises the card load in
+# proportion.
+#
+# Why one: with two camera buffers the IPA ticks once per sensor frame, so we see every
+# frame and do not need a rule to pick from them -- and a frame lost at 1 Hz is an absent
+# frame rather than a pair 500 ms apart, which is what every remaining outlier at the 2 Hz
+# pin turned out to be. The sensor mode's floor is 69669 us, so faster is legal; a Zero
+# running its sensor fast for a 1 Hz stills job is heat for nothing.
+Environment=CAMPOD_FRAME_DURATION_US=1000000
 # libcamera runs the IPA, and so the sync algorithm, once per queued application request --
 # so this sets how many sensor frames one sync correction is applied across. At one, that
 # was 2 to 4 frames and the client never converged.
