@@ -314,6 +314,17 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
     bundle = bundle_path(out_dir, node, session)
     partial = bundle.with_suffix(".partial")
     started = time.time()
+
+    # BEFORE THE ARCHIVE, not during it. These used to be read after every file and the
+    # whole collectd tree had been streamed through tar into zstd -- hundreds of MB off the
+    # same card -- and journalctl then timed out at 120 s on three bundles out of four,
+    # always campod-sw, which is the pod carrying the accel and so the bigger session (416
+    # MB extracted against 353). The contention was our own packaging pass, not capture:
+    # `coord sessions package` is quiesced before it starts, and pod-link waits for the
+    # units to be actually inactive. Read first, the journal is ~180 kB held in memory
+    # while the archive streams.
+    jrn, jrn_error = journal_for(session)
+    pps, pps_error = journal_for(session, namespace="pps")
     proc = None
     try:
         entries = {}
@@ -339,7 +350,6 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
                     "bytes": path.stat().st_size,
                     "sha256": add_hashed(tar, path, f"{node}/{session}/{rel}"),
                 }
-            jrn, jrn_error = journal_for(session)
             if jrn:
                 entries["journal.log"] = {
                     "bytes": len(jrn),
@@ -349,7 +359,6 @@ def cmd_package(captures: Path, session: str, out_dir: Path) -> int:
             # The PPS edge arrivals live in their own journal namespace, so they need
             # asking for separately. Absent on a node with no buffer leg soldered,
             # which is most of them -- recorded either way, same as the main journal.
-            pps, pps_error = journal_for(session, namespace="pps")
             if pps:
                 entries["pps.log"] = {
                     "bytes": len(pps),
