@@ -45,15 +45,20 @@ Connections to socket breakout board
 * 17 VCC
 * 18 (n/c)
 * 19 MOSI
-* 20 GND (GND0)
+* 20 GND
 * 21 MISO
 * 22 (n/c)
 * 23 SCLK
-* 24 CE0 (CS0)
-* 25 GND (GND1)
-* 26 CE1 (CS1)
+* 24 CE0 (CS0, camera)
+* 25 (n/c)
+* 26 CE1 (CS1, arm)
 
-Where GND0 / CS0 and GND1 / CS1 are the corresponding pins on the accelerometers 0 and 1.
+**One ground, on pin 20.** An earlier plan paired a ground with each chip select -- GND0 with
+CS0 on 24/25, GND1 with CS1 on 26 -- so each CS could be twisted with its own return. It has
+never been built that way: both sets run a single ground line and both work. The ADXL345
+breakout has one GND pad anyway, so the second line had nowhere of its own to land, and a
+ground that is shared at both ends is not a return for one signal in any case. Pin 25 is
+not connected.
 
 #### Pi connection refinements
 
@@ -122,5 +127,7 @@ With pins down, looking at back of connector, L to R
 
 VCC, CS, INT1, MOSI, GND, MISO, GND, SCL
 
-Note: We should CONSIDER whether to align with teh pinout on the PCBs for the accels. This is set up for two grounds to be twisted with the two signal lines but there's only a
-single gnd on the pinout so we'd have to do SOMETHING there, and we don't currently carry INT2 though we could. Max run length is the part of the length of an arm,
+Note: this does not match the pin order on the accelerometer PCBs, so the pigtail is not a
+straight-through. The module reads `GND, VCC, CS, INT1, INT2, SDO, SDA, SCL` top to bottom;
+`MOSI` lands on `SDA` and `MISO` on `SDO` (the silkscreen carries the I2C names). The second
+`GND` position is unused -- see above, one ground line -- and `INT2` is not carried. Max run length is the part of the length of an arm,
