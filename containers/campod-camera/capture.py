@@ -184,6 +184,55 @@ def _boundary_offset_ns(wall_exposure_ns, period_ns=1_000_000_000):
     Returns (second_index, offset_ns) with the offset always >= 0 and < period: the second
     is taken by FLOOR, so every exposure belongs to the second it actually happened in.
 
+    A FIELD, NOT A DECISION, since 2026-10-19. `second_offset_us` goes in the ledger and
+    the sidecar because it says where in the second a frame sat, which is worth having when
+    joining against anything else; nothing branches on it.
+
+    IT USED TO BE THE SELECTION RULE -- keep the first frame of each second, skip the rest
+    -- and that rule's documented risk is what retired it: the decision edge sat exactly
+    where a frame can land, so a frame falling within the pods' grid-alignment error of a
+    second boundary was binned as before by one pod and after by the other, and they kept
+    frames a whole period apart. Measured as +/-500 ms outliers in three runs at a 2 Hz
+    pin, every one of them traceable to a single dropped or boundary-straddling frame.
+
+    What makes dropping the rule safe is the second camera buffer: libcamera runs the IPA
+    once per queued request, so with one buffer we saw every other sensor frame and needed
+    a rule to thin what remained. With two we see every frame, so the pin IS the rate --
+    and a lost frame now costs a missing frame rather than a mispaired one.
+    """
+    second = wall_exposure_ns // period_ns
+    return second, wall_exposure_ns - second * period_ns
+
+
+def _clock_triple():
+    """One boot/mono/wall sample, the three read back to back, microseconds apart.
+
+    Converts a frame's CLOCK_BOOTTIME exposure stamp into wall time, which is what the
+    selection rule below decides on. The OFFSET is the wanted part, not the sample instant,
+    so reading it after the frame costs nothing in accuracy: chrony slews at microseconds
+    per second, so an offset sampled a second late is still sub-microsecond here.
+
+    Recorded ALONGSIDE FrameWallClock rather than instead of it, so the two cross-check:
+    FrameWallClock is libcamera's own realtime stamp for the frame, and this is the
+    device's own conversion. Disagreement between them is itself a finding, and if the
+    libcamera on the device has no FrameWallClock this is what is left.
+
+    Same three keys as the accel reader's `t:"clk"` records (accel/main.go), because
+    analysis should not need two conventions for one quantity.
+    """
+    return {
+        "boot_ns": time.clock_gettime_ns(time.CLOCK_BOOTTIME),
+        "mono_ns": time.monotonic_ns(),
+        "wall_ns": time.time_ns(),
+    }
+
+
+def _boundary_offset_ns(wall_exposure_ns, period_ns=1_000_000_000):
+    """Which second this exposure fell in, and how far into it.
+
+    Returns (second_index, offset_ns) with the offset always >= 0 and < period: the second
+    is taken by FLOOR, so every exposure belongs to the second it actually happened in.
+
     THE SELECTION RULE: keep the first frame of each second, and nothing else.
 
     What it replaced, and why that failed. The rule used to require the frame to be within
@@ -876,7 +925,7 @@ def main():
 
     print(
         f"capture: node={node} dir={session_dir} size={size[0]}x{size[1]} "
-        f"one frame per second, the first of each "
+        f"every frame at the pinned rate, no selection "
         f"quality={quality} exposure_cap={exposure_cap or 'none'} "
         f"focus={focus_active} sync={sync_active or 'off'} "
         f"frame_duration={pinned_us or 'unpinned'} buffers={buffer_count}",
@@ -903,7 +952,6 @@ def main():
     ledger = _FrameLedger(session_dir / "frames.jsonl")
     # The second we have already written a frame for, so a second gets one frame even
     # though several frames fall inside the window when the grid is much faster.
-    last_boundary = None
     unstamped = 0
     # Warm up, then hold ready. The warmup frames are real and are RETRIEVED, which
     # is what pays the camera's own allocations -- the import is ~16-20 MiB/s of reads
@@ -1022,12 +1070,13 @@ def main():
                 else:
                     exposure_wall_ns = exposure_boot_ns + (clk["wall_ns"] - clk["boot_ns"])
                     boundary, offset_ns = _boundary_offset_ns(exposure_wall_ns)
+                    # NO SELECTION. The pin is the rate: every frame that arrives
+                    # armed and synced is kept. See _boundary_offset_ns for what the
+                    # rule was and why choosing per second cost pairs rather than frames.
                     if phase != "capture" or not capturing:
                         decision = "paused"
                     elif sync_active and not sync_ready_seen:
                         decision = "sync_wait"
-                    elif boundary == last_boundary:
-                        decision = "second_taken"
                     else:
                         decision = "kept"
                         keep = True
@@ -1070,10 +1119,7 @@ def main():
                           flush=True)
 
                 if not keep:
-                    if decision == "paused":
-                        last_boundary = None
                     continue
-                last_boundary = boundary
 
                 wall = dt.datetime.fromtimestamp(exposure_wall_ns / 1e9, dt.timezone.utc)
                 stem = f"{node}_{seq:08d}_{wall.strftime('%Y%m%dT%H%M%S_%f')}Z"

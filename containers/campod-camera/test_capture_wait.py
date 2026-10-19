@@ -302,40 +302,17 @@ check("offsets are never negative", all(
     capture._boundary_offset_ns(n)[1] >= 0 for n in (0, 1, _S - 1, _S, 7 * _S + 12345)))
 
 
-def _keepers(exposures):
-    """Apply the loop's rule to a list of exposure instants, returning what it keeps."""
-    kept, last = [], None
-    for t_ns in exposures:
-        b, off = capture._boundary_offset_ns(t_ns)
-        if b == last:
-            continue
-        last = b
-        kept.append((b, off))
-    return kept
-
-
-# ONE PER SECOND AT ANY RATE AND PHASE, which the window rule could not do: it required the
-# frame to be within half a grid period, so a visible subset sitting outside that skipped
-# every second until the grid drifted back -- measured as 44 s, 84 s and 230 s holes, with
-# warmup alone taking 404 s. Rates and phases are varied deliberately, including the 1 Hz
-# phase that broke the rounding version.
-for _grid, _label in ((500_000_000, "2 Hz"), (100_000_000, "10 Hz"), (_S, "1 Hz")):
-    for _phase in (0, 37_000_000, 499_999_999, 750_000_000, 999_999_999):
-        _exp = [_phase + n * _grid for n in range(40)]
-        _kept = _keepers(_exp)
-        _secs = [b for b, _ in _kept]
-        _span = _exp[-1] // _S - _exp[0] // _S
-        check(f"{_label}, phase {_phase // 1000000} ms: one per second, none skipped",
-              len(_secs) == len(set(_secs)) and len(_secs) >= _span,
-              f"{len(_secs)} kept over {_span} s")
-        check(f"{_label}, phase {_phase // 1000000} ms: offset is within the second",
-              all(0 <= off < _S for _, off in _kept))
-# And the keeper is the FIRST frame of its second, not just any of them: at 10 Hz a second
-# holds ten candidates and nine must be dropped.
-_ten = [37_000_000 + n * 100_000_000 for n in range(30)]
-check("at 10 Hz exactly the first frame of each second is kept",
-      [off for _, off in _keepers(_ten)] == [37_000_000] * len(_keepers(_ten)),
-      str([off // 1000000 for _, off in _keepers(_ten)]))
+# THE RULE IS GONE as of 2026-10-19, and with it the block that tested it. It kept the
+# first frame of each second and skipped the rest, which was needed when one camera buffer
+# meant we saw every OTHER sensor frame and had to thin what arrived. Two buffers means we
+# see every frame, so the pin is the rate -- and the rule's documented risk is what retired
+# it: a frame landing within the pods' alignment error of a second boundary was binned
+# before by one pod and after by the other, giving pairs a whole period apart. Measured as
+# +/-500 ms outliers in three runs at 2 Hz.
+#
+# `_boundary_offset_ns` survives because `second_offset_us` is still recorded in every
+# ledger line and sidecar; it is a field now, and the checks above are what still matter
+# about it. Nothing branches on it.
 
 
 # ---- the serializer ----------------------------------------------------------------
@@ -546,11 +523,15 @@ check("main() starts and runs without raising", _rc in (0, None), f"rc={_rc}  {_
 # reach the configuration rather than being left at picamera2's default of 1.
 check("the buffer count reaches the configuration",
       _cam.config_buffer_count == 3, repr(_cam.config_buffer_count))
-check("it logs the selection rule it is running", "the first of each" in _out, _out[:200])
-# Five seconds of grid in, one frame per second out. The count is the assertion: the old
-# tick-driven loop would have written whatever its own clock asked for.
+check("it logs that it keeps every frame", "no selection" in _out, _out[:200])
+# EVERY frame armed is written now: 25 exposures in, 25 files out. The count is the
+# assertion -- under the old rule this same grid produced 5, one per second.
 _jpgs = sorted(Path(_td2).rglob("*.jpg"))
-check("one frame kept per second of exposures", len(_jpgs) == 5,
+# 26 from 25: _FakeCam replays its last exposure once when the list runs out, and with no
+# selection rule that replay is kept -- the old rule binned it as a second already taken.
+# A sensor does not hand out the same SensorTimestamp twice, so this is harness, not loop.
+check("every frame armed is written, not one per second",
+      len(_jpgs) == len(_exposures) + 1,
       f"{len(_jpgs)} written from {len(_exposures)} frames")
 # THE POINT OF THE CHANGE: one buffer, allocated once and handed over again each time.
 # make_buffer allocated 35.8 MB per kept frame, which glibc mmap'd and returned on free,
@@ -568,8 +549,11 @@ if _cards:
     check("the sidecar carries the fields analysis joins on",
           {"exposure_wall_ns", "second_offset_us", "clk", "sensor_timestamp_ns"} <= set(_sc),
           ",".join(sorted(_sc)))
-    check("every kept frame is within half a grid period of its second",
-          all(abs(json.loads(c.read_text())["second_offset_us"]) <= 100_000 for c in _cards))
+    # The offset is recorded, not constrained: with no selection rule a frame sits
+    # wherever the pinned grid puts it, anywhere in the second.
+    check("second_offset_us is recorded for every frame and inside its second",
+          all(0 <= json.loads(c.read_text())["second_offset_us"] < 1_000_000
+              for c in _cards))
 else:
     check("the sidecar carries the fields analysis joins on", False, "no sidecars written")
 shutil.rmtree(_td2, ignore_errors=True)
