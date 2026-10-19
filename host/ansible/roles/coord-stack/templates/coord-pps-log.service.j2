@@ -9,6 +9,11 @@ Documentation=https://github.com/symmatree/coordinator/issues/11
 # BindsTo rather than Wants: this unit's entire existence is one device, so if the
 # device goes away the service should stop rather than have Restart=always cycle every
 # 30 s against something that is not coming back.
+#
+# dev-pps0.device exists only because the role installs a udev rule tagging the pps
+# subsystem for systemd -- files/99-pps-systemd.rules, which says why. Untagged, this
+# dependency was a 90 s wait on a unit that could never appear, ending in 'dependency'
+# failure on every boot, and no edge was ever recorded on a campod.
 BindsTo=dev-pps0.device
 After=dev-pps0.device
 
@@ -32,4 +37,11 @@ Restart=always
 RestartSec=30
 
 [Install]
-WantedBy=multi-user.target
+# THE DEVICE PULLS THIS, not the boot target. Wanted by multi-user.target, the unit is
+# queued at every boot whether or not there is a PPS device, and on a card whose
+# config.append.txt predates the pps-gpio overlay that is a job waiting for a device
+# that will never arrive. Wanted by the device, it starts when the device appears and
+# is simply never started when there is none -- `systemctl status coord-pps-log` reads
+# inactive with no dev-pps0.device beside it, which is visible, unlike a Condition
+# reporting success for a unit that did nothing.
+WantedBy=dev-pps0.device

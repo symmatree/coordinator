@@ -1,0 +1,17 @@
+# Tag PPS devices for systemd, so dev-pps0.device exists (coordinator#11).
+#
+# systemd's own 99-systemd.rules tags block, net, tty, ptp, bluetooth, sound, usb, udc,
+# backlight and misc/rfkill -- not pps. Without a tag udev never tells systemd the device
+# is there, so `dev-pps0.device` NEVER ACTIVATES however long anything waits for it: a
+# unit ordered After= it waits out DefaultDeviceTimeoutSec (90 s) and then fails with
+# 'dependency'. That was coord-pps-log on every campod boot, and the 90 s was most of a
+# pod's 1min 41s userspace boot.
+#
+# ptp being tagged upstream and pps not is a choice about which subsystems systemd
+# promises units for, not a statement that a pps device is unfit to depend on. The tag is
+# all that is missing; nothing else about the device needs changing.
+#
+# Verifiable on a device:
+#   udevadm info /dev/pps0 | grep TAGS        the tag, as udev sees it
+#   systemctl status dev-pps0.device          the unit it makes possible
+SUBSYSTEM=="pps", TAG+="systemd"
