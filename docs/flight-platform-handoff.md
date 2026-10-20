@@ -4,7 +4,7 @@ For whoever is the flight-software / flight-platform agent next. This is the sof
 runs **on the vehicle** -- `host/ansible` (how a device is converged and reimaged), the
 campod and coordinator payload containers in `containers/`, the stack definitions in
 `stacks/`, and the device-side CLIs in `device-sw/cli/`. Not the cluster-hosted control surface; that
-is [ground-platform-handoff.md](ground-platform-handoff.md).
+is [handoffs/ground-platform-handoff.md](handoffs/ground-platform-handoff.md).
 
 The boundary is not the directory. `fleet-control` reaches devices over ssh, so when the
 thing being fixed is *what happens on the device*, the fix belongs here even if the line of

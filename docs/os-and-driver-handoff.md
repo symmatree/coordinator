@@ -109,7 +109,7 @@ that you can check every claim rather than inherit it.
 7. **Issues, comments included:** #434 (warm idle-ready), #11 and #370 (time distribution),
    #312 and #372 (reimage), #326 (the manifest vocabulary and the device-reports-a-map
    shape), #316 (closed, but its comments are the real CMA reasoning).
-8. **`flight-platform-handoff.md`** and **`ground-platform-handoff.md`** -- for the
+8. **`flight-platform-handoff.md`** and **`handoffs/ground-platform-handoff.md`** -- for the
    boundaries, and to see how the other roles think.
 
 ## Where the fleet actually is (2026-10-20)
