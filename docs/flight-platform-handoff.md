@@ -73,48 +73,73 @@ the probe the ground platform reads. Read **`containers/fleet-control/src/quiesc
 **`probe.ts`** too, short as they are -- they decide what every remote operation costs, and one
 of them stops the whole fleet.
 
-## Where things stand (2026-10-12)
+## Where things stand (2026-10-20)
 
-**The capture lifecycle thread is done.** #434 is closed and #439 merged, so a pod warms up,
-holds idle-ready, and starts when the coordinator tells it the vehicle armed -- `capture.py`
-gated on a flag file, `pod-link` publishing from the arm file the router writes. #442 added the
-MQTT control surface and status document on top. What is left of #25 is the topics and the
-readiness half, not the mechanism.
+**Two campods expose simultaneously, and that is the headline.** Both pods pair 248-250
+frames per window within 50 us, median |delta| 25-33 us. The mechanism is worth holding
+onto because it reads as a tuning problem and is not: `Vc4CameraData::tryRunPipeline()`
+returns early when `requestQueue_` is empty, so the IPA -- and with it libcamera's sync
+algorithm -- ticks **once per queued application request, not per sensor frame**. With
+`CAMPOD_BUFFER_COUNT=1` a single correction was applied across 2-4 sensor frames and the
+error flipped sign forever, giving a tri-modal +/-93 ms. Two buffers is load-bearing, not
+a knob. Capture is pinned at 1 Hz with no selection rule (#571), and the raw buffer is
+allocated once and reused: minor faults while armed went 8780/s to ~400/s, the residual
+being one JPEG per frame because simplejpeg returns fresh bytes.
 
-**The deployment tier changed shape underneath that.** `bin/` is now `device-sw/cli/`, holding
-only what a device installs, and `packaging/build-device-sw` packs it with `stacks/` into a
-`device-sw-<sha>.tar.gz` per commit -- 29.6 KB against the whole repo. Nothing on a device
-fetches it yet; `roles/checkout` still clones, and that is #341's surface. The install set is a
-directory rather than a list, deliberately: `roles/host-cli` copies every file in `cli/` and the
-packer packs the same directory, so neither can disagree with the other or go stale.
+**All four accelerometers report.** campod-se's were a miswired CE1, found on 2026-10-19
+by stopping its stack and reading DEVID directly: 0x00 on both chip selects, writes not
+latching, against sw's identical binary showing both present. Fitted rates are 3156-3282
+Hz against a 3200 nominal, repeatable across independent boots to under 0.1%, and they
+are **absolute rather than ratio-only** because both pods hold PPS-locked stratum-1
+clocks (skew 0.024 and 0.283 ppm). The two devices on one pod differ by 2-4%, which no
+host-clock error can produce, so that scatter is in the parts. NOTE: se's `camera` and
+`arm` labels are matched by eye off the pins; sw's were confirmed by tapping each sensor.
 
-**Quadlet units and the CLIs are copies, not symlinks into the checkout.** A symlink under
-`/etc/containers/systemd` points into `/home`, which podman's generator reads before
-`local-fs.target` -- it dangles and the generator emits *nothing*, exit 0, no output. That broke
-first boot twice before it was understood.
+**PPS edge logging had never run on a campod.** systemd's `99-systemd.rules` tags block,
+net, tty, ptp, usb, udc -- and not `pps`. Untagged, udev never tells systemd the device
+exists, so `dev-pps0.device` cannot activate, and `coord-pps-log`'s `BindsTo=` waited out
+the 90 s device timeout and failed 'dependency' on every boot since it was written. #576
+ships `SUBSYSTEM=="pps", TAG+="systemd"` and keys the unit to the device rather than to
+`multi-user.target`. Confirmed on hardware: userspace boot **1m40.8s to 27.5s**, and
+`pps.log` is in the bundle -- 420 edges, zero sequence breaks, and chrony's initial step
+visible exactly where the design says it should be, a -176 ms shift in the fractional part
+at sequence 19. Settled edges sit 0.17-0.25 us off the second with 3-7 us of spread, and
+both pods see the same edge to a median 0.24 us.
 
-**`deploy.yaml` neither reboots nor starts the stack.** The quiesce at the top leaves it
-stopped and that is the intended end state -- `coord start`, fleet-control's Reboot, or a power
-cycle is the operator's call. `provision.yaml` still reboots, for udev and the gadget link on a
-fresh card. Do not add a start task: that argument has been had twice and the second time it
-was me asserting my own requirement against Seth's design.
+**The bench cycle is a declared workflow, not a script you run.** `bench-simflight` in
+tiles `tanka/environments/fleet-control/main.jsonnet` calls the stages in
+`harness/bench_cycle.py` -- deploy, arm, a `suspend` measurement window with no pod of
+ours scheduled, disarm, collect, and an `onExit` disarm. There is no argo CLI on the
+notebook: submit a `Workflow` with a `workflowTemplateRef` via `kubectl create`. It has
+**no provenance or build check by design** -- whether to wait for a build is the caller's
+knowledge, not the script's. Bundles land in
+`/home/jovyan/datasets/flights/rekon10/<flight>/` with a record per node in `collected/`.
 
-**PPS is built on the coordinator and brought up.** First tier only: a DS3234 and one
-SN74AHC125N feeding GPIO24, measured 2026-10-11. [time-base.md](time-base.md) has the numbers
-and, more usefully, what they are *not*. The fan-out for the pods is not built and no Zero has a
-leg. The software -- chrony with the chip as its source, the FC correcting the chip while
-disarmed, the edge recorded at both ends -- is merged and has never run on hardware.
+**`ready` is being redefined, in two PRs that must land in order.** #578: a campod
+published `camera.ready` meaning *warm*, while the arm gate had already learned to also
+require `sync_ready` -- so the front panel showed a ready pod for the ~80 s between
+warmup ending (frame 10) and the pair aligning (frame 94). `warm` is now that field's
+name and `ready` means warm AND synced, computed on the pod. #579 then rebuilds the panel
+around it: a `READY` banner, a row per pod with a letter per subsystem, and `ready` per
+pod published by pod-link because it is the process holding both the camera and the accel
+documents. #578 first.
 
-**The FC parameter store reset itself to defaults on 2026-09-27** and took `SERIAL4_PROTOCOL`
-with it, so the coordinator's UART went quiet and every log pull failed at `wait_heartbeat`.
-Unexplained. `ardupilot/verify.py` compares the fragments against the export and is
-deliberately non-blocking, because a fragment legitimately leads the export between merge and
-apply.
+**Sync is no longer optional.** `CAMPOD_SYNC_LEADER` is required and an unset one exits at
+start; applying the control is fatal rather than best-effort. Seth's call, and the trivial
+case is a server with no followers, which works. Electing a leader over the bus is #501.
 
-**A freshly flashed card cannot be reached by fleet-control.** dotfiles-symm#77: the cloud-init
-seed carries one key and it is the operator's, so the service gets `Permission denied
-(publickey)` until someone appends its key by hand over their own. Twice now, two different
-cards. Expect to do it on every flash until that lands.
+**Open and not built:** the libcamera tuning override that would cut `ready_frame` from
+100 to 50 and `sync_period` from 30 to 5 frames, via a generated tuning JSON and
+`LIBCAMERA_RPI_TUNING_FILE`. Asked for on 2026-10-19; nothing written.
+
+**Unexplained, and flagged rather than assigned:** campod-sw drops WiFi about 39 s after
+disarm; sw shows 300-500 ms gaps in both accel streams where se's worst is 12-40 ms; and
+the cross-pod frame spread widened between two otherwise identical cycles (stdev 7.5 us
+to 34.5 us, 245/248 within 50 us to 217/250) with no explanation and one cycle each way.
+
+**A freshly flashed card still cannot be reached by fleet-control** -- dotfiles-symm#77 is
+open. The cloud-init seed carries one key and it is the operator's, so the service gets
+`Permission denied (publickey)` until someone appends its key by hand.
 
 ## What must not be dropped
 
@@ -127,11 +152,13 @@ board with no swap; `docker ps` measures 2.1-22.0 s with capture running against
 without. **A command returning is not evidence it was harmless** -- the cost is page cache, not
 exit status, and it outlives the call (E4: I/O continuing ~6 min after the command was killed).
 
-**`GET /status` quiesces EVERY node.** `probe.ts:64` is `PROBE_COMMAND = quiesced('coord version')`
-and `probeAll` maps it over the whole roster, so looking at the status page stops the fleet
-capturing -- and with no `restart:` policy anywhere, the containers stay stopped until a reboot.
-Use `GET /nodes/<name>/status` for one device. This also collides with #434: asking whether pods
-are ready is what makes them not ready.
+**`GET /status` quiesces EVERY node.** Still true as of 2026-10-20, though the mechanism
+moved: the quiesce is no longer wrapped around the command string, it is `await quiesce(...)`
+over the bus at the top of `probeNode`, and `probeAll` still maps that over the whole roster.
+So looking at the status page stops the fleet capturing, and with no `restart:` policy
+anywhere the containers stay stopped until a reboot. Use `GET /nodes/<name>/status` for one
+device. This also collides with #434: asking whether pods are ready is what makes them not
+ready.
 
 **The card fills in about 4.2 hours and nothing caps it.** A full card does not present as a
 disk error -- it presents as a pod that cannot capture, stops answering, and invites several
@@ -225,6 +252,14 @@ signals, collect, compute.
 without opening a single frame. It happened to be true; had it not been, the report would have
 been a spontaneous hardware failure that was really someone disturbing a cable. Two images and
 four minutes would have settled it either way.
+
+**When something is missing, check whether it was ever produced before explaining how it
+was lost.** `pps.log` was absent from four bundles and I explained it with a plausible
+collection failure -- a journald sync unit exiting 1 -- which put the fault in the reading
+path and implied the data existed. Asked how confident I was, the answer was: the producer
+had never started on those boxes, and the failing sync unit was downstream of an empty
+namespace. The collection path is the second place to look. The first is whether anything
+ever wrote.
 
 **Reach before declaring something unreachable.** Twice in one session I declared a capability
 absent after one failed check -- no ssh key (it was in `~/.ssh/OnePKey`) and no Go toolchain (a
