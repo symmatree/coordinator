@@ -10,21 +10,48 @@ An **echo of the pod bus**, and nothing else: `rekon/pod/+/status` and
 `rekon/capture/intent`.
 
 ```
-COORDINATOR
-ok         HH:MM:SSZ
-pods SE sw
-idle disarmed  24G
++--------------------+
+|       READY        |   inverted bar: every campod is on the bus and ready
+|SE   C S Ac Aa      |
+|sw   C s Ac aa      |   sync still counting, arm accel missing -> not ready
+|ARMED 24G         . |   . blinks once a second
++--------------------+
 ```
 
-- **line 2** -- the coordinator's `state` from its own pod-link document, and the clock.
-  `stale` if that document has aged out.
-- **pods** -- one token per campod, in two states. `se` lower case: the pod is up and
-  pre-flighting. `SE` upper case: `camera.ready`, which is warm AND synced, combined on
-  the pod itself (#577) -- the same field and the same meaning the bench cycle's arm gate
-  uses. `--`: no fresh document, which covers a pod that is off and a pod whose last
-  message has aged out.
-- **line 4** -- `ARMED` or `idle <reason>` from the capture intent, and the coordinator's
+This is the **field instrument**: no network, no table, someone standing over the vehicle
+deciding whether to arm. So it answers that first and explains itself second.
+
+- **the banner** -- `READY`, drawn black-on-white across the top, when every campod is
+  publishing and reports itself ready. `WAIT` otherwise. Inverted rather than worded so
+  the one-bit answer differs by half the screen's brightness instead of by one letter.
+- **one row per pod** -- the name's case is that pod's own verdict (`SE` ready, `se` not),
+  and the letters say which subsystem is not there yet:
+
+  | | |
+  |---|---|
+  | `C` | camera present and warm |
+  | `S` | camera sync achieved |
+  | `Ac` | accelerometer on the camera mount |
+  | `Aa` | accelerometer on the arm |
+
+  Upper case is good. **A letter appears only if that pod claims the subsystem**, so a
+  capture pod that never joins the sync group shows no `S` rather than a permanent
+  lower-case one -- a letter that is always bad teaches you to stop reading it.
+- **no row at all** when a pod is not publishing, or its last document has aged out
+  (`STALE_AFTER_S`, three missed heartbeats). The rows are the inventory as well as the
+  status: a row existing means that pod is up and on the bus. Documents are retained, so
+  one that exists is not evidence of life.
+- **the coordinator's own capture pod** gets a row too, named `oak`, if it publishes a
+  camera document. It is shown and does not gate -- say the word and that is one line.
+- **the footer** -- `ARMED` or `idle <reason>` from the capture intent, and the card's
   free space.
+- **the dot** -- blinks once a second. Liveness for the panel itself: everything else here
+  can legitimately sit still, so without it a frozen screen looks like a calm fleet. A
+  clock would not fit beside the footer at 15 characters a row.
+
+`ready` per pod is **not computed here**. pod-link holds both the camera and accel
+documents and publishes the verdict; this panel and the fleet-control table read the same
+field, because two readers each assembling their own answer is the bug #577 fixed.
 
 ### Why an echo
 

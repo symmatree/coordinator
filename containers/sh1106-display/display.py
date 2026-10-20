@@ -7,24 +7,31 @@ AN ECHO OF THE POD BUS, AND NOTHING ELSE. It subscribes to `rekon/pod/+/status` 
 opinion about the fleet's state -- one that could disagree with the bus every other
 component reads, and one that knew nothing about the campods at all.
 
-WHAT THE CAMPOD TOKENS MEAN. TWO STATES, because two is what the question has. Lower
-case `se`/`sw`: that pod is up and pre-flighting -- it is publishing, and it is not ready.
-Upper case `SE`/`SW`: `camera.ready`, the pod's own answer to "will arming now produce
-usable frames", which is warm AND synced and is combined on the pod (#577) so that this
-panel and the bench cycle's arm gate cannot mean different things by it. `--`: no fresh
-document, which includes a pod that is off and a pod whose last message has aged out --
-the documents are RETAINED, so one that exists is not evidence anything is alive.
+WHAT IS ON IT, AND WHY THAT. This is the field instrument: no network, no table, someone
+standing over the vehicle deciding whether to arm. So it answers that first, as an
+inverted READY bar, and then explains itself -- one row per pod, `SE  C S Ac Aa`, where
+the name's case is that pod's own verdict and each letter is one subsystem, upper case
+when it is there. The operator decides what is an acceptable defect and what is a reason
+to wait, which needs the parts shown separately, not one bit.
 
-THIS PANEL IS THE FIELD INSTRUMENT. With a network there is the fleet-control table,
-which has room to say WHY a pod is not ready. Here there is 128 px and someone deciding
-whether to arm, so the verdict is all it shows and the verdict has to be the real one.
+  C   camera present and warm          S   camera sync achieved
+  Ac  accelerometer on the camera      Aa  accelerometer on the arm
+
+A POD THAT IS NOT PUBLISHING HAS NO ROW. The rows are the inventory as well as the
+status: a row existing means that pod is up and on the bus, which is the first thing
+worth knowing and the thing a `--` token muddled. The documents are RETAINED, so one
+that exists is not evidence of life -- age decides.
+
+NOT RE-DERIVED HERE. `ready` per pod comes from pod-link, which holds both the camera and
+accel documents; the letters explain that verdict rather than computing a second one. The
+panel and the fleet-control table disagreeing about "ready" is the bug #577 fixed.
 
 THE LAG IS THE HEARTBEAT. pod-link publishes status every POD_LINK_STATUS_PERIOD_S,
-60 by default and deliberately slow -- every wake-up on a campod is a chance to fault
-the camera's pages back in. So readiness here can be up to a minute behind the device.
-Raising it is `desired/status_period` on the bus (docs/pod-bus.md), which is an
-operator's decision about a pod's residency rather than something this panel should do
-on its own.
+which the stacks set to 5 s (its own default is 60). Every wake-up on a campod is a
+chance to fault the camera's pages back in, so the cadence is a decision about a pod's
+residency rather than something this panel should take for itself -- `desired/
+status_period` on the bus (docs/pod-bus.md) is where it is changed. STALE_AFTER_S below
+is paired with it: three missed publications is a pod that is gone.
 
 The render path (`draw_status`) and the state it renders (`status_from_bus`) are pure
 and hardware-free, unit-tested in `test_display.py` (which the Docker build runs), so a
@@ -64,14 +71,65 @@ STALE_AFTER_S = 15.0
 CAMPODS = ("campod-se", "campod-sw")
 
 
-def pod_token(node, doc, age):
-    """`SE` ready to arm, `se` up and pre-flighting, `--` absent or stale. Short, because
-    the panel is 128 px wide and two pods have to fit beside the coordinator's state."""
-    short = node.replace("campod-", "")
-    if doc is None or age is None or age > STALE_AFTER_S:
-        return "--"
+def subsystem_letters(doc):
+    """The per-subsystem letters for one pod, in a fixed order.
+
+    `C` camera present and warm, `S` camera sync achieved, `Ac` and `Aa` the accelerometer
+    on the camera mount and the one on the arm. UPPER CASE is that subsystem good, lower
+    case is not -- so the shape of the row is constant and only its case moves, which is
+    what makes it readable at arm's length without reading it word by word.
+
+    A LETTER IS ONLY PRESENT IF ITS SUBSYSTEM IS CLAIMED. A pod publishing no accel
+    document gets no A letters rather than lower-case ones: absent hardware that nobody
+    expects is not a fault, and a row of failures for a pod that is fine is how a panel
+    stops being read. What makes a MISSING accel visible is the reader listing the device
+    and saying `present: false`, which is what it does (it reports DEVID mismatches).
+
+    These letters explain the verdict; they are not the verdict. `ready` comes from the
+    pod (pod-link's podReady) so that this panel and the fleet-control table cannot come
+    to mean different things by it.
+    """
+    letters = []
     camera = doc.get("camera") or {}
-    return short.upper() if camera.get("ready") is True else short.lower()
+    if camera:
+        warm = camera.get("warm")
+        # A pod on an image from before #577 has no `warm`; its `ready` meant warm, which
+        # is what C is. Read that rather than showing a camera-shaped hole.
+        if warm is None:
+            warm = camera.get("ready")
+        letters.append("C" if warm is True else "c")
+        # Only if this pod is IN the sync group. A capture pod that never syncs -- the
+        # coordinator's own, for one -- would otherwise carry a permanent lower-case `s`
+        # and teach the reader to ignore a letter, which is worse than not showing it.
+        if "sync_ready" in camera:
+            letters.append("S" if camera.get("sync_ready") is True else "s")
+    for device in (doc.get("accel") or {}).get("devices") or []:
+        label = str(device.get("label") or "?")
+        tag = f"A{label[:1].lower()}"
+        letters.append(tag if device.get("present") is True else tag.lower())
+    return letters
+
+
+def pod_row(node, doc, age):
+    """One pod's row, or None when that pod is not on the bus.
+
+    NO ROW AT ALL rather than a placeholder: a row existing is itself the signal that the
+    pod is up and talking, which is the first thing worth knowing and the one a token like
+    `--` muddles. The documents are RETAINED, so one that exists is not evidence of life
+    and age is what decides.
+
+    The NAME carries the pod's own verdict in its case -- `SE` ready, `se` not -- so one
+    glance down the left edge answers "can I arm", and the letters answer "why not".
+    """
+    if doc is None or age is None or age > STALE_AFTER_S:
+        return None
+    short = node.replace("campod-", "")
+    ready = doc.get("ready") is True
+    return {
+        "name": short.upper() if ready else short.lower(),
+        "ready": ready,
+        "letters": subsystem_letters(doc),
+    }
 
 
 def status_from_bus(docs, received, now, intent=None):
@@ -82,48 +140,103 @@ def status_from_bus(docs, received, now, intent=None):
     `as_of_boot_s` is device uptime -- there is no RTC on a campod and no wall clock in
     the message to compare against ours.
     """
-    pods = []
+    coord_age = received.get("coordinator")
+    coord = docs.get("coordinator") or {}
+
+    # The coordinator's own capture pod, when there is one. It publishes a camera document
+    # like any other pod, so it needs no special reading; until something does, there is
+    # no row and nothing to explain.
+    oak_rows = []
+    if coord_age is not None and (coord.get("camera") or coord.get("accel")):
+        row = pod_row("oak", coord, now - coord_age)
+        if row is not None:
+            oak_rows.append(row)
+
+    campod_rows = []
     for node in CAMPODS:
         age = None if received.get(node) is None else now - received[node]
-        pods.append(pod_token(node, docs.get(node), age))
-    coord = docs.get("coordinator") or {}
-    coord_age = received.get("coordinator")
+        row = pod_row(node, docs.get(node), age)
+        if row is not None:
+            campod_rows.append(row)
+    rows = oak_rows + campod_rows
+
+    # THE GATE: every campod on the bus AND saying it is ready. Counting the rows is half
+    # of it -- a pod that is absent is the most important way of not being ready, and it
+    # has no row to be lower case in. The oak pod is shown and does not gate; say so and
+    # it becomes a one-line change.
+    gate = len(campod_rows) == len(CAMPODS) and all(r["ready"] for r in campod_rows)
+
     capture = None
     if intent is not None:
         capture = bool(intent.get("capture"))
     elif coord:
         capture = bool(coord.get("capture"))
     return {
-        "time": dt.datetime.now(dt.timezone.utc).strftime("%H:%M:%SZ"),
-        "pods": pods,
+        # The blink phase, not a clock: liveness for THIS panel, since a frozen screen and
+        # a quiet fleet look identical otherwise and every other field can sit still. Kept
+        # in the state so the render stays pure and the test can drive both phases.
+        "blink": int(now) % 2 == 0,
+        "rows": rows,
+        "gate": gate,
         "capture": capture,
         "reason": (intent or {}).get("reason"),
-        # The coordinator's own line comes from its pod-link document too, so every field
-        # on this screen has one source.
-        "coord_state": (coord.get("state") if coord else None),
-        "coord_stale": coord_age is None or (now - coord_age) > STALE_AFTER_S,
         "free_gb": (round(coord["data_free_bytes"] / 1e9, 1)
                     if isinstance(coord.get("data_free_bytes"), (int, float)) else None),
     }
 
 
+# MEASURED, NOT ASSUMED. PIL's default font draws 8 px wide glyphs whose ink runs from
+# 2 px to 12 px below the given y -- so a 128 px panel holds 15 characters at x=4, and a
+# row costs 11 px of height. The first layout here was written for 6x8 and clipped its
+# own footer. `test_display.py` asserts the fit rather than trusting this comment.
+CHARS_PER_ROW = 15
+BANNER_H = 15
+ROW_Y = (17, 28, 39)
+FOOTER_Y = 50
+
+
 def draw_status(draw, width, height, status):
-    """Render the status screen onto a PIL ImageDraw. Pure -- no hardware, no I/O."""
+    """Render the status screen onto a PIL ImageDraw. Pure -- no hardware, no I/O.
+
+    FOUR THINGS, in the order someone standing over the vehicle asks them:
+
+      1. the banner   -- can I arm. INVERTED (black on white) when every campod is on the
+                         bus and ready, so the one-bit answer differs by half the screen's
+                         brightness rather than by one word. WAIT otherwise
+      2. a row per pod -- `SE  C S Ac Aa`. The name's case repeats that pod's own verdict,
+                         the letters say which subsystem is not there yet. A pod that is
+                         not publishing HAS NO ROW, so the rows are the inventory too
+      3. the footer   -- ARMED or idle, and the card space: the other thing checked before
+                         a flight
+      4. the blink    -- a dot in the corner, on for one second and off the next. Liveness
+                         for THIS PANEL: every other thing here can legitimately sit still,
+                         so without it a frozen screen looks like a calm fleet. There is no
+                         room for a clock beside the footer at 15 characters a row, and the
+                         dot answers the only question the clock was answering
+    """
     draw.rectangle((0, 0, width - 1, height - 1), outline="white")
-    draw.text((4, 1), "COORDINATOR", fill="white")
-    coord = status["coord_state"] or "--"
-    if status["coord_stale"]:
-        coord = "stale"
-    draw.text((4, 15), f"{coord[:9]:<9} {status['time']}", fill="white")
-    draw.text((4, 30), f"pods {' '.join(status['pods'])}", fill="white")
+
+    if status["gate"]:
+        draw.rectangle((1, 1, width - 2, BANNER_H), fill="white")
+        draw.text((width // 2 - 20, 2), "READY", fill="black")
+    else:
+        draw.text((width // 2 - 16, 2), "WAIT", fill="white")
+
+    for y, row in zip(ROW_Y, status["rows"]):
+        line = f"{row['name']:<4}{' '.join(row['letters'])}"
+        draw.text((4, y), line[:CHARS_PER_ROW], fill="white")
+
     if status["capture"] is True:
         cap = "ARMED"
     elif status["capture"] is False:
-        cap = f"idle {status['reason'][:9]}" if status.get("reason") else "idle"
+        cap = f"idle {status['reason']}" if status.get("reason") else "idle"
     else:
         cap = "cap --"
-    free = "" if status["free_gb"] is None else f"  {status['free_gb']:.0f}G"
-    draw.text((4, 45), f"{cap[:14]}{free}", fill="white")
+    free = "" if status["free_gb"] is None else f" {status['free_gb']:.0f}G"
+    draw.text((4, FOOTER_Y), f"{cap[:CHARS_PER_ROW - len(free)]}{free}", fill="white")
+
+    if status["blink"]:
+        draw.rectangle((width - 6, height - 6, width - 3, height - 3), fill="white")
 
 
 def main():

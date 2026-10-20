@@ -179,6 +179,14 @@ Retained, republished every `POD_LINK_STATUS_PERIOD_S` (default 5 s), so a late
 subscriber -- a front panel that just booted, a ground screen on reconnect -- gets the
 whole current picture in one subscribe with nothing to assemble.
 
+`ready` is the pod's own answer to **will arming this pod work**: the camera's `ready`
+(warm and synced, which the camera decides) AND every accelerometer the reader lists as
+present. It is combined by pod-link, which is the process holding both documents, so that
+the coordinator's front panel and the fleet-control table read one field rather than each
+assembling their own -- which is how they came to disagree before #577. Absent on a pod
+with no payload subsystem at all, because a bare `true` there would assert something
+nobody measured.
+
 ```json
 {
   "state": "ok",
@@ -192,6 +200,7 @@ whole current picture in one subscribe with nothing to assemble.
   "services": {"campod_camera": "running"},
   "desired": {"capture": "true", "radio": "closed", "service/campod_camera": "running"},
   "data_free_bytes": 12802234368,
+  "ready": true,
   "camera": {
     "node": "campod-sw", "session": "<boot-id>", "camera": "present",
     "phase": "capture", "ready": true, "ready_at_mono_s": 128.4,

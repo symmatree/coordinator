@@ -99,6 +99,21 @@ type podStatus struct {
 	SelfRSSBytes    int64 `json:"self_rss_bytes,omitempty"`
 	SelfMajorFaults int64 `json:"self_major_faults,omitempty"`
 
+	// WILL ARMING THIS POD WORK: every payload subsystem it has is ready. Today that is
+	// the camera's own `ready` -- warm and synced, which the camera decides -- AND every
+	// accelerometer the reader reports as present.
+	//
+	// COMBINED HERE because this is the process holding both documents. The readers are
+	// the coordinator's front panel (128 px, someone in a field with no network deciding
+	// whether to arm) and the fleet-control table, and two readers each assembling their
+	// own answer is how they come to disagree -- which is exactly what happened before
+	// #577. The panel's per-subsystem letters come from the documents below; this is the
+	// verdict those letters explain.
+	//
+	// Absent on a pod with no payload subsystem at all: the coordinator publishes
+	// neither document, and a bare `true` there would assert something nobody measured.
+	Ready *bool `json:"ready,omitempty"`
+
 	// The capture processes' own documents, passed through untouched.
 	Camera json.RawMessage `json:"camera,omitempty"`
 	Accel  json.RawMessage `json:"accel,omitempty"`
@@ -192,4 +207,48 @@ func passThrough(path string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("%s is not valid JSON (%d bytes)", path, len(body))
 	}
 	return json.RawMessage(body), nil
+}
+
+// podReady answers "will arming this pod work" from the two documents it publishes.
+//
+// Ready when every payload subsystem the pod HAS is ready: the camera's own `ready`,
+// and every accelerometer the reader lists as present. A pod with neither document has
+// no payload and gets no answer -- see podStatus.Ready.
+//
+// READ, NOT RE-DERIVED, for the camera: `camera.ready` is warm AND synced and the camera
+// decides it (#577). This adds the accelerometers, which the camera knows nothing about.
+//
+// A document that will not parse, or an accel reader that lists no devices, is NOT ready.
+// Both are "nobody has confirmed this hardware", and on a pod whose accels are expected
+// that is the answer -- a slipped cable reads the same as a reader that never started.
+func podReady(camera, accel json.RawMessage) *bool {
+	if camera == nil && accel == nil {
+		return nil
+	}
+	ready := true
+	if camera != nil {
+		var cam struct {
+			Ready bool `json:"ready"`
+		}
+		if err := json.Unmarshal(camera, &cam); err != nil || !cam.Ready {
+			ready = false
+		}
+	}
+	if accel != nil {
+		var acc struct {
+			Devices []struct {
+				Present bool `json:"present"`
+			} `json:"devices"`
+		}
+		if err := json.Unmarshal(accel, &acc); err != nil || len(acc.Devices) == 0 {
+			ready = false
+		} else {
+			for _, d := range acc.Devices {
+				if !d.Present {
+					ready = false
+				}
+			}
+		}
+	}
+	return &ready
 }
