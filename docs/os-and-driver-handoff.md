@@ -112,7 +112,7 @@ that you can check every claim rather than inherit it.
 8. **`flight-platform-handoff.md`** and **`ground-platform-handoff.md`** -- for the
    boundaries, and to see how the other roles think.
 
-## Where the fleet actually is (2026-10-18)
+## Where the fleet actually is (2026-10-20)
 
 All three devices were reflashed from `53d9971` and verified on the metal:
 `gpu_mem=32` with full firmware, `/proc/pressure` present on the campods, the
@@ -139,9 +139,19 @@ were reflashed from `ffac9b4`, the claim checker passes 21/21 on both pods and
 and are chrony clients of it at tens of microseconds. `chrony` and `pps-tools`
 now come from `APT_INSTALL`, so the converge installs no packages at all.
 
-Both pods carry a hand-patched `/boot/firmware/config.txt` -- `gpiopin` 24 to 26
--- so their `disk_image` reads `current: false` against main by design, until
-they are next reflashed. That label is informational and gates nothing.
+Both pods carry a hand-patched `/boot/firmware/config.txt` in two places --
+`gpiopin` 24 to 26, and CMA raised from `cma-128` to `cma-size=0xB000000` (176
+MiB, dotfiles-symm#86). Verified after the reboot: `CmaTotal 180224 kB` and
+21/21 claims on both. `MemTotal` moves 457428 -> 457812 kB with the larger
+region, which is `struct page` accounting rather than new memory and is the
+cheapest way to tell from a bundle which region a run used. Their `disk_image`
+reads `current: false` against main by design until they are next reflashed;
+that label is informational and gates nothing.
+
+campod-sw has both ADXL345s fitted and campod-se does not yet, which is the
+whole of the pod-to-pod asymmetry in any capture measurement: accel costs sw
+4.5 MiB resident and 0.48 MB/s of card writes while armed, 0.000 while paused
+(#443, closed).
 
 The flash-time seed is now the **fleet** key as its single `authorized_keys`
 entry (dotfiles-symm#83), and operator keys arrive at converge from
@@ -171,7 +181,9 @@ deferring to this table.
 | **The PPS chain locks routinely and survives a reboot.** Coordinator at `Reference ID: PPS`, stratum 1, 33 ns fast / 390 ns slow on two readings days apart, RMS 313 ns and 2.9 us, both sources reach `377`. The boot unit configures the chip unattended | `chronyc tracking` for the refid; `cat /sys/class/pps/pps0/assert` for a nonzero sequence |
 | **A DS3234 reading `0x00` in every register is the bus, not the chip.** Status reads `0x48` powered, so a zero there is an undriven MISO and `osf` carries no information. `2000-00-00` is impossible for the part -- BCD day and month power up to `01`. With `BBSQW=0` losing VCC stops SQW while timekeeping continues, so one disconnected wire gives a dead bus and zero edges at once | `sudo coord-rtc status`; if every register is zero, look at the 1 Hz LED rather than at software |
 | **Capture's footprint grows at arm time, and it tracks frame size rather than `buffer_count`.** 12 MP at one buffer: anon 45.5 -> 135.5 MiB, 8808 minflt/s, which is 35.8 MB per kept frame -- exactly `main`'s buffer. 3 MP at four buffers: anon 45.7 -> 77.8 MiB and minflt at its paused baseline. Four times the buffers produced 2.8x *less* growth | difference `vmpage_number-anon_pages` and `vmpage_faults` across the phase boundary in `frames.jsonl` |
-| **The limit on growing CMA is `dirty_background_threshold`, not free memory.** It is a fraction of free-plus-reclaimable, so it falls as capture eats the page cache -- 25 MiB paused to 16 MiB armed -- while dirty rises to 11.5. Armed at full resolution there is 67-71 MiB free with `vmscan_write`, `throttled_written` and writeback all zero and nothing ever blocked | `vmpage_number-{dirty,dirty_background_threshold}` from a 10 Hz bundle, per phase |
+| **CMA is NOT carved out the way `gpu_mem` is, so oversizing the region is nearly free.** `gpu_mem` never appears in `MemTotal`; the CMA region is inside it and the allocator fills it with movable pages, migrating them out when a contiguous allocation arrives. So a bigger region does not cost page cache -- it costs only the ability to place *unmovable* allocations there, and at 176 MiB the non-CMA pool is ~270 MiB against ~28 MiB of unreclaimable slab. An earlier version of this row said the limit was `dirty_background_threshold`; that threshold does fall during capture, but because capture's anon eats the cache, not because of how the region is sized | `free_cma` against `CmaTotal` at idle: it reads near zero at any size, which is the allocator having taken the slack as cache |
+| **`sets = buffer_count + 1`, and a set is `main` plus `raw`.** At 2304x1296 the held-or-movable total differs by 23.8 and 25.4 MiB between four buffers and two, against 24.2 MiB predicted for two sets of 8.96 + 3.73 MB. At 4608x2592 a set is 50.7 MB, so `buffer_count=2` wants ~145 MiB -- which is #316's measured third-set figure by an independent route | difference `128 - free_cma` at the paused phase between two runs that differ only in `buffer_count` |
+| **The per-kept-frame allocation is `main`-sized and fixed.** 8738 pages/frame at `buffer_count=1` and 10 Hz, 8645 at `buffer_count=2` and 2 Hz -- 35.8 and 35.4 MB, within 1%, independent of buffer count and frame rate. That is `make_buffer` returning a fresh array per kept frame, which coordinator#564 replaces with one warmup allocation | `vmpage_faults` minflt rate during the armed window, divided by kept frames per second |
 | **`watchdog0/bootstatus` is always 0 here** -- `bcm2835_wdt.c` declares no `WDIOF_CARDRESET` and never assigns the field. Not "did not fire": not reported | grep `WDIOF_CARDRESET` and `bootstatus` in `drivers/watchdog/bcm2835_wdt.c` |
 | **NM will not manage a `DEVTYPE=gadget` interface.** Without the `90-` udev override the campod profile is inert and `usb0` stays DOWN with no error | `nmcli -f GENERAL.REASON device show usb0` -> reason 77 when the override is missing |
 | **NM keyfile list properties are `;`-separated.** A space-separated `match.driver` is one pattern matching nothing, and autoconnect falls back to a default DHCP profile silently | `nmcli connection up campod-bridge-port ifname usbN` names the mismatch |
@@ -187,7 +199,7 @@ deferring to this table.
 | **`vmem`'s metrics are named `vmpage_*`, not `pgmajfault`.** `vmpage_faults` carries minflt and majflt as two values; the `nr_*` fields arrive as `vmpage_number-<name>`. `CollectContextSwitch true` produces no file at all | `ls /var/log/collectd/<boot>/<node>/vmem*` |
 | **`collectd`'s `vmem` plugin cannot report `workingset_refault_file`** -- it dispatches `nr_*` by prefix plus a fixed list of named keys, and `workingset_*` matches none of them. It *does* give `pgmajfault` and all 51 `nr_*` fields | read the key dispatch in `collectd/src/vmem.c`; `grep -c '^nr_' /proc/vmstat` for the metric count |
 
-## Open work (2026-10-11)
+## Open work (2026-10-20)
 
 Treat the state column as the part that rots; check `origin/main` and the issue's comments.
 
@@ -195,14 +207,15 @@ Treat the state column as the part that rots; check `origin/main` and the issue'
 |---|---|
 | **#372** re-image a rootfs without pulling the card | Unstarted and still the substantial one. No selection mechanism exists on a campod. Blocks #312. Adopting one costs every device a reflash |
 | **#312** touchless reimage, bench side | Needs a mechanism from #372 |
-| **#447** `gpu_mem` | Answered: 32, measured, shipped. Close it or leave it as the record of the measurement -- that is Seth's |
-| **#452** the docs PR carrying the `gpu_mem` findings and the bare-OS baseline | Open last I looked |
-| **#434** warm up and hold idle-ready | The measurement that was mine is closed -- the camera holds its CMA across a pause. The rest is flight-platform's |
+| **#447** `gpu_mem` | Answered: 32, measured, shipped, and the reasoning now lives in `deployment-model.md`. Still open; closing it is Seth's |
+| **#434** warm up and hold idle-ready | Closed. The pods now wait on the time-synced unit before starting, which Seth reports cut import time substantially -- unmeasured here, because `collect` reboots before it offloads so the import lands in the *next* boot's collectd tree, not in the bundle |
 | **#370** campod time | Built. Both roles carry the overlay on their own pin, the legs are wired, and the pods are chrony clients of the coordinator. What has no figure yet is the pods' own PPS refclock: the line was gated out of the rendered config until coordinator#495, so no pod has been measured on the fraction |
 | **#251** disarm RO snapshot of `@data` | A decision Seth has declined to make, twice. Do not re-raise it as a thing to settle; it is not costing anything |
 | **#90** bake container images into the image | Not built. Different and harder than baking packages: it needs the image store populated offline |
-| **#236**, **#261** provisioning service, fleet SSH key | Not started |
+| **#236** provisioning service | Not started |
+| **#261** fleet SSH key | Built, both halves. The flash-time seed carries the fleet key as its single entry (dotfiles-symm#83) and `roles/ssh-access` writes the set at provision, taking the fleet key from the driver rather than a repo literal. Still open; dotfiles-symm#77 is the issue that tracked the gap and is also still open |
 | **#41** power-loss filesystem | Umbrella |
+| **CMA at 176 MiB** | Merged (dotfiles-symm#86) and hand-patched onto both pods. Sized for `buffer_count=2` at full resolution from `sets = buffer_count + 1`, which two independent routes agree on but `dma_buf/bufinfo` has never confirmed directly at 12 MP. Nothing in collectd reports it and `free_cma` cannot substitute |
 | wired `eth0` on the coordinator | Still nothing configures it. Parked until Seth can run a cable; `10.55.1.1/24` was the suggestion and the address is his |
 | baking the rest of provision | Packages and the `/usr/local/bin` symlinks are the pair that would let provision drop the `/usr` hatch and its reboot. Packages are done. The symlinks, the static config files and the `modules-load.d` entries are classified in flight-platform's message on it; `i2c-dev` is cleanly bakeable, the gadget one is coupled to the hostname-derived MACs |
 
@@ -429,6 +442,31 @@ free, having substituted my own criterion -- does the converge have room -- for
 his, which is that the run starts from a known empty card. Free space and session
 age are the two variables nothing has ever separated, so I uncontrolled one of
 them on the only pod with the sensors.
+
+**Answer it from the bundle before you answer it from the box.** The worst thing I
+did this session: I ran `journalctl --list-boots` over ssh against campod-se to date a
+run, during a collection pass, and it hit a two-minute timeout -- two sustained minutes
+of a Zero reading its own 200 MB persistent journal off the card a collection was
+writing. It cost Seth that pass, and the after-side of the pre-allocation bracket had to
+be run again. The answer was already in the four bundles sitting extracted in my
+scratchpad: differencing `MemTotal` across them identifies which CMA region each run used,
+offline, in one command. He had pointed me at the bundles precisely so this would not
+happen. **`journalctl`, `find`, `du` and `grep -r` all walk the card** -- on a pod there is
+almost nothing worth learning over ssh that a bundle does not already hold.
+
+**Do not reason past your own measurement.** Minutes after reading `CmaTotal 180224` and
+`MemTotal 457812` off both pods with my own hands, I concluded a run must predate that
+patch -- and then went to the hardware to settle it. I had attributed the pods' current
+boot to my own reboot when it was `collect`'s pre-offload reboot, which lands seconds
+after a session's last frame and is easy to mistake for an interruption. When a conclusion
+contradicts something you measured an hour ago, the conclusion is the thing to doubt.
+
+**Read the bug, including its comments, before writing to it.** The doc above already says
+this about auditing. I did the stronger version: posted a measurement to #443 having read
+only its title from a list. Its one comment had already established the exact gap my
+measurement filled -- that the cheap paused-ready figures came from the pod with no
+accelerometers fitted -- and my first draft was a free-standing table that did not answer
+it, because I did not know what the bug said.
 
 **Do not launch anything into a settling box.** I started a converge the instant
 the previous one's reboot returned, which put apt into the import storm. The box
