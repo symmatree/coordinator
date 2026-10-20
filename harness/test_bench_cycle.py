@@ -70,40 +70,33 @@ check("one pod missing is not a fresh boot, however fresh the other looks",
       not bc.is_fresh([_FRESH[0]], 7000.0))
 
 # ---- camera readiness -----------------------------------------------------------------
-# Arming while a camera was still in warmup produced a window whose first frames were
-# warmup frames on one pod only. `phase` being set is not enough; `ready` is the flag.
-check("both ready is ready", bc.cameras_ready(
-    [{"raw": {"camera": {"ready": True}}}, {"raw": {"camera": {"ready": True}}}]))
-check("a camera in warmup is not ready", not bc.cameras_ready(
-    [{"raw": {"camera": {"ready": True}}},
-     {"raw": {"camera": {"phase": "warmup", "ready": False}}}]))
-check("a camera with no document is not ready", not bc.cameras_ready(
-    [{"raw": {"camera": {"ready": True}}}, {"raw": {}}]))
-check("one pod reporting is not both", not bc.cameras_ready(
-    [{"raw": {"camera": {"ready": True}}}]))
-
-# ---- and synced, which is a second wait -----------------------------------------------
-# The window of 2026-10-18T22:40 opened 18.5 s before the pair was aligned: 38 frames on
-# each pod recorded `sync_wait` and were thrown away, so that run kept 232 where its
-# neighbours kept 248 and 250. #542 exists so a PAUSED pod reaches sync before arming;
-# the gate simply never looked at the field.
-def _cam(ready=True, sync=True):
-    return {"raw": {"camera": {"ready": ready, "sync_ready": sync}}}
+# ONE FIELD, DECIDED ON THE POD. `camera.ready` is warm AND synced, combined by the campod
+# (#577); this gate reads it and combines nothing. It used to assemble readiness here from
+# `ready` (which then meant warm only) plus three-valued `sync_ready` -- and the front
+# panel assembled it differently, which is how the panel came to show a ready pod for the
+# ~80 s between warmup ending and the pair aligning.
+#
+# Why the wait has to be real: the window of 2026-10-18T22:40 opened 18.5 s before the
+# pair was aligned, 38 frames on each pod recorded `sync_wait` and were thrown away, and
+# that run kept 232 frames where its neighbours kept 248 and 250.
+def _cam(ready=True):
+    return {"raw": {"camera": {"ready": ready}}}
 
 
-check("ready and synced is ready", bc.cameras_ready([_cam(), _cam()]))
-check("ready but still counting is NOT ready",
-      not bc.cameras_ready([_cam(), _cam(sync=False)]))
-# null is sync switched off, not sync pending: with no leader configured there is nothing
-# to wait for, and blocking on it would hang the stage until the 900 s timeout.
-check("sync off on both pods does not block",
-      bc.cameras_ready([_cam(sync=None), _cam(sync=None)]))
-# A MIXTURE is a pod that has not evaluated yet. Reading that as "off" is exactly how a
-# gate passes early, which is the bug being fixed.
-check("one pod not yet reporting sync is not synced",
-      not bc.cameras_ready([_cam(sync=True), _cam(sync=None)]))
-check("sync true cannot rescue a camera that is not ready",
-      not bc.cameras_ready([_cam(), _cam(ready=False)]))
+check("both ready is ready", bc.cameras_ready([_cam(), _cam()]))
+check("one pod not ready is not ready", not bc.cameras_ready([_cam(), _cam(ready=False)]))
+check("a camera with no document is not ready",
+      not bc.cameras_ready([_cam(), {"raw": {}}]))
+check("one pod reporting is not both", not bc.cameras_ready([_cam()]))
+# Absent, not false: a pod running an image from before #577 publishes no `ready` at all,
+# and "the field is missing" must not read as ready.
+check("a missing ready field is not ready",
+      not bc.cameras_ready([_cam(), {"raw": {"camera": {"warm": True}}}]))
+# The halves are detail now. A gate that still looked at them would be the second
+# definition this change exists to delete.
+check("warm and sync_ready cannot make a pod ready on their own",
+      not bc.cameras_ready([_cam(),
+                            {"raw": {"camera": {"warm": True, "sync_ready": True}}}]))
 
 # ---- failure detection, in both line formats ------------------------------------------
 # fleet-control renders FAILED:/UNREACHABLE: today and has no `fatal:` at all, so a grep

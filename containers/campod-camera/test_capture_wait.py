@@ -59,7 +59,12 @@ sys.modules["picamera2"] = fake
 # python3-simplejpeg in the camera image, where these run during the build, and
 # simplejpeg in the notebook image for running them by hand.
 _libcamera = types.ModuleType("libcamera")
-_libcamera.controls = types.SimpleNamespace()
+# SyncMode is on the stub because applying it is no longer best-effort (#577): a control
+# that cannot be set is now fatal at start, so a stub missing it would fail every run
+# here for a reason that has nothing to do with what is being tested.
+_libcamera.controls = types.SimpleNamespace(
+    rpi=types.SimpleNamespace(
+        SyncModeEnum=types.SimpleNamespace(Server="server", Client="client")))
 sys.modules["libcamera"] = _libcamera
 
 _spec = importlib.util.spec_from_file_location("capture", "capture.py")
@@ -409,14 +414,20 @@ class _FakeCam:
         if "FrameDurationLimits" in c:
             self.camera_controls["FrameDurationLimits"] = c["FrameDurationLimits"]
 
+    # SyncReady on every frame's metadata, because that is what a real server does: a
+    # pacesetter with no followers reports ready like any other. It used to be absent
+    # here and that was harmless only while sync could be off (#577) -- with sync
+    # mandatory, an absent SyncReady means every armed frame is discarded as sync_wait.
     def capture_request(self):
         if self.i >= len(self.exposures):
             capture._stop = True
-            return _FakeRequest({"SensorTimestamp": self.exposures[-1]}, self.saved)
+            return _FakeRequest({"SensorTimestamp": self.exposures[-1],
+                                 "SyncReady": True, "SyncTimer": 0}, self.saved)
         ts = self.exposures[self.i]
         self.i += 1
         return _FakeRequest({"SensorTimestamp": ts, "ExposureTime": 4995,
-                             "FrameDuration": 199990}, self.saved)
+                             "FrameDuration": 199990,
+                             "SyncReady": True, "SyncTimer": 0}, self.saved)
 
     def capture_metadata(self):
         return {"SyncReady": True, "SyncTimer": 0}
@@ -491,7 +502,9 @@ capture._copy_out = _fake_copy_out
 
 _env = {"CAMPOD_CAPTURE_DIR": _td2, "CAMPOD_WARMUP_FRAMES": "0",
         "CAMPOD_STATUS_FILE": str(Path(_td2) / "status"), "CAMPOD_CAPTURE_FLAG": "",
-        "CAMPOD_SYNC_LEADER": "", "CAMPOD_FRAME_DURATION_US": "200000",
+        # This pod is the leader, which is the one-pod case and needs no followers.
+        "CAMPOD_SYNC_LEADER": capture._node_name(),
+        "CAMPOD_FRAME_DURATION_US": "200000",
         "CAMPOD_BUFFER_COUNT": "3"}
 _old_env = {k: os.environ.get(k) for k in _env}
 os.environ.update(_env)
@@ -574,7 +587,10 @@ _env3 = {"CAMPOD_CAPTURE_DIR": _td3, "CAMPOD_WARMUP_FRAMES": "3",
          "CAMPOD_STATUS_FILE": str(_status3),
          # A flag path that exists and says 0: armed is a decision, and this is "paused".
          "CAMPOD_CAPTURE_FLAG": str(Path(_td3) / "armed"),
-         "CAMPOD_SYNC_LEADER": "", "CAMPOD_FRAME_DURATION_US": "200000"}
+         # Its own name, so it is the server: the trivial sync case, one pod pacing
+         # itself with no followers. There is no unsynced mode to test instead.
+         "CAMPOD_SYNC_LEADER": capture._node_name(),
+         "CAMPOD_FRAME_DURATION_US": "200000"}
 (Path(_td3) / "armed").write_text("0\n")
 _old3 = {k: os.environ.get(k) for k in _env3}
 os.environ.update(_env3)
@@ -592,16 +608,21 @@ finally:
         else:
             os.environ[_k] = _v
 
-# The document read after the run is the SHUTDOWN state -- phase `stopped`, ready False --
-# so what proves warmup ended is `ready_at_mono_s` being stamped at all, plus the READY line
+# The document read after the run is the SHUTDOWN state -- phase `stopped`, warm False --
+# so what proves warmup ended is `warm_at_mono_s` being stamped at all, plus the WARM line
 # the process prints when it crosses. Both are absent entirely when warmup deadlocks.
 _doc3 = json.loads(_status3.read_text()) if _status3.exists() else {}
 _out3 = _buf3.getvalue()
-check("a paused pod finishes warmup and stamps when it went ready",
-      _doc3.get("ready_at_mono_s") is not None, f"rc={_rc3} status={_doc3}")
+check("a paused pod finishes warmup and stamps when it went warm",
+      _doc3.get("warm_at_mono_s") is not None, f"rc={_rc3} status={_doc3}")
 check("it says so, and says it is paused rather than capturing",
-      "READY after" in _out3 and "paused" in _out3.split("READY after")[1][:80],
+      "WARM after" in _out3 and "paused" in _out3.split("WARM after")[1][:80],
       _out3[-300:])
+# And it got all the way to ready while paused, which is the point of #434's idle-ready
+# state: the pair negotiates sync before anyone arms, so arming does not spend its first
+# frames waiting. The fake camera reports SyncReady, so warm is the only other half.
+check("a paused pod reaches ready, not just warm",
+      _doc3.get("ready_at_mono_s") is not None, f"status={_doc3}")
 check("a paused pod writes nothing even so",
       len(_cam3.saved) == 0, f"{len(_cam3.saved)} written while paused")
 check("and it reports every frame it retrieved",
@@ -694,6 +715,17 @@ check("the sidecar still lands after its image, which is what marks a frame comp
       str(_written))
 check("no errors were swallowed on the way", _ser.errors == 0, str(_ser.errors))
 shutil.rmtree(_tdq, ignore_errors=True)
+
+# ---- what `ready` means (#577) ---------------------------------------------------------
+# The arm answer, and the only thing a person in a field with no network gets to read off
+# the coordinator's panel. Warm was published AS `ready` until #577, so the middle two
+# cases here are the bug: roughly 80 s of every start, warm and not yet aligned.
+_ready = capture._is_ready
+check("warm and synced is ready", _ready(True, True) is True)
+check("warm but still counting towards sync is NOT ready", _ready(True, False) is False)
+check("warm but sync not evaluated yet is NOT ready", _ready(True, None) is False)
+check("synced but not warm is not ready", _ready(False, True) is False)
+check("neither is not ready", _ready(False, None) is False)
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

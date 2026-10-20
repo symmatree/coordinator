@@ -7,11 +7,17 @@ AN ECHO OF THE POD BUS, AND NOTHING ELSE. It subscribes to `rekon/pod/+/status` 
 opinion about the fleet's state -- one that could disagree with the bus every other
 component reads, and one that knew nothing about the campods at all.
 
-WHAT THE CAMPOD TOKENS MEAN. `se`/`sw` lower case: that pod is publishing. Upper case:
-its camera reports `ready`, which is the same field the bench cycle waits on before it
-arms. `--`: no fresh document, which includes a pod that is off and a pod whose last
-message has aged out -- the documents are RETAINED, so one that exists is not evidence
-anything is alive.
+WHAT THE CAMPOD TOKENS MEAN. TWO STATES, because two is what the question has. Lower
+case `se`/`sw`: that pod is up and pre-flighting -- it is publishing, and it is not ready.
+Upper case `SE`/`SW`: `camera.ready`, the pod's own answer to "will arming now produce
+usable frames", which is warm AND synced and is combined on the pod (#577) so that this
+panel and the bench cycle's arm gate cannot mean different things by it. `--`: no fresh
+document, which includes a pod that is off and a pod whose last message has aged out --
+the documents are RETAINED, so one that exists is not evidence anything is alive.
+
+THIS PANEL IS THE FIELD INSTRUMENT. With a network there is the fleet-control table,
+which has room to say WHY a pod is not ready. Here there is 128 px and someone deciding
+whether to arm, so the verdict is all it shows and the verdict has to be the real one.
 
 THE LAG IS THE HEARTBEAT. pod-link publishes status every POD_LINK_STATUS_PERIOD_S,
 60 by default and deliberately slow -- every wake-up on a campod is a chance to fault
@@ -52,14 +58,15 @@ def _env(name, default):
 # will start showing as absent between its own publications.
 STALE_AFTER_S = 15.0
 
-# What the camera's own document calls ready. The bench cycle waits on this exact field
-# before it arms, which is the reason the panel shows it.
+# The pod's own arm answer, read and not re-derived. This panel deliberately does not
+# combine `warm` and `sync_ready` itself: the campod does that (#577), so the panel and
+# the bench cycle's arm gate cannot drift into meaning different things by "ready".
 CAMPODS = ("campod-se", "campod-sw")
 
 
 def pod_token(node, doc, age):
-    """`SE` ready, `se` publishing, `--` absent or stale. Short, because the panel is
-    128 px wide and two pods have to fit beside the coordinator's own state."""
+    """`SE` ready to arm, `se` up and pre-flighting, `--` absent or stale. Short, because
+    the panel is 128 px wide and two pods have to fit beside the coordinator's state."""
     short = node.replace("campod-", "")
     if doc is None or age is None or age > STALE_AFTER_S:
         return "--"

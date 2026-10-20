@@ -46,8 +46,16 @@ export interface PodStatus {
   stack?: string;
   radio?: string;
   dataFreeBytes?: number;
-  /** Camera readiness, the part #434 is about. */
+  /**
+   * Will arming work now: warm AND synced, combined on the pod (#577). The two halves
+   * below are carried so the table can say WHY a pod is not ready; nothing in this
+   * service recombines them, because then there would be two definitions of ready.
+   */
   ready?: boolean;
+  /** Camera started and buffers allocated, the part #434 is about. */
+  warm?: boolean;
+  /** This pod believes it is aligned with the pair. Absent until it has evaluated. */
+  syncReady?: boolean;
   phase?: string;
   frames?: number;
   /** The whole document, so nothing is lost by this interface being narrower than it. */
@@ -75,6 +83,8 @@ function parse(node: string, payload: string): PodStatus {
     radio: typeof d.radio === 'string' ? d.radio : undefined,
     dataFreeBytes: typeof d.data_free_bytes === 'number' ? d.data_free_bytes : undefined,
     ready: typeof cam.ready === 'boolean' ? cam.ready : undefined,
+    warm: typeof cam.warm === 'boolean' ? cam.warm : undefined,
+    syncReady: typeof cam.sync_ready === 'boolean' ? cam.sync_ready : undefined,
     phase: typeof cam.phase === 'string' ? cam.phase : undefined,
     frames: typeof cam.frames === 'number' ? cam.frames : undefined,
     raw: d,

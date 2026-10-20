@@ -125,30 +125,21 @@ def is_fresh(pods: list[dict], uptime_before: float) -> bool:
 
 
 def cameras_ready(pods: list[dict]) -> bool:
-    """Both cameras past warmup AND synchronised, which are two different waits.
+    """Both cameras ready, which is the pod's own word for "arming now works".
 
-    `ready` and not merely a phase: arming during warmup produced a window whose first
-    frames were warmup frames on one pod only.
+    ONE FIELD, AND NOT ASSEMBLED HERE. `camera.ready` is warm AND synced, combined by the
+    campod that knows both (#577). This gate used to read `ready` -- which then meant warm
+    only -- and separately reason about three-valued `sync_ready`, and arming is not the
+    only reader: the front panel has to answer the same question for someone standing in
+    front of it with no network. Two readers deciding what readiness means is how they
+    disagree, which they did: this gate was fixed on 2026-10-19 and the panel was not.
 
-    AND `sync_ready`, because warmup finishing does not mean the pair is aligned. #542 made
-    a paused pod negotiate sync while idle precisely so this wait could be over before
-    arming -- but the gate never looked, and got away with it until the window of
-    2026-10-18T22:40 opened 18.5 s early: 38 frames on each pod recorded `sync_wait` and
-    were discarded, so that run kept 232 frames where its neighbours kept 248 and 250.
-
-    THE THREE-VALUED FIELD. `sync_ready` is null when sync is off (no leader configured),
-    false while a client is still counting, true once achieved. So: all null means there is
-    no sync to wait for and this must not block; anything else means wait for all of them
-    to be true. A mixture -- one null, one false -- is a pod that has not evaluated yet, and
-    treating that as "off" is how a gate passes early.
+    Why it matters that the wait is real: the window of 2026-10-18T22:40 opened 18.5 s
+    early, 38 frames on each pod recorded `sync_wait` and were discarded, and that run kept
+    232 frames where its neighbours kept 248 and 250.
     """
     cams = [(p.get("raw") or {}).get("camera") or {} for p in pods]
-    if len(cams) != len(CAMPODS) or not all(c.get("ready") for c in cams):
-        return False
-    syncs = [c.get("sync_ready") for c in cams]
-    if all(s is None for s in syncs):
-        return True
-    return all(s is True for s in syncs)
+    return len(cams) == len(CAMPODS) and all(c.get("ready") is True for c in cams)
 
 
 # Failure markers, for a play that started and then failed. They are ansible's own words and

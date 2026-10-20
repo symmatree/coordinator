@@ -30,8 +30,23 @@ async function broker(retained: Record<string, string>): Promise<{
 const SE = JSON.stringify({
   state: 'ok', node: 'campod-se', build: 'c6dc61e', capture: true, stack: 'running',
   radio: 'closed', data_free_bytes: 12802234368,
-  camera: { phase: 'capture', ready: true, frames: 412 },
+  camera: { phase: 'capture', ready: true, warm: true, sync_ready: true, frames: 412 },
   accel: { devices: [{ label: 'camera', present: true, self_test: 'pass' }] },
+});
+
+test('the halves ride along beside the verdict, and nothing recombines them', async () => {
+  // `ready` is the pod's own answer (#577). `warm` and `sync_ready` are carried so the
+  // table can say WHY a pod is not ready -- the state it sits in for ~80 s of a start.
+  const warming = JSON.parse(SE) as Record<string, unknown>;
+  warming.camera = { phase: 'capture', ready: false, warm: true, sync_ready: false };
+  const b = await broker({ 'rekon/pod/campod-se/status': JSON.stringify(warming) });
+  try {
+    const { pods } = await readPods(b.cfg);
+    const p = pods[0];
+    assert.equal(p?.ready, false);
+    assert.equal(p?.warm, true);
+    assert.equal(p?.syncReady, false);
+  } finally { await b.stop(); }
 });
 
 test('an empty url disables the bus rather than dialling nothing', () => {

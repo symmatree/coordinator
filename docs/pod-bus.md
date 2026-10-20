@@ -194,7 +194,8 @@ whole current picture in one subscribe with nothing to assemble.
   "data_free_bytes": 12802234368,
   "camera": {
     "node": "campod-sw", "session": "<boot-id>", "camera": "present",
-    "phase": "capture", "ready": true, "ready_at_mono_s": 95.2,
+    "phase": "capture", "ready": true, "ready_at_mono_s": 128.4,
+    "warm": true, "warm_at_mono_s": 95.2, "sync_ready": true,
     "capturing": true, "frames": 412, "last_frame_mono_s": 1831.9,
     "as_of_mono_s": 1832.1
   },
