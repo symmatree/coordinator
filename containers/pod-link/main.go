@@ -723,6 +723,8 @@ func reconcile(c config, h *host, want *wanted) *podStatus {
 	} else {
 		doc.Accel = acc
 	}
+	// After both documents, because it is one verdict over both. See podStatus.Ready.
+	doc.Ready = podReady(doc.Camera, doc.Accel)
 
 	doc.SelfRSSBytes, doc.SelfMajorFaults = selfCost()
 
