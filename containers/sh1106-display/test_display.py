@@ -12,9 +12,16 @@ from PIL import Image, ImageDraw
 from display import STALE_AFTER_S, draw_status, pod_token, status_from_bus
 
 READY = {"node": "campod-se", "state": "ok",
-         "camera": {"phase": "capture", "ready": True, "frames": 12}}
+         "camera": {"phase": "capture", "ready": True, "warm": True,
+                    "sync_ready": True, "frames": 12}}
 WARM = {"node": "campod-se", "state": "ok",
-        "camera": {"phase": "warmup", "ready": False, "frames": 0}}
+        "camera": {"phase": "warmup", "ready": False, "warm": False,
+                   "sync_ready": None, "frames": 0}}
+# The state this panel used to call ready: past warmup, still counting towards sync,
+# roughly 80 s of every start. `ready` is false on it and so is the token (#577).
+WARM_UNSYNCED = {"node": "campod-se", "state": "ok",
+                 "camera": {"phase": "capture", "ready": False, "warm": True,
+                            "sync_ready": False, "frames": 0}}
 NO_CAMERA = {"node": "campod-se", "state": "ok"}
 COORD = {"node": "coordinator", "state": "ok", "capture": False,
          "data_free_bytes": 24_707_977_216}
@@ -35,9 +42,16 @@ def _render(status):
 
 
 # ---- the token, which is the whole readability of the panel ---------------------------
-# Upper case is `camera.ready`: the same field the bench cycle waits on before arming.
+# Upper case is `camera.ready`, the pod's own arm answer -- warm AND synced, combined on
+# the pod, the same field and meaning the bench cycle's arm gate uses.
 check("ready is upper case", pod_token("campod-se", READY, 1.0) == "SE")
 check("publishing but not ready is lower case", pod_token("campod-se", WARM, 1.0) == "se")
+check("warm but not yet synced is lower case, which is the #577 bug",
+      pod_token("campod-se", WARM_UNSYNCED, 1.0) == "se")
+# The panel reads the verdict; it must not reconstruct it. A pod claiming ready with no
+# halves present still reads ready, because the pod is the one that decides.
+check("the panel trusts `ready` without checking the halves",
+      pod_token("campod-sw", {"node": "campod-sw", "camera": {"ready": True}}, 1.0) == "SW")
 check("a pod with no camera document is lower case, not ready",
       pod_token("campod-se", NO_CAMERA, 1.0) == "se")
 check("absent is --", pod_token("campod-sw", None, None) == "--")

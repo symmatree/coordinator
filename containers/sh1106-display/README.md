@@ -18,10 +18,11 @@ idle disarmed  24G
 
 - **line 2** -- the coordinator's `state` from its own pod-link document, and the clock.
   `stale` if that document has aged out.
-- **pods** -- one token per campod. `se` lower case: the pod is publishing. `SE` upper
-  case: its `camera.ready` is true, which is the same field the bench cycle waits on
-  before it arms. `--`: no fresh document, which covers a pod that is off and a pod whose
-  last message has aged out.
+- **pods** -- one token per campod, in two states. `se` lower case: the pod is up and
+  pre-flighting. `SE` upper case: `camera.ready`, which is warm AND synced, combined on
+  the pod itself (#577) -- the same field and the same meaning the bench cycle's arm gate
+  uses. `--`: no fresh document, which covers a pod that is off and a pod whose last
+  message has aged out.
 - **line 4** -- `ARMED` or `idle <reason>` from the capture intent, and the coordinator's
   free space.
 

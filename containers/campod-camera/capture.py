@@ -2,12 +2,14 @@
 """Rekon campod still-capture loop.
 
 Captures JPEG stills from the Camera Module 3 (IMX708) at a fixed cadence and
-writes each frame plus a JSON metadata sidecar to local storage. Standalone
-(Phase 2): no network, no coordination. The frame-sync hooks (pacesetter/server
-+ clients) are present but default off -- they are exercised once multiple campods
-share a network and time base (#24). See docs/campod.md.
+writes each frame plus a JSON metadata sidecar to local storage. Frame sync
+(one pacesetter/server, the rest clients) is how the pods' frames line up and is
+not optional -- CAMPOD_SYNC_LEADER is required. See docs/campod.md.
 
-Config via environment (all optional):
+A pod reports `camera.ready` only when it is both warm and synced, because that
+is the question anyone asks of it: will arming now produce usable frames.
+
+Config via environment:
   CAMPOD_NODE_NAME       node label in filenames/metadata (default: hostname)
   CAMPOD_CAPTURE_DIR     output dir (default: /captures)
   CAMPOD_CAPTURE_WIDTH   frame width  (default: 0 = sensor full resolution)
@@ -20,10 +22,11 @@ Config via environment (all optional):
                       algorithm requires a FIXED rate and warns every frame without one.
                       Clamped to what the sensor mode allows, and the achieved value is
                       logged (default: 200000, i.e. 5 fps)
-  CAMPOD_SYNC_LEADER     hostname of the pod that paces the others; this pod becomes
-                      the sync server if it matches its own name and a client if it
-                      does not. Empty disables sync entirely (default: empty)
-  CAMPOD_WARMUP_FRAMES   frames to capture at startup before going ready (default: 10)
+  CAMPOD_SYNC_LEADER     REQUIRED. hostname of the pod that paces the others; this pod
+                      becomes the sync server if it matches its own name and a client if
+                      it does not. There is no unsynced mode: a single pod names itself
+                      and runs as a server with no followers
+  CAMPOD_WARMUP_FRAMES   frames to capture at startup before going warm (default: 10)
   CAMPOD_CAPTURE_FLAG    path whose contents gate capture; empty disables gating
                       and captures continuously (default: /tmp/campod_capture)
   CAMPOD_STATUS_FILE     path this writes its own state to, for pod-link to publish;
@@ -488,7 +491,7 @@ class _Serializer:
 
 
 def _sync_mode_for(leader, node):
-    """server on the leader, client on everyone else, off when no leader is named.
+    """server on the leader, client on everyone else. A leader is required.
 
     ONE VALUE, IDENTICAL ON EVERY POD, because that is the only kind of configuration the
     deployment can currently express: stacks/campod/ is one file copied to every pod and a
@@ -502,9 +505,15 @@ def _sync_mode_for(leader, node):
 
     An unknown leader name leaves every pod a client and nothing paces them, which is why
     the caller logs what it resolved to rather than only that sync is on.
+
+    NO UNSYNCED MODE. A campod is a member of the pair; an unsynced one produces frames
+    that cannot be used with the other pod's, which is the whole product. So an unset
+    leader is a configuration error rather than a mode -- see main(). Electing a leader
+    over the bus instead of naming one is coordinator#501, and is a refinement of this,
+    not a reason to keep a path for having none.
     """
     if not leader:
-        return "off"
+        raise ValueError("no sync leader named")
     return "server" if leader == node else "client"
 
 
@@ -555,35 +564,31 @@ def _pin_frame_duration(picam2, want_us):
     return got
 
 
-def _maybe_apply_sync(picam2, mode):
-    """Best-effort libcamera camera-sync configuration.
+def _apply_sync(picam2, mode):
+    """libcamera camera-sync configuration. Required, not best-effort.
 
     The CM3 has no XVS hardware trigger, so multi-campod alignment uses libcamera's
-    software sync (one server/pacesetter, the rest clients). The exact picamera2
-    control surface is NOT verified on hardware yet, so this is guarded: a wrong
-    control name logs a warning instead of killing capture. Confirm against the
-    installed picamera2/libcamera and wire properly in Phase 3 (#24). With the
-    default (off) this code path never runs, so standalone capture is unaffected.
-    """
-    if mode == "off":
-        return None
-    try:
-        from libcamera import controls  # noqa: PLC0415  (optional, version-dependent)
+    software sync (one server/pacesetter, the rest clients).
 
-        sync_enum = {
-            "server": controls.rpi.SyncModeEnum.Server,
-            "client": controls.rpi.SyncModeEnum.Client,
-        }[mode]
-        picam2.set_controls({"SyncMode": sync_enum})
-        print(f"capture: sync mode set to {mode}", flush=True)
-        return mode
-    except Exception as exc:  # noqa: BLE001  intentionally broad; sync is optional
-        print(
-            f"capture: WARNING could not set sync mode {mode!r}: {exc}. "
-            "Continuing unsynced; verify control surface on hardware (#24).",
-            flush=True,
-        )
-        return None
+    THERE IS NO UNSYNCED MODE, and this used to warn and continue because the picamera2
+    control surface was unverified on hardware. It is verified now -- every run since
+    2026-10-18 pairs 248-250 frames within 50 us by it -- and a pod that silently
+    continued unsynced would produce frames that cannot be used with the other pod's,
+    which is the product. So a control we cannot set is fatal here, at start, rather
+    than a pod that never reaches ready and does not say why.
+
+    The trivial case is a server with no followers, which needs nothing special: it
+    paces itself and reports SyncReady like any other server.
+    """
+    from libcamera import controls  # noqa: PLC0415  (version-dependent)
+
+    sync_enum = {
+        "server": controls.rpi.SyncModeEnum.Server,
+        "client": controls.rpi.SyncModeEnum.Client,
+    }[mode]
+    picam2.set_controls({"SyncMode": sync_enum})
+    print(f"capture: sync mode set to {mode}", flush=True)
+    return mode
 
 
 # A campod with no camera waits for one; it does not exit. Exiting means docker's
@@ -679,6 +684,25 @@ def _wait_for_camera(heartbeat=None):
 
 # Where the stack file mounts the host's own /etc/hostname.
 HOST_HOSTNAME_PATH = Path("/etc/host-hostname")
+
+
+def _is_ready(warm, sync_ready):
+    """Will arming now produce usable frames: warm AND synced.
+
+    THE ONE PLACE THIS IS DECIDED. The question has three readers -- the bench cycle's
+    arm gate, the coordinator's front panel, and the fleet-control table -- and the panel
+    is the one that matters, because in the field it is the only one: no network, no
+    table, someone standing in front of a 128 px screen deciding whether to arm. A reader
+    cannot combine booleans, so this pod combines them.
+
+    It was two definitions before #577 and they disagreed. `camera.ready` meant warm
+    only; the arm gate separately required `sync_ready`, and the panel did not, so the
+    panel showed a ready pod for the ~80 s between warm and synced.
+
+    `sync_ready is True` rather than truthy because the field is absent until the pod has
+    evaluated it, and "has not looked yet" must not read as ready.
+    """
+    return bool(warm) and sync_ready is True
 
 
 def _capture_wanted(flag_path):
@@ -816,7 +840,15 @@ def main():
     quality = _env_int("CAMPOD_JPEG_QUALITY", 90)
     max_exposure_us = _env_int("CAMPOD_STILL_MAX_EXPOSURE_US", 5000)
     focus = (os.getenv("CAMPOD_STILL_FOCUS") or "infinity").strip().lower()
+    # Required: there is no unsynced mode (_sync_mode_for says why). A pod with no leader
+    # named cannot know whether it is the pacesetter, and the quadlet has set this on every
+    # campod since sync landed -- so an empty one is a broken deployment, which should say
+    # so at start rather than produce unusable frames.
     sync_leader = (os.getenv("CAMPOD_SYNC_LEADER") or "").strip()
+    if not sync_leader:
+        print("capture: CAMPOD_SYNC_LEADER is required -- name the pacesetter pod "
+              "(a single pod names itself and runs as the server)", flush=True)
+        return 2
     frame_duration_us = _env_int("CAMPOD_FRAME_DURATION_US", 200_000)
     buffer_count = _env_int("CAMPOD_BUFFER_COUNT", 1)
     warmup_frames = _env_int("CAMPOD_WARMUP_FRAMES", 10)
@@ -838,7 +870,13 @@ def main():
 
     # One mutable document, stamped and written by publish(). Everything a
     # consumer needs to tell the three states apart that look alike from outside:
-    # blind (no camera), warm but holding (ready, not capturing), and capturing.
+    # blind (no camera), warm but holding (warm, not capturing), and capturing.
+    #
+    # `ready` IS THE ARM ANSWER AND NOTHING ELSE: will this pod's frames be usable if
+    # you arm now. It is warm AND synced, computed here, because a reader standing in
+    # front of the panel cannot combine two booleans and three readers that each
+    # combine them their own way is how they drift apart. `warm` and `sync_ready` stay
+    # as the detail for the network case, where there is room for it.
     state = {
         "node": node,
         "session": session,
@@ -846,16 +884,28 @@ def main():
         "phase": "startup",
         "ready": False,
         "ready_at_mono_s": None,
+        # The camera is started and its buffers are allocated: warmup is done and the
+        # copy-encode-write path has been exercised once. NOT an arm answer on its own
+        # -- it was called `ready` until #577 and read as one, roughly 80 s before the
+        # pair was actually aligned.
+        "warm": False,
+        "warm_at_mono_s": None,
         "capturing": False,
         "frames": 0,
         "last_frame_mono_s": None,
-        # On the bus, where it answers "can this pod's frames be used yet" for the fleet
-        # at a glance. SyncTimer deliberately is NOT here -- it changes every frame and
-        # belongs in the sidecar beside the frame it describes.
+        # SyncTimer deliberately is NOT here -- it changes every frame and belongs in
+        # the sidecar beside the frame it describes.
         "sync_ready": None,
     }
 
+    def refresh_ready():
+        """`ready` from the two facts that make it, and the moment it first held."""
+        state["ready"] = _is_ready(state["warm"], state["sync_ready"])
+        if state["ready"] and state["ready_at_mono_s"] is None:
+            state["ready_at_mono_s"] = round(time.monotonic(), 3)
+
     def publish():
+        refresh_ready()
         state["as_of_mono_s"] = round(time.monotonic(), 3)
         _write_status(status_path, state)
 
@@ -911,10 +961,9 @@ def main():
     # pod became. "sync is on" without "and I am a client" is the state where every pod is
     # a client, nothing paces them, and the frames are no more aligned than before.
     sync_mode = _sync_mode_for(sync_leader, node)
-    if sync_leader:
-        print(f"capture: sync leader is {sync_leader!r}; this pod ({node}) is {sync_mode}",
-              flush=True)
-    sync_active = _maybe_apply_sync(picam2, sync_mode)
+    print(f"capture: sync leader is {sync_leader!r}; this pod ({node}) is {sync_mode}",
+          flush=True)
+    sync_active = _apply_sync(picam2, sync_mode)
     picam2.start()
 
     # After start(): controls are applied to the running camera, and a failed
@@ -927,7 +976,7 @@ def main():
         f"capture: node={node} dir={session_dir} size={size[0]}x{size[1]} "
         f"every frame at the pinned rate, no selection "
         f"quality={quality} exposure_cap={exposure_cap or 'none'} "
-        f"focus={focus_active} sync={sync_active or 'off'} "
+        f"focus={focus_active} sync={sync_active} "
         f"frame_duration={pinned_us or 'unpinned'} buffers={buffer_count}",
         flush=True,
     )
@@ -953,7 +1002,7 @@ def main():
     # The second we have already written a frame for, so a second gets one frame even
     # though several frames fall inside the window when the grid is much faster.
     unstamped = 0
-    # Warm up, then hold ready. The warmup frames are real and are RETRIEVED, which
+    # Warm up, then hold warm. The warmup frames are real and are RETRIEVED, which
     # is what pays the camera's own allocations -- the import is ~16-20 MiB/s of reads
     # for the first minute and a half, and doing that while the operator waits to arm
     # costs flight time he is paying for in battery.
@@ -965,7 +1014,7 @@ def main():
     # write path end to end.
     phase = "warmup" if warmup_frames > 0 else "capture"
     capturing = True
-    ready_logged = False
+    warm_logged = False
     # Latched, because SyncReady "will continue to signal the value true for the rest of
     # the session" -- so once seen there is nothing to re-check, and no reason to keep
     # paying a metadata retrieval per frame.
@@ -988,28 +1037,29 @@ def main():
             # `phase == "warmup"` because the keep rule below reads that as paused, so
             # counting warmup in `seq` was a deadlock: warmup could not end, so `ready`
             # was unreachable on every boot, armed or not. Both pods sat in warmup for
-            # 15 minutes on 2026-10-17 and the cycle timed out waiting for ready.
+            # 15 minutes on 2026-10-17 and the cycle timed out waiting for warm.
             if phase == "warmup" and frames_seen >= warmup_frames:
                 phase = "capture"
                 state["phase"] = phase
 
             if phase == "capture":
                 wanted = _capture_wanted(flag_path)
-                if not ready_logged:
-                    # The device records its own time-to-ready. Reading it afterwards
+                if not warm_logged:
+                    # The device records its own time-to-warm. Reading it afterwards
                     # costs nothing; watching for it costs the thing being measured.
-                    ready_at = time.monotonic()
-                    print(f"capture: READY after {frames_seen} warmup frames at "
-                          f"{ready_at:.1f}s since start, "
+                    warm_at = time.monotonic()
+                    print(f"capture: WARM after {frames_seen} warmup frames at "
+                          f"{warm_at:.1f}s since start, "
                           f"{'capturing' if wanted else 'paused'}", flush=True)
-                    ready_logged = True
+                    warm_logged = True
                     capturing = wanted
-                    # Ready is the readiness signal #434 asks for, and this process
-                    # holds the ground truth for it: the camera is started and its
-                    # buffers are allocated. RSS and refault rates are proxies for
-                    # this line, useful for validating it once, not for watching.
-                    state["ready"] = True
-                    state["ready_at_mono_s"] = round(ready_at, 3)
+                    # Warm is half of #434's readiness signal, and this process holds
+                    # the ground truth for it: the camera is started and its buffers are
+                    # allocated. RSS and refault rates are proxies for this line, useful
+                    # for validating it once, not for watching. The other half is sync,
+                    # below; publish() combines them into `ready`.
+                    state["warm"] = True
+                    state["warm_at_mono_s"] = round(warm_at, 3)
                     state["capturing"] = capturing
                     publish()
                 elif wanted != capturing:
@@ -1039,7 +1089,7 @@ def main():
                 clk = _clock_triple()
                 sync_ready_now = metadata.get("SyncReady")
 
-                if sync_active and not sync_ready_seen and sync_ready_now:
+                if not sync_ready_seen and sync_ready_now:
                     sync_ready_seen = True
                     state["sync_ready"] = True
                     # SyncTimer at the crossing is the headline number: at this moment it
@@ -1049,7 +1099,7 @@ def main():
                           f"waiting frames; SyncTimer at the crossing is "
                           f"{metadata.get('SyncTimer')} us", flush=True)
                     publish()
-                elif sync_active and not sync_ready_seen:
+                elif not sync_ready_seen:
                     sync_waits += 1
                     state["sync_ready"] = False
                     if sync_waits == 1 or sync_waits % 50 == 0:
@@ -1075,7 +1125,7 @@ def main():
                     # rule was and why choosing per second cost pairs rather than frames.
                     if phase != "capture" or not capturing:
                         decision = "paused"
-                    elif sync_active and not sync_ready_seen:
+                    elif not sync_ready_seen:
                         decision = "sync_wait"
                     else:
                         decision = "kept"
@@ -1196,8 +1246,7 @@ def main():
                 # with the server" (control_ids_rpi.yaml), which makes it a MEASUREMENT and
                 # not a flag. That is why it is here per frame rather than on the bus.
                 #
-                # Absent rather than false when sync is off: None distinguishes "not using
-                # sync" from "using it and not ready", which a boolean would conflate.
+                # Always server or client now: there is no unsynced mode.
                 "sync_mode": sync_active,
                 "sync_ready": metadata.get("SyncReady"),
                 "sync_timer_us": metadata.get("SyncTimer"),
@@ -1205,7 +1254,7 @@ def main():
                 # line time; see containers/campod-camera/README.md.
                 "frame_duration_us": metadata.get("FrameDuration"),
                 "size": [size[0], size[1]],
-                "sync_mode": sync_active or "off",
+                "sync_mode": sync_active,
                 "phase": phase,
             }
             # One handoff per kept frame: the worker encodes, writes the image, then the
@@ -1230,8 +1279,10 @@ def main():
         serializer.close()
         ledger.close()
         state["phase"] = "stopped"
-        state["ready"] = False
+        state["warm"] = False
         state["capturing"] = False
+        # publish() recomputes `ready` from `warm`, so a stopped camera reports
+        # not-ready without this having to say so twice.
         publish()
         extra = ""
         if (serializer.waits or serializer.write_waits or serializer.errors

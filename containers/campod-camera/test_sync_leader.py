@@ -49,10 +49,15 @@ check("every other pod is a client",
       [f("campod-sw", n) for n in ("campod-se", "campod-ne", "campod-nw")]
       == ["client", "client", "client"])
 
-# No leader means sync off entirely -- NOT "everyone is a client", which looks enabled
-# while nothing paces anything and the frames are no more aligned than before.
-check("no leader means off", f("", "campod-sw") == "off")
-check("None leader means off", f(None, "campod-se") == "off")
+# No leader is a configuration error, not a mode. There is no unsynced capture -- a lone
+# pod names itself and runs as a server with no followers -- and returning "off" here used
+# to look like a supported setup while nothing paced anything.
+for empty in ("", None):
+    try:
+        f(empty, "campod-sw")
+        check(f"no leader ({empty!r}) is refused", False, "returned a mode")
+    except ValueError:
+        check(f"no leader ({empty!r}) is refused", True)
 
 # A leader that is not in the fleet leaves everybody a client. That is a real
 # misconfiguration -- a typo in one shared value disables pacing for the whole fleet --

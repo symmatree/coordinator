@@ -201,7 +201,14 @@
       row.append(cell('bus', 'status did not parse', 'stale'));
       return row;
     }
-    row.append(cell('camera', p.ready === true ? (p.phase ?? 'ready') : (p.phase ?? 'not ready'),
+    // Ready is the one that matters, so it reads as ready or not-ready and is the cell's
+    // colour. WHY NOT, though, is worth a word here where there is room: the panel on the
+    // coordinator can only afford the verdict, and "warm, waiting for sync" is the state a
+    // pod sits in for about 80 s of every start.
+    const why = p.ready === true ? null
+      : p.warm === true ? (p.syncReady === false ? 'warm, waiting for sync' : 'warm')
+      : (p.phase ?? 'not ready');
+    row.append(cell('camera', p.ready === true ? (p.phase ?? 'ready') : why,
                     p.ready === true ? 'ok' : 'stale'));
     if (p.frames !== undefined) row.append(cell('frames', String(p.frames)));
     row.append(cell('capture', p.capture === true ? 'on' : 'off'));
