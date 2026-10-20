@@ -23,6 +23,7 @@ on this pin" and "what can I move", not "tell me about timing".
 | Which **propeller set** is which, and what each one is | [props.md](props.md) |
 | How something is **mechanically mounted** -- the OAK-D, the arm pods | [oak-d-mount.md](oak-d-mount.md), [campod.md](../campod.md) |
 | What a **blink pattern** means with no link up | [led-cheatsheet.md](led-cheatsheet.md) |
+| Who owns a hardware question, and what is open on the vehicle | [`docs/handoffs/flight-hardware-handoff.md`](../handoffs/flight-hardware-handoff.md) |
 
 **The rule is by component, not by subsystem.** A fact about an FC pad belongs with the FC
 even if it exists because of the hub board, and vice versa. Grouping by the subsystem you
