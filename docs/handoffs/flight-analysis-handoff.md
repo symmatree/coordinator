@@ -6,9 +6,7 @@ captures -- and turns them into numbers someone can act on. Distinct from flight
 (software that runs on the vehicle) and ground-platform (the cluster-hosted control surface),
 both of which have their own handoffs --
 [`docs/handoffs/ground-platform-handoff.md`](ground-platform-handoff.md) here, and
-[`docs/flight-platform-handoff.md`](../flight-platform-handoff.md) one level up, along with
-`os-and-driver-handoff.md`. Moving the remaining two in is their owners' call, not something
-to do to them.
+[`docs/flight-platform-handoff.md`](../flight-platform-handoff.md)
 
 The boundary is not the directory. When a measurement turns out to be impossible because a
 field is miscounted or a control is wrong, fixing that is in scope -- several of this role's
