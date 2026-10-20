@@ -4,11 +4,11 @@ For whoever is the flight-analysis agent next. This role extracts findings **fro
 vehicle recorded** -- flight dataflash, campod accel and stills, coordinator tlogs and
 captures -- and turns them into numbers someone can act on. Distinct from flight-platform
 (software that runs on the vehicle) and ground-platform (the cluster-hosted control surface),
-both of which have their own handoffs -- currently at
-[`docs/flight-platform-handoff.md`](../flight-platform-handoff.md) and
-[`docs/ground-platform-handoff.md`](../ground-platform-handoff.md), one level up, along with
-`os-and-driver-handoff.md`. This file is the first in `docs/handoffs/`; moving the other
-three in is their owners' call, not something to do to them.
+both of which have their own handoffs --
+[`docs/handoffs/ground-platform-handoff.md`](ground-platform-handoff.md) here, and
+[`docs/flight-platform-handoff.md`](../flight-platform-handoff.md) one level up, along with
+`os-and-driver-handoff.md`. Moving the remaining two in is their owners' call, not something
+to do to them.
 
 The boundary is not the directory. When a measurement turns out to be impossible because a
 field is miscounted or a control is wrong, fixing that is in scope -- several of this role's
