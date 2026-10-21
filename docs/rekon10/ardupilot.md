@@ -141,7 +141,7 @@ command, so no photo mission or camera is needed for an edge to be recorded. It 
 
 ## Battery monitoring
 
-Mission Planner **Initial Tune** (with **6S Li-ion** selected) set most **`BATT_*`** metering and voltage thresholds. Full **`BATT_*`** / **`MOT_BAT_*`** set: **[`inputs/battery.param`](../../ardupilot/inputs/battery.param)**. Battery monitor is **ESC telemetry (`BATT_MONITOR = 9`)** off a calibrated AM32 build (the FC analog current input is arc-blown); details in [flight-platform.md](flight-platform.md).
+Mission Planner **Initial Tune** (with **6S Li-ion** selected) set most **`BATT_*`** metering and voltage thresholds. Full **`BATT_*`** / **`MOT_BAT_*`** set: **[`inputs/battery.param`](../../ardupilot/inputs/battery.param)**. Battery monitor is **ESC telemetry (`BATT_MONITOR = 9`)** off a calibrated AM32 build (the FC analog current input reads a fixed over-range voltage, cause unknown); details in [flight-platform.md](flight-platform.md).
 
 **Failsafe actions (operator choice, not Initial Tune):** **`BATT_FS_LOW_ACT = 1`** (**Land** on low pack) and **`BATT_FS_CRT_ACT = 1`** (**Land** on critical) -- Land is the correct action under canopy (RTL is not). Low uses **`BATT_LOW_VOLT`**; critical uses **`BATT_CRT_VOLT`**. (`BATT_LOW_TIMER = 0` in the current export.)
 

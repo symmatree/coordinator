@@ -4,9 +4,10 @@
 # Li-ion selected). See ardupilot.md "Battery monitoring" and flight-platform.md.
 #
 # Monitor via ESC telemetry (9), NOT the FC analog input -- the FC current sense is
-#   dead (arc-blown, #117). Volts/current arrive on SERIAL8 (see 20-serial) from a
-#   custom-calibrated AM32 build: voltage ~1%, current scale generic so mAh is
-#   +/-15%.  provenance: 954150979 2026-07-27; [flight-platform.md; #117]
+#   reads a fixed over-range voltage, cause unknown (#117). Volts/current arrive on
+#   SERIAL8 (see 20-serial) from a custom-calibrated AM32 build: voltage ~1%,
+#   current scale generic and unverified.  provenance: 954150979 2026-07-27;
+#   [flight-platform.md; #117]
 BATT_MONITOR,9
 BATT_ESC_MASK,0
 BATT_CAPACITY,8000
