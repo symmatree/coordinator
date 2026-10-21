@@ -19,6 +19,7 @@ on this pin" and "what can I move", not "tell me about timing".
 | What is on the **hub board** -- the buffer tree, the 5 V rails, the pod harness, the PPS signal | [central-hub.md](central-hub.md) |
 | What is on a **campod** -- the Zero, the camera, the accelerometers, their wiring | [campod.md](../campod.md), [campod-electrical.md](../campod-electrical.md) |
 | What the **ESC, motors, battery, radio or VTX** are and how they are wired | [flight-platform.md](flight-platform.md) |
+| What the **FLIR Blackfly S** on the rampod is -- its GPIO pins, power options, trigger | [flir-blackfly-s.md](flir-blackfly-s.md) |
 | **Why** a part or value was chosen, and what was tried before it | [flight-platform-build-log.md](flight-platform-build-log.md) |
 | Which **propeller set** is which, and what each one is | [props.md](props.md) |
 | How something is **mechanically mounted** -- the OAK-D, the arm pods | [oak-d-mount.md](oak-d-mount.md), [campod.md](../campod.md) |
@@ -55,6 +56,7 @@ this directory: [`docs/time-base.md`](../time-base.md), [`docs/campod-software.m
 | Arm pods (Pi Zero + cameras; multicamera sync, DS3234 PPS, chrony, upward gap-detect pair) | [campod.md](../campod.md) |
 | Mapping pipeline (PPK interpolation, ODM, rolling-shutter correction) | [mapping.md](mapping.md) |
 | Central hub, power, pod harness | [central-hub.md](central-hub.md) |
+| FLIR Blackfly S BFS-U3-244S8M-C (rampod camera): sensor, lens, GPIO, power, trigger | [flir-blackfly-s.md](flir-blackfly-s.md) |
 | Flight platform (as-built hardware, wiring, stack recipe) | [flight-platform.md](flight-platform.md) |
 | Flight platform build log (chronicle, bench notes) | [flight-platform-build-log.md](flight-platform-build-log.md) |
 | Vibration and structural testing (chain validation, bump-test method) | [vibration-testing.md](vibration-testing.md) |
