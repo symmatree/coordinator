@@ -116,18 +116,22 @@ FC Connections:
 | 4V5 | 4.76 V | GPS, RADIO (RX) |
 | 3V3 | 3.268 V | logic breakout -- do not use for external device power |
 | 9V (VTX) | ~9 V on / 0.4 V off | RELAY4-switched |
-| PC1 (current sense) | 9.92 V, fixed | analog sensor dead (over-range); superseded by ESC telemetry -- see below |
+| PC1 (current sense) | 9.92 V, fixed | unresolved -- see below |
 
 **Battery monitor: ESC telemetry (`BATT_MONITOR=9`).** The FC's analog current input
-(PC1 / `BATT_CURR_PIN=11`) is dead -- arc-blown at first bring-up, stuck at a fixed ~9.9 V
-(above the ADC's ~3.6 V range), reporting a constant false current. Instead of the analog
-channel, battery **voltage and current now come from ESC serial telemetry** (SERIAL8), using a
+(PC1 / `BATT_CURR_PIN=11`) reads a fixed ~9.9 V, above the ADC's ~3.6 V range, and so reports a
+constant false current. **What happened to it is not known**, nor which board is at fault --
+the FC input or the ESC's current-sense output feeding it. `Cur2` (PA7) measures a stable
+0.667 MOhm to GND while PC1 climbs.
+
+Battery **voltage and current come from ESC serial telemetry** (SERIAL8) instead, using a
 **custom-calibrated AM32 build** (see [ESC / Firmware](#firmware) and
-[`firmware/esc/` (coordinator)](../../firmware/esc/README.md)). With the calibrated firmware the ESC readout tracks a
-meter within ~1 % on voltage and reads ~0 A at rest. Voltage / capacity failsafes are active
-(`BATT_LOW_VOLT=18.6`, `BATT_CRT_VOLT=18`, `BATT_CAPACITY=8000`). The current **scale** is left at
-the AM32 generic value, so mAh is good to ~+/-15 % -- enough for low-voltage / low-capacity
-"land now" detection, not precise energy accounting.
+[`firmware/esc/` (coordinator)](../../firmware/esc/README.md)). On the bench, disarmed, the ESC
+readout tracked a meter within ~1 % on voltage and read ~0 A at rest. The current **scale** is
+left at the AM32 generic value and has not been checked against a known load; the current from
+the last round of flights looked unreliable, which is for flight analysis to check on the next
+flight. Voltage / capacity failsafes are active (`BATT_LOW_VOLT=18.6`, `BATT_CRT_VOLT=18`,
+`BATT_CAPACITY=8000`).
 
 ## Serial ports (as wired)
 
@@ -184,7 +188,9 @@ derivation in [coordinator#117](https://github.com/symmatree/coordinator/issues/
 
 **Motors:** **iFlight Helion 10 3110 900KV** (also sold as Xing2 3110 900KV). Datasheet PDF: [attachments/Helion-10-3110-900KV-EN.pdf](https://github.com/symmatree/fables/blob/main/Drones/rekon10/attachments/Helion-10-3110-900KV-EN.pdf).
 
-**Props:** **Master Airscrew MR Series 10x4.5 2-blade** -- one pair **CW** and one **CCW** ([MR series](https://www.masterairscrew.com/pages/mr-drone-propellers)). Rotation reference: [attachments/Multirotor_prop_direction_3DR.pdf](https://github.com/symmatree/fables/blob/main/Drones/rekon10/attachments/Multirotor_prop_direction_3DR.pdf). Other props available, will test multiple variants.
+**Props:** there is no single prop set -- several are on hand and swapped between flights. Which
+sets exist is in [props.md](props.md); which one flew is in that flight's notes. Rotation
+reference: [attachments/Multirotor_prop_direction_3DR.pdf](https://github.com/symmatree/fables/blob/main/Drones/rekon10/attachments/Multirotor_prop_direction_3DR.pdf).
 
 ### Thrust and power (expected)
 

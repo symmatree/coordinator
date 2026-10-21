@@ -2,8 +2,8 @@
 
 Custom AM32 build for the rekon10's **TBS Lucid 60A 3-6S AM32 4-in-1** ESC, so ArduPilot's
 ESC telemetry (`BATT_MONITOR=9`) reports usable **battery voltage and current / mAh**. This
-exists because the FC's own analog current sensor is dead (arc-blown at first bring-up, PC1
-stuck ~9.9 V) -- see the airframe hardware doc [`flight-platform.md`](../../docs/rekon10/flight-platform.md) and
+exists because the FC's own analog current input is unusable (PC1 stuck at ~9.9 V, cause
+unknown) -- see the airframe hardware doc [`flight-platform.md`](../../docs/rekon10/flight-platform.md) and
 [coordinator#117](https://github.com/symmatree/coordinator/issues/117).
 
 ## What's wrong with stock, and the fix
@@ -64,7 +64,6 @@ after** (one ESC is reversed); backups in [`config/am32-esc/`](../../docs/rekon1
 
 `MILLIVOLT_PER_AMP` is left at the generic **20**; only the zero-offset was calibrated. A
 clean scale point needs a known load, which a no-prop bench spin (~3-5 A) can't provide above
-the sensor noise. Consequence: **mAh is accurate to roughly +/-15 %**, which is fine for the
-intended use (voltage-cliff and low-capacity "land now" detection) but not for precise energy
-accounting. To refine later: fly a known-current profile (or bench a real load), then set
+the sensor noise. So the current scale, and the mAh built on it, is not verified. To refine
+later: fly a known-current profile (or bench a real load), then set
 `MILLIVOLT_PER_AMP = 20 * reported_summed / true_current_summed` and rebuild.
