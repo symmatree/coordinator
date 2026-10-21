@@ -1,0 +1,3 @@
+# Not packaged in Debian. numpy comes from python3-numpy, hence --no-deps.
+simplejpeg==1.9.0 \
+    --hash=sha256:a0c375130f73bb08229a3ded392d84ee2d916b3e87e7ec5d2ac4e47b7144346a
