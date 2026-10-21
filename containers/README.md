@@ -58,6 +58,7 @@ the app images, never an implicit move.
 | `sh1106-display` | arm64 | -- | `debian@digest` | small; no heavy shared content |
 | `coordinator-mavlink` | arm64 | -- | `debian@digest` | small; no heavy shared content |
 | `campod-camera` | arm64 | -- | `debian@digest` (via `BASE_IMAGE`) | small; adds the Raspberry Pi apt suite for matched `libcamera`/`picamera2` |
+| `flir-camera` | arm64 | -- | `debian@digest` | small; Debian's own Aravis and PyGObject, plus one hash-pinned `simplejpeg` wheel |
 | `pod-link` | arm64 | `golang@digest` (cross-compiles on the builder) | `debian@digest` (via `BASE_IMAGE`) | small; a static binary plus `dumb-init`. Its deps are pinned by `go.sum`, and `go vet`/`go test` run in the build stage -- including an end-to-end test against an in-process `mochi-mqtt`, so a wire-level regression fails the build rather than a flight |
 
 The rule of thumb: **factor a base only for content that is both heavy and shared/expensive to

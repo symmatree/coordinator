@@ -29,6 +29,17 @@
         "runner": "ubuntu-24.04-arm",
         "lockfile": ""
       },
+      "flir-camera": {
+        "paths": [
+          "containers/flir-camera/**"
+        ],
+        "image": "ghcr.io/symmatree/coordinator-flir-camera",
+        "context": "containers/flir-camera",
+        "dockerfile": "containers/flir-camera/Dockerfile",
+        "platforms": "linux/arm64",
+        "runner": "ubuntu-24.04-arm",
+        "lockfile": ""
+      },
       "fleet-control": {
         "paths": [
           "containers/fleet-control/**",
