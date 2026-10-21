@@ -126,6 +126,13 @@ RUN cd /opt/campod && python3 test_capture_wait.py --require-manifest && rm test
 # fails the build rather than the flight.
 COPY test_sync_leader.py /opt/campod/test_sync_leader.py
 RUN cd /opt/campod && python3 test_sync_leader.py && rm test_sync_leader.py
+# libcamera's sync parameters live in the sensor tuning JSON. These are the installed
+# imx708 files with rpi.sync's ready_frame and sync_period set; libcamera searches
+# LIBCAMERA_IPA_CONFIG_PATH before its own directory. Generated from the files this
+# build installed, so they cannot fall behind the libcamera that reads them.
+COPY sync_tuning.py /opt/campod/sync_tuning.py
+RUN python3 /opt/campod/sync_tuning.py && rm /opt/campod/sync_tuning.py
+ENV LIBCAMERA_IPA_CONFIG_PATH=/opt/campod/libcamera-ipa
 
 # Flush logs immediately so `coord logs -f campod-camera` is live (cf. the
 # vio-tracker stdbuf line-buffering fix).
