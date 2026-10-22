@@ -574,7 +574,7 @@ The rest of the Coordinator header is two more shells, which replaced single fem
 
 | shell | header pins | marker | Pi functions on those pins |
 |-------|-------------|--------|----------------------------|
-| 1x5 | odd **1, 3, 5, 7, 9** | red wire on pin 1 | 3V3, GPIO2 (SDA1), GPIO3 (SCL1), GPIO4, GND |
+| 1x5 | odd **1, 3, 5, 7, 9** | red wire on pin 1 | 3V3, GPIO2 (SDA1), GPIO3 (SCL1), GPIO4, GND -- the SH1106 front-panel display, see [architecture.md](../architecture.md) |
 | 1x3 | even **6, 8, 10** | brown wire on pin 6 | GND, GPIO14 (TXD), GPIO15 (RXD) -- the FC UART, see [ardupilot-vio.md](../ardupilot-vio.md) |
 
 `dtparam=spi=on` and the `pps-gpio` overlay are in the coordinator image as of
