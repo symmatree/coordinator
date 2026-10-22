@@ -406,7 +406,7 @@ to it; a notification means you do not have to come back.
 | event | why |
 |---|---|
 | a run finished | the thing you started is over, and how it ended |
-| the service started | **a restart ends any run in flight.** The registry is in memory and the playbook is a child of that process, so this is not a hiccup. Worth knowing before starting something long, and after one vanishes |
+| the service started | **a restart ends the runs this process does itself** -- stop, reboot and ground -- and forgets every run in the registry, which is in memory. Converge, provision, reimage and collect are workflows and carry on; their record is the workflow. Worth knowing before starting something, and after a run vanishes from the screen |
 
 The start notification carries the build, because the reason to care is "did the roller replace me,
 and with what".
