@@ -7,10 +7,10 @@
 // Two events, for two different reasons:
 //
 //   run finished   the thing you started is over, and how it ended
-//   service started  the pod has been replaced, which KILLS a run in flight. The registry is in
-//                    memory and the playbook is a child of that process, so a restart is not a
-//                    hiccup -- it ends whatever was running. Worth knowing before starting a
-//                    long job, and worth knowing after one vanishes.
+//   service started  the pod has been replaced, which ends a stop, reboot or ground in flight
+//                    and forgets every run in the registry, which is in memory. Workflows
+//                    (converge, provision, reimage, collect) carry on without it. Worth knowing
+//                    before starting something, and worth knowing after a run vanishes.
 //
 // Apprise is already deployed in `tiles`. A notify with no `tag` matches zero targets, which is
 // recorded beside Alloy's own notifier -- so the tag is required, not optional.
@@ -67,7 +67,7 @@ export function serviceStarted(b: Build): [string, string] {
     [
       `${b.unit ?? 'fleet-control'} is up.`,
       `build ${rev}${b.refName === undefined || b.refName === '' ? '' : ` (${b.refName})`}`,
-      'Any run that was in flight was ended by this restart.',
+      'A stop, reboot or ground in flight was ended by this restart. Workflows carry on.',
     ].join('\n'),
   ];
 }

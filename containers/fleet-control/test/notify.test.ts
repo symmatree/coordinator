@@ -75,7 +75,7 @@ test('a restart is announced as the build, since that is the reason to care', ()
   assert.match(title, /started/);
   assert.match(body, /build 4ee3e86c1d \(refs\/heads\/main\)/);
   // The consequence is the point: a restart ends whatever was running.
-  assert.match(body, /in flight was ended by this restart/);
+  assert.match(body, /ground in flight was ended by this restart/);
 });
 
 test('a local build with no manifest is announced as such rather than as a blank revision', () => {
