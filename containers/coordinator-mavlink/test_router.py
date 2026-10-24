@@ -68,12 +68,14 @@ def main():
     session = os.path.join(captures, node, boot)
     ts_log = os.path.join(session, "timesync.jsonl")
     tlog = os.path.join(session, "vehicle.tlog")
+    fc_time = os.path.join(tmpdir, "fc_time")
 
     proc = subprocess.Popen(
         [sys.executable, ROUTER, "--device", slave_name, "--baud", "115200",
          "--socket", sockpath, "--source-system", "1", "--source-component", "197"],
         stderr=subprocess.PIPE, text=True,
-        env={**os.environ, "COORD_CAPTURES_DIR": captures},
+        env={**os.environ, "COORD_CAPTURES_DIR": captures,
+             "MAVLINK_FC_TIME_FILE": fc_time, "MAVLINK_TIMESYNC_PERIOD_S": "0.3"},
     )
     try:
         for _ in range(100):
@@ -185,6 +187,55 @@ def main():
         else:
             print(f"  FAIL: TIMESYNC not logged to {ts_log} ({lines})")
             ok = False
+
+        # #593: the value coord-rtc reads is UTC minus our CLOCK_MONOTONIC_RAW, not minus
+        # realtime -- realtime follows the chip, so an offset against it goes stale the
+        # moment it is used to write the chip. Play the FC: answer the router's own
+        # TIMESYNC request with tc1 = our raw clock, so FC-monotonic minus our raw is ~0,
+        # then send SYSTEM_TIME. The published value must then be UTC minus FC boot time.
+        utc_us, boot_ms = 1792844369_000_000, 250_000
+        answered = False
+        # Short reads: the router sends a request every 0.3 s and only matches a reply
+        # to its latest, so the answer has to go back before the next one is sent.
+        for _ in range(100):
+            reqs = [m for m in decode(read_for(master_fd, 0.03))
+                    if m.get_type() == "TIMESYNC" and m.tc1 == 0]
+            if reqs:
+                tc1 = time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
+                os.write(master_fd, tx.timesync_encode(tc1, reqs[-1].ts1).pack(tx))
+                os.write(master_fd, tx.system_time_encode(utc_us, boot_ms).pack(tx))
+                answered = True
+                break
+        line = ""
+        for _ in range(20):
+            if os.path.exists(fc_time):
+                line = open(fc_time).readline()
+                break
+            time.sleep(0.1)
+        fields = line.split()
+        if not answered:
+            print("  FAIL: the router sent no TIMESYNC request of its own to answer")
+            ok = False
+        elif len(fields) != 4:
+            print(f"  FAIL: fc_time is not 'utc_minus_raw rtt raw boot_id': {line!r}")
+            ok = False
+        else:
+            got = int(fields[0])
+            want = utc_us - boot_ms * 1000
+            raw_age_s = time.clock_gettime(time.CLOCK_MONOTONIC_RAW) - int(fields[2]) / 1e6
+            if abs(got - want) > 200_000:
+                print(f"  FAIL: fc_time utc_minus_raw {got} is not ~{want} "
+                      f"(off {(got - want) / 1e3:.1f} ms)")
+                ok = False
+            elif not 0 <= raw_age_s < 5:
+                print(f"  FAIL: fc_time's raw stamp is not this raw clock (age {raw_age_s:.3f} s)")
+                ok = False
+            elif fields[3] != boot:
+                print(f"  FAIL: fc_time boot id {fields[3]} != {boot}")
+                ok = False
+            else:
+                print(f"  fc_time ok: utc_minus_raw off by {(got - want) / 1e3:.1f} ms, "
+                      f"raw stamp {raw_age_s:.3f} s old, this boot")
 
         print("RESULT:", "PASS" if ok else "FAIL")
         return 0 if ok else 1

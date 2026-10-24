@@ -259,19 +259,26 @@ def write_arm_file(path, armed):
     os.replace(tmp, path)
 
 
-def write_fc_time(path, offset_us, rtt_us, local_us):
-    """Publish the current FC-measured offset for coord-rtc to read (#11).
+def write_fc_time(path, utc_minus_raw_us, rtt_us, raw_us, boot_id):
+    """Publish UTC against this box's CLOCK_MONOTONIC_RAW for coord-rtc to read (#11).
 
     Separate from the session log below because they have different jobs: this is a
     current value, replaced atomically, that coord-rtc uses to correct the DS3234's
     epoch while the vehicle is disarmed. The log is the per-flight record.
+
+    RAW, NOT REALTIME (#593). The realtime clock is disciplined to the chip, so a chip
+    write makes chrony slew it, and an offset measured against realtime goes stale the
+    moment it is used to write the chip -- the slew then reads as chip error and the
+    chip is rewritten every few seconds. MONOTONIC_RAW is the one clock chrony does not
+    touch; plain MONOTONIC is slewed along with realtime. The boot id goes with it
+    because the raw clock restarts at boot and this file does not.
 
     NOT a chrony input. chrony's reference is the chip itself -- see coord-rtc's
     cmd_feed for why the reference and the pulse have to be the same clock.
     """
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        f.write(f"{offset_us} {rtt_us} {local_us}\n")
+        f.write(f"{utc_minus_raw_us} {rtt_us} {raw_us} {boot_id}\n")
     os.replace(tmp, path)
 
 
@@ -434,6 +441,10 @@ def main():
     # fc_monotonic - ours; rtt_us is how well we know it.
     mono_offset_us = None
     mono_rtt_us = None
+    # The same exchange against our CLOCK_MONOTONIC_RAW: fc_monotonic - our raw clock.
+    # This is what coord-rtc gets; mono_offset_us stays for the session log (#593).
+    raw_offset_us = None
+    boot_id = read_line("/proc/sys/kernel/random/boot_id")
     # Monotonic, not time.time(): chrony steps the wall clock, which would make an age
     # computed from it meaningless at exactly the moment it matters.
     mono_at = -1e9
@@ -443,6 +454,7 @@ def main():
     utc_minus_boot_us = None
     # Outstanding TIMESYNC request we sent, so a reply can be matched and timed.
     ts_req_ts1 = None
+    ts_req_raw_ns = None
     ts_req_at = -1e9  # so the first request goes out immediately
     ts_req_period_s = float(os.environ.get("MAVLINK_TIMESYNC_PERIOD_S", "8"))
     armed = False
@@ -486,6 +498,7 @@ def main():
         # handle_timesync), and echoes ts1 unchanged so the reply can be matched.
         if now_mono - ts_req_at >= ts_req_period_s:
             ts_req_ts1 = time.time_ns()
+            ts_req_raw_ns = time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
             mav.mav.timesync_send(0, ts_req_ts1)
             ts_req_at = now_mono
 
@@ -557,8 +570,11 @@ def main():
                     #   offset = fc - (sent + received)/2
                     if ts_req_ts1 is not None and msg.ts1 == ts_req_ts1:
                         recv_ns = time.time_ns()
+                        recv_raw_ns = time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
                         rtt_ns = recv_ns - ts_req_ts1
                         mono_offset_us = (msg.tc1 - (ts_req_ts1 + recv_ns) // 2) // 1000
+                        raw_offset_us = (msg.tc1
+                                         - (ts_req_raw_ns + recv_raw_ns) // 2) // 1000
                         mono_rtt_us = rtt_ns // 1000
                         mono_at = time.monotonic()
                         ts_req_ts1 = None
@@ -592,8 +608,9 @@ def main():
                         local_us = time.time_ns() // 1000
                         boot_us = local_us + mono_offset_us
                         write_fc_time(fc_time_file,
-                                      utc_minus_boot_us + mono_offset_us,
-                                      mono_rtt_us, local_us)
+                                      utc_minus_boot_us + raw_offset_us, mono_rtt_us,
+                                      time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW) // 1000,
+                                      boot_id)
                         if fc_time_log is not None:
                             log_fc_time(fc_time_log,
                                         utc_minus_boot_us + mono_offset_us,

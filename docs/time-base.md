@@ -154,6 +154,17 @@ pre-arm. The cadence is a policy choice and nothing forces it: `PPS_LOCK_LIMIT` 
 the pulse against the reference, and the reference is the same chip, so the chip's error
 against UTC never enters that comparison.
 
+**The chip's error is measured on `CLOCK_MONOTONIC_RAW`, not on the system clock.** The
+system clock follows the chip, so after a write chrony slews it toward the new time at up
+to 83 ms/s. An FC offset taken against the system clock is then stale by that slew, which
+reads as chip error on the next pass. Until
+[coordinator#593](https://github.com/symmatree/coordinator/issues/593) the router published
+the offset against realtime, and with a GPS fix the chip was rewritten every 3-10 s,
+mostly by about 0.17 s at a time. The router now publishes UTC minus the raw clock, with
+the boot id since the raw clock restarts at boot. `coord-rtc` puts the edge on the raw
+clock and times the write on it. Plain `CLOCK_MONOTONIC` would not do: it is slewed along
+with realtime.
+
 **After replacing the coin cell, or on a new RTC, set the chip once by hand.** An unset
 chip reads `2000-01-01`, so the first GPS fix would write a 26-year correction into it --
 a jump of unknown consequence arriving outdoors, immediately before flying. Setting it
@@ -201,8 +212,10 @@ disturbance is the size of the correction, which is the error being fixed.
 
 ## UTC is a label, and where it comes from
 
-`coordinator-mavlink` logs the FC-derived offset to `fc_time.jsonl` per session. Nothing
-on the device reads it; it is for putting a date on a flight afterwards.
+`coordinator-mavlink` logs the FC-derived offset to `fc_time.jsonl` per session, against
+the realtime clock. Nothing on the device reads it; it is for putting a date on a flight
+afterwards. The current value `coord-rtc` reads is the same composition against
+`CLOCK_MONOTONIC_RAW` instead (above).
 
 Composing two FC messages is what makes it worth anything:
 
