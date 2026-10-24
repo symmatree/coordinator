@@ -84,7 +84,7 @@ ssh pi@$HOST 'coord version'                                         > "$C/coord
 ssh pi@$HOST 'sudo journalctl -b -1 -o short-iso-precise --no-pager' > "$C/journal-boot-1-flight.log"
 ssh pi@$HOST 'sudo journalctl -b  0 -o short-iso-precise --no-pager' > "$C/journal-boot-0-current.log"
 
-# collectd: 7 s system metrics, kept until deleted by hand, and NOTHING SCRAPES IT --
+# collectd: 7 s system metrics, kept per boot until that session is deleted, and NOTHING SCRAPES IT --
 # it exists only on the device (host/ansible/roles/metrics).
 ssh pi@$HOST 'sudo tar czf - -C /var/log collectd' > "$C/collectd.tar.gz"
 
