@@ -444,7 +444,21 @@ def cmd_delete(captures: Path, sessions: list[str], out_dir: Path) -> int:
             failed = True
             continue
 
-        entry = {"session": session, "session_dir": "absent", "bundle": "absent", "bytes": 0}
+        entry = {"session": session, "session_dir": "absent", "bundle": "absent",
+                 "collectd": "absent", "bytes": 0}
+
+        # The boot's collectd tree goes with its session: the bundle carries it, and
+        # nothing else ever deletes it -- there is no age bound on the card (#595).
+        # Before the session dir, so a boot that captured nothing is still prunable.
+        cd_dir = COLLECTD_ROOT / session
+        if cd_dir.is_dir():
+            cd_bytes = sum(p.stat().st_size for p in cd_dir.rglob("*") if p.is_file())
+            try:
+                shutil.rmtree(cd_dir)
+                entry["collectd"], entry["bytes"] = str(cd_dir), cd_bytes
+            except OSError as exc:
+                print(f"coord-sessions: cannot remove {cd_dir}: {exc}", file=sys.stderr)
+                failed = True
         if found is not None:
             node, session_dir = found
             entry["node"] = node
@@ -455,7 +469,8 @@ def cmd_delete(captures: Path, sessions: list[str], out_dir: Path) -> int:
                 print(f"coord-sessions: cannot remove {session_dir}: {exc}", file=sys.stderr)
                 failed = True
                 continue
-            entry["session_dir"], entry["bytes"] = str(session_dir), freed
+            entry["session_dir"] = str(session_dir)
+            entry["bytes"] += freed
 
             # The bundle is the same data again, so leaving it frees half the space
             # the caller asked for and leaves a second copy nobody owns.

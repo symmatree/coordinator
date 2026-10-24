@@ -28,7 +28,8 @@
 # No age bound on the samples. The only thing that enforced one was
 # systemd-tmpfiles-clean.timer, now masked with the other scheduled maintenance: it
 # aged files by an mtime that every boot writes on the image's build epoch until
-# chrony steps the clock. Deleted by hand if the card ever needs the space. This
+# chrony steps the clock. A boot's tree (the DataDir below is per boot id) is session
+# data: `coord-sessions package` bundles it and `coord-sessions delete` removes it. This
 # removes the rule from cards that were converged while it existed.
 - name: Remove the collectd age bound
   ansible.builtin.file:

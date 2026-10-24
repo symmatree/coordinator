@@ -36,8 +36,8 @@
 # campod-se's /tmp/campod_camera_status, written at 258 s before the step at 428 s: the
 # paused camera never rewrote it, and the panel showed a ready camera as absent (#593).
 # /tmp is a tmpfs, emptied every boot already. The other thing it enforced was the
-# collectd age bound, removed with it from roles/metrics -- those files are deleted by
-# hand if the card ever needs the space.
+# collectd age bound, removed with it from roles/metrics -- a boot's collectd tree is
+# session data now, packaged and deleted with its session by coord-sessions.
 #
 # MASK, not disable. `disable` is undone the next time a package upgrade re-applies
 # the systemd preset; a mask is a symlink to /dev/null and survives. Debian's

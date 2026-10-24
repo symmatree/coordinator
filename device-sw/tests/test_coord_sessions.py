@@ -325,6 +325,23 @@ try:
         rc = cs.cmd_delete(captures, ["22222222-bbbb"], out_dir)
     check("deletes the open session rather than refusing it",
           rc == 0 and not (captures / "campod-se" / "22222222-bbbb").exists())
+    # The boot's collectd tree goes with it. Nothing else deletes it: there is no age
+    # bound on the card (#595), so a delete that left it would leave it forever.
+    check("and takes that boot's collectd tree with it",
+          not (cs.COLLECTD_ROOT / "22222222-bbbb").exists())
+    check("and no other boot's", (cs.COLLECTD_ROOT / "99999999-other").is_dir())
+
+    # A boot that captured nothing still has collectd, and is still prunable by its id.
+    (cs.COLLECTD_ROOT / "44444444-dddd" / "campod-se").mkdir(parents=True)
+    (cs.COLLECTD_ROOT / "44444444-dddd" / "campod-se" / "cpu").write_text("t,v\n1,2\n")
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cs.cmd_delete(captures, ["44444444-dddd"], out_dir)
+    _only_cd = json.loads(buf.getvalue())["deleted"][0]
+    check("a boot with only collectd is deleted by its id",
+          rc == 0 and not (cs.COLLECTD_ROOT / "44444444-dddd").exists()
+          and _only_cd["session_dir"] == "absent" and _only_cd["bytes"] == 8,
+          str(_only_cd))
 
     # 10. idempotent: absent is the wanted end state, not a failure
     buf = io.StringIO()
