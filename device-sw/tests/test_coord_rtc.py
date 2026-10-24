@@ -311,6 +311,78 @@ check("a 0 arm flag reads as disarmed", cr.armed(str(_armfile)) is False)
 _armfile.write_text("1\n")
 check("a 1 arm flag reads as armed", cr.armed(str(_armfile)) is True)
 
+# ---- 17b. the FC sample is against the raw clock (#593) -------------------------------
+#
+# The system clock follows the chip, so an FC offset measured against it went stale the
+# moment it was used to write the chip: chrony slewed realtime toward the new chip time,
+# the next pass read that slew as chip error, and with a GPS fix the chip was rewritten
+# every few seconds. The sample is now UTC minus CLOCK_MONOTONIC_RAW, tagged with the boot.
+_fcfile = Path(tempfile.mkdtemp()) / "fc_time"
+_raw_us = int(cr.raw_now() * 1e6)
+_fcfile.write_text(f"1791858443000000 3000 {_raw_us} {cr.boot_id()}\n")
+check("a fresh raw-clock sample from this boot is used",
+      cr.fc_offset(str(_fcfile)) == (1791858443.0, 0.003), str(cr.fc_offset(str(_fcfile))))
+_fcfile.write_text(f"1791858443000000 3000 {_raw_us} not-this-boot\n")
+check("a sample from another boot is refused -- the raw clock restarts at boot",
+      cr.fc_offset(str(_fcfile)) is None)
+_fcfile.write_text(f"1791858443000000 3000 {_raw_us - int((cr.FC_MAX_AGE_S + 1) * 1e6)} "
+                   f"{cr.boot_id()}\n")
+check("a stale sample is refused", cr.fc_offset(str(_fcfile)) is None)
+_fcfile.write_text(f"1791858443000000 3000 {_raw_us + 10_000_000} {cr.boot_id()}\n")
+check("a sample from the future of this boot's raw clock is refused",
+      cr.fc_offset(str(_fcfile)) is None)
+_fcfile.write_text(f"-6065 6329 {int(_time.time() * 1e6)}\n")
+check("the realtime format from before #593 is refused, not misread",
+      cr.fc_offset(str(_fcfile)) is None)
+
+# THE property. A chip that is right reads as right however far chrony has slewed the
+# system clock since the FC sample: moving realtime moves `at` and `real_now` together, and
+# only their difference reaches the answer.
+_U = 1791858443.0          # UTC minus raw
+_R = 1000.2                # raw clock now; the edge was 0.2 s ago, at raw 1000.0
+_chip = 1791859443         # = 1000.0 + _U, a chip with no error
+for _slew in (0.0, 0.17, -0.17, 1.685):
+    _real_now = 1791859443.2 + _slew
+    check(f"a correct chip reads as correct with realtime moved {_slew:+.3f} s",
+          abs(cr.chip_error_s(_chip, _real_now - 0.2, _real_now, _R, _U)) < 1e-9)
+check("a chip that is off reads as off by that much",
+      abs(cr.chip_error_s(_chip - 1, 1791859443.0, 1791859443.2, _R, _U) + 1.0) < 1e-9)
+
+
+# set_chip times its write on the clock it is handed. The FC path hands it the raw clock,
+# so the instant it aims for cannot be moved by chrony either. A fake clock nowhere near
+# realtime proves the target comes from that clock and not from time.time().
+class _FakeClock:
+    def __init__(self, t):
+        self.t = t
+
+    def __call__(self):
+        self.t += 0.001   # every read advances, so the spin terminates
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
+_clk = _FakeClock(100.25)
+_saved_sleep = cr.time.sleep
+cr.time.sleep = _clk.sleep
+bus = RecordingBus()
+_target, _err, _sr = cr.set_chip(cr.Ds3234(bus), 1791859343.0, clock=_clk)
+cr.time.sleep = _saved_sleep
+check("set_chip aims at clock() + offset, two seconds out",
+      _target == 1791859445, str(_target))
+check("and the registers it wrote decode to that second",
+      cr.decode_time(bytes(bus.regs[0:7])) == _time.strftime(
+          "%Y-%m-%dT%H:%M:%S", _time.gmtime(1791859445)),
+      cr.decode_time(bytes(bus.regs[0:7])))
+check("and it landed on that clock's boundary", 0 <= _err < 0.01, f"{_err}")
+
+_feed_src = (CLI / "coord-rtc").read_text()
+_feed_src = _feed_src[_feed_src.index("def cmd_feed"):_feed_src.index("def set_system")]
+check("the feed's chip write is timed on the raw clock",
+      "set_chip(rtc, offset, clock=raw_now)" in _feed_src)
+
 # ---- 18. the second boundary comes off the pulse --------------------------------------
 #
 # The instant is the kernel's timestamp of the falling edge; we only supply the label. So

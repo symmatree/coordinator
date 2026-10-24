@@ -85,14 +85,20 @@ CHRONY_SOCK = os.environ.get("COORD_RTC_CHRONY_SOCK", "/run/chrony.ds3234.sock")
 # re-phased 1 Hz settle before sampling it.
 RETRY_PERIOD_S = float(os.environ.get("COORD_RTC_RETRY_PERIOD_S", "1"))
 
-# Where coordinator-mavlink publishes the current FC-measured offset from UTC:
-# "offset_us rtt_us local_us". Used ONLY to correct the chip's epoch while disarmed --
-# never as chrony's reference, which is always the chip itself.
+# Where coordinator-mavlink publishes UTC as measured through the FC, against this box's
+# CLOCK_MONOTONIC_RAW: "utc_minus_raw_us rtt_us raw_us boot_id". Used ONLY to correct the
+# chip's epoch while disarmed -- never as chrony's reference, which is always the chip.
+#
+# RAW, BECAUSE REALTIME FOLLOWS THE CHIP (#593). chrony disciplines realtime to the chip,
+# so after a chip write it slews realtime toward it at up to 83 ms/s. An offset measured
+# against realtime is then stale by the slew, which reads as chip error on the next pass,
+# and the chip was rewritten every few seconds for as long as the FC had a fix. MONOTONIC
+# is slewed too; MONOTONIC_RAW is the clock nothing adjusts.
 FC_TIME_FILE = os.environ.get("COORD_RTC_FC_TIME_FILE",
                               "/var/lib/coordinator/ipc/fc_time")
-# A sample whose local reading is further than this from the current clock is not
-# usable. The file outlives a reboot, so a previous flight's sample would otherwise be
-# applied as if it were current.
+# A sample older than this on the raw clock is not usable, and neither is one from
+# another boot: the raw clock restarts at boot and the file outlives it, so a previous
+# flight's sample would otherwise be applied as if it were current.
 FC_MAX_AGE_S = 300.0
 # The arm flag the router publishes. The chip is only ever written while disarmed: the
 # write resets the countdown chain, which re-phases the 1 Hz and makes one second the
@@ -278,20 +284,52 @@ def cmd_enable_pps(rtc: Ds3234) -> int:
     return 0
 
 
-def fc_offset(path: str = FC_TIME_FILE, max_age_s: float = FC_MAX_AGE_S):
-    """The FC-measured offset of this box's clock from UTC, or None.
+def raw_now() -> float:
+    """CLOCK_MONOTONIC_RAW in seconds: the clock chrony cannot move. A seam for tests."""
+    return time.clock_gettime(time.CLOCK_MONOTONIC_RAW)
 
-    Returns (offset_s, rtt_s). Rejected when stale: the file is on disk and survives a
-    reboot, so a previous flight's sample would otherwise be applied as if current.
+
+def boot_id() -> str:
+    try:
+        with open("/proc/sys/kernel/random/boot_id") as f:
+            return f.readline().strip()
+    except OSError:
+        return ""
+
+
+def fc_offset(path: str = FC_TIME_FILE, max_age_s: float = FC_MAX_AGE_S):
+    """UTC minus this box's CLOCK_MONOTONIC_RAW, as measured through the FC, or None.
+
+    Returns (utc_minus_raw_s, rtt_s). Rejected when from another boot or stale on the
+    raw clock: the file is on disk and survives a reboot, so a previous flight's sample
+    would otherwise be applied as if current. A line without a boot id is the realtime
+    format from before #593 and is rejected too.
     """
     try:
         with open(path) as f:
-            offset_us, rtt_us, local_us = (int(x) for x in f.readline().split()[:3])
-    except (OSError, ValueError):
+            fields = f.readline().split()
+        offset_us, rtt_us, raw_us = (int(x) for x in fields[:3])
+        sample_boot = fields[3]
+    except (OSError, ValueError, IndexError):
         return None
-    if abs(time.time() - local_us / 1e6) > max_age_s:
+    if sample_boot != boot_id():
+        return None
+    if not 0 <= raw_now() - raw_us / 1e6 <= max_age_s:
         return None
     return offset_us / 1e6, rtt_us / 1e6
+
+
+def chip_error_s(chip_s: int, at: float, real_now: float, raw: float,
+                 utc_minus_raw: float) -> float:
+    """How far the chip's label is from UTC at the edge, measured on the raw clock.
+
+    `at` is the kernel's REALTIME stamp of the edge and `chip_s` the label read after
+    it. `real_now` and `raw` are the two clocks read together, just now, so the edge
+    lands on the raw clock as raw - (real_now - at). The only realtime quantity left is
+    that interval, under PPS_LABEL_WINDOW_S, so a chrony slew moves the answer by at
+    most 83 ms/s of it rather than by the whole slew since the FC sample (#593).
+    """
+    return chip_s - (raw - (real_now - at) + utc_minus_raw)
 
 
 def armed(path: str = ARM_FILE) -> bool:
@@ -484,10 +522,13 @@ def cmd_feed(rtc: Ds3234) -> int:
         fc = fc_offset()
         offset = fc[0] if fc is not None else None
         # What the chip is wrong BY, which is what the debounce is about. offset is how
-        # far trusted time is from our clock; chip_s is what the chip read at `at`.
-        chip_error = None if offset is None else chip_s - (at + offset)
+        # far UTC is from the raw clock; chip_s is what the chip read at `at`. Measured
+        # on the raw clock because realtime follows the chip (#593).
+        real_now, raw = time.time(), raw_now()
+        chip_error = (None if offset is None
+                      else chip_error_s(chip_s, at, real_now, raw, offset))
         if should_set_chip(no_epoch, chip_error, armed()):
-            target, err, sr = set_chip(rtc, offset)
+            target, err, sr = set_chip(rtc, offset, clock=raw_now)
             stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(target))
             print(f"coord-rtc: set the chip to {stamp}Z from the FC "
                   f"(chip was off {chip_error:+.3f} s, landed {err * 1000:+.1f} ms, "
@@ -535,17 +576,20 @@ def set_system(ts: float) -> None:
     time.clock_settime(time.CLOCK_REALTIME, ts)
 
 
-def set_chip(rtc: Ds3234, offset: float = 0.0) -> tuple[int, float, int]:
-    """Write the chip, landing on a second boundary of (system clock + offset).
+def set_chip(rtc: Ds3234, offset: float = 0.0,
+             clock=time.time) -> tuple[int, float, int]:
+    """Write the chip, landing on a second boundary of (clock() + offset).
 
     The chip has no sub-second register, so the fraction cannot be written as a
     value -- it is carried by WHEN the write lands, because writing the seconds
     register resets the countdown chain. The second comes from the registers, the
     phase comes from the timing.
 
-    `offset` is how far the true time is from this box's clock, which is zero for
-    `systohc` and the GPS correction when one is being applied. Returns the second
-    claimed, the error in seconds, and the status register after clearing OSF.
+    `offset` is how far the true time is from `clock`: zero against realtime for
+    `systohc`, and UTC minus the raw clock for the FC correction, which times the write
+    on raw_now so the measurement and the write share a clock chrony cannot slew
+    (#593). Returns the second claimed, the error in seconds, and the status register
+    after clearing OSF.
 
     WHAT THE CONSUMERS SEE AROUND THIS WRITE IS NOT A CLEAN STEP. The datasheet says
     the output "transitions high 500ms after the seconds data transfer" and says
@@ -569,17 +613,17 @@ def set_chip(rtc: Ds3234, offset: float = 0.0) -> tuple[int, float, int]:
     Not worth optimising: the disturbance is the size of the phase correction, which is
     the error being fixed, so there is no landing instant that avoids it.
     """
-    target = math.floor(time.time() + offset) + 2
+    target = math.floor(clock() + offset) + 2
     regs = time_regs(time.gmtime(target))
     # The boundary in terms of the clock this process can actually read.
     fire = target - offset
-    delay = fire - time.time() - SPIN_LEAD_S
+    delay = fire - clock() - SPIN_LEAD_S
     if delay > 0:
         time.sleep(delay)
-    while time.time() < fire:
+    while clock() < fire:
         pass
     rtc.write_time(regs)
-    landed = time.time()
+    landed = clock()
     return target, landed - fire, rtc.clear_osf()
 
 
