@@ -1,6 +1,6 @@
 ---
-# collectd's configuration. Deploy: the template and the retention bound change with
-# the repo. The package and the DataDir helper are roles/collectd-install.
+# collectd's configuration. Deploy: the template changes with the repo. The package
+# and the DataDir helper are roles/collectd-install.
 # System metrics for post-flight forensics (#25, #41). Applies to every Rekon
 # device: the coordinator and the campods run off the same avionics 5 V rail, off
 # the same kind of SD card, and lose power the same way.
@@ -25,15 +25,15 @@
 # on @var. They are also a plain text file that drops into flights/<id>/ next to
 # ground/backpack-link.jsonl, which is already the per-flight artifact convention.
 
-- name: Bound the on-card sample history
-  ansible.builtin.copy:
-    dest: /etc/tmpfiles.d/collectd-csv.conf
-    content: |
-      # Managed by ansible (roles/metrics). Drop sample files older than the
-      # retention window; systemd-tmpfiles recurses, and collectd recreates the
-      # per-host/per-plugin subdirectories on its next write.
-      d /var/log/collectd 0755 root root {{ metrics_retention }}
-    mode: "0644"
+# No age bound on the samples. The only thing that enforced one was
+# systemd-tmpfiles-clean.timer, now masked with the other scheduled maintenance: it
+# aged files by an mtime that every boot writes on the image's build epoch until
+# chrony steps the clock. Deleted by hand if the card ever needs the space. This
+# removes the rule from cards that were converged while it existed.
+- name: Remove the collectd age bound
+  ansible.builtin.file:
+    path: /etc/tmpfiles.d/collectd-csv.conf
+    state: absent
 
 # collectd-core ships NO /etc/collectd/collectd.conf -- only an example under
 # /usr/share/doc. Its unit carries ConditionPathExists=/etc/collectd/collectd.conf,
