@@ -1,0 +1,13 @@
+# Tag spidev devices for systemd, so dev-spidev0.0.device exists (coordinator#11).
+#
+# The same gap as 99-pps-systemd.rules: systemd's 99-systemd.rules does not tag the
+# spidev subsystem, so udev never tells systemd the device is there and
+# `dev-spidev0.0.device` never activates. coord-rtc-clock, coord-rtc-feed and
+# coord-rtc-pps are each Wants= and After= it, so each waited out DefaultDeviceTimeoutSec
+# (90 s) and then started anyway -- and coord-rtc-clock sits ahead of sysinit.target, so
+# the whole coordinator stack started at ~1min 43s on every boot.
+#
+# Verifiable on a device:
+#   udevadm info /dev/spidev0.0 | grep TAGS        the tag, as udev sees it
+#   systemctl status dev-spidev0.0.device          the unit it makes possible
+SUBSYSTEM=="spidev", TAG+="systemd"
