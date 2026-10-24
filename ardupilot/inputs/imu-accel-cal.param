@@ -12,9 +12,10 @@
 # (AP_InertialSensor.cpp, _accel_id_ok) -- so restoring offsets alone does not clear
 # "3D Accel calibration needed" after a parameter wipe. A six-pose saves the ids.
 #
-# AHRS_TRIM_Y is -4.34 deg. The first pose had the arms on two supports of equal height, so
-# this is the board's pitch relative to the arms after the 2026-10 rebuild. The previous
-# cal (3856c84 2026-09-23) had 0.06 deg.
+# AHRS_TRIM_Y is -4.34 deg; the previous cal (3856c84 2026-09-23) had 0.06 deg. The first
+# pose was set symmetrical side to side on two supports of equal height; fore-and-aft was
+# not checked against level, so how much of the 4.34 deg is the board's mounting after the
+# 2026-10 rebuild and how much is the pose is not known.
 #
 # provenance: six-pose on 2026-10-24 under 4.7.2, export in #600 (73938ae). Replaces the
 # 2026-09-23 values restored by #596, which the FC would not accept because the ids had
