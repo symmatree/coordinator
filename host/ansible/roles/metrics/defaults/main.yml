@@ -14,8 +14,3 @@
 # 43% more rows per unit time than 10s on a card whose write path is the thing under
 # measurement. Raising it is the first knob to reach for if that volume matters.
 metrics_interval: 7
-
-# How long samples stay on the card. These are flight forensics: once a flight's
-# window has been copied off, the on-device copy is a convenience. Bounded so the
-# card cannot fill -- the failure mode this fleet has already hit once.
-metrics_retention: 7d

@@ -29,11 +29,15 @@
 # nothing on a schedule" is less to hold, and it pre-empts timers from packages not
 # installed yet -- masking an absent unit is legal and keeps the decision made.
 #
-# THE EXCEPTION: systemd-tmpfiles-clean.timer stays. It is the only thing enforcing
-# the collectd retention rule from roles/metrics, it is `static` rather than enabled,
-# and it runs boot+15min rather than on a calendar -- so it does not accumulate a
-# backlog and it does fire within a normal session. Masking it would quietly turn
-# that retention bound into decoration.
+# systemd-tmpfiles-clean.timer TOO, which used to be the exception. It ages files by
+# mtime, and every boot starts on the image's build epoch (systemd's floor, April 2026
+# for the current image) until chrony steps the clock to the present. Anything written
+# before the step looks months old to the run at boot+15min. On 2026-10-24 it deleted
+# campod-se's /tmp/campod_camera_status, written at 258 s before the step at 428 s: the
+# paused camera never rewrote it, and the panel showed a ready camera as absent (#593).
+# /tmp is a tmpfs, emptied every boot already. The other thing it enforced was the
+# collectd age bound, removed with it from roles/metrics -- those files are deleted by
+# hand if the card ever needs the space.
 #
 # MASK, not disable. `disable` is undone the next time a package upgrade re-applies
 # the systemd preset; a mask is a symlink to /dev/null and survives. Debian's
@@ -56,6 +60,7 @@
     - logrotate.timer
     - e2scrub_all.timer
     - fstrim.timer
+    - systemd-tmpfiles-clean.timer
   # The package set varies by role and by base image, and `state: stopped` errors on
   # a unit that is not installed. Masking one that is absent still succeeds and is
   # the point -- the decision is made before the package arrives.
