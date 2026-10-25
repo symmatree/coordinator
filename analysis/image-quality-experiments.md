@@ -360,6 +360,12 @@ internally consistent within one flight and unstable across flights. The visuall
 repeatedly not been what the numeric methods found. Any new numeric result here should be checked
 against frames marked up by eye before it is believed.
 
+The method in use since 2026-10-25 is `still_banding.row_sharpness`: each row's 95th percentile of
+local contrast, blown-out pixels excluded, rather than any row mean or variance. It agreed with the
+operator's eye-marked bands on the campod frames it was first checked against, where a
+Laplacian-energy ratio had put its crests on visibly blurry rows. That is agreement on a handful of
+frames, not a validation; the module docstring records what it does and does not fix.
+
 **What would discriminate it:** whether any campod still shows a sharpness *contrast* between rows at
 all. If none does, the topic is not yet testable on that camera and waits on topic 2.
 

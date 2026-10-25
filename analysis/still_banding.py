@@ -1,12 +1,33 @@
-"""still_banding.py -- measure the horizontal blur banding in the 12 MP colour stills.
+"""still_banding.py -- measure the horizontal blur banding in rolling-shutter stills.
 
-The IMX378 still camera is rolling-shutter (docs/rekon10/oak-d-mount.md), so a periodic
-disturbance during the ~33 ms readout writes itself into the frame as horizontal bands of
-varying blur. Measuring the band *pitch* from a single frame does not work -- var-Laplacian
-and directional-cutoff detectors are dominated by scene content and fire on ground frames
-(that is E24's over-counting caveat, and it reproduces).
+Both still cameras are rolling-shutter -- the OAK-D IMX378 (docs/rekon10/oak-d-mount.md) and the
+campod IMX708 (containers/campod-camera/README.md) -- so a periodic disturbance during readout
+writes itself into the frame as horizontal bands of varying blur.
 
-This measures it differently. Take **two stills of the same scene**, register them, and take
+**The row-sharpness model: a row's sharpness is its BEST local contrast, not its average.**
+`row_sharpness` takes the 95th percentile, over columns, of local gradient magnitude, with
+clipped (blown-out) pixels excluded. It works because a blurry band is blurry across its WHOLE
+width: no part of the row keeps fine edges, so the row's best contrast falls, while a sharp
+band keeps its best edges wherever the scene has any. A mean, an energy or a variance -- var of
+the Laplacian, mean squared gradient, Tenengrad -- falls just as much when most of a row crosses
+something featureless (a shadow, the sky, a blown-out patch), and real frames are full of rows
+like that, so it tracks the scene layout, not the blur. **Do not go back to var-Laplacian or any
+row MEAN for this.** What the percentile does NOT fix: it is still a contrast measure, so a row
+whose texture is uniformly weaker by about as much as the blur costs reads like a blurred one.
+On synthetic frames where the blur halves p95, a contrast pattern of 1.5x still left the crests
+on the sharp rows, 1.9x broke the fit (R2 0.2), and 2.3x moved them onto the blurry ones. `test_analysis_modules` pins
+the featureless-row and glare behaviours. That family over-counted bands and fired on ground
+frames (E24), and on the 2026-10-25 campod stills a fine/coarse Laplacian-energy ratio put its
+crests on rows the operator could see were blurry. The p95 profile matched the operator's
+eye-marked bands on the first frames it was checked against (frame 23: blur ~1550, sharp ~1830;
+frame 6: five sharp bands) and gave 457-486 rows on eleven of twelve frames across the flight (the twelfth 435).
+Any change to this metric is checked against eye-marked frames before it is believed.
+
+`frame_bands` fits that profile on ONE frame. The two-frame method below predates it and is
+kept: it cancels scene content by division, which is still worth having where a frame's
+profile is weak.
+
+The two-frame method. Take **two stills of the same scene**, register them, and take
 the **ratio** of per-row gradient energy. Scene texture appears in both frames and divides
 out; what survives is the difference in per-row blur, which is camera-side. Fitting a
 sinusoid to that ratio gives the pitch.
@@ -20,8 +41,9 @@ hand first:
   fit quality before summarising, rather than taking a median over every pair that parsed.
 
 The pitch is a spatial period in rows. Converting it to a frequency needs the sensor readout
-time, which we have **not** measured -- `pitch_to_hz` takes it as an explicit argument and
-does not default, so the assumption stays visible at the call site.
+time -- `pitch_to_hz` takes it as an explicit argument and does not default. For the campod
+IMX708 at 4608x2592 it is known from the kernel driver (`CAMPOD_READOUT_S`); the OAK-D's has
+not been measured.
 
 **Choosing the pairs.** Registering every nearby-in-time pair and discarding what fails is a
 weak filter -- on 260814 it rejected 79 of 88 candidates and every survivor came from the one
@@ -42,7 +64,8 @@ import json
 import os
 
 import numpy as np
-from scipy.ndimage import gaussian_filter, uniform_filter1d
+from scipy.ndimage import (gaussian_filter, gaussian_gradient_magnitude, maximum_filter,
+                           uniform_filter1d)
 
 try:
     from PIL import Image
@@ -52,6 +75,76 @@ except ImportError:  # pragma: no cover - Pillow is an analysis-only dependency
 ROW_BLOCK = 8          # rows averaged per sample of the profile
 MIN_PHASE_CORR = 0.10  # registration quality floor
 MIN_R2 = 0.60          # sinusoid fit quality floor
+
+# campod IMX708, mode 4608x2592: line_length_pix 15648 at pixel_rate 595.2 MHz, from the imx708
+# kernel driver; the same constants give the published 14.35 fps (containers/campod-camera/README.md).
+CAMPOD_ROWS = 2592
+CAMPOD_READOUT_S = CAMPOD_ROWS * 15648 / 595200000
+
+ROW_PCT = 95           # which percentile of a row's local contrast is its sharpness
+CLIP_LEVEL = 250       # any channel at or above this is blown out, and reads as flat
+
+
+def row_sharpness(rgb, pct=ROW_PCT, sigma=1.5, clip=CLIP_LEVEL, smooth=15):
+    """log of each row's `pct` percentile of gradient magnitude, clipped pixels excluded.
+
+    `rgb` is (H, W, 3) uint8, or (H, W) grayscale. Pixels within 4 px of a clipped one are left
+    out -- a blown-out highlight has no gradient and would read as blur. Smoothed over `smooth`
+    rows. See the module docstring for why this is a percentile and not a mean.
+    """
+    a = np.asarray(rgb)
+    gray = a.mean(2).astype(np.float32) if a.ndim == 3 else a.astype(np.float32)
+    hot = a.max(2) if a.ndim == 3 else a
+    gm = gaussian_gradient_magnitude(gray, sigma)
+    gm[maximum_filter(hot >= clip, size=9)] = np.nan
+    return uniform_filter1d(np.log(np.nanpercentile(gm, pct, axis=1)), smooth)
+
+
+def frame_bands(rgb, pitch_range=(150, 1400), n_trials=1251):
+    """Single-frame band fit on `row_sharpness`: quadratic detrend, sinusoid scanned over pitch.
+
+    Returns a dict with the pitch (rows), its periodogram, the fit's R2 and amplitude, the crest
+    rows (the SHARPEST rows of the fitted pattern) and `status` from `pitch_from_periodogram`, so
+    a fit railing against `pitch_range` is reported rather than returned as a pitch.
+    """
+    p = row_sharpness(rgb)
+    rows = np.arange(len(p), dtype=float)
+    p = p - np.polyval(np.polyfit(rows, p, 2), rows)
+    tss = ((p - p.mean()) ** 2).sum()
+    ps = np.linspace(*pitch_range, n_trials)
+    ve = np.empty_like(ps)
+    coef = []
+    for i, pitch in enumerate(ps):
+        w = 2 * np.pi / pitch
+        X = np.column_stack([np.sin(w * rows), np.cos(w * rows), np.ones_like(rows)])
+        c, *_ = np.linalg.lstsq(X, p, rcond=None)
+        ve[i] = 1 - ((p - X @ c) ** 2).sum() / tss
+        coef.append(c)
+    pitch, r2, status = pitch_from_periodogram(ps, ve)
+    out = {"status": status, "r2": r2, "profile": p, "periodogram": (ps, ve)}
+    if status != "ok":
+        return out
+    c = coef[int(np.argmax(ve))]
+    w = 2 * np.pi / pitch
+    first = ((np.pi / 2 - np.arctan2(c[1], c[0])) / w) % pitch   # model peaks where w*row+phase = pi/2
+    out.update(pitch_rows=pitch, amp=float(np.hypot(c[0], c[1])),
+               crests=np.arange(first, len(p), pitch).tolist())
+    return out
+
+
+def score_still(path):
+    """Per-still summary for a session sweep: frame sharpness from `row_sharpness` (median over
+    rows, and the 90th percentile over rows -- the sharpest band) plus the `frame_bands` fit,
+    without the profile and periodogram arrays. Module-level so a process pool can map it."""
+    if Image is None:
+        raise RuntimeError("Pillow is required to read stills")
+    rgb = np.asarray(Image.open(path))
+    raw = row_sharpness(rgb)
+    fb = frame_bands(rgb)
+    return {"sharp_median": float(np.median(raw)), "sharp_p90": float(np.percentile(raw, 90)),
+            "band_status": fb["status"], "band_r2": float(fb["r2"]),
+            "band_pitch_rows": fb.get("pitch_rows"), "band_amp": fb.get("amp"),
+            "band_crests": fb.get("crests")}
 
 
 def load_gray(path):
@@ -72,13 +165,15 @@ def register(a, b, downsample=8):
     return (p[0] - A.shape[0] // 2) * downsample, (p[1] - A.shape[1] // 2) * downsample, float(c.max())
 
 
-def row_energy(img, block=ROW_BLOCK):
-    """Mean squared gradient magnitude per block of rows -- a per-row sharpness profile."""
+def row_energy(img, block=ROW_BLOCK, pct=ROW_PCT):
+    """Per block of rows, the `pct` percentile of squared gradient magnitude -- the same
+    best-contrast model as `row_sharpness`, without clip masking (the ratio in `band_pitch`
+    cancels what a clipped region does to both frames)."""
     g = gaussian_filter(img, 1.0)
     gy, gx = np.gradient(g)
     e = gx * gx + gy * gy
     n = (e.shape[0] // block) * block
-    return e[:n].reshape(-1, block, e.shape[1]).mean(axis=(1, 2))
+    return np.percentile(e[:n].reshape(-1, block * e.shape[1]), pct, axis=1)
 
 
 def band_pitch(a, b, window=(80, 2960, 700, 3300), pitch_range=(300, 2600), n_trials=900,

@@ -139,6 +139,32 @@ def test_band_pitch_recovers_a_known_pitch():
     assert r2 > 0.5
 
 
+def test_frame_bands_ignores_rows_that_are_mostly_featureless():
+    """Blur bands at 480 rows, plus a 700-row pattern of rows whose left three quarters are
+    featureless (shadow, sky). A row MEAN fits the 700 -- checked when this was written: R2 0.73
+    at 695 rows. The p95 profile only needs some texture in a row, so it fits the blur."""
+    rows = np.arange(2592)
+    a = _banded(480, shape=(2592, 1600), seed=3)
+    flat = np.cos(2 * np.pi * rows / 700) > 0
+    a[flat, :1200] = 128 + (a[flat, :1200] - 128) * 0.05
+    out = still_banding.frame_bands(np.clip(a, 0, 255).astype(np.uint8))
+    assert out["status"] == "ok"
+    assert abs(out["pitch_rows"] - 480) < 15
+    # crests land on the sharp rows (cos peaks at multiples of 480), not on the blurry ones
+    assert all(min(c % 480, 480 - c % 480) < 40 for c in out["crests"])
+
+
+def test_clipped_rows_do_not_read_as_blur():
+    """A blown-out highlight has no gradient. Unmasked, this glare fits as a band (checked when
+    this was written: R2 0.53 at 403 rows); masked, it fits nothing (R2 0.05)."""
+    rng = np.random.default_rng(5)
+    a = np.clip(rng.normal(128, 40, (2592, 1600)), 0, 255).astype(np.uint8)
+    for r0 in range(0, 2592, 400):
+        a[r0:r0 + 200, :1200] = 255                      # three quarters of the row, glared
+    out = still_banding.frame_bands(np.dstack([a] * 3))
+    assert not (out["status"] == "ok" and abs(out["pitch_rows"] - 400) < 20 and out["r2"] > 0.3)
+
+
 def test_pitch_at_the_search_bound_is_rejected():
     """The failure that produced a wrong cross-flight number by hand: the fit railing."""
     ps = np.linspace(300, 2600, 900)
