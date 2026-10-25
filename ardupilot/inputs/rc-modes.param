@@ -16,6 +16,15 @@ MAV3_EXT_STAT,1
 MAV3_POSITION,1
 MAV3_EXTRA1,1
 MAV3_EXTRA2,1
+# Every other stream group off. A GCS's REQUEST_DATA_STREAM on this link sets and saves
+# these (GCS_Param.cpp handle_request_data_stream, set_and_save_ifchanged); on 2026-10-24
+# Mission Planner over ELRS left all of them at 4.
+MAV3_ADSB,0
+MAV3_EXTRA3,0
+MAV3_PARAMS,0
+MAV3_RAW_CTRL,0
+MAV3_RAW_SENS,0
+MAV3_RC_CHAN,0
 # Mark this link private -- bit 1 = NO_FORWARD (GCS.h Option::NO_FORWARD). The FC stops
 # relaying broadcast traffic from the coordinator link (MAV2) onto ELRS. Measured on
 # 260812-maneuver: forwarded VISION_POSITION_ESTIMATE (3.2 Hz) + VISION_SPEED_ESTIMATE

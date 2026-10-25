@@ -12,14 +12,14 @@
 # (AP_InertialSensor.cpp, _accel_id_ok) -- so restoring offsets alone does not clear
 # "3D Accel calibration needed" after a parameter wipe. A six-pose saves the ids.
 #
-# AHRS_TRIM_Y is -4.34 deg; the previous cal (3856c84 2026-09-23) had 0.06 deg. The first
-# pose was set symmetrical side to side on two supports of equal height; fore-and-aft was
-# not checked against level, so how much of the 4.34 deg is the board's mounting after the
-# 2026-10 rebuild and how much is the pose is not known.
-#
 # provenance: six-pose on 2026-10-24 under 4.7.2, export in #600 (73938ae). Replaces the
 # 2026-09-23 values restored by #596, which the FC would not accept because the ids had
 # not been saved since the 2026-09-30 wipe.
+#
+# AHRS_TRIM is from Calibrate Level (which writes only AHRS_TRIM) on 2026-10-25, with the
+# airframe level both side to side and fore-and-aft: X 0.43 deg, Y 0.45 deg. The
+# six-pose's first pose, fore-and-aft unchecked, had set Y to -4.34 deg.
+#   provenance: export in #603 (e0f7057)
 INS_ACCOFFS_X,-0.007271941
 INS_ACCOFFS_Y,0.02858531
 INS_ACCOFFS_Z,-0.009277901
@@ -34,6 +34,6 @@ INS_ACC2SCAL_X,0.9979284
 INS_ACC2SCAL_Y,0.9997893
 INS_ACC2SCAL_Z,0.9991022
 INS_ACC2_CALTEMP,56.40097
-AHRS_TRIM_X,0.004414165
-AHRS_TRIM_Y,-0.07575822
+AHRS_TRIM_X,0.007504338
+AHRS_TRIM_Y,0.007802457
 AHRS_TRIM_Z,0
