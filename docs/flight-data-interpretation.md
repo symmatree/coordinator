@@ -245,9 +245,10 @@ light-vs-time reference. Sliding the still series against it on 260814: device-p
 varies per frame.
 
 > **Known-stale consumer.** `analysis/image-sharpness-vs-motion.ipynb` predates this and places
-> stills by `monotonic_ns`, so its stills sit several seconds late and frames near the arm boundary
+> OAK-D stills by `monotonic_ns`, so they sit several seconds late and frames near the arm boundary
 > can land in the wrong regime bucket. Its cross-stream alignment (OAK-D gyro vs FC gyro) is sound;
-> it is only the still placement that is affected.
+> it is only the OAK-D still placement that is affected. Campod stills are placed by
+> `exposure_wall_ns` and are not affected.
 
 ---
 

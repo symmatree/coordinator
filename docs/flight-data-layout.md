@@ -125,7 +125,8 @@ that space, even when it has the same shape as a capture. Concretely:
     flight-analysis-<logstem>.ipynb       # executed FC-log notebook + PDF (see Deviations: currently root)
     flight-analysis-<logstem>.pdf
     vio-quality.json                      # VINS-vs-EKF score
-    image-sharpness-vs-motion.json
+    image-sharpness-vs-motion-<camera>.json   # per camera: campod-se, campod-sw, oakd
+    vibration-spectrogram-<pod>.json
     *.png / *.mp4                         # figures
 ```
 
@@ -157,7 +158,8 @@ Two rules make this navigable:
 | **vio-offline** CronJob (tiles) | on-demand (manual `create job --from`; #139) | each `*.feat` | `derived/pose/<stem>.vinspose.csv` + sidecar (#139) |
 | `analysis/vio-quality.ipynb` | manual / after cron | pose CSV + `.bin` + `manifest.json` | `derived/vio-quality.json` (+ figures) |
 | `analysis/vio-online-offline-comparison.ipynb` | manual | pose CSV + `VISP` from `.bin` | `derived/vio-online-offline-comparison.json` (+ figures) |
-| `analysis/image-sharpness-vs-motion.ipynb` | manual | `stills/` + `.bin` | `derived/image-sharpness-vs-motion.json` (+ figures) |
+| `analysis/image-sharpness-vs-motion.ipynb` | manual | stills + `.bin` | `derived/image-sharpness-vs-motion-<camera>.json` (+ figures) |
+| `analysis/vibration-spectrogram.ipynb` | manual, once per instrumented pod | campod `accel-*.jsonl` + `.bin` | `derived/vibration-spectrogram-<pod>.json` (+ figures) |
 | `analysis/tools/vio_param_sweep.py` | manual (bench, docker) | a `.feat` + `.bin` | canonical: `derived/reconstructions/<param>/...`. **Current: `<feat>.<param>-sweep.json` next to the `.feat` -- deviation.** |
 
 **Provenance sidecars** (RO-Crate-ish field names, coordinator #40):
