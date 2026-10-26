@@ -452,3 +452,31 @@ constant across the exposure, `f*t_exp` below about 0.45, which is ~90 Hz at 5 m
 motion reverses within the exposure and the smear saturates while the formula keeps growing: it
 overstates by 1.48x at 120 Hz and 8.89x at 800 Hz. Every rotor-band blur figure computed that way was
 inflated.
+
+---
+
+## Topic 7 -- Image motion measured against a global-shutter reference (method, awaiting data)
+
+Every measurement above infers image motion indirectly: from row sharpness, from band pitch, or from
+accelerometers that are not on the camera module. The OAK-D carries a rolling-shutter color sensor
+and global-shutter mono sensors on one device. A mono frame from the same moment as a color still is
+a reference for where each row of the color frame should sit.
+
+**The idea:** map the mono frame into the color frame using the device calibration and scene depth.
+Then measure each color row's horizontal and vertical offset from the reference, with strong
+straight edges such as shadow lines carrying most of the precision. With the IMX378's 10.9 us line
+time, the offsets are image displacement against time across the 33 ms readout, sampled at one row
+per 10.9 us. That record does not depend on which structure moves or on where an accelerometer sits.
+
+**What it needs from a capture** (a capture outside the VIO pipeline, with static config or MQTT
+topics, owned by the flight-platform side):
+
+- color still at full resolution and the mono frame(s), unrectified;
+- device timestamps for both streams on one clock, with exposure time and gain per frame, so the
+  mono exposure can be placed within the color readout;
+- the device calibration (intrinsics, color-to-mono extrinsics), once per session;
+- both monos, or saved stereo depth, so the few-cm color-to-mono baseline can be handled without
+  assuming a flat scene.
+
+**Limit:** this measures image motion at the OAK-D mount, on the body. It reaches the campod images
+only if a mono and a campod see the same ground, so one can be mapped onto the other.
