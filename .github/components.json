@@ -52,6 +52,17 @@
         "runner": "ubuntu-24.04",
         "lockfile": ""
       },
+      "oak-capture": {
+        "paths": [
+          "containers/oak-capture/**"
+        ],
+        "image": "ghcr.io/symmatree/coordinator-oak-capture",
+        "context": "containers/oak-capture",
+        "dockerfile": "containers/oak-capture/Dockerfile",
+        "platforms": "linux/arm64",
+        "runner": "ubuntu-24.04-arm",
+        "lockfile": ""
+      },
       "pod-link": {
         "paths": [
           "containers/pod-link/**"

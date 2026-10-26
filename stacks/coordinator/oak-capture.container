@@ -1,0 +1,47 @@
+# Colour stills, both monos and the IMU from the OAK. containers/oak-capture/README.md.
+[Unit]
+Description=OAK capture
+PartOf=coordinator-stack.target
+# Wall-clock data is the deliverable, so wait for chrony as campod-camera does. The
+# target is bounded, and a timeout still reaches it, so this orders capture, never blocks it.
+After=time-sync.target
+Wants=time-sync.target
+
+[Container]
+Image=ghcr.io/symmatree/coordinator-oak-capture:main
+ContainerName=oak_capture
+Pull=never
+PodmanArgs=--privileged --stop-timeout=30
+
+# A VOLUME, not AddDevice: depthai uploads firmware and the OAK re-enumerates at a new
+# node under /dev/bus/usb, which a device mapping taken at start cannot see.
+# docs/bench-tracker.md has the measurement.
+Volume=/dev/bus/usb:/dev/bus/usb
+# The arm file coordinator-mavlink writes, and this process's status for pod-link.
+Volume=/var/lib/coordinator/ipc:/ipc
+Volume=/var/lib/coordinator/captures:/captures
+# The host's name and card-image manifest; a container's own hostname is its id.
+Volume=/etc/hostname:/etc/host-hostname:ro
+Volume=/etc/fleet-image:/etc/fleet-image:ro
+
+# Colour, left and right all at this rate, so each colour frame has a mono pair.
+Environment=OAK_FPS=1
+# Shutter ceiling in us, for all three cameras. A ceiling, not a fixed time: DepthAI has
+# no fixed-time, auto-gain mode (src/main.cpp).
+Environment=OAK_MAX_EXPOSURE_US=1000
+Environment=OAK_JPEG_QUALITY=90
+Environment=OAK_IMU_ACCEL_HZ=480
+Environment=OAK_IMU_GYRO_HZ=400
+Environment=OAK_WARMUP_FRAMES=10
+# Written by coordinator-mavlink: "1" armed, "0" disarmed, absent until it has heard
+# the FC. Nothing is written unless it says armed.
+Environment=OAK_CAPTURE_FLAG=/ipc/fc_armed
+Environment=OAK_STATUS_FILE=/ipc/oak_capture_status
+
+[Service]
+TimeoutStopSec=60
+# A container that dies mid-run stays dead until the next boot, as the rest of the stack.
+Restart=no
+
+[Install]
+WantedBy=coordinator-stack.target

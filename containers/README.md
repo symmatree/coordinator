@@ -43,7 +43,7 @@ The two big offenders were **depthai-core** (~built, then copied in) and the **O
 | Base | Arch | Carries | Consumed by | Ships to the Pi? |
 |------|------|---------|-------------|------------------|
 | [`vio-tracker-base`](vio-tracker-base/) | arm64 | Debian + C++ toolchain + a built **depthai-core** at `/opt/depthai` | `vio-tracker` **builder** stage | no (build-only) |
-| [`oak-capture-base`](oak-capture-base/) | arm64 | Debian trixie + gcc 14/CMake/Ninja + a built **depthai-core v3** at `/opt/depthai` | the OAK capture app (not yet written) | no (build-only) |
+| [`oak-capture-base`](oak-capture-base/) | arm64 | Debian trixie + gcc 14/CMake/Ninja + a built **depthai-core v3** at `/opt/depthai` | `oak-capture` **builder** stage (its runtime copies `/opt/depthai/lib`) | no (build-only) |
 | [`vio-runtime-base`](vio-runtime-base/) | arm64 + amd64 | Debian + the **OpenCV runtime** + libs common to both VIO runtime stages | `vio-tracker` + `vio-estimator` **runtime** stages | yes (its layers ship inside both app images, pulled once) |
 
 Each base rebuilds only when **its own** directory changes (a base-digest bump or its dep list),
@@ -58,6 +58,7 @@ the app images, never an implicit move.
 | `vio-estimator` | arm64 + amd64 | `debian@digest` (own Ceres/OpenCV-dev toolchain) | `vio-runtime-base@digest` | a dedicated build base is a possible future CI-time win; the runtime OpenCV is the layer that ships, and it comes from the shared base |
 | `sh1106-display` | arm64 | -- | `debian@digest` | small; no heavy shared content |
 | `coordinator-mavlink` | arm64 | -- | `debian@digest` | small; no heavy shared content |
+| `oak-capture` | arm64 | `oak-capture-base@digest` | `debian@digest` (same as coordinator-mavlink) | the runtime adds depthai's two shared libraries, ~23 MB |
 | `campod-camera` | arm64 | -- | `debian@digest` (via `BASE_IMAGE`) | small; adds the Raspberry Pi apt suite for matched `libcamera`/`picamera2` |
 | `flir-camera` | arm64 | -- | `debian@digest` | small; Debian's own Aravis and PyGObject, plus one hash-pinned `simplejpeg` wheel |
 | `pod-link` | arm64 | `golang@digest` (cross-compiles on the builder) | `debian@digest` (via `BASE_IMAGE`) | small; a static binary plus `dumb-init`. Its deps are pinned by `go.sum`, and `go vet`/`go test` run in the build stage -- including an end-to-end test against an in-process `mochi-mqtt`, so a wire-level regression fails the build rather than a flight |

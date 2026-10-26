@@ -23,10 +23,11 @@ Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket
 Volume=/var/lib/coordinator/captures:/captures:ro
 
 Environment=POD_LINK_ROLE=publisher
-# The collector to stop on a quiesce: the router holds the FC serial and writes the
-# session. The coordinator has more slack than a Zero, so this is about releasing the
-# port and the capture directory rather than about memory.
-Environment=POD_LINK_COLLECTION_UNITS=coordinator-mavlink
+# The collectors to stop on a quiesce: the router holds the FC serial and writes the
+# session, and oak-capture writes into the same session. The coordinator has more slack
+# than a Zero, so this is about releasing the port and the capture directory rather than
+# about memory.
+Environment=POD_LINK_COLLECTION_UNITS=coordinator-mavlink,oak-capture
 Environment=POD_LINK_BROKER=tcp://127.0.0.1:1883
 Environment=POD_LINK_ARM_FILE=/ipc/fc_armed
 Environment=POD_LINK_PERIOD_S=2
@@ -34,8 +35,9 @@ Environment=POD_LINK_PERIOD_S=2
 # Nothing here is protecting a camera's residency: this is the 4-core Pi 4B.
 Environment=POD_LINK_STATUS_PERIOD_S=5
 Environment=POD_LINK_DATA_DIR=/captures
-# No capture processes on this box write status files.
-Environment=POD_LINK_CAMERA_STATUS_FILE=
+# oak-capture's document has the campod camera's shape, so this box's `ready` is the
+# OAK's: warm on all three cameras. Absent while oak-capture is not running.
+Environment=POD_LINK_CAMERA_STATUS_FILE=/ipc/oak_capture_status
 Environment=POD_LINK_ACCEL_STATUS_FILE=
 
 [Service]
