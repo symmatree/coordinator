@@ -13,7 +13,9 @@ Wants=time-sync.target
 [Container]
 Image=ghcr.io/symmatree/coordinator-campod-camera:main
 ContainerName=campod_camera
-Exec=python3 /opt/campod/capture.py
+# The C++ capture. capture.py, the picamera2 original, is still in the image with the same
+# environment: `Exec=python3 /opt/campod/capture.py` runs it instead.
+Exec=/opt/campod/campod-capture
 # A power-up must need no network: docs/deployment-model.md.
 Pull=never
 
@@ -48,11 +50,10 @@ Volume=/etc/fleet-image:/etc/fleet-image:ro
 # Shared with pod-link and the accel reader: the capture flag and the status files.
 Volume=/tmp:/tmp
 
-# No capture rate: one frame per second is a consequence of the selection rule, not a
-# setting. capture.py keeps the frame nearest each second from the pinned grid below.
-# 0 = sensor full resolution, 4608x2592. picamera2 defaults the raw stream to main's size,
-# so this sets the sensor mode and both buffer sizes: a set is 50.7 MB here against 12.7 MB
-# at the 2304x1296 binned mode.
+# No capture rate: the rate is the pinned frame duration below.
+# 0 = sensor full resolution, 4608x2592, which also selects the sensor mode. The C++
+# capture's output buffers are YUV420, 17.9 MB each at this size, where capture.py's main
+# stream was 35.8 MB of RGB.
 Environment=CAMPOD_CAPTURE_WIDTH=0
 Environment=CAMPOD_CAPTURE_HEIGHT=0
 Environment=CAMPOD_JPEG_QUALITY=90
@@ -71,9 +72,9 @@ Environment=CAMPOD_STILL_FOCUS=infinity
 # the bus instead is coordinator#501.
 # Fixed frame duration, which the camera-sync algorithm requires -- without it libcamera
 # logs an error every frame and its single-frame correction has nothing stable to correct
-# against. Clamped to what the mode allows; capture.py logs what it achieved.
+# against. Clamped to what the mode allows; the capture logs what it achieved.
 #
-# 1 Hz at full resolution, AND THIS IS NOW THE CAPTURE RATE. capture.py keeps every frame
+# 1 Hz at full resolution, AND THIS IS NOW THE CAPTURE RATE. The capture keeps every frame
 # it is handed, so the pin is the only control over how much is written: there is no
 # selection rule to thin a faster grid any more. Raising this raises the card load in
 # proportion.

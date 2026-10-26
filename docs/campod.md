@@ -239,7 +239,7 @@ shell on a pod.
    coordinator. That host path is the router's `/tmp/fc_armed` and pod-link's `/ipc/fc_armed`
    (read-only); the format is one line, `1` or `0`. pod-link's publisher role reads it every
    2 s and publishes `rekon/capture/intent`, each campod's pod-link writes
-   `/tmp/campod_capture`, and `capture.py` and the accel reader both gate their writes on
+   `/tmp/campod_capture`, and the camera capture and the accel reader both gate their writes on
    that file. This is the only step that touches a device directly.
 7. **Let it collect for about 4 minutes.**
 8. **Write `0` to the arm file, then wait 20 seconds** so the intent propagates and the

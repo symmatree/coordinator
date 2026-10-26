@@ -9,10 +9,11 @@
     "components": {
       "campod-camera": {
         "paths": [
-          "containers/campod-camera/**"
+          "containers/campod-camera/**",
+          "containers/capture-common/**"
         ],
         "image": "ghcr.io/symmatree/coordinator-campod-camera",
-        "context": "containers/campod-camera",
+        "context": "containers",
         "dockerfile": "containers/campod-camera/Dockerfile",
         "platforms": "linux/arm64",
         "runner": "ubuntu-24.04-arm",

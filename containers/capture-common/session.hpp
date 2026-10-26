@@ -35,6 +35,13 @@ struct SessionConfig {
     std::optional<std::filesystem::path> flag_path;
     std::optional<std::filesystem::path> status_path;
     std::string log_name;  // prefix for log lines, e.g. "oak-capture"
+    // Camera sync is part of `ready`, and nothing is kept until it is reached: a campod's
+    // frames are only usable with its partner's. The backend reports it with
+    // set_sync_ready(). Without this, ready is warm.
+    bool sync = false;
+    // The ledger's file name in `dir`. Empty means <prefix>_<session>.frames.jsonl; the
+    // campods' is frames.jsonl.
+    std::string ledger_file{};
 };
 
 // One frame, as a backend saw it.
@@ -72,12 +79,22 @@ class Session {
 
     // Every frame retrieved goes through here. If it is kept, `encode` is called for its
     // bytes and the file and sidecar are queued to the writer; otherwise it is not called,
-    // so a paused session never pays for an encode.
+    // so a paused session never pays for an encode. Its ledger line says which, as
+    // `decision`: warmup, paused, sync_wait, kept, dropped (the writer's queue was full) or
+    // encode_failed.
+    //
+    // Files are <prefix>_<kind>_<seq>_<utc><ext>, with its .json sidecar beside it. A
+    // session of one stream leaves the kind out, <prefix>_<seq>_<utc>, as the campods'
+    // names always have.
     void frame(const Frame& f, const char* ext, const std::function<std::vector<uint8_t>()>& encode);
 
-    // Warm and armed: whether anything is being written, for streams the backend writes
-    // itself (the OAK's IMU).
-    bool capturing() const { return warm_ && armed_; }
+    // Camera sync as the backend last saw it. Published, and part of `ready` and of
+    // capturing(), when the session was configured with `sync`.
+    void set_sync_ready(bool ready);
+
+    // Warm, armed and (if configured) synced: whether anything is being written, for
+    // streams the backend writes itself (the OAK's IMU).
+    bool capturing() const { return warm_ && armed_ && (!cfg_.sync || sync_ready_); }
 
     // Drain the writer, close the ledger, publish the stopped state. Idempotent.
     void stop();
@@ -104,6 +121,7 @@ class Session {
     std::string prefix_;
     bool warm_ = false;
     bool armed_ = false;
+    bool sync_ready_ = false;
     bool stopped_ = false;
     bool failed_ = false;
     double last_gate_ = -1e9;

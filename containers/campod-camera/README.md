@@ -6,8 +6,24 @@ Capture container for the Rekon camera pod (Pi Zero 2 W + Camera Module 3 / IMX7
 
 ## What it does
 
-- `capture.py` runs picamera2 + libcamera, captures stills at `CAMPOD_CAPTURE_HZ`, and writes `<stem>.jpg` + `<stem>.json` under `/captures/<node>/<session>/`.
+- `campod-capture` (C++, `src/capture.cpp`) is what the stack runs: libcamera's C++ API, with the control loop from [`capture-common`](../capture-common/) shared with oak-capture. It captures every frame at the pinned frame duration and writes `<node>_<seq>_<utc>.jpg` + `.json` and a `frames.jsonl` ledger under `/captures/<node>/<session>/`, with the same environment, status document and sidecar fields as `capture.py`.
+- `capture.py` is the picamera2 original, still in the image; `Exec=python3 /opt/campod/capture.py` in the quadlet runs it instead.
 - The sidecar records `sensor_timestamp_ns` (libcamera `SensorTimestamp`, CLOCK_BOOTTIME at exposure) plus wall-clock and monotonic time -- the anchor for later PPK-style interpolation against ArduPilot pose logs. Georeferencing comes from GNSS, not here.
+
+### campod-capture against capture.py
+
+| | `capture.py` | `campod-capture` |
+|---|---|---|
+| ISP output | RGB888 (35.8 MB at 12 MP) plus a raw stream | YUV420 (17.9 MB), the Pi pipeline's StillCapture default |
+| JPEG | simplejpeg on a copy of the frame, on an encoder thread | libjpeg-turbo straight from the camera's buffer, on the loop thread; the request is requeued after |
+| Card write | its own thread, blocking when 4 frames are queued | capture-common's writer: tmp, fsync, rename; drops and counts when 4 are queued |
+| Sidecar `monotonic_ns` | read after the copy | the exposure instant (SensorTimestamp) on CLOCK_MONOTONIC |
+| Ledger `decision` | `paused` covered warmup too | `warmup` separately; also `dropped`, `encode_failed` |
+| Status `frames_seen` | a number | `{"still": n}` |
+
+Holding the request through the encode loses no frame while the encode is shorter than the
+frame duration: with two buffers, the other is queued for the next frame. The stack's
+duration is 1 s; capture.py's encode measured 389-422 ms from RGB. This one's is unmeasured.
 - Clean shutdown on SIGTERM/SIGINT so `coord stop` / `docker stop` finishes the in-flight frame and stops the camera.
 
 ## Rolling shutter: turning a band pitch into a frequency
