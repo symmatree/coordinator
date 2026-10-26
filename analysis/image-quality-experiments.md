@@ -473,6 +473,8 @@ same transitions in the color still and measure how they bend there relative to 
 - The bending of an edge against row is image displacement against time across the 33 ms readout,
   at the IMX378's 10.9 us line time.
 - That record does not depend on which structure moves or on where an accelerometer sits.
+- An edge's own shape in the scene, such as a shadow following ground relief, is common to two
+  cameras this close together. It appears in both images and drops out of the comparison.
 
 **No 3D reconstruction.** Frames are chosen from a stable hover with a far-field view: low FC EKF
 motion and no kick in the accelerometers around the still. Under those conditions one fixed
