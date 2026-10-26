@@ -57,7 +57,7 @@ Environment=CAMPOD_CAPTURE_WIDTH=0
 Environment=CAMPOD_CAPTURE_HEIGHT=0
 Environment=CAMPOD_JPEG_QUALITY=90
 # Shutter cap in us; auto-exposure trades the rest to gain. 0 = uncapped.
-Environment=CAMPOD_STILL_MAX_EXPOSURE_US=5000
+Environment=CAMPOD_STILL_MAX_EXPOSURE_US=1000
 # Lens position in dioptres, 1/metres. Mapping subjects are at infinity.
 Environment=CAMPOD_STILL_FOCUS=infinity
 # off | server | client. Multi-campod sync is #24.

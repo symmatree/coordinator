@@ -54,7 +54,7 @@ the same vibration writes **2.4x more bands** here. Binning is a lever if it eve
 | `CAMPOD_CAPTURE_HZ` | `1.0` | captures per second |
 | `CAMPOD_CAPTURE_WIDTH` / `_HEIGHT` | `0` | `0` = sensor full resolution (4608x2592) |
 | `CAMPOD_JPEG_QUALITY` | `90` | JPEG quality 1-100 |
-| `CAMPOD_STILL_MAX_EXPOSURE_US` | `5000` | caps the shutter; `0` = uncapped AE |
+| `CAMPOD_STILL_MAX_EXPOSURE_US` | `1000` | caps the shutter; `0` = uncapped AE |
 | `CAMPOD_STILL_FOCUS` | `infinity` | `infinity` \| lens position in **dioptres** |
 | `CAMPOD_SYNC_MODE` | `off` | `off` \| `server` \| `client` (Phase 3) |
 
