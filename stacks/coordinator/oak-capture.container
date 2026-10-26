@@ -24,8 +24,10 @@ Volume=/var/lib/coordinator/captures:/captures
 Volume=/etc/hostname:/etc/host-hostname:ro
 Volume=/etc/fleet-image:/etc/fleet-image:ro
 
-# Colour, left and right all at this rate, so each colour frame has a mono pair.
-Environment=OAK_FPS=1
+# Colour, left and right all at this rate, so each colour frame has a mono pair. Every
+# frame is kept. Not 1: the OV9282 monos refuse anything under 1.687 fps (measured
+# 2026-10-26, "Desired FPS 1 is lower than min FPS of the sensor config: 1.687").
+Environment=OAK_FPS=2
 # Shutter ceiling in us, for all three cameras. A ceiling, not a fixed time: DepthAI has
 # no fixed-time, auto-gain mode (src/main.cpp).
 Environment=OAK_MAX_EXPOSURE_US=1000

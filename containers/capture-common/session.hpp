@@ -82,6 +82,10 @@ class Session {
     // Drain the writer, close the ledger, publish the stopped state. Idempotent.
     void stop();
 
+    // Stop, publishing `phase: failed` and the reason instead of `stopped`, so a reader can
+    // tell a capture that ended from one that broke.
+    void fail(const std::string& why);
+
     struct Counts {
         int64_t seen = 0;
         int64_t kept = 0;
@@ -101,6 +105,7 @@ class Session {
     bool warm_ = false;
     bool armed_ = false;
     bool stopped_ = false;
+    bool failed_ = false;
     double last_gate_ = -1e9;
     double last_publish_ = -1e9;
 };

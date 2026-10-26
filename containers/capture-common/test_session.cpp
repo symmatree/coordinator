@@ -149,6 +149,19 @@ int main() {
         CHECK(s.capturing());
     }
 
+    // A failure is published as such, with its reason, and a later stop() does not hide it.
+    {
+        capture::Session s({"bench", "boot4", dir, {"color"}, 0, std::nullopt, status, "test"});
+        s.set_status("camera", "present");
+        s.publish();
+        s.fail("Desired FPS 1 is lower than min FPS");
+        s.stop();
+        auto st = json::parse(slurp(status));
+        CHECK(st["phase"] == "failed");
+        CHECK(st["error"] == "Desired FPS 1 is lower than min FPS");
+        CHECK(st["ready"] == false);
+    }
+
     fs::remove_all(dir);
     if (failures) {
         std::cerr << failures << " check(s) failed\n";
