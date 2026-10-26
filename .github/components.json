@@ -54,10 +54,11 @@
       },
       "oak-capture": {
         "paths": [
-          "containers/oak-capture/**"
+          "containers/oak-capture/**",
+          "containers/capture-common/**"
         ],
         "image": "ghcr.io/symmatree/coordinator-oak-capture",
-        "context": "containers/oak-capture",
+        "context": "containers",
         "dockerfile": "containers/oak-capture/Dockerfile",
         "platforms": "linux/arm64",
         "runner": "ubuntu-24.04-arm",

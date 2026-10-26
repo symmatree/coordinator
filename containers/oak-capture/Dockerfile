@@ -3,16 +3,20 @@
 # Built on oak-capture-base, which carries the toolchain and depthai-core v3 at
 # /opt/depthai; the runtime takes only the binary and depthai's two shared libraries.
 #
+# The build context is containers/, for the shared control loop in capture-common.
+#
 # Local build (arm64 box, or QEMU):
-#   docker build -t coordinator-oak-capture:local containers/oak-capture
+#   docker build -t coordinator-oak-capture:local -f containers/oak-capture/Dockerfile containers
 FROM ghcr.io/symmatree/coordinator-oak-capture-base:main@sha256:50b995654204f409119b3cfa33afdbb51ad79436a3ef9eb0a5d3b4db4b11ee6a AS builder
 
 WORKDIR /src
-COPY CMakeLists.txt ./
-COPY src/ src/
-RUN cmake -S. -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/depthai \
+COPY capture-common/ capture-common/
+COPY oak-capture/CMakeLists.txt oak-capture/
+COPY oak-capture/src/ oak-capture/src/
+RUN cmake -S oak-capture -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/depthai \
   && cmake --build build --parallel "$(nproc)" \
-  && ./build/test_conventions
+  && ./build/capture-common/test_conventions \
+  && ./build/capture-common/test_session
 
 # The same Debian as coordinator-mavlink, so the base layer is already on the coordinator.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
