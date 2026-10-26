@@ -31,16 +31,28 @@ Session::Session(SessionConfig cfg) : cfg_(std::move(cfg)), writer_(cfg_.dir.str
         {"frames", 0},
         {"last_frame_mono_s", nullptr},
     };
+    // Null until the backend has looked, so "not evaluated yet" never reads as an answer.
+    // Present only on a synced session: the panel shows an S letter for a pod that has it.
+    if (cfg_.sync) state_["sync_ready"] = nullptr;
 }
 
 Session::~Session() { stop(); }
 
 void Session::set_status(const std::string& key, nlohmann::json value) { state_[key] = std::move(value); }
 
+void Session::set_sync_ready(bool ready) {
+    if (state_["sync_ready"] == ready) return;
+    sync_ready_ = ready;
+    state_["sync_ready"] = ready;
+    state_["capturing"] = capturing();
+    publish();
+}
+
 void Session::publish() {
-    // No sync in this loop, so ready is warm: every stream has delivered its warmup.
-    state_["ready"] = warm_;
-    if (warm_ && state_["ready_at_mono_s"].is_null()) state_["ready_at_mono_s"] = round3(mono_s());
+    // Will arming now produce usable frames: every stream has delivered its warmup, and
+    // the camera is synced if this session needs it. capture.py _is_ready.
+    state_["ready"] = warm_ && (!cfg_.sync || sync_ready_);
+    if (state_["ready"] == true && state_["ready_at_mono_s"].is_null()) state_["ready_at_mono_s"] = round3(mono_s());
     last_publish_ = mono_s();
     state_["as_of_mono_s"] = round3(last_publish_);
     write_status(cfg_.status_path, state_);
@@ -50,7 +62,8 @@ void Session::begin(const std::string& file_prefix) {
     prefix_ = file_prefix;
     // Every frame retrieved, kept or not: what shows the streams' timing without
     // writing a single image.
-    const auto path = cfg_.dir / (prefix_ + "_" + cfg_.session + ".frames.jsonl");
+    const auto path = cfg_.dir / (cfg_.ledger_file.empty() ? prefix_ + "_" + cfg_.session + ".frames.jsonl"
+                                                           : cfg_.ledger_file);
     ledger_ = std::fopen(path.c_str(), "a");
     if (!ledger_) throw std::runtime_error("cannot open " + path.string());
     state_["phase"] = "warmup";
@@ -103,21 +116,26 @@ void Session::frame(const Frame& f, const char* ext, const std::function<std::ve
     if (c.last_device_seq && f.device_seq != *c.last_device_seq + 1) c.device_seq_gaps++;
     c.last_device_seq = f.device_seq;
     c.seen++;
-    const bool keep = capturing();
 
     nlohmann::json rec = {{"kind", f.kind}, {"device_seq", f.device_seq}, {"monotonic_ns", f.monotonic_ns}};
     rec.update(f.fields);
-    rec["kept"] = keep;
-    if (ledger_) {
+    rec["clk"] = to_json(clk);
+    // Written last, so it says what happened to the frame rather than what was intended.
+    auto ledger = [&](const char* decision) {
+        rec["decision"] = decision;
+        if (!ledger_) return;
         const std::string s = rec.dump();
         std::fwrite(s.data(), 1, s.size(), ledger_);
         std::fputc('\n', ledger_);
-    }
-    if (!keep) return;
+    };
+    if (!warm_) return ledger("warmup");
+    if (!armed_) return ledger("paused");
+    if (cfg_.sync && !sync_ready_) return ledger("sync_wait");
 
     char seqbuf[24];
     std::snprintf(seqbuf, sizeof(seqbuf), "%08lld", static_cast<long long>(c.kept));
-    const std::string stem = prefix_ + "_" + f.kind + "_" + seqbuf + "_" + utc_stem(wall_ns);
+    const std::string kind = streams_.size() == 1 ? "" : f.kind + "_";
+    const std::string stem = prefix_ + "_" + kind + seqbuf + "_" + utc_stem(wall_ns);
     nlohmann::json sidecar = {
         {"node", cfg_.node},
         {"kind", f.kind},
@@ -136,15 +154,21 @@ void Session::frame(const Frame& f, const char* ext, const std::function<std::ve
 
     Job job;
     job.path = (cfg_.dir / (stem + ext)).string();
-    job.bytes = encode();
+    try {
+        job.bytes = encode();
+    } catch (const std::exception& e) {
+        std::cerr << cfg_.log_name << ": encoding " << stem << ext << " failed: " << e.what() << std::endl;
+        return ledger("encode_failed");
+    }
     job.sidecar_path = (cfg_.dir / (stem + ".json")).string();
     job.sidecar = sidecar.dump();
-    if (writer_.submit(std::move(job))) {
-        c.kept++;
-        // `frames` is the first stream's count, the one a panel shows.
-        if (!cfg_.streams.empty() && f.kind == cfg_.streams.front()) state_["frames"] = c.kept;
-        state_["last_frame_mono_s"] = round3(mono_s());
-    }
+    if (!writer_.submit(std::move(job))) return ledger("dropped");
+    rec["kept_seq"] = c.kept;
+    ledger("kept");
+    c.kept++;
+    // `frames` is the first stream's count, the one a panel shows.
+    if (!cfg_.streams.empty() && f.kind == cfg_.streams.front()) state_["frames"] = c.kept;
+    state_["last_frame_mono_s"] = round3(mono_s());
 }
 
 void Session::stop() {

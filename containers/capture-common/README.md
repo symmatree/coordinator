@@ -2,7 +2,7 @@
 
 The capture control loop and the campod conventions, in C++ with no camera library: shared
 source for each capture app, built into it with `add_subdirectory`. Used by
-[`oak-capture`](../oak-capture/); a libcamera campod capture would be the second user.
+[`oak-capture`](../oak-capture/) and the campods' [`campod-capture`](../campod-camera/).
 
 | File | What |
 |------|------|
@@ -20,9 +20,15 @@ encoded bytes, which is only called when the frame is kept. It calls `tick()` re
 the gate and the status. `Session` never calls back into the backend.
 
 That suits both shapes of camera library: depthai's output queues are polled from the app's
-own loop, while libcamera completes requests on its own thread, so a libcamera backend moves
-each completed frame onto its loop's thread before handing it over. `Session` is not
+own loop, while libcamera completes requests on its own thread, so campod-capture moves each
+completed request onto its loop's thread before handing it over. `Session` is not
 thread-safe.
 
-What it does not do yet, because no backend has needed it: a readiness condition beyond
-warm (the campods' `ready` also needs camera sync).
+A session configured with `sync` (the campods) adds camera sync to `ready` and to what is
+kept: the backend reports it with `set_sync_ready()`, the status carries `sync_ready`, and
+frames before it are ledgered as `sync_wait`.
+
+Every frame retrieved gets one ledger line with its `decision`: `warmup`, `paused`,
+`sync_wait`, `kept`, `dropped` (the writer's queue was full) or `encode_failed`. Files are
+`<prefix>_<kind>_<seq>_<utc>`; a session of one stream leaves out the kind, which with the
+node as the prefix is the campods' `<node>_<seq>_<utc>`.

@@ -46,6 +46,18 @@ static size_t count_ext(const fs::path& dir, const std::string& ext) {
     return n;
 }
 
+static capture::SessionConfig cfg(std::string session, fs::path dir, std::vector<std::string> streams,
+                                  int warmup, std::optional<fs::path> flag, std::optional<fs::path> status) {
+    return {.node = "bench",
+            .session = std::move(session),
+            .dir = std::move(dir),
+            .streams = std::move(streams),
+            .warmup_frames = warmup,
+            .flag_path = std::move(flag),
+            .status_path = std::move(status),
+            .log_name = "test"};
+}
+
 int main() {
     const fs::path dir = fs::temp_directory_path() / ("capture-session-test-" + std::to_string(::getpid()));
     fs::create_directories(dir);
@@ -69,7 +81,7 @@ int main() {
     };
 
     {
-        capture::Session s({"bench", "boot", dir, {"color", "left"}, 2, flag, status, "test"});
+        capture::Session s(cfg("boot", dir, {"color", "left"}, 2, flag, status));
         s.set_status("camera", "present");
         s.begin("MX");
         CHECK(json::parse(slurp(status))["phase"] == "warmup");
@@ -130,20 +142,77 @@ int main() {
     auto led = lines(dir / "MX_boot.frames.jsonl");
     CHECK(led.size() == 7);
     int kept = 0;
-    for (const auto& l : led) kept += l["kept"].get<bool>();
+    for (const auto& l : led) kept += l["decision"] == "kept";
     CHECK(kept == 2);
+    CHECK(led[0]["decision"] == "warmup");
+    CHECK(led[6]["decision"] == "paused");
     CHECK(led[0]["exposure_us"] == 1000);
+    CHECK(led[0]["clk"].contains("boot_ns"));
+
+    // A synced session: warm is not ready, nothing is kept until sync, and one stream's
+    // names carry no kind -- the campods' layout.
+    {
+        const fs::path sdir = dir / "synced";
+        fs::create_directories(sdir);
+        spit(flag, "1\n");
+        auto c = cfg("boot5", sdir, {"still"}, 1, flag, status);
+        c.node = "campod-se";
+        c.sync = true;
+        c.ledger_file = "frames.jsonl";
+        capture::Session s(std::move(c));
+        s.begin("campod-se");
+        CHECK(json::parse(slurp(status))["sync_ready"].is_null());
+        s.frame(frame("still", 0), ".jpg", encode);
+        s.tick(20.0);
+        auto st = json::parse(slurp(status));
+        CHECK(st["warm"] == true);
+        CHECK(st["ready"] == false);
+        CHECK(!s.capturing());
+        s.set_sync_ready(false);
+        CHECK(json::parse(slurp(status))["sync_ready"] == false);
+        s.frame(frame("still", 1), ".jpg", encode);
+        s.set_sync_ready(true);
+        st = json::parse(slurp(status));
+        CHECK(st["ready"] == true);
+        CHECK(st["capturing"] == true);
+        s.frame(frame("still", 2), ".jpg", encode);
+        s.stop();
+        auto sled = lines(sdir / "frames.jsonl");
+        CHECK(sled.size() == 3);
+        CHECK(sled[1]["decision"] == "sync_wait");
+        CHECK(sled[2]["decision"] == "kept");
+        CHECK(sled[2]["kept_seq"] == 0);
+        CHECK(count_ext(sdir, ".jpg") == 1);
+        for (const auto& e : fs::directory_iterator(sdir))
+            if (e.path().extension() == ".jpg") CHECK(e.path().filename().string().rfind("campod-se_00000000_", 0) == 0);
+    }
+
+    // An encode that throws costs that frame, not the session.
+    {
+        const fs::path edir = dir / "encode";
+        fs::create_directories(edir);
+        capture::Session s(cfg("boot6", edir, {"still"}, 0, std::nullopt, std::nullopt));
+        s.begin("MX");
+        s.tick(0);
+        s.frame(frame("still", 0), ".jpg", []() -> std::vector<uint8_t> { throw std::runtime_error("no"); });
+        s.frame(frame("still", 1), ".jpg", encode);
+        s.stop();
+        auto eled = lines(edir / "MX_boot6.frames.jsonl");
+        CHECK(eled[0]["decision"] == "encode_failed");
+        CHECK(eled[1]["decision"] == "kept");
+        CHECK(s.counts("still").kept == 1);
+    }
 
     // No gate file at all means paused, and no gate path means always capturing.
     {
         fs::remove(flag);
-        capture::Session s({"bench", "boot2", dir, {"color"}, 0, flag, std::nullopt, "test"});
+        capture::Session s(cfg("boot2", dir, {"color"}, 0, flag, std::nullopt));
         s.begin("MX");
         s.tick(0);
         CHECK(!s.capturing());
     }
     {
-        capture::Session s({"bench", "boot3", dir, {"color"}, 0, std::nullopt, std::nullopt, "test"});
+        capture::Session s(cfg("boot3", dir, {"color"}, 0, std::nullopt, std::nullopt));
         s.begin("MX");
         s.tick(0);
         CHECK(s.capturing());
@@ -151,7 +220,7 @@ int main() {
 
     // A failure is published as such, with its reason, and a later stop() does not hide it.
     {
-        capture::Session s({"bench", "boot4", dir, {"color"}, 0, std::nullopt, status, "test"});
+        capture::Session s(cfg("boot4", dir, {"color"}, 0, std::nullopt, status));
         s.set_status("camera", "present");
         s.publish();
         s.fail("Desired FPS 1 is lower than min FPS");

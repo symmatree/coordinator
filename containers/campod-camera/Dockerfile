@@ -1,4 +1,5 @@
-# coordinator-campod-camera: picamera2 + libcamera still capture (arm64 / Pi Zero 2 W).
+# coordinator-campod-camera: libcamera still capture (arm64 / Pi Zero 2 W), in C++
+# (campod-capture) and in Python (capture.py, picamera2), plus the accelerometer reader.
 #
 # Uses Raspberry Pi's apt archive (NOT stock Debian) so libcamera + picamera2 are
 # the matched, Pi-pipeline-aware versions -- the one real gotcha for camera-in-
@@ -6,10 +7,10 @@
 # the suite the campod image is built from (dotfiles-symm/pi-image/build-image.sh):
 # the container's libcamera talks to the host kernel, so the two move together.
 #
-# Local build on the Zero (or arm64 box):
-#   docker build -t coordinator-campod-camera:local containers/campod-camera
-# Cross-build (slow; QEMU):
-#   docker buildx build --platform linux/arm64 -t coordinator-campod-camera:local containers/campod-camera
+# The build context is containers/, for the shared control loop in capture-common.
+#
+# Local build (arm64 box, or QEMU):
+#   docker build -t coordinator-campod-camera:local -f containers/campod-camera/Dockerfile containers
 
 # Declared before the first FROM so it is a GLOBAL arg: an ARG after a FROM
 # belongs to that stage only, and the final `FROM ${BASE_IMAGE}` could not see it.
@@ -28,7 +29,7 @@ ARG BASE_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01cc
 # builder instead of under QEMU; only the output is arm64.
 FROM --platform=$BUILDPLATFORM golang:1.26-trixie@sha256:771f3162219f7a66bb6be3fea1ba31f418932946a99ad9eac26ffd555dfcf393 AS accel-build
 WORKDIR /src
-COPY accel/ ./
+COPY campod-camera/accel/ ./
 # Hardware-free: a fake SPI part covers the register protocol, the signed decode
 # across the 13-bit boundary, DEVID gating, the self-test verdict against the
 # datasheet's signed per-axis limits, that a drain is exactly one ioctl, and that
@@ -44,7 +45,10 @@ ARG GIT_SHA=""
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
       go build -trimpath -ldflags="-s -w -X main.buildSHA=${GIT_SHA}" -o /out/campod-accel .
 
-FROM ${BASE_IMAGE}
+# Debian with the Raspberry Pi archive configured, and nothing installed from it yet: the
+# base of both the C++ build and the runtime, so the two resolve libcamera from the same
+# archive in the same build.
+FROM ${BASE_IMAGE} AS rpi-apt
 
 ARG DEBIAN_FRONTEND=noninteractive
 # Raspberry Pi apt suite; keep aligned with the host Pi OS release.
@@ -79,18 +83,46 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -f /tmp/rpi-keyring.deb \
   && echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] http://archive.raspberrypi.com/debian/ ${RPI_SUITE} main" \
        > /etc/apt/sources.list.d/raspi.list \
-  && apt-get update && apt-get install -y --no-install-recommends \
-    dumb-init \
-    python3-picamera2 \
-    python3-simplejpeg \
   && apt-get purge -y curl gpg \
   && apt-get autoremove -y \
+  && rm -rf /var/lib/apt/lists/*
+
+# campod-capture, the C++ capture, against the archive's libcamera. The tests are
+# hardware-free and a failure fails the build.
+FROM rpi-apt AS capture-build
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    g++ \
+    libcamera-dev \
+    libturbojpeg0-dev \
+    ninja-build \
+    nlohmann-json3-dev \
+    pkg-config \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY capture-common/ capture-common/
+COPY campod-camera/CMakeLists.txt campod-camera/
+COPY campod-camera/src/ campod-camera/src/
+RUN cmake -S campod-camera -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
+  && cmake --build build --parallel "$(nproc)" \
+  && ./build/test_campod \
+  && ./build/capture-common/test_conventions \
+  && ./build/capture-common/test_session
+
+FROM rpi-apt
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    dumb-init \
+    libturbojpeg0 \
+    python3-picamera2 \
+    python3-simplejpeg \
   && rm -rf /var/lib/apt/lists/*
 
 # The build provenance, as a file the payload can read without knowing it runs in
 # a container. The same values the workflow attaches as OCI labels, which are
 # recoverable with `docker inspect` but only by something that knows to ask
-# docker. capture.py and campod-accel copy this into each session's manifests/.
+# docker. The captures and campod-accel copy this into each session's manifests/.
 #
 # Format per #326: a flat table of double-quoted strings, which is valid TOML AND
 # a sourceable shell file AND a systemd EnvironmentFile at once. Two rules, both
@@ -117,20 +149,24 @@ RUN printf '%s\n' \
       "FLEET_UNIT=\"campod-camera\"" \
       > /etc/container-image
 
-COPY capture.py /opt/campod/capture.py
+COPY campod-camera/capture.py /opt/campod/capture.py
 COPY --from=accel-build /out/campod-accel /opt/campod/campod-accel
-COPY test_capture_wait.py /opt/campod/test_capture_wait.py
+COPY --from=capture-build /src/build/campod-capture /opt/campod/campod-capture
+# The runtime's libcamera is whatever picamera2 pulled from the archive; this fails the
+# build if that is not the soname the C++ capture was linked against.
+RUN ! ldd /opt/campod/campod-capture | grep "not found"
+COPY campod-camera/test_capture_wait.py /opt/campod/test_capture_wait.py
 RUN cd /opt/campod && python3 test_capture_wait.py --require-manifest && rm test_capture_wait.py
 # Which pod paces the others. Runs at build time like the wait test above, so a change
 # that makes every pod a client -- sync that looks on while nothing is synchronised --
 # fails the build rather than the flight.
-COPY test_sync_leader.py /opt/campod/test_sync_leader.py
+COPY campod-camera/test_sync_leader.py /opt/campod/test_sync_leader.py
 RUN cd /opt/campod && python3 test_sync_leader.py && rm test_sync_leader.py
 # libcamera's sync parameters live in the sensor tuning JSON. These are the installed
 # imx708 files with rpi.sync's ready_frame and sync_period set; libcamera searches
 # LIBCAMERA_IPA_CONFIG_PATH before its own directory. Generated from the files this
 # build installed, so they cannot fall behind the libcamera that reads them.
-COPY sync_tuning.py /opt/campod/sync_tuning.py
+COPY campod-camera/sync_tuning.py /opt/campod/sync_tuning.py
 RUN python3 /opt/campod/sync_tuning.py && rm /opt/campod/sync_tuning.py
 ENV LIBCAMERA_IPA_CONFIG_PATH=/opt/campod/libcamera-ipa
 
