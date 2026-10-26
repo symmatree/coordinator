@@ -468,11 +468,16 @@ accelerometers that are not on the camera module. The OAK-D carries a rolling-sh
 and global-shutter mono sensors on one device. A mono frame from the same moment as a color still is
 a reference for where each row of the color frame should sit.
 
-**The idea:** map the mono frame into the color frame using the device calibration and scene depth.
-Then measure each color row's horizontal and vertical offset from the reference, with strong
-straight edges such as shadow lines carrying most of the precision. With the IMX378's 10.9 us line
-time, the offsets are image displacement against time across the 33 ms readout, sampled at one row
-per 10.9 us. That record does not depend on which structure moves or on where an accelerometer sits.
+**The idea:** find bright, high-contrast transitions in the mono frame, such as shadow lines. Find the
+same transitions in the color still and measure how they bend there relative to the mono.
+- The bending of an edge against row is image displacement against time across the 33 ms readout,
+  at the IMX378's 10.9 us line time.
+- That record does not depend on which structure moves or on where an accelerometer sits.
+
+**No 3D reconstruction.** Frames are chosen from a stable hover with a far-field view: low FC EKF
+motion and no kick in the accelerometers around the still. Under those conditions one fixed
+mono-to-color mapping, from the device calibration, carries the edges across. Parallax from the
+few-cm baseline is then a near-constant offset rather than something to solve per feature.
 
 **What it needs from a capture** (a capture outside the VIO pipeline, with static config or MQTT
 topics, owned by the flight-platform side):
@@ -481,8 +486,7 @@ topics, owned by the flight-platform side):
 - device timestamps for both streams on one clock, with exposure time and gain per frame, so the
   mono exposure can be placed within the color readout;
 - the device calibration (intrinsics, color-to-mono extrinsics), once per session;
-- both monos, or saved stereo depth, so the few-cm color-to-mono baseline can be handled without
-  assuming a flat scene.
+- FC log and accelerometer data covering the stills, for choosing the frames.
 
 **Limit:** this measures image motion at the OAK-D mount, on the body. It reaches the campod images
 only if a mono and a campod see the same ground, so one can be mapped onto the other.
