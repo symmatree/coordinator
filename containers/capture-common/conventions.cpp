@@ -103,7 +103,7 @@ void copy_manifests(const fs::path& session_dir,
     for (const auto& [src, given] : sources) {
         auto body = read_file(src);
         if (!body) {
-            std::cout << "oak-capture: no " << src.string()
+            std::cout << "capture: no " << src.string()
                       << " to record; this session is unattributed" << std::endl;
             continue;
         }

@@ -53,8 +53,8 @@ report, so only reports with a new sequence number are written.
 
 ## Arm gate and status
 
-The campods' conventions ([src/conventions.hpp](src/conventions.hpp), ported from
-`campod-camera/capture.py`):
+The control loop is `capture::Session` in [`../capture-common`](../capture-common/), the
+campods' conventions ported from `campod-camera/capture.py`; this app is the depthai half.
 
 - **Gate:** `OAK_CAPTURE_FLAG`, the arm file coordinator-mavlink writes. Frames are retrieved
   all the time so the cameras stay warm; nothing is written until the file says armed. The
@@ -66,6 +66,5 @@ The campods' conventions ([src/conventions.hpp](src/conventions.hpp), ported fro
 
 ## Build
 
-`src/test_conventions.cpp` runs in the image build, without a device. `durable_writer.hpp`
-is vio-tracker's #89 writer (fsync, rename, drop when the queue is full), copied because it
-lives in another build context.
+The build context is `containers/`, so the image can take `capture-common`. Its tests run
+in the image build, without a device.
