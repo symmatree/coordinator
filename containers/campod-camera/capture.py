@@ -16,7 +16,7 @@ Config via environment:
   CAMPOD_CAPTURE_HEIGHT  frame height (default: 0 = sensor full resolution)
   CAMPOD_JPEG_QUALITY    1-100 (default: 90)
   CAMPOD_STILL_MAX_EXPOSURE_US
-                      cap the shutter (default: 5000; 0 = uncapped AE)
+                      cap the shutter (default: 1000; 0 = uncapped AE)
   CAMPOD_STILL_FOCUS     infinity | <dioptres> (default: infinity)
   CAMPOD_FRAME_DURATION_US  fixed frame duration in microseconds; the camera-sync
                       algorithm requires a FIXED rate and warns every frame without one.
@@ -838,7 +838,7 @@ def main():
     width = _env_int("CAMPOD_CAPTURE_WIDTH", 0)
     height = _env_int("CAMPOD_CAPTURE_HEIGHT", 0)
     quality = _env_int("CAMPOD_JPEG_QUALITY", 90)
-    max_exposure_us = _env_int("CAMPOD_STILL_MAX_EXPOSURE_US", 5000)
+    max_exposure_us = _env_int("CAMPOD_STILL_MAX_EXPOSURE_US", 1000)
     focus = (os.getenv("CAMPOD_STILL_FOCUS") or "infinity").strip().lower()
     # Required: there is no unsynced mode (_sync_mode_for says why). A pod with no leader
     # named cannot know whether it is the pacesetter, and the quadlet has set this on every
