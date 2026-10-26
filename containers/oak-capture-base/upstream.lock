@@ -1,0 +1,6 @@
+# Pinned upstream source for coordinator-oak-capture-base image builds.
+# On a USB OAK (RVC2) the device firmware is bundled into depthai-core, so this pin is also
+# the camera's firmware version. Regenerate the SHA after an intentional tag bump.
+
+DEPTHAI_CORE_TAG=v3.11.0
+DEPTHAI_CORE_SHA=e9ead6536e1bf9842d91211fcf80f0b4ef119954

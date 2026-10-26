@@ -31,7 +31,7 @@ The two big offenders were **depthai-core** (~built, then copied in) and the **O
    move becomes a **deliberate, reviewed** digest bump.
 2. **Factor the heavy, stable content into pinned base images**, built on their own cadence and
    consumed **by digest**. Then an app-source change rebuilds only its small layer; the heavy
-   layers keep their digests and are not re-pulled. Two such bases exist (below).
+   layers keep their digests and are not re-pulled. Such bases exist per heavy dependency (below).
 3. **Keep the digests fresh with `pin-base-digests.sh`** (no third-party app). It auto-discovers
    the base refs in `*/Dockerfile`, resolves each tag's current digest, and rewrites the pins;
    `.github/workflows/update-base-digests.yaml` runs it monthly / on demand and opens a PR when a
@@ -43,6 +43,7 @@ The two big offenders were **depthai-core** (~built, then copied in) and the **O
 | Base | Arch | Carries | Consumed by | Ships to the Pi? |
 |------|------|---------|-------------|------------------|
 | [`vio-tracker-base`](vio-tracker-base/) | arm64 | Debian + C++ toolchain + a built **depthai-core** at `/opt/depthai` | `vio-tracker` **builder** stage | no (build-only) |
+| [`oak-capture-base`](oak-capture-base/) | arm64 | Debian trixie + gcc 14/CMake/Ninja + a built **depthai-core v3** at `/opt/depthai` | the OAK capture app (not yet written) | no (build-only) |
 | [`vio-runtime-base`](vio-runtime-base/) | arm64 + amd64 | Debian + the **OpenCV runtime** + libs common to both VIO runtime stages | `vio-tracker` + `vio-estimator` **runtime** stages | yes (its layers ship inside both app images, pulled once) |
 
 Each base rebuilds only when **its own** directory changes (a base-digest bump or its dep list),
