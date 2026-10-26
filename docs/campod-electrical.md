@@ -17,8 +17,8 @@ It has a serial console available for bring-up monitoring.
 
 ### Accelerometers
 
-Each campod has (up to) a pair of ADXL345 accelerometers. Nominally one is mounted attached to the campod's camera, and one is
-mounted at the end of the same arm adjacent to the motors, giving motion for the arm as a whole, as well as a clearer view
+Each campod has (up to) a pair of ADXL345 accelerometers. One (`camera`) is attached to the camera mounting near the camera,
+since the arm under the mounting base is not reachable; it is not on the camera module. The other (`arm`) is mounted at the end of the same arm adjacent to the motors, giving motion for the arm as a whole, as well as a clearer view
 of motor-sourced vibration at the root of it.
 
 Sourced from [3d west](https://west3d.com/products/adxl345-accelerometer?variant=41129750888616) but the text on the page
