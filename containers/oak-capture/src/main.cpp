@@ -84,7 +84,7 @@ int main() {
 
     const std::string node = capture::node_name("OAK_NODE_NAME", "/etc/host-hostname");
     const fs::path out_dir = std::getenv("OAK_CAPTURE_DIR") ? std::getenv("OAK_CAPTURE_DIR") : "/captures";
-    const float fps = static_cast<float>(env_double("OAK_FPS", 1.0));
+    const float fps = static_cast<float>(env_double("OAK_FPS", 2.0));
     const int max_exposure_us = env_int("OAK_MAX_EXPOSURE_US", 1000);
     const int jpeg_quality = env_int("OAK_JPEG_QUALITY", 90);
     const int accel_hz = env_int("OAK_IMU_ACCEL_HZ", 480);
@@ -124,158 +124,163 @@ int main() {
         return 0;
     }
 
-    auto device = std::make_shared<dai::Device>();
-    const std::string mxid = device->getDeviceId();
-    session.set_status("camera", "present");
-    session.set_status("device_id", mxid);
-    session.publish();
-    {
-        std::cout << "oak-capture: " << device->getProductName() << " " << mxid << " ("
-                  << device->getDeviceName() << "), usb " << static_cast<int>(device->getUsbSpeed())
-                  << ", imu " << device->getConnectedIMU() << " fw "
-                  << device->getIMUFirmwareVersion().toString() << ", cameras:";
-        for (const auto& f : device->getConnectedCameraFeatures()) {
-            std::cout << " " << dai::toString(f.socket) << "=" << f.sensorName;
-        }
-        std::cout << std::endl;
-    }
-
-    dai::Pipeline pipeline(device);
-
-    // Colour: full sensor resolution, encoded to JPEG on the camera.
-    //
-    // A CAP, NOT A FIXED SHUTTER. DepthAI has manual exposure (time AND ISO fixed) or
-    // auto exposure with a ceiling; there is no fixed-time, auto-gain mode like the one
-    // the campods use. With the ceiling, AE keeps the shutter at or under it and gains
-    // the rest -- and may go shorter in bright light. Every frame records what it got.
-    auto color = pipeline.create<dai::node::Camera>()->build(dai::CameraBoardSocket::CAM_A, std::nullopt, fps);
-    color->initialControl.setAutoExposureLimit(static_cast<uint32_t>(max_exposure_us));
-    auto* color_out = color->requestFullResolutionOutput(dai::ImgFrame::Type::NV12, fps);
-    auto encoder = pipeline.create<dai::node::VideoEncoder>()->build(*color_out);
-    encoder->setDefaultProfilePreset(fps, dai::VideoEncoderProperties::Profile::MJPEG);
-    encoder->setQuality(jpeg_quality);
-
-    // The monos, at the colour's rate and with the same ceiling. Raw 8-bit, written as
-    // PGM: lossless, and a frame is ~1 MB.
-    auto mono = [&](dai::CameraBoardSocket socket) {
-        auto cam = pipeline.create<dai::node::Camera>()->build(socket, std::nullopt, fps);
-        cam->initialControl.setAutoExposureLimit(static_cast<uint32_t>(max_exposure_us));
-        return cam->requestFullResolutionOutput(dai::ImgFrame::Type::GRAY8, fps);
-    };
-    auto* left_out = mono(dai::CameraBoardSocket::CAM_B);
-    auto* right_out = mono(dai::CameraBoardSocket::CAM_C);
-
-    // The IMU in its own frame, with nothing applied: the raw streams are the sensor's
-    // output before DepthAI's alignment or calibration, which is what a vibration
-    // spectrum wants.
-    auto imu = pipeline.create<dai::node::IMU>();
-    imu->enableIMUSensor(dai::IMUSensor::ACCELEROMETER_RAW, accel_hz);
-    imu->enableIMUSensor(dai::IMUSensor::GYROSCOPE_RAW, gyro_hz);
-    imu->setBatchReportThreshold(5);
-    imu->setMaxBatchReports(20);
-
-    // Non-blocking, so a slow host drops the oldest message rather than stalling the
-    // device; a drop shows as a gap in the device sequence numbers, which are recorded.
-    auto color_q = encoder->out.createOutputQueue(4, false);
-    auto left_q = left_out->createOutputQueue(4, false);
-    auto right_q = right_out->createOutputQueue(4, false);
-    auto imu_q = imu->out.createOutputQueue(64, false);
-
-    pipeline.start();
-    std::cout << "oak-capture: node=" << node << " dir=" << session_dir.string() << " fps=" << fps
-              << " max_exposure_us=" << max_exposure_us << " jpeg_quality=" << jpeg_quality
-              << " imu accel=" << accel_hz << "Hz gyro=" << gyro_hz << "Hz"
-              << " gate=" << (flag_path ? flag_path->string() : "none") << std::endl;
-
-    session.begin(mxid);
-    std::FILE* imu_log = std::fopen((session_dir / (mxid + "_" + session_id + ".imu.jsonl")).c_str(), "a");
-    if (!imu_log) {
-        std::cerr << "oak-capture: cannot open the IMU log in " << session_dir << std::endl;
-        return 1;
-    }
-    int64_t imu_written = 0;
-    std::optional<int32_t> last_accel_seq, last_gyro_seq;
-    auto imu_line = [&](const char* t, const auto& r) {
-        const std::string s = json{{"t", t},
-                                   {"seq", r.sequence},
-                                   {"monotonic_ns", ns(r.getTimestamp())},
-                                   {"device_timestamp_ns", ns(r.getTimestampDevice())},
-                                   {"x", r.x},
-                                   {"y", r.y},
-                                   {"z", r.z},
-                                   {"accuracy", static_cast<int>(r.accuracy)}}
-                                  .dump();
-        std::fwrite(s.data(), 1, s.size(), imu_log);
-        std::fputc('\n', imu_log);
-        imu_written++;
-    };
-    auto on_mono = [&](const char* kind, const std::shared_ptr<dai::ImgFrame>& f) {
-        session.frame(oak_frame(kind, *f, mxid, max_exposure_us), ".pgm", [&] {
-            auto data = f->getData();
-            return capture::encode_pgm(data.data(), f->getWidth(), f->getHeight(), f->getStride());
-        });
-    };
-
-    int exit_code = 0;
-    bool was_capturing = false;
+    // Anything thrown from here to the loop is a setup failure -- a rate the sensor will not
+    // run at, a device that went away while opening -- and is published as `failed` with its
+    // message, rather than leaving the last status document standing.
     try {
-        while (!g_stop) {
-            if (!pipeline.isRunning()) {
-                std::cerr << "oak-capture: the pipeline stopped -- device lost?" << std::endl;
-                exit_code = 1;
-                break;
+        auto device = std::make_shared<dai::Device>();
+        const std::string mxid = device->getDeviceId();
+        session.set_status("camera", "present");
+        session.set_status("device_id", mxid);
+        session.publish();
+        {
+            std::cout << "oak-capture: " << device->getProductName() << " " << mxid << " ("
+                      << device->getDeviceName() << "), usb " << static_cast<int>(device->getUsbSpeed())
+                      << ", imu " << device->getConnectedIMU() << " fw "
+                      << device->getIMUFirmwareVersion().toString() << ", cameras:";
+            for (const auto& f : device->getConnectedCameraFeatures()) {
+                std::cout << " " << dai::toString(f.socket) << "=" << f.sensorName;
             }
-            session.tick(mono_s());
-            if (was_capturing && !session.capturing()) std::fflush(imu_log);
-            was_capturing = session.capturing();
+            std::cout << std::endl;
+        }
 
-            bool any = false;
-            for (const auto& f : color_q->tryGetAll<dai::EncodedFrame>()) {
-                any = true;
-                auto frame = oak_frame("color", *f, mxid, max_exposure_us);
-                frame.fields["lens_position"] = f->getLensPosition();
-                frame.fields["color_temperature_k"] = f->getColorTemperature();
-                frame.fields["jpeg_quality"] = jpeg_quality;
-                session.frame(frame, ".jpg", [&] {
-                    auto data = f->getData();
-                    return std::vector<uint8_t>(data.begin(), data.end());
-                });
-            }
-            for (const auto& f : left_q->tryGetAll<dai::ImgFrame>()) {
-                any = true;
-                on_mono("left", f);
-            }
-            for (const auto& f : right_q->tryGetAll<dai::ImgFrame>()) {
-                any = true;
-                on_mono("right", f);
-            }
-            for (const auto& d : imu_q->tryGetAll<dai::IMUData>()) {
-                any = true;
-                if (!session.capturing()) continue;
-                // A packet carries the latest report of each sensor, so at different rates
-                // the slower one repeats; its sequence number says which are new.
-                for (const auto& p : d->packets) {
-                    if (!last_accel_seq || p.acceleroMeter.sequence != *last_accel_seq) {
-                        last_accel_seq = p.acceleroMeter.sequence;
-                        imu_line("a", p.acceleroMeter);
-                    }
-                    if (!last_gyro_seq || p.gyroscope.sequence != *last_gyro_seq) {
-                        last_gyro_seq = p.gyroscope.sequence;
-                        imu_line("g", p.gyroscope);
+        dai::Pipeline pipeline(device);
+
+        // Colour: full sensor resolution, encoded to JPEG on the camera.
+        //
+        // A CAP, NOT A FIXED SHUTTER. DepthAI has manual exposure (time AND ISO fixed) or
+        // auto exposure with a ceiling; there is no fixed-time, auto-gain mode like the one
+        // the campods use. With the ceiling, AE keeps the shutter at or under it and gains
+        // the rest -- and may go shorter in bright light. Every frame records what it got.
+        auto color = pipeline.create<dai::node::Camera>()->build(dai::CameraBoardSocket::CAM_A, std::nullopt, fps);
+        color->initialControl.setAutoExposureLimit(static_cast<uint32_t>(max_exposure_us));
+        auto* color_out = color->requestFullResolutionOutput(dai::ImgFrame::Type::NV12, fps);
+        auto encoder = pipeline.create<dai::node::VideoEncoder>()->build(*color_out);
+        encoder->setDefaultProfilePreset(fps, dai::VideoEncoderProperties::Profile::MJPEG);
+        encoder->setQuality(jpeg_quality);
+
+        // The monos, at the colour's rate and with the same ceiling. Raw 8-bit, written as
+        // PGM: lossless, and a frame is ~1 MB.
+        auto mono = [&](dai::CameraBoardSocket socket) {
+            auto cam = pipeline.create<dai::node::Camera>()->build(socket, std::nullopt, fps);
+            cam->initialControl.setAutoExposureLimit(static_cast<uint32_t>(max_exposure_us));
+            return cam->requestFullResolutionOutput(dai::ImgFrame::Type::GRAY8, fps);
+        };
+        auto* left_out = mono(dai::CameraBoardSocket::CAM_B);
+        auto* right_out = mono(dai::CameraBoardSocket::CAM_C);
+
+        // The IMU in its own frame, with nothing applied: the raw streams are the sensor's
+        // output before DepthAI's alignment or calibration, which is what a vibration
+        // spectrum wants.
+        auto imu = pipeline.create<dai::node::IMU>();
+        imu->enableIMUSensor(dai::IMUSensor::ACCELEROMETER_RAW, accel_hz);
+        imu->enableIMUSensor(dai::IMUSensor::GYROSCOPE_RAW, gyro_hz);
+        imu->setBatchReportThreshold(5);
+        imu->setMaxBatchReports(20);
+
+        // Non-blocking, so a slow host drops the oldest message rather than stalling the
+        // device; a drop shows as a gap in the device sequence numbers, which are recorded.
+        auto color_q = encoder->out.createOutputQueue(4, false);
+        auto left_q = left_out->createOutputQueue(4, false);
+        auto right_q = right_out->createOutputQueue(4, false);
+        auto imu_q = imu->out.createOutputQueue(64, false);
+
+        pipeline.start();
+        std::cout << "oak-capture: node=" << node << " dir=" << session_dir.string() << " fps=" << fps
+                  << " max_exposure_us=" << max_exposure_us << " jpeg_quality=" << jpeg_quality
+                  << " imu accel=" << accel_hz << "Hz gyro=" << gyro_hz << "Hz"
+                  << " gate=" << (flag_path ? flag_path->string() : "none") << std::endl;
+
+        session.begin(mxid);
+        std::FILE* imu_log = std::fopen((session_dir / (mxid + "_" + session_id + ".imu.jsonl")).c_str(), "a");
+        if (!imu_log) throw std::runtime_error("cannot open the IMU log in " + session_dir.string());
+        int64_t imu_written = 0;
+        std::optional<int32_t> last_accel_seq, last_gyro_seq;
+        auto imu_line = [&](const char* t, const auto& r) {
+            const std::string s = json{{"t", t},
+                                       {"seq", r.sequence},
+                                       {"monotonic_ns", ns(r.getTimestamp())},
+                                       {"device_timestamp_ns", ns(r.getTimestampDevice())},
+                                       {"x", r.x},
+                                       {"y", r.y},
+                                       {"z", r.z},
+                                       {"accuracy", static_cast<int>(r.accuracy)}}
+                                      .dump();
+            std::fwrite(s.data(), 1, s.size(), imu_log);
+            std::fputc('\n', imu_log);
+            imu_written++;
+        };
+        auto on_mono = [&](const char* kind, const std::shared_ptr<dai::ImgFrame>& f) {
+            session.frame(oak_frame(kind, *f, mxid, max_exposure_us), ".pgm", [&] {
+                auto data = f->getData();
+                return capture::encode_pgm(data.data(), f->getWidth(), f->getHeight(), f->getStride());
+            });
+        };
+
+        int exit_code = 0;
+        bool was_capturing = false;
+        try {
+            while (!g_stop) {
+                if (!pipeline.isRunning()) {
+                    session.fail("the pipeline stopped -- device lost?");
+                    exit_code = 1;
+                    break;
+                }
+                session.tick(mono_s());
+                if (was_capturing && !session.capturing()) std::fflush(imu_log);
+                was_capturing = session.capturing();
+
+                bool any = false;
+                for (const auto& f : color_q->tryGetAll<dai::EncodedFrame>()) {
+                    any = true;
+                    auto frame = oak_frame("color", *f, mxid, max_exposure_us);
+                    frame.fields["lens_position"] = f->getLensPosition();
+                    frame.fields["color_temperature_k"] = f->getColorTemperature();
+                    frame.fields["jpeg_quality"] = jpeg_quality;
+                    session.frame(frame, ".jpg", [&] {
+                        auto data = f->getData();
+                        return std::vector<uint8_t>(data.begin(), data.end());
+                    });
+                }
+                for (const auto& f : left_q->tryGetAll<dai::ImgFrame>()) {
+                    any = true;
+                    on_mono("left", f);
+                }
+                for (const auto& f : right_q->tryGetAll<dai::ImgFrame>()) {
+                    any = true;
+                    on_mono("right", f);
+                }
+                for (const auto& d : imu_q->tryGetAll<dai::IMUData>()) {
+                    any = true;
+                    if (!session.capturing()) continue;
+                    // A packet carries the latest report of each sensor, so at different rates
+                    // the slower one repeats; its sequence number says which are new.
+                    for (const auto& p : d->packets) {
+                        if (!last_accel_seq || p.acceleroMeter.sequence != *last_accel_seq) {
+                            last_accel_seq = p.acceleroMeter.sequence;
+                            imu_line("a", p.acceleroMeter);
+                        }
+                        if (!last_gyro_seq || p.gyroscope.sequence != *last_gyro_seq) {
+                            last_gyro_seq = p.gyroscope.sequence;
+                            imu_line("g", p.gyroscope);
+                        }
                     }
                 }
+                session.set_status("imu_records", imu_written);
+                if (!any) std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
-            session.set_status("imu_records", imu_written);
-            if (!any) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } catch (const std::exception& e) {
+            session.fail(e.what());
+            exit_code = 1;
         }
-    } catch (const std::exception& e) {
-        std::cerr << "oak-capture: " << e.what() << std::endl;
-        exit_code = 1;
-    }
 
-    pipeline.stop();
-    std::fclose(imu_log);
-    session.stop();
-    std::cout << "oak-capture: imu records written " << imu_written << std::endl;
-    return exit_code;
+        pipeline.stop();
+        std::fclose(imu_log);
+        session.stop();
+        std::cout << "oak-capture: imu records written " << imu_written << std::endl;
+        return exit_code;
+    } catch (const std::exception& e) {
+        session.fail(e.what());
+        return 1;
+    }
 }

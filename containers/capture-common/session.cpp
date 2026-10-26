@@ -157,13 +157,20 @@ void Session::stop() {
     }
     warm_ = false;
     armed_ = false;
-    state_["phase"] = "stopped";
+    state_["phase"] = failed_ ? "failed" : "stopped";
     state_["warm"] = false;
     state_["capturing"] = false;
     publish();
-    std::cout << cfg_.log_name << ": stopped; written";
+    std::cout << cfg_.log_name << ": " << (failed_ ? "failed" : "stopped") << "; written";
     for (const auto& [kind, c] : streams_) std::cout << " " << kind << "=" << c.kept;
     std::cout << ", dropped by the writer " << writer_.dropped() << std::endl;
+}
+
+void Session::fail(const std::string& why) {
+    std::cerr << cfg_.log_name << ": " << why << std::endl;
+    failed_ = true;
+    state_["error"] = why;
+    stop();
 }
 
 }  // namespace capture

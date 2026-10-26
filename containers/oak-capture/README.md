@@ -9,7 +9,7 @@ One process because the OAK cannot be shared: whoever opens it owns every sensor
 
 ## What it records
 
-The three cameras run at one rate (`OAK_FPS`, 1 Hz), so each colour frame has a left and a
+The three cameras run at one rate (`OAK_FPS`, 2 Hz), so each colour frame has a left and a
 right frame from the same moment. The monos are global-shutter; the colour sensor is rolling,
 so a shadow line that is straight in a mono frame and bent in the colour frame is the
 vibration measurement.
@@ -61,7 +61,8 @@ campods' conventions ported from `campod-camera/capture.py`; this app is the dep
   IMU is written only while armed too.
 - **Status:** `OAK_STATUS_FILE`, the campod camera document (`ready`, `warm`, `capturing`,
   `frames`, ...), which the coordinator's pod-link publishes as this box's camera. `ready` is
-  warm: every camera has delivered `OAK_WARMUP_FRAMES`.
+  warm: every camera has delivered `OAK_WARMUP_FRAMES`. A failure, at setup or later, is
+  published as `phase: failed` with the message in `error`.
 - **Session:** the boot id; build manifests go to `<session>/manifests/`.
 
 ## Build
