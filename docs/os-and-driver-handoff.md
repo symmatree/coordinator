@@ -331,8 +331,9 @@ minimal image on forky, ahead of our trixie rather than behind it.
 **The ports, from Radxa's marketing copy rather than a schematic:** USB 3.0 HOST Type-C for
 data, USB 2.0 OTG Type-C for power and data. Two controllers, so the two roles a pod needs --
 USB device on the coordinator's hub for the gadget link, USB host for the camera -- do not
-contend. The gadget half lands on the USB 2.0 OTG port, which is a dwc2-family controller, so
-`g_ether` is the configuration already in use with `dr_mode = "peripheral"` in device tree
+contend. The gadget half lands on the USB 2.0 OTG port. That controller is DWC3, not dwc2
+(measured from the vendor dtb: `/usbdrd/usb@fcc00000`, `maximum-speed = "high-speed"`), so
+`g_ether` rides DWC3 with `dr_mode = "peripheral"` set on `&usbdrd_dwc3` by the rampod overlay
 instead of a `dtoverlay=dwc2` line. It also collapses the two-micro-USB trap that left
 campod-sw dark for days: there is one port that carries power and it is the data one.
 
@@ -360,9 +361,10 @@ blocked on firmware that stores the tryboot flag and ignores it.
 carried as an Armbian extension (`AIC8800_TYPE="sdio"`, `enable_extension "radxa-aic8800"`),
 not an in-tree module like `brcmfmac` -- tolerable where the operating state is the gadget
 link and WiFi is bench mode, but `coord radio open` depends on a third-party driver continuing
-to build. And nobody has checked whether that `vendor_6.1.115` kernel ships `pps_gpio`, the
-dwc2 gadget, `btrfs`, `spidev` and `uvcvideo`; every one of those is load-bearing, and the
-rootfs sits 348 MB into the image so it needs the full download rather than a prefix.
+to build. The `vendor_6.1.115` kernel's config has since been read: `pps_gpio`, the DWC3
+gadget, `btrfs`, `spidev` and `uvcvideo` are all there, and the IMX708 driver is not (the
+image builds it). The table is in dotfiles-symm `pi-image/RADXA-ZERO3.md`, which is the
+current plan for this board; the image is the `rampod` role (dotfiles-symm#93).
 
 **Not evaluated:** the Cubie A7s units, which have more RAM. The axis that decides it is
 Allwinner's mainline position against Rockchip's -- RK3566 has `current` and `edge` branches in
