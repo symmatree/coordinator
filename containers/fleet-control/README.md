@@ -507,7 +507,8 @@ what being short one looks like.
 | `FLEET_MIMIR_URL` / `FLEET_MIMIR_TENANT` | `http://mimir-gateway.mimir.svc` / `tiles` | for the backpack series. The tenant is the cluster name, and there is more than one cluster |
 | `PORT` / `HOST` | `8080` / `0.0.0.0` | |
 
-Roster: `host` is optional and defaults to `name`.
+Roster: `role` is `coordinator`, `campod` or `rampod`, and is passed to the playbook as
+`device_role`. `host` is optional and defaults to `name`.
 
 ```json
 {
