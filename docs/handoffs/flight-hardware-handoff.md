@@ -56,7 +56,16 @@ the Coordinator, chrony holding `Reference ID: PPS` at stratum 1, both campods s
 gadget link, the FC timing the same edge on `S11`. All five pigtail legs pass the signal: the
 two that did not were a free-floating input jumper on U2's `T2_FRONT` net, since reconnected.
 
-**Open PRs from this role:** none. Merged since the last handoff: #586 (props point at
+**The FC reboot-looped on 2026-10-27 and a reflash cleared it.** Hard fault 1.7 s into every
+boot, program counter inside EKF3 code that cannot run that early, same firmware and parameters
+as the 10-25 flights, crash dump truncated. Reflashing the same 4.7.2 image fixed it and the
+parameters survived; cause not established. Logs and dump at
+`datasets/flights/rekon10/bench-20261027-crashing/`, the full read in
+`flight-platform-build-log.md` under that date, including how to catch the `WDG:` line and the
+DFU route for next time. The board runs `ArduCopter V4.7.2 (fb773567)`; the 4.7.0 to 4.7.2
+step is not recorded in the docs.
+
+**Open PRs from this role:** the one carrying this handoff. Merged since the last handoff: #586 (props point at
 `props.md`; PC1's cause is not known), #587 (`docs/rekon10/flir-blackfly-s.md`, the Blackfly S
 on the rampod: GPIO pinout, power options, trigger features, the Radxa Zero 3W USB facts from
 its schematic), #589 and #591 (the Coordinator header's 1x5 SH1106 shell and 1x3 FC-UART shell,
