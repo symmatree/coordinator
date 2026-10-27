@@ -90,7 +90,6 @@ int main() {
     const int max_exposure_us = env_int("OAK_MAX_EXPOSURE_US", 1000);
     const int jpeg_quality = env_int("OAK_JPEG_QUALITY", 90);
     const int accel_hz = env_int("OAK_IMU_ACCEL_HZ", 250);
-    const int gyro_hz = env_int("OAK_IMU_GYRO_HZ", 400);
     const auto flag_path = capture::env_path("OAK_CAPTURE_FLAG", "/ipc/fc_armed");
 
     // The session is the boot id, so this process, the router's timesync.jsonl and
@@ -178,13 +177,13 @@ int main() {
         // output before DepthAI's alignment or calibration, which is what a vibration
         // spectrum wants.
         //
-        // The accel stays below the gyro. With accel 480 (the BNO086 ran it at 507 Hz) and
-        // gyro 400, bench-20261027-three-node got exactly as many accel records as gyro
-        // records, and the accel sequence skipped one sample in five: the packets came at
-        // the gyro's rate with the newest accel report in each.
+        // Accelerometer only. With the gyro enabled too, depthai delivered packets at the
+        // slower sensor's rate carrying the newest report of each, so the faster one lost
+        // samples: accel 507 Hz / gyro 400 Hz kept 4 accel samples in 5
+        // (bench-20261027-three-node); accel 255 Hz / gyro 400 Hz kept the gyro at 255/s
+        // with irregular gaps (bench-20261027-oak-s2). The BNO086 has no rate both share.
         auto imu = pipeline.create<dai::node::IMU>();
         imu->enableIMUSensor(dai::IMUSensor::ACCELEROMETER_RAW, accel_hz);
-        imu->enableIMUSensor(dai::IMUSensor::GYROSCOPE_RAW, gyro_hz);
         imu->setBatchReportThreshold(5);
         imu->setMaxBatchReports(20);
 
@@ -199,14 +198,13 @@ int main() {
         std::cout << "oak-capture: node=" << node << " dir=" << session_dir.string() << " fps=" << fps
                   << " max_exposure_us=" << max_exposure_us << " jpeg_quality=" << jpeg_quality
                   << " lens_position=" << lens_position << " (AF off)"
-                  << " imu accel=" << accel_hz << "Hz gyro=" << gyro_hz << "Hz"
+                  << " imu accel=" << accel_hz << "Hz"
                   << " gate=" << (flag_path ? flag_path->string() : "none") << std::endl;
 
         session.begin(mxid);
         std::FILE* imu_log = std::fopen((session_dir / (mxid + "_" + session_id + ".imu.jsonl")).c_str(), "a");
         if (!imu_log) throw std::runtime_error("cannot open the IMU log in " + session_dir.string());
         int64_t imu_written = 0;
-        std::optional<int32_t> last_accel_seq, last_gyro_seq;
         auto imu_line = [&](const char* t, const auto& r) {
             const std::string s = json{{"t", t},
                                        {"seq", r.sequence},
@@ -264,18 +262,7 @@ int main() {
                 for (const auto& d : imu_q->tryGetAll<dai::IMUData>()) {
                     any = true;
                     if (!session.capturing()) continue;
-                    // A packet carries the latest report of each sensor, so at different rates
-                    // the slower one repeats; its sequence number says which are new.
-                    for (const auto& p : d->packets) {
-                        if (!last_accel_seq || p.acceleroMeter.sequence != *last_accel_seq) {
-                            last_accel_seq = p.acceleroMeter.sequence;
-                            imu_line("a", p.acceleroMeter);
-                        }
-                        if (!last_gyro_seq || p.gyroscope.sequence != *last_gyro_seq) {
-                            last_gyro_seq = p.gyroscope.sequence;
-                            imu_line("g", p.gyroscope);
-                        }
-                    }
+                    for (const auto& p : d->packets) imu_line("a", p.acceleroMeter);
                 }
                 session.set_status("imu_records", imu_written);
                 if (!any) std::this_thread::sleep_for(std::chrono::milliseconds(2));
