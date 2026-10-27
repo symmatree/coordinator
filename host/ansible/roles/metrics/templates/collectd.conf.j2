@@ -89,7 +89,7 @@ LoadPlugin chrony
   #
   # collectd runs on the host in the host PID namespace, so container processes
   # appear here with their host PIDs; nothing has to reach into a container.
-  ProcessMatch "capture" "python3 /opt/campod/capture.py"
+  ProcessMatch "capture" "/opt/campod/campod-capture"
   ProcessMatch "accel" "/opt/campod/campod-accel"
   # The ~56 MiB resident jump at storm onset has never been attributed, and these
   # are the candidates big enough to be it. "containerd" also matches the
