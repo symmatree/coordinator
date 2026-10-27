@@ -105,11 +105,11 @@ test('the run id goes on as a label, which is how it is found again', async () =
 test('extra vars are serialised into the parameter, not passed as an object', async () => {
   const k = fakeKubectl(CREATED);
   await withPath(k.dir, () =>
-    submitPlaybook(CFG, { ...REQ, extraVars: { reimage_image_url: 'https://x/i.img' } }),
+    submitPlaybook(CFG, { ...REQ, extraVars: { some_var: 'https://x/i.img' } }),
   );
   const spec = JSON.parse(k.stdin()).spec as { arguments: { parameters: Array<{ name: string; value: string }> } };
   const extra = spec.arguments.parameters.find((p) => p.name === 'extra-vars');
-  assert.equal(extra?.value, '{"reimage_image_url":"https://x/i.img"}');
+  assert.equal(extra?.value, '{"some_var":"https://x/i.img"}');
 });
 
 test('a kubectl that fails to create says why, rather than yielding no name', async () => {

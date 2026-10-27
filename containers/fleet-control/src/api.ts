@@ -1,13 +1,12 @@
 // The route surface. The UI is one client of it; anything the page can do, curl can do.
 
-import { createReadStream, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import { findNode } from './inventory.js';
 import { RunRegistry, echoToProcess, sinkFor } from './runs.js';
-import { converge, reboot, reimage, stop } from './actions.js';
-import { ImageCache } from './imagecache.js';
+import { converge, reboot, stop } from './actions.js';
 import { probeAll, probeNode } from './probe.js';
 import { deleteSessions, listSessions, stopCapture } from './sessions.js';
 import { listLogs } from './fclog.js';
@@ -18,7 +17,7 @@ import { configured as busConfigured, readPods, setDesired } from './bus.js';
 import { findByRun, nodeBusyWith, readWorkflow, submitCollect, workflowUrl, type CollectTarget } from './workflows.js';
 import { build } from './build.js';
 import { notify, runEnded } from './notify.js';
-import { commitTitle, isHeadOfRef, listArtifacts, listBuilds, refHead, registryImage } from './github.js';
+import { commitTitle, refHead, registryImage } from './github.js';
 
 export function buildServer(
   cfg: Config,
@@ -218,14 +217,11 @@ export function buildServer(
   // good; only head-of-ref is re-asked. That is what keeps a refresh inside GitHub's 60/hour
   // unauthenticated budget.
 
-  const lookups = new LookupCache(cfg.images.token, 60_000, Date.now, {
-    title: (repo, sha) => commitTitle(repo, sha, cfg.images.token),
-    head: (repo, ref) => refHead(repo, ref, cfg.images.token),
+  const token = cfg.action.github.token;
+  const lookups = new LookupCache(token, 60_000, Date.now, {
+    title: (repo, sha) => commitTitle(repo, sha, token),
+    head: (repo, ref) => refHead(repo, ref, token),
     image: (ref) => registryImage(ref),
-    // The disk image's currency is the newest successful BUILD of it, not the newest commit:
-    // its workflow is path-filtered on pi-image/**, so branch head moves for changes that
-    // cannot affect the card at all.
-    buildSha: async () => (await listBuilds(cfg.images, 1))[0]?.sha,
   });
 
   /** Every machine, concurrently. One that cannot be reached is reported, not omitted. */
@@ -364,154 +360,6 @@ export function buildServer(
         return await deleteSessions(node, cfg.action, sessions);
       } catch (err) {
         return reply.code(502).send({ error: (err as Error).message });
-      }
-    },
-  );
-
-  // ---- images -------------------------------------------------------------------------
-  // Discovery is unauthenticated: the repos are public and listing runs and artifacts works
-  // without a token. Only the download does, so everything here except `fetch` works with no
-  // credential configured at all.
-
-  const images = new ImageCache(cfg.images.cacheDir);
-
-  /**
-   * Recent builds on the tracked ref, newest first, each marked with whether we already hold
-   * it. Shown, not filtered: a build whose artifact has expired is still listed, because
-   * "the one I wanted is gone" is worth seeing rather than silently omitting.
-   */
-  app.get<{ Querystring: { role?: string; limit?: string } }>('/images/builds', async (req) => {
-    const builds = await listBuilds(cfg.images, Number(req.query.limit ?? 10));
-    const held = await images.list();
-    const role = req.query.role;
-    return Promise.all(
-      builds.map(async (b) => ({
-        ...b,
-        // The run's own display_title is the commit subject, which for a merge commit is
-        // `Merge pull request #64 from symmatree/feat/...` -- the branch, not the title.
-        // This is the list you pick a build from, so it gets the real one. Cached per sha
-        // and a sha's PR never changes, so a second listing costs nothing.
-        title: await lookups.title(cfg.images.repo, b.sha).catch(() => b.title ?? ''),
-        artifacts: role === undefined ? undefined : await listArtifacts(cfg.images, b.runId),
-        cached: held.some((h) => h.sha === b.sha && (role === undefined || h.role === role)),
-      })),
-    );
-  });
-
-  /**
-   * Resolve a build to a cached image, fetching it if absent. Returns a problem rather than
-   * throwing, so callers can choose the status code.
-   */
-  async function ensureCached(
-    role: string,
-    sha?: string,
-  ): Promise<import('./imagecache.js').CachedImage | { error: string; code: 404 | 410 }> {
-    const builds = await listBuilds(cfg.images, 20);
-    const build = sha ? builds.find((b) => b.sha.startsWith(sha)) : builds[0];
-    if (!build) return { error: `no build matching ${sha ?? '(newest)'}`, code: 404 };
-    const held = await images.get(role, build.sha);
-    if (held && (await images.pathFor(role, build.sha))) return held;
-    // The run's display_title is the commit subject, which for a merge commit is the branch
-    // name. What gets written beside a cached image should be the title the builds list
-    // shows, since both answer "which change is this".
-    build.title = await lookups.title(cfg.images.repo, build.sha).catch(() => build.title);
-    const arts = await listArtifacts(cfg.images, build.runId);
-    const art = arts.find((a) => a.name.startsWith(`${role}-`));
-    if (!art) return { error: `run ${build.runId} has no artifact for role ${role}`, code: 404 };
-    if (art.expired) {
-      return { error: `artifact for ${build.sha.slice(0, 10)} expired at ${art.expiresAt}`, code: 410 };
-    }
-    return images.ensure(cfg.images, build, role, art.id);
-  }
-
-  /** What the cache holds. Nothing evicts, so this only grows until the volume is wiped. */
-  app.get('/images/cached', async () => images.list());
-
-  /**
-   * Put a build in the cache. The one route that needs `FLEET_GITHUB_TOKEN`; it says so
-   * plainly rather than failing as a bare 500.
-   */
-  app.post<{ Params: { role: string }; Querystring: { sha?: string } }>(
-    '/images/:role/fetch',
-    async (req, reply) => {
-      try {
-        const got = await ensureCached(req.params.role, req.query.sha);
-        return 'error' in got ? reply.code(got.code).send({ error: got.error }) : got;
-      } catch (err) {
-        return reply.code(502).send({ error: (err as Error).message });
-      }
-    },
-  );
-
-  /**
-   * Serve a cached image. This is what a device fetches with `get_url`, so the bytes it
-   * verifies are the bytes we hold.
-   */
-  app.get<{ Params: { role: string; sha: string } }>(
-    '/images/:role/:sha/zip',
-    async (req, reply) => {
-      const path = await images.pathFor(req.params.role, req.params.sha);
-      const meta = await images.get(req.params.role, req.params.sha);
-      if (!path || !meta) {
-        return reply.code(404).send({ error: `not cached: ${req.params.role} ${req.params.sha}` });
-      }
-      return reply
-        .type('application/zip')
-        .header('content-length', String(meta.sizeBytes))
-        .header('x-fleet-image-sha256', meta.sha256)
-        .send(createReadStream(path));
-    },
-  );
-
-  /**
-   * Whether a sha is current on the tracked ref, and what the commit was. A displayed fact:
-   * nothing here refuses to act on a stale answer.
-   */
-  app.get<{ Params: { sha: string } }>('/images/:sha/current', async (req, reply) => {
-    try {
-      const [head, title] = await Promise.all([
-        isHeadOfRef(cfg.images.repo, cfg.images.ref, req.params.sha, cfg.images.token),
-        commitTitle(cfg.images.repo, req.params.sha, cfg.images.token),
-      ]);
-      return { ...head, ref: cfg.images.ref, title };
-    } catch (err) {
-      return reply.code(502).send({ error: (err as Error).message });
-    }
-  });
-
-  /**
-   * Reimage a node from a cached build, fetching it first if we do not hold it.
-   *
-   * `?sha=` picks a build; absent means the newest on the tracked ref. The play stages and
-   * arms only -- whether it worked is answered by probing afterwards, not reported here.
-   */
-  app.post<{ Params: { name: string }; Querystring: { sha?: string } }>(
-    '/nodes/:name/reimage',
-    async (req, reply) => {
-      const node = findNode(cfg.inventory, req.params.name);
-      if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-
-      let held;
-      try {
-        held = await ensureCached(node.role, req.query.sha);
-      } catch (err) {
-        return reply.code(502).send({ error: (err as Error).message });
-      }
-      if ('error' in held) return reply.code(held.code).send({ error: held.error });
-
-      const image = {
-        url: `${cfg.images.publicUrl}/images/${node.role}/${held.sha}/zip`,
-        sha256: held.sha256,
-        sha: held.sha,
-      };
-      try {
-        // Counts against the playbook cap for the same reason converge does -- reimage.yaml
-        // is a play, so it is an ansible interpreter in this pod.
-        const run = await runs.start('reimage', node.name, (emit, runId) =>
-          reimage(node, cfg.action, { runId, image }, sinkFor(emit)));
-        return reply.code(202).send({ id: run.id, action: run.action, node: run.node, image });
-      } catch (err) {
-        return reply.code(409).send({ error: (err as Error).message });
       }
     },
   );

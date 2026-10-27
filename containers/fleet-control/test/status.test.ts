@@ -80,9 +80,6 @@ function fakeLookups(over: Partial<Lookups> = {}): Lookups {
     async image() {
       return undefined;
     },
-    async buildSha() {
-      return undefined;
-    },
     ...over,
   };
 }
@@ -141,28 +138,18 @@ test('a container with no digest reported is unknown, not assumed current', asyn
   assert.equal(got.current, undefined);
 });
 
-test('the disk image compares against the newest BUILD, not the newest commit', async () => {
-  // Same trap: build-pi-image.yaml is path-filtered on pi-image/**, so dotfiles-symm head
-  // moves for changes that cannot affect the card.
+test('the disk image is shown with no currency: nothing here knows which build is newest', async () => {
+  // Its build is path-filtered on pi-image/**, so branch head is the wrong comparison, and the
+  // build lookup went with the reimage path. Rendered as a row, with a title, no verdict.
   const got = await enrichUnit(DISK, fakeLookups({
-    async buildSha() {
-      return DISK.revision;
-    },
     async head() {
       return 'ecff0ee000000000000000000000000000000000';
     },
   }));
-  assert.equal(got.current, true);
-});
-
-test('the disk image is behind when a newer build exists', async () => {
-  const got = await enrichUnit(DISK, fakeLookups({
-    async buildSha() {
-      return 'cccccccccccccccccccccccccccccccccccccccc';
-    },
-  }));
-  assert.equal(got.current, false);
-  assert.ok(got.headTitle);
+  assert.equal(got.current, undefined);
+  assert.equal(got.head, undefined);
+  assert.ok(got.title, 'the installed build is still named');
+  assert.equal(got.headTitle, undefined);
 });
 
 test('a whole-repo checkout still compares against branch head', async () => {
@@ -185,8 +172,15 @@ test('a whole-repo checkout still compares against branch head', async () => {
 });
 
 test('a lookup failure lands on the unit instead of taking the screen down', async () => {
-  const got = await enrichUnit(DISK, fakeLookups({
-    async buildSha() {
+  const unit = {
+    ...CONTAINER,
+    extra: {
+      FLEET_CONTAINER_IMAGE: 'ghcr.io/symmatree/coordinator-campod-camera:main',
+      FLEET_CONTAINER_IMAGE_DIGEST: 'ghcr.io/symmatree/coordinator-campod-camera@sha256:abc',
+    },
+  };
+  const got = await enrichUnit(unit, fakeLookups({
+    async image() {
       throw new Error('GitHub 403 rate limited');
     },
   }));

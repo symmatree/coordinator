@@ -406,7 +406,7 @@ to it; a notification means you do not have to come back.
 | event | why |
 |---|---|
 | a run finished | the thing you started is over, and how it ended |
-| the service started | **a restart ends the runs this process does itself** -- stop, reboot and ground -- and forgets every run in the registry, which is in memory. Converge, provision, reimage and collect are workflows and carry on; their record is the workflow. Worth knowing before starting something, and after a run vanishes from the screen |
+| the service started | **a restart ends the runs this process does itself** -- stop, reboot and ground -- and forgets every run in the registry, which is in memory. Converge, provision and collect are workflows and carry on; their record is the workflow. Worth knowing before starting something, and after a run vanishes from the screen |
 
 The start notification carries the build, because the reason to care is "did the roller replace me,
 and with what".
@@ -465,11 +465,6 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /runs` / `GET /runs/:id` | run list / one run with its log |
 | `GET /runs/:id/stream` | live output, server-sent events |
 | `GET /workflows/:name` | one workflow's phase, read from the cluster each time |
-| `GET /images/builds` | recent successful builds on the tracked ref, newest first |
-| `GET /images/cached` | what the image cache holds |
-| `POST /images/:role/fetch[?sha=]` | put a build in the cache -- the only route needing a token |
-| `GET /images/:role/:sha/zip` | serve a cached image, for a device to `get_url` |
-| `GET /images/:sha/current` | is that sha head of the tracked ref, and what PR was it |
 
 One action per node at a time; a second `POST` against a busy node is a `409`. **Except reboot**,
 which is the way out of a stuck box and so cannot be the thing a stuck box refuses.
@@ -530,10 +525,7 @@ what being short one looks like.
 | `FLEET_INVENTORY` | *(required)* | path to the roster |
 | `FLEET_SSH_KEY` | `/secrets/ssh/id` | private key |
 | `FLEET_SSH_TIMEOUT_SEC` | `90` | Ansible's connect timeout, raised from its 10s default |
-| `FLEET_IMAGE_REPO` | `symmatree/dotfiles-symm` | where disk images are built |
-| `FLEET_IMAGE_WORKFLOW` | `build-pi-image.yaml` | the workflow that builds them |
-| `FLEET_IMAGE_REF` | `main` | the ref the fleet tracks |
-| `FLEET_GITHUB_TOKEN` | *(unset)* | needed **only** to download an artifact; see below |
+| `FLEET_GITHUB_TOKEN` | *(unset)* | raises the GitHub rate limit for the status lookups; the playbook step uses it to download the archive. Every route works without it |
 | `FLEET_PLAYBOOK_REPO` | `symmatree/coordinator` | where the playbook archive is published |
 | `FLEET_PLAYBOOK_WORKFLOW` | `ansible-payload.yaml` | the workflow that publishes it |
 | `FLEET_PLAYBOOK_REF` | `main` | the ref a converge takes its playbook from |
@@ -541,8 +533,6 @@ what being short one looks like.
 | `FLEET_WORKFLOW_TEMPLATE` | `fleet-control-playbook` | the template they are submitted against |
 | `FLEET_COLLECT_TEMPLATE` | `fleet-control-collect` | the template a collect is submitted against |
 | `FLEET_WORKFLOW_UI` | `https://argo.tiles.symmatree.com` | what a run links to |
-| `FLEET_PUBLIC_URL` | `https://fleet.tiles.symmatree.com` | where a DEVICE reaches this service, for `get_url` |
-| `FLEET_IMAGE_CACHE` | `/images` | where fetched images are kept |
 | `FLEET_MQTT_URL` / `FLEET_MQTT_SETTLE_MS` | *(empty)* / `1500` | the pod bus; see above. Required -- empty disables every device command, not just the bus reads |
 | `FLEET_FLIGHTS_DIR` | `/mnt/flights` | where flight directories are assembled |
 | `FLEET_GROUND_TLOGS` | `/mnt/ground-tlogs` | tlog-split's output, read-only (tiles#794) |
@@ -561,20 +551,16 @@ Roster: `host` is optional and defaults to `name`.
 }
 ```
 
-## Images: discovery is public, download is not
+## Reimage is not here
 
-Listing builds and their artifacts needs no credential -- the repos are public and both API
-calls answer unauthenticated. **Downloading an artifact zip does**: that endpoint returns
-`401 Requires authentication` even for a public repo. So the status routes and the
-is-this-sha-current check work with `FLEET_GITHUB_TOKEN` unset, and only `fetch` needs it.
-The minimal useful grant is a fine-grained token with *Actions: read-only*.
-
-Identity comes from the build, not from the bytes: a run carries its own head sha and ref, so
-nothing is reconstructed afterwards.
-
-**Nothing evicts.** Every image fetched stays until the volume is wiped. Images are built on
-every PR and almost none matter; the ones actually pushed are exactly the ones worth keeping,
-and one image to five machines is one fetch and five local reads.
+There is no reimage route, no image cache and no disk-image build listing. The service
+carried all three for [#312](https://github.com/symmatree/coordinator/issues/312) -- stage a
+build in the FAT partition and arm a tryboot flasher -- and the flasher never booted on any
+hardware, while the changes it was for turned out to be edits to config files that a converge
+delivers. The status page still shows the `disk_image` unit a device reports, without a
+currency verdict: which build is newest is a question about `dotfiles-symm`'s path-filtered
+image workflow, and nothing here asks it any more. If reimage comes back it is a workflow,
+like everything else that moves bytes, not a route in this process.
 
 ## Known limitations
 

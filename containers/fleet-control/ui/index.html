@@ -147,12 +147,6 @@
       'wedged run is the commonest reason to want it. Nothing waits for it to come back -- ' +
       'refresh status when you want to know. Press Stop first if you want the containers to go ' +
       'down on our timeout rather than the shutdown\u2019s.',
-    reimage:
-      'Fetches the newest disk image for this role, stages it in the FAT partition, and ' +
-      'arms the tryboot flasher. The device drops off the network and comes back on the new ' +
-      'image, or does not -- refresh status to find out. Everything on the card is lost, the ' +
-      'same as writing it from a card reader. Worst case is a card pull, which is what a ' +
-      'reflash costs today.',
   };
 
   async function j(url, opts) {
@@ -330,19 +324,6 @@
         row.append($({ className: 'title stale', textContent: '\u2192 ' + u.headTitle }));
       }
       if (u.lookupError) row.append($({ className: 'title err', textContent: u.lookupError }));
-      // The disk image is the one unit whose update is not a converge. Offered whatever the
-      // row says: whether a newer build exists is the operator's to judge, not this page's.
-      if (u.kind === 'disk_image') {
-        const b = document.createElement('button');
-        b.textContent = 'Reimage';
-        b.style.flex = '0 0 auto';
-        b.style.minHeight = '34px';
-        b.style.padding = '0 12px';
-        b.style.fontSize = '.82rem';
-        b.disabled = !!(state.get(nodeName) ?? {}).busy;
-        b.onclick = () => confirmThen(nodeName, 'reimage');
-        row.append(b);
-      }
       wrap.append(row);
     }
     return wrap;

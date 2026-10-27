@@ -58,7 +58,7 @@ export function workflowUrl(cfg: WorkflowConfig, name: string): string {
 export interface PlaybookRequest {
   runId: string;
   node: string;
-  /** converge | provision | reimage -- a label, for finding it later. */
+  /** converge | provision -- a label, for finding it later. */
   action: string;
   playbook: string;
   host: string;
