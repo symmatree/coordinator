@@ -241,10 +241,12 @@ shell on a pod.
 3. **Reboot both campods.** Same call per node.
 4. **Wait about 2 minutes** for all three to settle: chrony to lock, the camera to negotiate
    libcamera sync, pod-link to connect and publish.
-5. **Stop the FC talker** -- `POST /nodes/coordinator/stop-capture`. On the coordinator the
-   bus quiesce stops `coordinator-mavlink`, which is the process that owns the arm file. With
-   it stopped, a value written by hand stays written instead of being overwritten at the
-   router's next MAVLink frame.
+5. **Stop the FC talker, and only it** -- `systemctl stop coordinator-mavlink` on the
+   coordinator, which is the process that owns the arm file. With it stopped, a value written
+   by hand stays written instead of being overwritten at the router's next MAVLink frame.
+   Not `POST /nodes/coordinator/stop-capture`: since #609 that quiesce stops `oak-capture`
+   as well, and oak-capture is what reads the arm file to record the OAK during the window.
+   fleet-control has no per-unit verb, so the script does this over the same ssh as step 6.
 6. **Imperative step: arm by hand.** Write `1` to `/var/lib/coordinator/ipc/fc_armed` on the
    coordinator. That host path is the router's `/tmp/fc_armed` and pod-link's `/ipc/fc_armed`
    (read-only); the format is one line, `1` or `0`. pod-link's publisher role reads it every
