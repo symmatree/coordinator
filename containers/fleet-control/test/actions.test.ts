@@ -33,11 +33,12 @@ describe('stop', () => {
 describe('reboot', () => {
   it('is ONE command, gated on nothing -- no stop is attempted first', async () => {
     // A reboot is the way out of a stuck box, so it must not depend on anything else
-    // working. If it quiesced first, an unreachable device would say so about the stop.
-    const lines: string[] = [];
-    await assert.rejects(() => reboot(node, ctx, (_s, l) => lines.push(l)));
-    assert.ok(!lines.some((l) => /stop/i.test(l)), JSON.stringify(lines));
-    assert.deepEqual(lines, ['[fleet-control] rebooting campod-se (203.0.113.9)']);
+    // working. If it quiesced first, an unreachable device would fail on the stop and say
+    // so -- `stop` above refuses without a bus, and that refusal must not appear here.
+    await assert.rejects(
+      () => reboot(node, ctx),
+      (e: Error) => /^campod-se: /.test(e.message) && !/pod bus|quiesce|stop/i.test(e.message),
+    );
   });
 
   it('fails for real when the device was never reached', async () => {

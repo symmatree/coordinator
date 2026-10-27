@@ -98,24 +98,6 @@ check("warm and sync_ready cannot make a pod ready on their own",
       not bc.cameras_ready([_cam(),
                             {"raw": {"camera": {"warm": True, "sync_ready": True}}}]))
 
-# ---- failure detection, in both line formats ------------------------------------------
-# fleet-control renders FAILED:/UNREACHABLE: today and has no `fatal:` at all, so a grep
-# for `fatal:` alone was inert. #540 switches the lines to raw ansible, which prints
-# `fatal:` and `UNREACHABLE!`. Both have to match.
-check("today's rendered failure is caught",
-      bc.run_failed_line(["TASK Install", "  FAILED: 10.0.5.237 Install -- boom (rc=2)"])
-      is not None)
-check("today's rendered unreachable is caught",
-      bc.run_failed_line(["  UNREACHABLE: 10.0.2.49 -- timed out"]) is not None)
-check("raw ansible's fatal is caught",
-      bc.run_failed_line(["fatal: [10.0.5.237]: FAILED! => {\"msg\": \"boom\"}"]) is not None)
-check("raw ansible's unreachable is caught",
-      bc.run_failed_line(["fatal: [10.0.2.49]: UNREACHABLE! => {}"]) is not None)
-check("a clean play reports no failure",
-      bc.run_failed_line(["PLAY [all]", "ok: [10.0.5.237]", "PLAY RECAP", "failed=0"]) is None)
-check("the LAST failure is the one reported, not the first",
-      "second" in bc.run_failed_line(["  FAILED: a first", "  FAILED: b second"]))
-
 # ---- every stage actually runs ---------------------------------------------------------
 # The first real workflow submission died on `NameError: name 'stage_deploy' is not defined`.
 # An edit had taken the `def` line with it, and because a column-0 comment does not end a
@@ -170,10 +152,10 @@ class _FakeFleet:
         if path.startswith("/workflows/"):
             return {"name": path.rsplit("/", 1)[-1], "phase": "Succeeded"}
         if path.endswith("/converge"):
-            return {"id": "11111111-2222-3333-4444-555555555555"}
-        if path.startswith("/runs/"):
-            return {"status": "succeeded", "lines": [{"line": "PLAY RECAP"},
-                                                     {"line": "ok=41 changed=4 failed=0"}]}
+            # 202 {workflow, url, playbook, revision, node, action} -- a submit, nothing more.
+            node = path.split("/")[2]
+            return {"workflow": f"converge-{node}-abcde", "url": f"https://argo/w/converge-{node}-abcde",
+                    "playbook": "deploy.yaml", "revision": "c" * 40, "node": node, "action": "converge"}
         if path.endswith("/sessions"):
             return {"sessions": [{"session": "aaaa", "open": False, "frames": 250,
                                   "last_activity_utc": "2026-10-17T18:00:00Z"}]}
@@ -218,7 +200,7 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
         # Both submitted before either is watched: the fleet-wide cap on playbook runs is
         # gone, so the deploy costs one converge's wall time rather than two.
         conv = [i for i, c in enumerate(calls) if c[1].endswith("/converge")]
-        first_watch = next(i for i, c in enumerate(calls) if c[1].startswith("/runs/"))
+        first_watch = next(i for i, c in enumerate(calls) if c[1].startswith("/workflows/"))
         check("deploy converges both pods",
               [calls[i] for i in conv]
               == [("POST", f"/nodes/{n}/converge") for n in bc.CAMPODS])
@@ -359,17 +341,16 @@ _fail_calls = []
 class _FailingFleet(_FakeFleet):
     """campod-se's run fails; campod-sw's is still running when it does."""
 
-    def __call__(self, path, method="GET", timeout=300):
+    def __call__(self, path, method="GET", timeout=300, body=None):
         _fail_calls.append(path)
-        if path.startswith("/runs/"):
-            run_id = path.split("/")[2]
-            if run_id.endswith("se"):
-                return {"status": "failed",
-                        "lines": [{"line": "fatal: [10.0.5.237]: FAILED! => {}"}]}
-            return {"status": "running", "lines": []}
+        if path.startswith("/workflows/"):
+            name = path.split("/")[2]
+            if name.endswith("se"):
+                return {"name": name, "phase": "Failed", "message": "step main exited 2"}
+            return {"name": name, "phase": "Running"}
         if path.endswith("/converge"):
-            return {"id": f"run-for-{path.split('/')[2]}"}
-        return super().__call__(path, method, timeout)
+            return {"workflow": f"run-for-{path.split('/')[2]}", "url": "https://argo/w/x"}
+        return super().__call__(path, method, timeout, body)
 
 
 _fleet = _FailingFleet()
@@ -388,7 +369,7 @@ _said = _buf.getvalue()
 
 check("a failed converge stops the stage", _result != "returned", _result)
 check("and it names the other converge and its state",
-      "run-for-campod-sw is running" in _said, _said[-300:])
+      "run-for-campod-sw is Running" in _said, _said[-300:])
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

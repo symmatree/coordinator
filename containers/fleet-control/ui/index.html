@@ -74,6 +74,12 @@
 </div>
 <div id="fleet">loading...</div>
 <div class="pf">
+  <h2>Runs</h2>
+  <div class="meta">What has run and what is running, read from the cluster. Tap one for its log.</div>
+  <div id="wfList"></div>
+  <pre id="wfLog" hidden></pre>
+</div>
+<div class="pf">
   <h2>Post-flight</h2>
   <div class="meta">Stop capture, pick what to keep, the rest is deleted.</div>
 
@@ -242,7 +248,7 @@
         // away the button for the case it exists for (#424). Everything else stays disabled:
         // two converges against one device fight over the docker daemon.
         b.disabled = !!st.busy && action !== 'reboot';
-        b.onclick = () => confirmThen(n.name, action, st.busy ? st.runAction : undefined);
+        b.onclick = () => confirmThen(n.name, action, st.busy ? st.workflow : undefined);
         return b;
       };
       // Converge is primary because it is the one pressed between flights. Full provision is
@@ -380,7 +386,7 @@
 
     btn.disabled = false;
   }
-  document.getElementById('refresh').onclick = async () => { await showBuild(); await refreshPods(); await adoptRuns(); await refreshStatus(); };
+  document.getElementById('refresh').onclick = async () => { await showBuild(); await refreshPods(); await adoptWorkflows(); await refreshStatus(); };
 
   /** Every action confirms first, so a bump on a phone screen cannot start anything. */
   async function confirmThen(name, action, busyWith) {
@@ -389,141 +395,185 @@
     // what is running on this node. Named, not blocked -- the operator decides (#424).
     document.getElementById('cWhat').textContent = busyWith === undefined
       ? WHAT[action]
-      : `${name} has '${busyWith}' running, and this reboot ENDS it -- rebooting the box ends it `
-        + `either way, so it will be marked abandoned rather than left looking alive. `
-        + `${WHAT[action]}`;
+      : `${name} has ${busyWith} running, and this reboot ENDS it -- the workflow will record `
+        + `that itself when its step loses the device. ${WHAT[action]}`;
     dlg.showModal();
     document.getElementById('cYes').onclick = () => { dlg.close(); run(name, action); };
     document.getElementById('cNo').onclick = () => dlg.close();
   }
 
+  const clock = (iso) => `${iso.slice(11, 19)}Z`;
+  const now = () => new Date().toISOString().slice(11, 19);
+
+  /**
+   * Press a button. Two shapes of answer, and the card says which:
+   *
+   * - converge / provision SUBMIT a workflow and come back with its name. The card follows
+   *   its phase and points at its log; the work is the cluster's, not this page's.
+   * - stop / reboot are synchronous. The answer is the result.
+   *
+   * There is no run to adopt or lose (coordinator#566): what is running is `/workflows`,
+   * read from the cluster, and a reload finds it there.
+   */
   async function run(name, action) {
     const st = state.get(name) ?? {};
-    // CLEARED ON PRESS, and the adopted run forgotten with it -- otherwise the next render
-    // can readopt the old run and put its log back under the new one.
     st.busy = true;
-    st.runAction = action;
-    st.runId = undefined;
-    st.log = [`[fleet-control] ${new Date().toISOString().slice(11, 19)}  starting ${action}`];
+    st.workflow = undefined;
+    st.log = [`${now()}  ${action}...`];
     state.set(name, st);
     render(await j('/nodes'));
-    let id;
-    try { ({ id } = await j(`/nodes/${name}/${action}`, { method: 'POST' })); }
+    let r;
+    try { r = await j(`/nodes/${name}/${action}`, { method: 'POST' }); }
     catch (e) {
-      st.busy = false; st.log.push(`error: ${e.message}`); state.set(name, st);
+      st.busy = false; st.log.push(`${now()}  error: ${e.message}`); state.set(name, st);
       return render(await j('/nodes'));
     }
-    return follow(name, st, id);
-  }
-
-  /** Watch a run to its end and leave the card saying how it ended. */
-  async function follow(name, st, id) {
-    const status = await watchRun(id, async (line, reset) => {
-      if (reset) st.log = [];
-      st.log.push(typeof line === 'string' ? line : stamped(line));
-      if (st.log.length > 400) st.log.splice(0, st.log.length - 400);
+    if (r.workflow === undefined) {
+      // Synchronous: the answer is the result.
+      st.busy = false;
+      st.log.push(`${now()}  ${r.note ?? (r.stopped ? 'stopped' : JSON.stringify(r))}`);
+      if (r.wasRunning) st.log.push(`${now()}  ${r.wasRunning} was driving this node; the reboot ends it`);
+      state.set(name, st);
       render(await j('/nodes'));
-    });
-    st.busy = false;
-    const now = new Date().toISOString().slice(11, 19);
-    st.log.push(lostNote(status) ?? `[fleet-control] ${now}  run ${status}`);
+      await adoptWorkflows();
+      return;
+    }
+    st.workflow = r.workflow;
+    st.log.push(`${now()}  submitted ${r.workflow} -- ${r.playbook} from ${(r.revision ?? '').slice(0, 10)}`);
+    st.log.push(`${now()}  ${r.url}`);
     state.set(name, st);
     render(await j('/nodes'));
+    await adoptWorkflows();
+    await followOnCard(name, st, r.workflow);
   }
 
-  /**
-   * Show the runs the SERVICE knows about, not just the ones this page started.
-   *
-   * The page's memory of a run lived entirely in `state`, so switching away on a phone -- or
-   * reloading -- threw away information the service still had. `/runs` keeps the last 50 with
-   * their logs, so a converge that finished while the browser was in the background is
-   * recoverable rather than lost.
-   *
-   * One run per node, the newest. A still-running one is REATTACHED, which needs nothing new:
-   * `watchRun` already replays the log from the start on connect.
-   */
-  async function adoptRuns() {
-    let recent;
-    try { recent = await j('/runs'); } catch { return; }      // no runs, or no service; the cards stand
-    const newest = new Map();
-    for (const r of recent) if (!newest.has(r.node)) newest.set(r.node, r);
-
-    for (const [node, r] of newest) {
-      const st = state.get(node) ?? {};
-      if (st.runId === r.id) continue;                        // already showing this one
-      st.runId = r.id;
-      try {
-        const full = await j(`/runs/${r.id}`);
-        // The header first, so the top of the log says what this is and when -- an adopted
-        // run and a just-pressed one are otherwise indistinguishable.
-        st.log = [runHeader(full), ...full.lines.map(stamped).slice(-400)];
-        st.busy = full.status === 'running';
-        // What is running, so the reboot dialog can name what it would end.
-        st.runAction = r.action;
-        state.set(node, st);
-        if (full.status === 'running') void follow(node, st, r.id);
-      } catch {
-        // Pruned between listing and fetching. Nothing to show; leave the card alone.
-      }
-    }
-    render(await j('/nodes'));
-  }
-
-  /** How long to wait before reattaching, so a stream that refuses to stay up cannot spin. */
-  const REATTACH_MS = 1000;
-
-  /**
-   * Watch a run to its end and say how it ended: `succeeded`, `failed`, or `lost`.
-   *
-   * A DROPPED STREAM IS NOT AN ENDING. Both callers used to treat it as one -- the node card
-   * stopped repainting and sat mid-run forever, and the retrieve loop below went further and
-   * unticked the session as though it had been collected. An EventSource dies for reasons that
-   * have nothing to do with the run; a phone locking its screen is enough.
-   *
-   * So on error this asks `/runs/:id`, which separates all three cases because the registry is
-   * in memory and the playbook is a child of the process driving it:
-   *
-   * - still running -> reattach. The stream dying is not the run dying.
-   * - finished      -> report the ending we missed, from the service's own lines.
-   * - 404           -> `lost`: the service restarted and took the run with it. It is not
-   *                    running somewhere else and nothing resumes.
-   *
-   * `onLine(line, reset)` -- `reset` asks the caller to discard what it has first, because
-   * `/stream` replays every line it holds on connect, so anything kept across a reattach is a
-   * duplicate. The service's record is the authoritative one.
-   */
-  function watchRun(id, onLine) {
-    return new Promise((resolve) => {
-      const attach = () => {
-        const es = new EventSource(`/runs/${id}/stream`);
-        // The whole line object, not just its text: it carries the stamp the card shows.
-        es.onmessage = (ev) => onLine(JSON.parse(ev.data), false);
-        es.addEventListener('done', (ev) => {
-          es.close();
-          resolve(JSON.parse(ev.data).status);
-        });
-        es.onerror = async () => {
-          es.close();
-          let run;
-          try { run = await j(`/runs/${id}`); } catch { return resolve('lost'); }
-          if (run.status !== 'running') {
-            run.lines.forEach((l, i) => onLine(l, i === 0));
-            return resolve(run.status);
-          }
-          onLine('[fleet-control] connection dropped; still running, reattaching (log resynced)', true);
-          setTimeout(attach, REATTACH_MS);
-        };
-      };
-      attach();
+  /** Follow a workflow's phase on its node's card, and leave the card saying how it ended. */
+  async function followOnCard(name, st, workflow) {
+    const phase = await watchWorkflow(workflow, async (line) => {
+      if (st.workflow !== workflow) return;                   // a newer press took the card
+      st.log.push(`${now()}  ${line}`);
+      render(await j('/nodes'));
     });
+    if (st.workflow !== workflow) return;
+    st.busy = false;
+    state.set(name, st);
+    render(await j('/nodes'));
+    await adoptWorkflows();
+  }
+
+  /**
+   * What is running and what ran, from the cluster.
+   *
+   * One list, every workflow in the namespace -- ours and the bench cycle's -- because the
+   * thing holding a campod is not always something this page submitted. A node with a live
+   * workflow is busy; its card follows it. The list is the run history, and a tap streams
+   * the workflow's own log.
+   */
+  const wfList = document.getElementById('wfList');
+  const wfLog = document.getElementById('wfLog');
+  let wfOpen;                                                  // the workflow whose log is open
+  let wfSource;                                                // and its EventSource
+
+  async function adoptWorkflows() {
+    let all;
+    try { ({ workflows: all } = await j('/workflows')); } catch (e) { log(`workflows: ${e.message}`); return; }
+
+    // Newest live workflow per node, by its node label. A collect carries no node label --
+    // it touches several -- and the cards do not try to show it; the list does.
+    const live = new Map();
+    for (const w of all) {
+      if (w.node && !FINISHED.includes(w.phase) && !live.has(w.node)) live.set(w.node, w);
+    }
+    const nodes = await j('/nodes');
+    for (const n of nodes) {
+      const st = state.get(n.name) ?? {};
+      const w = live.get(n.name);
+      if (w === undefined) {
+        // Nothing live for this node. A card still following something has seen it end, or
+        // will on its next poll; nothing to adopt.
+      } else if (st.workflow !== w.name) {
+        // Running, and not what the card is following: adopt it.
+        st.busy = true;
+        st.workflow = w.name;
+        st.log = [`${now()}  ${w.action} ${w.name} started ${w.startedAt ? clock(w.startedAt) : ''}, ${w.phase}`, `${now()}  ${w.url}`];
+        state.set(n.name, st);
+        void followOnCard(n.name, st, w.name);
+      }
+      state.set(n.name, st);
+    }
+    render(nodes);
+
+    wfList.textContent = '';
+    for (const w of all.slice(0, 20)) {
+      const row = $({ className: 'unit' });
+      const badge = w.phase === 'Succeeded' ? 'ok' : FINISHED.includes(w.phase) ? 'stale' : 'unknown';
+      const took = w.startedAt && w.finishedAt ? since(w.startedAt, w.finishedAt)
+        : w.startedAt ? `${since(w.startedAt, new Date().toISOString())} so far` : '';
+      row.append(
+        $({ className: 'kind', textContent: w.action ?? 'workflow' }),
+        $({ className: 'id', textContent: w.node ?? w.name }),
+        Object.assign($({ className: 'badge ' + badge }), { textContent: w.phase ?? 'pending' }),
+        $({ className: 'sha', textContent: `${w.createdAt ? w.createdAt.replace('T', ' ').slice(0, 16) + 'Z' : ''} ${took}` }),
+      );
+      const open = document.createElement('button');
+      open.textContent = wfOpen === w.name ? 'close log' : 'log';
+      open.style.flex = '0 0 auto'; open.style.minHeight = '34px'; open.style.padding = '0 12px'; open.style.fontSize = '.82rem';
+      open.onclick = () => (wfOpen === w.name ? closeLog() : openLog(w));
+      row.append(open);
+      const a = document.createElement('a');
+      a.href = w.url; a.textContent = 'argo'; a.target = '_blank'; a.className = 'sha';
+      row.append(a);
+      if (w.message) row.append($({ className: 'title stale', textContent: w.message }));
+      wfList.append(row);
+    }
+  }
+
+  /**
+   * Stream one workflow's log into the pane. The service follows the pods' logs and says
+   * `done` with the phase; a finished workflow streams its whole log and ends at once.
+   */
+  function openLog(w) {
+    closeLog();
+    wfOpen = w.name;
+    wfLog.hidden = false;
+    wfLog.textContent = `${w.name}\n${w.url}\n`;
+    const es = new EventSource(`/workflows/${encodeURIComponent(w.name)}/log`);
+    wfSource = es;
+    es.onmessage = (ev) => {
+      const l = JSON.parse(ev.data);
+      // Follow the tail unless the operator has scrolled up to read something.
+      const keep = atBottom(wfLog);
+      wfLog.textContent += `${(l.t ?? '').slice(11, 19)}  ${l.line}\n`;
+      if (keep) wfLog.scrollTop = wfLog.scrollHeight;
+    };
+    es.addEventListener('done', (ev) => {
+      const d = JSON.parse(ev.data);
+      wfLog.textContent += `-- ${d.phase}${d.message ? ': ' + d.message : ''}\n`;
+      es.close();
+      wfSource = undefined;
+    });
+    es.onerror = () => {
+      // A dropped stream is not an ending; the workflow is in the cluster. Say so and stop,
+      // rather than reattaching and replaying the whole log on top of itself.
+      wfLog.textContent += '-- stream dropped; tap log again to reread\n';
+      es.close();
+      wfSource = undefined;
+    };
+    void adoptWorkflows();
+  }
+
+  function closeLog() {
+    if (wfSource) { wfSource.close(); wfSource = undefined; }
+    wfOpen = undefined;
+    wfLog.hidden = true;
+    wfLog.textContent = '';
   }
 
   /**
    * Follow a workflow to its end. Polled, not streamed.
    *
-   * There is no run to stream: a collect's output is its step pods' logs, which go to Loki
-   * rather than through this service. What the page needs is the outcome and a link, and a
-   * phase every few seconds is that. Nothing here is lost if the page is closed -- the
+   * What a card needs is the outcome and a link, and a phase every few seconds is that; the
+   * log is a tap away in the Runs list. Nothing here is lost if the page is closed -- the
    * workflow is in the cluster and the Argo UI shows the same thing.
    */
   const FINISHED = ['Succeeded', 'Failed', 'Error'];
@@ -548,11 +598,6 @@
       await new Promise((r) => setTimeout(r, 5000));
     }
   }
-
-  /** The one status that needs explaining rather than reporting. */
-  const lostNote = (status) => status !== 'lost' ? undefined
-    : '[fleet-control] the service restarted; this run is lost and the node may be '
-      + 'part-converged. Refresh status, then run it again.';
 
   // ---- post-flight --------------------------------------------------------------------
   // Sessions are loaded on demand, like status: nothing touches the fleet unprompted. The
@@ -579,22 +624,6 @@
 
   const MB = (n) => `${(n / 1e6).toFixed(0)} MB`;
 
-  /**
-   * One log line, stamped.
-   *
-   * Every line has carried a `t` since the registry existed -- `/runs/:id` returns it and the
-   * event stream sends the whole object -- and the page threw it away. Without it a run that
-   * finished two days ago and one that finished in three seconds read identically, which is
-   * the whole difficulty in telling a stale card from a fast one.
-   *
-   * Time of day only. The date is on the run header below; repeating it on 400 lines is noise.
-   *
-   * `stamped`, not `stamp`: a function below already binds `stamp` to the topbar's
-   * `getElementById('stamp')`, and two things of that name in one file is a trap for whoever
-   * edits either next.
-   */
-  const stamped = (l) => `${(l.t ?? '').slice(11, 19)}  ${l.line}`;
-
   /** `6m56s`, `3s`. For saying how long ago, and how long it took. */
   function since(a, b) {
     const s = Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000));
@@ -603,21 +632,6 @@
     return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
   }
 
-  /**
-   * What run the card is showing, and when it was.
-   *
-   * THE POINT OF THE WHOLE CHANGE. A card adopted on page load used to look exactly like one
-   * from a button press a second ago, so "did this just run" was unanswerable without reading
-   * the service's own log.
-   */
-  function runHeader(r) {
-    const when = r.startedAt.replace('T', ' ').slice(0, 19);
-    if (r.status === 'running') return `[fleet-control] ${r.action} started ${when}Z, running for ${since(r.startedAt, new Date().toISOString())}`;
-    const took = r.endedAt ? ` in ${since(r.startedAt, r.endedAt)}` : '';
-    const ago = since(r.startedAt, new Date().toISOString());
-    return `[fleet-control] ${r.action} ${r.status}${took} -- started ${when}Z, ${ago} ago`;
-  }
-  const clock = (iso) => `${iso.slice(11, 19)}Z`;
 
   /**
    * What the sidecar times say -- which for the session you most want is not a duration.
@@ -891,14 +905,19 @@
       for (const name of tlogs) q.append('tlog', name);
       if (start) { q.set('start', start); q.set('end', end); }
       log(`ground: ${tlogs.length} tlog(s)${start ? `, ${start} -> ${end}` : ''}`);
+      // Synchronous: a copy between two shares and one Mimir query, answered with the result.
       try {
-        const { id } = await j(`/flights/${encodeURIComponent(flight)}/ground?${q}`, { method: 'POST' });
-        const status = await watchRun(id, (line) => log('  ' + line));
-        // Same rule as a session: untick only on success, so a file left ticked costs a retry
-        // while an unticked one that never landed would be a silent hole in the flight.
-        if (status === 'succeeded') for (const name of tlogs) pf.picked.delete(`tlog:${name}`);
-        else log(`  ground: ${lostNote(status) ?? `run ${status}`} -- leaving the tlogs ticked`);
-      } catch (e) { log(`ground: ${e.message}`); }
+        const r = await j(`/flights/${encodeURIComponent(flight)}/ground?${q}`, { method: 'POST' });
+        for (const line of r.notes ?? []) log('  ' + line);
+        log(`  collected ${r.collected.length}: ${r.collected.map((c) => c.file).join(', ')}`);
+        for (const f of r.failed ?? []) log(`  not collected -- ${f}`);
+        log(r.range === undefined ? '  no range, so no backpack series'
+          : `  range ${r.range.start} -> ${r.range.end} (${r.range.from})`);
+        // Untick only on success, so a file left ticked costs a retry while an unticked one
+        // that never landed would be a silent hole in the flight. A named tlog that did not
+        // arrive fails the whole call, so success here means every named one landed.
+        for (const name of tlogs) pf.picked.delete(`tlog:${name}`);
+      } catch (e) { log(`ground: ${e.message} -- leaving the tlogs ticked`); }
       renderSessions();
     }
     // EVERYTHING PICKED GOES AS ONE COLLECT -- sessions and FC logs together. They are
@@ -997,10 +1016,10 @@
     }
   }
 
-  // Before anything else: say what the service is already doing, or just finished doing.
+  // Before anything else: say what the cluster is already doing, or just finished doing.
   // Before the roster renders, so the cards come up carrying live state. This is the cheap read;
   // the probe stays behind its button.
   await refreshPods();
-  await adoptRuns();
+  await adoptWorkflows();
   await showBuild();
 </script>

@@ -6,11 +6,12 @@
 //
 // Two events, for two different reasons:
 //
-//   run finished   the thing you started is over, and how it ended
-//   service started  the pod has been replaced, which ends a stop, reboot or ground in flight
-//                    and forgets every run in the registry, which is in memory. Workflows
-//                    (converge, provision, collect) carry on without it. Worth knowing
-//                    before starting something, and worth knowing after a run vanishes.
+//   run finished     the thing you started is over, and how it ended. Said by the WORKFLOW'S
+//                    exit handler (notify-step.ts), not by this process: a converge or a
+//                    collect outlives this pod, so the announcement has to as well.
+//   service started  the pod has been replaced. Workflows carry on; what a roll ends is a
+//                    stop, reboot or ground that was mid-request, and the log stream anyone
+//                    had open. Worth knowing before starting something.
 //
 // Apprise is already deployed in `tiles`. A notify with no `tag` matches zero targets, which is
 // recorded beside Alloy's own notifier -- so the tag is required, not optional.

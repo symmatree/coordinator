@@ -142,22 +142,6 @@ def cameras_ready(pods: list[dict]) -> bool:
     return len(cams) == len(CAMPODS) and all(c.get("ready") is True for c in cams)
 
 
-# Failure markers, for a play that started and then failed. They are ansible's own words and
-# can only appear once a play is running: `fatal: [host]: FAILED! => {...}` and
-# `UNREACHABLE!`. They say NOTHING about a job that never ran -- that case produced no marker
-# at all and a `status` stuck on `running` (2026-10-17, a missing WorkflowTaskResult CRD), so
-# it is `watch_run`'s wall clock that catches it, not these.
-_FAILURE_MARKERS = ("fatal:", "FAILED:", "UNREACHABLE")
-
-
-def run_failed_line(lines: list[str]) -> str | None:
-    """The last line that says the play failed, or None."""
-    for ln in reversed(lines):
-        if any(m in ln for m in _FAILURE_MARKERS):
-            return ln.strip()
-    return None
-
-
 # ---- fleet interaction -----------------------------------------------------------------
 
 def campod_pods() -> list[dict]:
@@ -192,54 +176,21 @@ def wait_for(what: str, check, timeout_s: int, every_s: int = 15):
                      + (f"; last error was {last_error}" if last_error else ""))
 
 
-def watch_run(run_id: str, label: str, timeout_s: int = 1800) -> None:
-    """Poll a run to completion. Branches on `status`; the lines are for the operator and
-    for the failure marker.
-
-    The cap is not belt-and-braces. A converge whose workflow cannot be created at all --
-    on 2026-10-17, a missing resource CRD -- holds `status: running` indefinitely and
-    repeats `No resources found in fleet-control namespace.`, with no `fatal:`, `FAILED:`
-    or `UNREACHABLE` anywhere in it. Status plus markers cannot see that, so without a
-    wall clock this polls until someone notices. This IS the bound, not a backstop behind
-    one: coordinator#543 would have failed such a run in the submitter after five minutes
-    and was withdrawn, because the converge it was written for did eventually run when the
-    CRD landed -- so the deadline would have recorded a success as a failure.
-    """
-    seen = 0
-    deadline = time.monotonic() + timeout_s
-    while True:
-        run = api(f"/runs/{run_id}", timeout=60)
-        lines = [l["line"] for l in run.get("lines", [])]
-        for ln in lines[seen:]:
-            # The lines worth echoing whatever the path: they name what actually ran.
-            if ln.startswith("[step]") or ln.startswith("[fleet-control]"):
-                log(f"  {label}: {ln.strip()}")
-        seen = len(lines)
-        status = run.get("status")
-        if status == "running":
-            if time.monotonic() > deadline:
-                raise SystemExit(
-                    f"[bench] {label} still `running` after {timeout_s}s with no terminal "
-                    f"status; last line: {(lines or ['<none>'])[-1].strip()}")
-            time.sleep(20)
-            continue
-        bad = run_failed_line(lines)
-        if status != "succeeded" or bad:
-            raise SystemExit(f"[bench] {label} ended {status}: {bad or lines[-1:]}")
-        log(f"{label}: succeeded")
-        return
-
-
 def watch_workflow(name: str, label: str, timeout_s: int = 3600) -> None:
     """Poll a workflow to completion. Branches on `phase`, which Argo owns.
 
-    No line scanning, unlike `watch_run`: the steps' output is their pods' logs, collected
-    into Loki rather than routed through the service, and a step that fails fails the
-    workflow. So the phase IS the answer here, and the failure marker heuristics that
-    `watch_run` needs for an in-service run have nothing to add.
+    No line scanning: the steps' output is their pods' logs, collected into Loki rather
+    than routed through the service, and a step that fails fails the workflow. So the
+    phase IS the answer. Converges and collects alike (coordinator#566): a converge is a
+    workflow the service submitted and nothing more, so the same poll follows both.
 
-    The wall clock is longer than a converge's because this moves the flight's data -- 336
-    and 361 MB took about seven minutes each on 2026-10-18, and a full card is larger.
+    The wall clock IS the bound for a workflow that never gets a pod. On 2026-10-17 a
+    missing WorkflowTaskResult CRD held a converge in `Pending` indefinitely with nothing
+    in its phase to say so; coordinator#543 would have failed it in the submitter after
+    five minutes and was withdrawn, because the converge did eventually run when the CRD
+    landed -- so a short deadline would have recorded a success as a failure. An hour is
+    long enough for a collect too: 336 and 361 MB took about seven minutes each on
+    2026-10-18, and a full card is larger.
     """
     finished = {"Succeeded", "Failed", "Error"}
     said = None
@@ -288,30 +239,31 @@ def ssh_coordinator(key: str, command: str) -> str:
 
 def stage_deploy() -> None:
     before = min((p.get("raw") or {}).get("as_of_boot_s") or 0 for p in campod_pods())
-    # BOTH AT ONCE. A play runs in its own pod now, so the second converge costs this
-    # service a submit and a watch rather than a second ansible interpreter in its memory
-    # -- the reason the fleet-wide cap existed. Submitted together, then watched in turn;
-    # the second watch returns immediately if that run has already finished.
-    runs = {}
+    # BOTH AT ONCE. A play runs in its own pod, so the second converge costs the service a
+    # submit rather than a second ansible interpreter in its memory -- the reason the
+    # fleet-wide cap existed. Submitted together, then watched in turn; the second watch
+    # returns immediately if that workflow has already finished.
+    workflows = {}
     for node in CAMPODS:
-        run = api(f"/nodes/{node}/converge", method="POST", timeout=120)
-        runs[node] = run["id"]
-        log(f"{node}: converge {run['id']}")
-    for node, run_id in runs.items():
+        sub = api(f"/nodes/{node}/converge", method="POST", timeout=120)
+        workflows[node] = sub["workflow"]
+        log(f"{node}: converge {sub['workflow']} ({sub.get('playbook')} from "
+            f"{(sub.get('revision') or '')[:10]})")
+    for node, name in workflows.items():
         try:
-            watch_run(run_id, f"{node} converge")
+            watch_workflow(name, f"{node} converge")
         except SystemExit:
             # Submitting both means a failure here leaves the other one RUNNING and
             # unwatched -- serial never submitted it at all. Name it and say what it is
             # doing, so the operator is not left to find a converge nobody mentioned.
-            for other, other_id in runs.items():
+            for other, other_name in workflows.items():
                 if other == node:
                     continue
                 try:
-                    status = api(f"/runs/{other_id}", timeout=60).get("status")
+                    phase = api(f"/workflows/{other_name}", timeout=60).get("phase")
                 except SystemExit:
-                    status = "unknown -- the API did not answer"
-                log(f"{other} converge {other_id} is {status} and no longer watched")
+                    phase = "unknown -- the API did not answer"
+                log(f"{other} converge {other_name} is {phase} and no longer watched")
             raise
     for node in CAMPODS:
         api(f"/nodes/{node}/reboot", method="POST", timeout=180)

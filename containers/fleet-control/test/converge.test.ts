@@ -61,6 +61,7 @@ else:
   } as ActionContext;
 
   return {
+    dir,
     ctx,
     sent: () => JSON.parse(readFileSync(submitted, 'utf8')) as Record<string, never>,
     restore: () => { process.env.PATH = realPath; globalThis.fetch = realFetch; },
@@ -74,38 +75,31 @@ function paramsOf(sent: Record<string, never>): Record<string, string> {
 
 test('the resolved artifact is what the workflow is told to run', async () => {
   // The seam between three modules: latestPlaybook picks a build, submitPlaybook sends it,
-  // and the workflow's name comes back out in the log before anything is waited on -- so a
-  // run whose watcher dies is still traceable to the thing that outlived it. Which playbook
-  // name belongs to which action is not asserted; that is a constant, and a test of it only
-  // means renaming one costs two edits.
+  // and the workflow's name and link come back -- the only handle there is, since nothing
+  // here waits for it (coordinator#566). Which playbook name belongs to which action is
+  // not asserted; that is a constant, and a test of it only means renaming one costs two
+  // edits.
   const b = bench();
-  const lines: string[] = [];
   try {
-    await converge(NODE, b.ctx, { runId: 'r1', kind: 'converge' }, (_s, l) => lines.push(l));
+    const sub = await converge(NODE, b.ctx, 'converge');
     const p = paramsOf(b.sent());
     assert.equal(p.revision, 'a'.repeat(40));
     assert.equal(p['artifact-url'], 'https://api.github.com/repos/symmatree/coordinator/actions/artifacts/7/zip');
+    assert.equal(sub.workflow, 'wf-1');
+    assert.equal(sub.revision, 'a'.repeat(40));
+    // A link, not just a name: the UI is where someone goes to see what a workflow did.
+    assert.equal(sub.url, 'https://argo.example.invalid/workflows/fleet-control/wf-1');
   } finally {
     b.restore();
   }
-  // A link, not a name: the UI is where someone goes to see what a workflow did, and a
-  // run that outlived its watcher has nothing else left to go on.
-  assert.ok(
-    lines.some((l) => l.includes('https://argo.example.invalid/workflows/fleet-control/wf-1')),
-    JSON.stringify(lines),
-  );
 });
 
-test('a failed workflow fails the run, naming the workflow to go and look at', async () => {
-  const b = bench({ phase: 'Failed', message: 'step main exited 2' });
+test('a submit that the cluster refuses is an error, not a workflow name', async () => {
+  const b = bench();
+  // Replace the fake kubectl's create with a refusal.
+  writeFileSync(join(b.dir, 'kubectl'), '#!/bin/sh\necho "forbidden" >&2\nexit 1\n');
   try {
-    await assert.rejects(
-      () => converge(NODE, b.ctx, { runId: 'r4', kind: 'converge' }),
-      (e: Error) =>
-        e.message.includes('Failed') &&
-        e.message.includes('step main exited 2') &&
-        e.message.includes('wf-1'),
-    );
+    await assert.rejects(() => converge(NODE, b.ctx, 'converge'), /kubectl create exited 1/);
   } finally {
     b.restore();
   }
