@@ -117,10 +117,14 @@
     dest: /etc/modules-load.d/campod-gadget.conf
     mode: "0644"
     content: |
-      # Managed by roles/campod. dwc2 is bound by the device-tree overlay in the
-      # campod image and would autoload anyway; naming it is harmless and makes
-      # the pair legible in one place.
+      # Managed by roles/campod-hardware.
+      {% if device_role == 'campod' %}
+      # dwc2 is bound by the device-tree overlay in the campod image and would
+      # autoload anyway; naming it is harmless and makes the pair legible in one place.
       dwc2
+      {% endif %}
+      # On a rampod the controller is the RK3566's DWC3, put in peripheral mode by
+      # the rampod image's overlay; only the gadget function is loaded here.
       g_ether
 
 - name: Pin the g_ether MAC addresses

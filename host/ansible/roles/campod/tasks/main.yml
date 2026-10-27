@@ -58,11 +58,14 @@
       check out a commit from before the rename. Do not mix the two.
   when: campod_stale_data_mount.rc == 0
 
-- name: Install campod stack and state dirs
+# The stack is the role's: stacks/campod or stacks/rampod. The state root is the same
+# for both -- the rampod image mounts @data at /var/lib/campod too
+# (dotfiles-symm/pi-image/roles/rampod.env), so pod-link and collection see one path.
+- name: Install {{ device_role }} stack and state dirs
   ansible.builtin.include_role:
     name: coord-stack
   vars:
-    coord_stack_name: campod
+    coord_stack_name: "{{ device_role }}"
     coord_state_root: /var/lib/campod
     coord_state_subdirs:
       - config

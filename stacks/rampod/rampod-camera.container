@@ -1,0 +1,33 @@
+# The FLIR Blackfly S still capture, containers/flir-camera. It writes the campod file
+# contract -- the capture flag it reads, the camera status document pod-link publishes,
+# captures/<node>/<boot id>/ -- so the bus and session collection treat it as a pod.
+[Unit]
+Description=rampod still capture (FLIR Blackfly S)
+PartOf=rampod-stack.target
+# Frames are stamped with the wall clock, so wait for chrony as the campod capture does.
+After=time-sync.target
+Wants=time-sync.target
+
+[Container]
+Image=ghcr.io/symmatree/coordinator-flir-camera:main
+ContainerName=rampod_camera
+Pull=never
+# Aravis reaches the camera through libusb on /dev/bus/usb.
+PodmanArgs=--privileged --stop-timeout=90
+
+Volume=/var/lib/campod/captures:/captures
+Volume=/etc/hostname:/etc/host-hostname:ro
+Volume=/etc/fleet-image:/etc/fleet-image:ro
+Volume=/tmp:/tmp
+
+Environment=FLIR_FRAME_RATE_HZ=1.0
+Environment=FLIR_JPEG_QUALITY=90
+Environment=FLIR_CAPTURE_FLAG=/tmp/campod_capture
+Environment=FLIR_STATUS_FILE=/tmp/campod_camera_status
+
+[Service]
+TimeoutStopSec=120
+Restart=no
+
+[Install]
+WantedBy=rampod-stack.target

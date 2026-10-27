@@ -61,3 +61,5 @@ campod_gadget_addresses:
   campod-se: 10.55.0.12
   campod-sw: 10.55.0.13
   campod-nw: 10.55.0.14
+  # Rampods (Radxa Zero 3W camera pods) from .21, by name.
+  blackfly: 10.55.0.21
