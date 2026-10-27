@@ -10,5 +10,7 @@ CAM1_FEEDBAK_PIN,60
 # 0 = INTERRUPT_FALLING. The default is 1, the rising edge, which is the wrong one here.
 CAM1_FEEDBAK_POL,0
 #
-# 5 = MAVLINK. No camera is fitted; a non-zero type is what installs the feedback ISR.
+# 5 = MAVLINK. No camera is fitted; a non-zero type is what owns the feedback pin. The
+# ISR itself is installed by the first take_picture(), which scripts/pps-feedback-arm.lua
+# issues once per boot.
 CAM1_TYPE,5

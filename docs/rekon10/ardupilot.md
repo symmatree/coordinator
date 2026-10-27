@@ -112,13 +112,23 @@ CAM1_TYPE         5
 ```
 
 **`CAM1_TYPE` is a gate, not a camera.** `AP_Camera::init()` switches on the type and
-creates no backend for `CameraType::NONE`, so there is no `init()`, no `attach_interrupt`
-and no ISR -- a feedback pin with `CAM1_TYPE=0` does nothing at all. Any non-zero type
-installs one. `5` (MAVLINK) is the cheapest: it binds no pin, no relay and no servo output,
-and `trigger_pic()` only broadcasts `MAV_CMD_DO_DIGICAM_CONTROL`. **No camera is fitted**,
-and this is not leftover config for one.
+creates no backend for `CameraType::NONE`, so with `CAM1_TYPE=0` there is nothing to own
+the feedback pin at all. `5` (MAVLINK) is the cheapest backend: it binds no pin, no relay
+and no servo output, and `trigger_pic()` only broadcasts `MAV_CMD_DO_DIGICAM_CONTROL`.
+**No camera is fitted**, and this is not leftover config for one.
 
-Cost: a `CAM` record every second, forever, in the dataflash.
+**The backend does not arm the pin at init.** In 4.7.2 `setup_feedback_callback()`, which
+does the `pinMode`, the pull-up and the `attach_interrupt`, is called from one place:
+`AP_Camera_Backend::take_picture()` (`libraries/AP_Camera/AP_Camera_Backend.cpp:141`).
+Until something takes a picture the pin is never sampled and no `CAM` row is written,
+whatever is on the wire. Nothing in this configuration triggers a picture on its own
+(`CAM1_TRIGG_DIST` is 0, no RC option 9, no mission items), which is why every log before
+2026-10-28 has no `CAM` rows. The arming is done by
+[`ardupilot/scripts/pps-feedback-arm.lua`](../../ardupilot/scripts/pps-feedback-arm.lua):
+one `camera:take_picture(0)` five seconds after boot, which with the MAVLink backend costs
+one DIGICAM_CONTROL message and one `TRIG` row. It lives on the FC card in `APM/scripts/`.
+
+Cost once armed: a `CAM` record every second, forever, in the dataflash.
 
 **`CAM1_FEEDBAK_POL` is 0, and the default of 1 is the wrong edge here.**
 `setup_feedback_callback()` does `trigger_polarity = feedback_polarity == 0 ? 0 : 1` then
@@ -128,9 +138,8 @@ does `hal.gpio->write(pin, !trigger_polarity)`, enabling a pull-up so the pin id
 the wanted failure mode, since with the coordinator off and the FC on battery the buffer
 output is unpowered and a defined idle beats a floating pin feeding an ISR.
 
-`check_feedback()` logs on the ISR's count changing, with no gate on a preceding trigger
-command, so no photo mission or camera is needed for an edge to be recorded. It writes a
-`CAM` record and back-corrects the ISR-to-logging delay.
+Once the ISR is installed, `check_feedback()` logs on its count changing, with no further
+gate: it writes a `CAM` record and back-corrects the ISR-to-logging delay.
 
 ## Compass and GPS (Holybro F9P Rover Lite)
 
