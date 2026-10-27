@@ -54,7 +54,9 @@ Nyquist is 182 lp/mm (*arithmetic*). One listing calls it 20 MP and another 26 M
 [1stVision](https://1stvision.com/lens/spec/Kowa/LM16XC),
 [Kowa overview](https://cdn.graftek.com/system/files/12848/original/Kowa_Lens_Overview.pdf))
 
-Mass of the lens, and how its focus and iris are held, are not recorded here yet.
+Filter thread M40.5 x 0.5 (both listings). 45 mm diameter x 79.5 mm long (Stemmer). Focus and
+iris each have a locking screw (this unit). Mass is not weighed yet; Stemmer gives only the series
+range, 210-270 g.
 
 ## GPIO connector
 
