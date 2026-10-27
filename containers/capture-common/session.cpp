@@ -14,7 +14,7 @@ double round3(double v) { return std::round(v * 1000.0) / 1000.0; }
 
 }  // namespace
 
-Session::Session(SessionConfig cfg) : cfg_(std::move(cfg)), writer_(cfg_.dir.string()) {
+Session::Session(SessionConfig cfg) : cfg_(std::move(cfg)), writer_(cfg_.dir.string(), cfg_.writer_queue) {
     for (const auto& s : cfg_.streams) streams_[s];
     // The campods' status document, so pod-link publishes it the same way and `ready`
     // means what a pod's does: will arming now produce frames.

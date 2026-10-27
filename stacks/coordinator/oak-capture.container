@@ -38,6 +38,10 @@ Environment=OAK_MAX_EXPOSURE_US=1000
 Environment=OAK_JPEG_QUALITY=90
 Environment=OAK_IMU_ACCEL_HZ=250
 Environment=OAK_WARMUP_FRAMES=10
+# Frames that may wait for the writer before one is dropped. The three streams arrive
+# together, so each tick takes three slots: 12 is four ticks, 2 s at 2 fps, ~1 MB each.
+# At 4, bench-20261027-oak-s2 dropped 5 of 1496 frames, singly.
+Environment=OAK_WRITER_QUEUE=12
 # Written by coordinator-mavlink: "1" armed, "0" disarmed, absent until it has heard
 # the FC. Nothing is written unless it says armed.
 Environment=OAK_CAPTURE_FLAG=/ipc/fc_armed

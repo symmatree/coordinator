@@ -42,6 +42,10 @@ struct SessionConfig {
     // The ledger's file name in `dir`. Empty means <prefix>_<session>.frames.jsonl; the
     // campods' is frames.jsonl.
     std::string ledger_file{};
+    // How many frames (image + sidecar) may wait for the writer before the next is
+    // dropped. One slot per frame, whatever its stream: a process whose streams arrive
+    // together fills several slots per tick.
+    size_t writer_queue = 4;
 };
 
 // One frame, as a backend saw it.
