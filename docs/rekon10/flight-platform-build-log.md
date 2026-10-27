@@ -318,6 +318,44 @@ Two matched runs designed as a **control experiment for camera vibration**. The 
 
 **Systems exercised in one hop:** full coordinator flight stack onboard (first light), coordinator-mavlink -> FC serial link, in-tracker disparity+still capture, VISO/ExtNav pre-arm + arming, a real woods traverse + vertical, and a probable GPS/RTK-degradation event.
 
+### Sensor raft material (2026-10-27)
+
+The layout under discussion with flight-analysis: battery on top, a sensor raft (camera modules,
+the Blackfly, accelerometers) hung below it on rubber isolators. The raft today is 9 mm aluminum
+cheese plate; the question was whether a solid aluminum sheet with a few drilled holes, or a 3/16"
+x 3" steel bar from the hardware store, would be a better raft.
+
+**Decision: stay with the cheese plate**, moving to the 10 mm plates B&H sells. The raft's own
+first bending mode is what has to stay above the excitation band (the 153 Hz arm mode and the
+262 Hz blade-pass line in [vibration-testing.md](vibration-testing.md)), and that is set by
+`E * t^3`, so thickness wins:
+
+| raft | E * t^3 (N m) | areal mass (kg/m^2) |
+|---|---|---|
+| 10 mm aluminum, solid | 69,000 | 27.0 |
+| 9 mm aluminum, solid | 50,000 | 24.3 |
+| 9 mm aluminum cheese plate, ~25% stiffness lost to holes | ~37,000 | ~19 |
+| 3/16" (4.76 mm) steel | 21,600 | 37.4 |
+| 6 mm aluminum, solid | 14,900 | 16.2 |
+| 3 mm aluminum, solid | 1,900 | 8.1 |
+
+Steel and aluminum at the *same* thickness are a wash: a plate's natural frequency goes as
+`t * sqrt(E / rho)`, and `sqrt(E / rho)` is about 5050 m/s for both. The 3/16" steel bar would put
+the raft's first mode at roughly half the frequency of the 9 mm aluminum for the same span, at
+about twice the mass (a 3" x 12" piece: ~870 g steel against ~450 g cheese plate). What steel
+buys is mass, which lowers the isolator natural frequency for a given set of mounts; softer
+mounts do the same at the cost of sway. 9-10 mm aluminum also taps, so brackets bolt straight in;
+3/16" steel is through-bolt territory.
+
+**Isolators.** First pass is stacking the rubber isolators on hand to see how soft it can be made.
+Two identical isolators in series halve the stiffness (natural frequency down by `1/sqrt(2)` per
+doubling, static sag doubled); the stack also lengthens the lever between the mount plane and the
+raft, so the rocking modes come down faster than the bounce mode. On the shelf as the next step
+if rubber cannot get there: DJI Matrice 400 gimbal dampers (the dual-neck ball type, isolation
+from the necks shearing, rated as a set -- "a gimbal up to 3 lb with the dual downward gimbal
+connector", count per set not stated). Those need mounts with ears designed for them, so they are
+not at the top of the list.
+
 ### FC parameters reset to defaults (2026-09-27)
 
 The flight controller's parameter store reset itself to firmware defaults -- frame class, serial
