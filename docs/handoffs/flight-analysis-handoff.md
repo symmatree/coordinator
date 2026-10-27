@@ -66,50 +66,65 @@ where are that island's edges" terminates.
    deliberately free of interpretation; the arguments live in the theory ledger.
 6. **`analysis/README.md`** -- index of what each module and notebook does.
 
-## Where things stand (2026-10-15)
+## Where things stand (2026-10-27)
 
-**Open PRs from this role:** #421 (six-pose calibration -- method, `pose_calibration.py`,
-tests, results), #503 (clock findings into the interpretation doc), #514 (campod does not
-hard-fail on a fixed-lens module). #404 merged, carrying the vibration investigation. #419
-merged -- campod focus is `infinity` on main, **not yet converged**.
+**Open PRs from this role:** coordinator#625 (layout doc: provenance per log), #626
+(spectrogram transfer function never interpolates across a hole), #627 (`tlog_read.py` and
+the three-observer section for #229), and tiles#874 (runner: DataFlash check, per-log provenance, timeouts, job
+deadline). Merged this session: #605 (row sharpness, band RMS), #607 (ledger topic 7),
+#613 (ledger measured baseline), #619 (notebook move + per-flight set), #620
+(`time-sync.ipynb`), tiles#871 (runner runs the per-flight set, extracts bundles).
 
-**The 152.9 Hz arm mode is the one new structural number**, from the 260926 strike test:
-152.92 Hz on the camera-colocated sensor and 152.94 on the arm-end one, 160 ppm apart, on 3
-and 5 of 16 strikes. Nothing drives it at current hover RPM -- nearest line is motor2's 2nd
-harmonic 21.4 Hz above. **The base was held by hand and moved under every strike**, so it is
-the mode of a hand-restrained assembly, and the damping is unusable: Q 14 against Q 40 at one
-frequency, unexplained.
+**The one flight with everything on it is `2026-10-25-soft-mount-check-flight`:** three
+FC boots (`fc-log-20/21/22`), three coordinator sessions, two campods with arm and
+camera-mount ADXLs, 5 ms exposure at `infinity`, three-blade set B, motor soft mounts.
+Its measured state is `analysis/image-quality-experiments.md`, *Measured baseline,
+2026-10-25*; everything below is from it unless said otherwise.
 
-**The biggest single finding was a bug, not a measurement.** The spectrogram computed
-`2 * rev` and called it blade-pass on a three-blade aircraft. Computing order 3 turned up the
-largest line anywhere on the airframe -- motor2's blade-pass at 261.80 Hz, PSD 7.187 on the
-arm-end sensor against 4.286 for its own rev line -- on the arm both sensors are bolted to.
+**Stills are not usable (operator):** about a tenth of each frame is sharp and which rows
+those are changes frame to frame. Bands are present on the campod (215/230 SE frames fit
+one) and the SE band frequency tracks Motor2's rev frame by frame (r 0.80); Motor2 is the
+slowest motor (82.7 Hz) and the amplitude peaks when it runs 76-79 Hz. The camera-mount
+ADXL reads 0.5-0.8 m/s^2 at the rev lines and up to 4 m/s^2 at blade-pass against a bench
+floor of 0.02-0.03. Rev lines sit at 83-115 Hz; `docs/campod.md` was written against
+~330 Hz, and its own VCM-resonance paragraph (80-200 Hz) now has forcing inside it.
 
-**Focus was the live defect and it is fixed but unflown.** The campod was focused at 1.25 m
-while photographing ground at flight altitude: a **2 px defocus floor on every survey frame
-to date**, which no exposure cap or mount change could lift. #419 sets `infinity`. So every
-still we have was taken through a known defect, and nothing about what remains is measured.
+**Motors:** throttle output 0.18 in hover; front/rear thrust split 1.55 (CG ~35 mm
+forward), left/right 0.97, and the two spin directions 0.82 with YOut -0.037 -- the last
+is new against 260730/260814 (coordinator#169 has the table).
 
-**Six-pose calibration is done and bounded.** Scale and bias per axis for both ADXL345s,
-camera-to-arm 94.26 deg about +z, and a three-instrument closure with the FC: 144.85 - 50.82
-= 94.03 deg against 94.26 measured directly, agreeing to 0.23 deg. The ~1 deg residual is
-**the part's own +/-1% cross-axis spec** (0.57 deg), so nothing is left to explain there. Not
-settled: the fit is exactly determined at six orientations, so its own residual is not
-evidence. Twelve would fix that, and `pose_set_identifiability` /
-`incremental_identifiability` / `ellipsoid_identifiability` score candidate sets.
+**The campods now carry Arducam B0310 modules** (IMX708 behind a fixed M12 lens, 120 deg H,
+no VCM, no `LensPosition`), from 2026-10-26; factory focus unknown; campod-se's camera did
+not probe on its first boot (os-and-driver's finding). Pixel amplitudes are not comparable
+across that change. An ADXL is taped to the module housing on these (operator). The
+operator's direction, not a plan of this role's: envelope-first -- find one configuration
+that gives sharp or sharp-jello frames, then expand from it; fixed lens, 1 ms exposure
+(a `campod-exposure-1ms` branch exists, not mine), battery back on top to centre the CG,
+cameras on a raft, the Blackfly for global shutter; VIO is off the table.
 
-**Clocks, measured:** FC `TimeUS` runs **+242 to +313 ppm** fast against GPS and moved 71 ppm
-between two flights three days apart, so fit it per flight. `SYSTEM_TIME` is **not**
-GPS-authoritative -- on 260923 it was a day behind its own GPS, almost certainly sourced from
-the coordinator's stepped clock. `vehicle.tlog` concatenates FC boot sessions with no marker.
-The campod-to-FC tie was +/-0.4 s before PPS, which is the loose link the PPS work fixes.
+**Time sync, measured end to end (`time-sync.ipynb`):** every UTC label on the vehicle
+(stills by two routes, coordinator, FC RTC) sits +25 to +32 ms ahead of GPS, within a few
+ms of each other. FC `TimeUS` against GPS: its second is long by 253-298 ppm (three boots,
+ten minutes apart) -- earlier text called the same number "fast"; state the convention.
+Against the coordinator's PPS-disciplined clock the FC reads 272-295 ppm by two routes, so
+"pulse vs GPS" by difference comes out -19 to +42 ppm across the three logs: not a
+measurement of the DS3234 yet. The coordinator locks to the pulse 20-22 s after boot
+(chrony slewing at 83 ms/s), then 3-20 us sd; pods stepped 195 days at boot, campod-sw sat
+95 ms off for 74 s before locking; during the flight all three are within 5 us sd. Pod vs
+pod same-second exposures: median 388 us, sd 287 us (design figure 52 us; coordinator#538
+has the method). Zero `CAM` rows in all three logs: the FC recorded no PPS edges that day.
+The ground tlog was a 0-byte `.tlog.part`. `vehicle.tlog` holds 11343 FC frames against
+11317 the FC counted sending on that channel, zero sequence loss.
 
-**In flight, unresolved:** whether soft mounts plus correct focus produce acceptable stills.
-That is the question everything else waits on. Hardware acquired toward it: a FLIR Blackfly
-BFS-U3-244S8M-C (24.5 MP IMX540 **global shutter** mono) with a Kowa LM16XC 16 mm f/2.0, four
-Arducam IMX219 **mechanically fixed-focus** modules, and IMX708 + M12 modules -- the last
-being the single-variable test against the current Camera Module 3, same sensor and readout,
-differing only in that the lens cannot move.
+**The per-flight set runs nightly:** `flight-analysis` per `.bin`, then per flight the
+bundles extracted into `captures/`, `time-sync`, and `vibration-spectrogram` and
+`image-sharpness-vs-motion` per pod on the `.bin` `time-sync.json` names for it, with
+`derived/polisher.json` provenance. The first nightly after tiles#871 processes every
+flight dir on the NAS; whether it completed has not been checked (needs `kubectl`, ask).
+
+**Still open from earlier:** the 152.9 Hz hand-held strike-test mode and the six-pose
+calibration stand as written in the 2026-10-15 version of this file (git history); the
+twelve-pose set is unflown.
 
 ## What must not be dropped
 
