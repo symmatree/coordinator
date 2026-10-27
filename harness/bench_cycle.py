@@ -17,15 +17,19 @@ the cameras are being timed.
 
 The waits that matter, and what each is for:
 
-  both converges together -- a play runs in its own pod, so the fleet-wide cap on playbook
-    runs is gone and the deploy takes one converge's time rather than two
+  all three converges together -- a play runs in its own pod, so the fleet-wide cap on
+    playbook runs is gone and the deploy takes one converge's time rather than three
   a reboot after converging -- a converge installs and pulls and starts nothing, so the
     reboot is the apply step
   uptime going backwards before trusting any pod state -- the bus documents are retained,
     so a pod that is down still publishes its last reading
-  both cameras `ready`, not merely present -- warmup frames are not capture frames
-  and both `sync_ready` -- warmup finishing does not mean the pair is aligned, and a
-    window that opens early spends its head discarding frames
+  every camera `ready`, not merely present -- warmup frames are not capture frames. On a
+    campod that is warm AND `sync_ready`, because warmup finishing does not mean the pair
+    is aligned and a window that opens early spends its head discarding frames; on the
+    coordinator it is the OAK warm on all three of its cameras
+  only the FC talker stopped to arm -- it owns the arm file, so it has to stop or it
+    overwrites what we write, but oak-capture reads that same file and has to keep running
+    or the coordinator's session has nothing in it
   nothing touched during the window -- every command on a 417 MiB board evicts the
     camera's working set, and timing is what is under test
 
@@ -50,7 +54,15 @@ import urllib.request
 
 FLEET_URL = os.environ.get("FLEET_URL", "https://fleet.tiles.symmatree.com")
 CAMPODS = ("campod-se", "campod-sw")
+# Every box the cycle converges, reboots, waits on and collects from. The coordinator is a
+# capture node too since oak-capture (#609): its session holds the OAK's frames and IMU
+# beside the router's tlog and timesync.
+NODES = ("coordinator", *CAMPODS)
 ARM_FILE = "/var/lib/coordinator/ipc/fc_armed"
+# The unit that owns the arm file. Stopped by name, not by the bus quiesce: that stops
+# every unit in the coordinator's POD_LINK_COLLECTION_UNITS, which since #609 is the
+# router AND oak-capture, and a window with oak-capture stopped records nothing from it.
+FC_TALKER_UNIT = "coordinator-mavlink"
 
 
 def log(msg: str) -> None:
@@ -105,49 +117,57 @@ def pick_session(sessions: list[dict]) -> dict | None:
     return max(closed, key=lambda s: s["last_activity_utc"])
 
 
-def is_fresh(pods: list[dict], uptime_before: float) -> bool:
+def is_fresh(pods: list[dict], uptime_before: float, expected: int = len(NODES)) -> bool:
     """Did these pods actually reboot?
 
     Uptime going BACKWARDS, not "a document exists". The bus documents are retained, so a
     pod that is down still publishes its last state -- a check for presence declared the
     cameras up while the pods were mid-reboot, and the run started against stale data.
 
-    BOTH PODS, COUNTED. On 2026-10-18 this passed on one: collect reboots the coordinator
+    EVERY NODE, COUNTED. On 2026-10-18 this passed on one: collect reboots the coordinator
     too, the broker runs there, and the retained documents are gone until each pod
     republishes -- so campod-se came back and published while campod-sw, whose reboot had
     actually failed, was simply absent. `all()` over one pod is true, and the stage reported
     "a fresh boot on both campods: ok" while meaning one. cameras_ready counts; this did not.
     """
-    if len(pods) != len(CAMPODS):
+    if len(pods) != expected:
         return False
     ups = [(p.get("raw") or {}).get("as_of_boot_s") for p in pods]
     return bool(ups) and all(u is not None and u < uptime_before for u in ups)
 
 
-def cameras_ready(pods: list[dict]) -> bool:
-    """Both cameras ready, which is the pod's own word for "arming now works".
+def cameras_ready(pods: list[dict], expected: int = len(NODES)) -> bool:
+    """Every camera ready, which is the pod's own word for "arming now works".
 
     ONE FIELD, AND NOT ASSEMBLED HERE. `camera.ready` is warm AND synced, combined by the
-    campod that knows both (#577). This gate used to read `ready` -- which then meant warm
-    only -- and separately reason about three-valued `sync_ready`, and arming is not the
-    only reader: the front panel has to answer the same question for someone standing in
-    front of it with no network. Two readers deciding what readiness means is how they
-    disagree, which they did: this gate was fixed on 2026-10-19 and the panel was not.
+    campod that knows both (#577); on the coordinator it is the OAK warm on all three of
+    its cameras, and that document has the same shape. This gate used to read `ready` --
+    which then meant warm only -- and separately reason about three-valued `sync_ready`,
+    and arming is not the only reader: the front panel has to answer the same question for
+    someone standing in front of it with no network. Two readers deciding what readiness
+    means is how they disagree, which they did: this gate was fixed on 2026-10-19 and the
+    panel was not.
 
     Why it matters that the wait is real: the window of 2026-10-18T22:40 opened 18.5 s
     early, 38 frames on each pod recorded `sync_wait` and were discarded, and that run kept
     232 frames where its neighbours kept 248 and 250.
     """
     cams = [(p.get("raw") or {}).get("camera") or {} for p in pods]
-    return len(cams) == len(CAMPODS) and all(c.get("ready") is True for c in cams)
+    return len(cams) == expected and all(c.get("ready") is True for c in cams)
 
 
 # ---- fleet interaction -----------------------------------------------------------------
 
-def campod_pods() -> list[dict]:
+def fleet_pods() -> list[dict]:
+    """The status documents of every node in the cycle, including the coordinator's."""
     pods = api("/pods", timeout=60).get("pods", [])
-    return sorted((p for p in pods if (p.get("node") or "") in CAMPODS),
+    return sorted((p for p in pods if (p.get("node") or "") in NODES),
                   key=lambda p: p["node"])
+
+
+def oldest_boot() -> float:
+    """The lowest uptime on the bus, the reference `is_fresh` wants to see go backwards."""
+    return min((p.get("raw") or {}).get("as_of_boot_s") or 0 for p in fleet_pods())
 
 
 def wait_for(what: str, check, timeout_s: int, every_s: int = 15):
@@ -238,13 +258,13 @@ def ssh_coordinator(key: str, command: str) -> str:
 # ---- the stages, one per workflow step --------------------------------------------------
 
 def stage_deploy() -> None:
-    before = min((p.get("raw") or {}).get("as_of_boot_s") or 0 for p in campod_pods())
-    # BOTH AT ONCE. A play runs in its own pod, so the second converge costs the service a
-    # submit rather than a second ansible interpreter in its memory -- the reason the
-    # fleet-wide cap existed. Submitted together, then watched in turn; the second watch
+    before = oldest_boot()
+    # ALL AT ONCE. A play runs in its own pod, so each further converge costs the service a
+    # submit rather than another ansible interpreter in its memory -- the reason the
+    # fleet-wide cap existed. Submitted together, then watched in turn; a later watch
     # returns immediately if that workflow has already finished.
     workflows = {}
-    for node in CAMPODS:
+    for node in NODES:
         sub = api(f"/nodes/{node}/converge", method="POST", timeout=120)
         workflows[node] = sub["workflow"]
         log(f"{node}: converge {sub['workflow']} ({sub.get('playbook')} from "
@@ -265,24 +285,27 @@ def stage_deploy() -> None:
                     phase = "unknown -- the API did not answer"
                 log(f"{other} converge {other_name} is {phase} and no longer watched")
             raise
-    for node in CAMPODS:
+    for node in NODES:
         api(f"/nodes/{node}/reboot", method="POST", timeout=180)
         log(f"{node}: rebooting")
-    wait_for("a fresh boot on both campods",
-             lambda: is_fresh(campod_pods(), before) and campod_pods(), 900)
-    wait_for("both cameras ready and synced", lambda: cameras_ready(campod_pods()), 900)
-    for p in campod_pods():
+    wait_for("a fresh boot on all three",
+             lambda: is_fresh(fleet_pods(), before) and fleet_pods(), 900)
+    wait_for("every camera ready (the campods synced, the OAK warm)",
+             lambda: cameras_ready(fleet_pods()), 900)
+    for p in fleet_pods():
         cam = (p.get("raw") or {}).get("camera") or {}
         log(f"  {p['node']}: ready at mono {cam.get('ready_at_mono_s')}s")
 
 
 def stage_arm(key: str) -> None:
-    # The FC talker owns the arm file, so it has to stop or it overwrites what we write.
-    # On the coordinator the bus quiesce stops exactly coordinator-mavlink.
-    api("/nodes/coordinator/stop-capture", method="POST", timeout=180)
-    log("coordinator: FC talker stopped")
-    ssh_coordinator(key, f"echo 1 | sudo tee {ARM_FILE}")
-    log("armed; the window is the workflow's suspend step, so nothing of ours runs during it")
+    # The FC talker owns the arm file, so it has to stop or it overwrites what we write --
+    # and ONLY it. The bus quiesce (`stop-capture`) stops everything in the coordinator's
+    # POD_LINK_COLLECTION_UNITS, which since #609 includes oak-capture, the thing that reads
+    # the file we are about to write. fleet-control has no per-unit verb, so this is the
+    # same ssh the file write already needs, with the stop in front of it.
+    ssh_coordinator(key, f"sudo systemctl stop {FC_TALKER_UNIT} && echo 1 | sudo tee {ARM_FILE}")
+    log(f"coordinator: {FC_TALKER_UNIT} stopped, oak-capture left running; armed. The "
+        "window is the workflow's suspend step, so nothing of ours runs during it")
 
 
 def stage_disarm(key: str) -> None:
@@ -297,16 +320,16 @@ def stage_disarm(key: str) -> None:
 
 
 def stage_collect(flight: str) -> None:
-    before = min((p.get("raw") or {}).get("as_of_boot_s") or 0 for p in campod_pods())
-    for node in ("coordinator", *CAMPODS):
+    before = oldest_boot()
+    for node in NODES:
         api(f"/nodes/{node}/reboot", method="POST", timeout=180)
     log("all three rebooting -- this is what makes the data durable, since the router's "
         "own disarm sync() cannot run with the router stopped")
-    wait_for("a fresh boot on both campods",
-             lambda: is_fresh(campod_pods(), before) and campod_pods(), 900)
+    wait_for("a fresh boot on all three",
+             lambda: is_fresh(fleet_pods(), before) and fleet_pods(), 900)
     time.sleep(60)
     targets = []
-    for node in CAMPODS:
+    for node in NODES:
         sessions = api(f"/nodes/{node}/sessions", timeout=300).get("sessions", [])
         best = pick_session(sessions)
         if not best:
@@ -316,9 +339,9 @@ def stage_collect(flight: str) -> None:
             f"(activity {best['last_activity_utc']}, frames {best.get('frames')})")
         targets.append({"node": node, "kind": "session", "id": best["session"]})
     if not targets:
-        raise SystemExit("[bench] no campod had a closed session to collect")
+        raise SystemExit("[bench] no node had a closed session to collect")
 
-    # ONE WORKFLOW, A STEP PER CAMPOD. The transfers are this stage's long pole and they used
+    # ONE WORKFLOW, A STEP PER NODE. The transfers are this stage's long pole and they used
     # to run one after the other because the service moved the bytes itself -- 336 and 361 MB
     # landing at 18:23 and 18:30 on 2026-10-18. In pods of their own they go at once, and
     # each writes its own record into the flight's collected/, so nothing has to be merged.
@@ -327,7 +350,7 @@ def stage_collect(flight: str) -> None:
     log(f"collect {sub['workflow']}")
     log(f"  {sub['url']}")
     watch_workflow(sub["workflow"], "collect")
-    log(f"collected into {flight}; read manifests/campod-camera FIRST to see which image "
+    log(f"collected into {flight}; read each session's manifests/ FIRST to see which image "
         "wrote it, then journal.log, then the sidecars")
 
 
