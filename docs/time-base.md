@@ -280,6 +280,12 @@ The FC takes a buffered copy on servo pad **S11**, bound as a camera feedback in
 every edge lands in the dataflash with a hardware-captured timestamp beside the EKF state
 at that instant. That is what ties a capture to a pose, and it does not go through UTC.
 
+**Status, 2026-10-28:** no flight log to date has a `CAM` row. The firmware arms the
+feedback pin only inside `take_picture()`, and nothing had ever called it; the fix is a
+one-shot Lua script on the FC card, `ardupilot/scripts/pps-feedback-arm.lua`, and the
+first log after it is deployed is the first test of the S11 wire itself. Mechanism in
+[rekon10/ardupilot.md](rekon10/ardupilot.md), "Camera feedback pin".
+
 Which pad, why it is free and what else could take it:
 [rekon10/flight-platform.md](rekon10/flight-platform.md). The parameters and what each
 means: [rekon10/ardupilot.md](rekon10/ardupilot.md).

@@ -2,7 +2,7 @@
 
 Flight-controller configuration for the **rekon10** airframe, concentrated in the
 coordinator repo alongside the code that supports it. Board **TBS_LUCID_H7**,
-firmware **ArduCopter 4.7.0**.
+firmware **ArduCopter 4.7.2**.
 
 The fragments in `inputs/` are the source we maintain: small per-subsystem files we edit
 and **apply to the FC**. `rekon10-methodi.param` is the last full dump off the FC -- the
@@ -17,6 +17,7 @@ ground truth `verify.py` checks the fragments against. Hardware/build narrative 
 | `inputs/*.param` | **The maintained config** -- one commented `.param` per device/subsystem, named for what it holds, applied to the FC. Inspired by the ArduPilot Methodic Configurator. |
 | `verify.py` | Round-trip check: every fragment value matches the export (see [Verifying](#verifying)). |
 | `gen_defaults_sitl.py` | Dumps a firmware version's code-defaults from SITL -- used on a firmware bump to tell "the default changed" from "our value changed." |
+| `scripts/*.lua` | Lua that runs on the FC. Deployed by copying to `APM/scripts/` on the FC's SD card (`SCR_ENABLE` is 1); the firmware loads the directory at boot. One file today, `pps-feedback-arm.lua`, which arms the PPS feedback pin each boot -- see `docs/rekon10/ardupilot.md`, "Camera feedback pin". |
 
 The fragments are hand-curated: they carry the rationale and provenance behind the
 build, which is the point. Grouping is by device, so things that interact sit together:
