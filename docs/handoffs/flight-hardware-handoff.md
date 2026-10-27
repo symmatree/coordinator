@@ -51,9 +51,10 @@ about the built board -- ask.
 
 ## Where things stand (2026-10-27)
 
-**The PPS chain works.** Board built, powered from the Coordinator, chrony holding
-`Reference ID: PPS` at stratum 1, 2.9 us RMS, both campods synced over the gadget link. Chip,
-SPI link, first-tier buffer and falling-edge capture all confirmed on hardware.
+**The PPS chain works, and coordinator#11 is closed as completed.** Board built, powered from
+the Coordinator, chrony holding `Reference ID: PPS` at stratum 1, both campods synced over the
+gadget link, the FC timing the same edge on `S11`. All five pigtail legs pass the signal: the
+two that did not were a free-floating input jumper on U2's `T2_FRONT` net, since reconnected.
 
 **Open PRs from this role:** none. Merged since the last handoff: #586 (props point at
 `props.md`; PC1's cause is not known), #587 (`docs/rekon10/flir-blackfly-s.md`, the Blackfly S
@@ -70,9 +71,6 @@ orientation gets USB 3 -- os-and-driver owns that (dotfiles-symm#91).
 
 Open on the hardware side:
 
-- **Two of the five PPS pigtail legs: cause found, fix pending.** U2 channels 3 and 4 (the NE and
-  NW legs in the design); the input jumper to `3A`/`4A` on the `T2_FRONT` net was free-floating.
-  He will reconnect it before the front two pods go on. Details in `central-hub.md`.
 - **The PPS board is not mounted.** Needs taping up and a location.
 - **The Coordinator connector is a 2x4 block on solid-core wire and has been knocked off
   once.** Solid core puts harness load straight into the header instead of flexing. Kapton
