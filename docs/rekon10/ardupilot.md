@@ -8,7 +8,7 @@ FC-side settings for the **TBS Lucid H7** build. The FC is the source of truth f
 
 Handset and ELRS profile (Boxer, rates, Model Match, switch table): **[ground-station.md](ground-station.md)**. EdgeTX model export: **[`config/MODELS/model01.yml`](config/MODELS/model01.yml)** (**Rekon10**, model id **10**).
 
-Firmware: **Copter 4.7.2** (`fb773567`) `arducopter_with_bl.hex` for **TBS_LUCID_H7** from `https://firmware.ardupilot.org/Copter/stable-4.7.2/TBS_LUCID_H7/arducopter_with_bl.hex`. Seen in the logs from 2026-10-25; reflashed with the same image on 2026-10-27 after the reboot loop ([build log](flight-platform-build-log.md#fc-reboot-loop-on-every-power-up-cleared-by-a-reflash-2026-10-27)). History: 4.6.3 to 4.7.0 on 2026-07-27; the 4.7.0 to 4.7.2 step is not recorded here.
+Firmware: **Copter 4.7.2** (`fb773567`) `arducopter_with_bl.hex` for **TBS_LUCID_H7** from `https://firmware.ardupilot.org/Copter/stable-4.7.2/TBS_LUCID_H7/arducopter_with_bl.hex`. Loaded 2026-10-24 as the fix for the FC reporting a flash error at every startup; [`ardupilot/ardupilot-4.7.2-sys/`](../../ardupilot/ardupilot-4.7.2-sys/README.md) is the `@SYS` export taken right after. Reflashed with the same image on 2026-10-27 after the reboot loop ([build log](flight-platform-build-log.md#fc-reboot-loop-on-every-power-up-cleared-by-a-reflash-2026-10-27)). History: 4.6.3 to 4.7.0 on 2026-07-27, 4.7.0 to 4.7.2 on 2026-10-24.
 
 ## Frame
 
