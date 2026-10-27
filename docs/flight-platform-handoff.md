@@ -73,7 +73,48 @@ the probe the ground platform reads. Read **`containers/fleet-control/src/quiesc
 **`probe.ts`** too, short as they are -- they decide what every remote operation costs, and one
 of them stops the whole fleet.
 
-## Where things stand (2026-10-20)
+## Where things stand (2026-10-27)
+
+**The campods capture in C++ now.** #612 replaced `capture.py` with `campod-capture`
+(`containers/campod-camera/src/capture.cpp`, libcamera's C++ API, libjpeg-turbo straight
+from the ISP's YUV420 buffer) on top of `containers/capture-common`, the control loop that
+#610 lifted out of oak-capture: warmup, the arm gate, the ledger, naming, the writer and the
+status document, with no camera library in it. Same environment, file names, sidecar fields
+and status document as the Python; `capture.py` is still in the image and `Exec=python3
+/opt/campod/capture.py` runs it instead. **Verified on the bench the same night** in
+`bench-20261027-campod-cpp-2`: 246 frames per pod in the 240 s window, se-sw FrameWallClock
+median 26 us and max 54 us over all 246 pairs, exposure 999 us at gain 16 on every frame, no
+sequence gaps, no writer drops. The first attempt (`bench-20261027-campod-cpp`) failed on
+campod-se never reporting a camera; a reseated ribbon fixed it. Its camera log from that
+boot was never read, so why the process wrote no status file at all that boot -- where the
+C++ capture writes `camera: waiting` before it looks for a camera -- is unexplained.
+
+**The coordinator captures from the OAK.** #608 (`oak-capture-base`, depthai-core v3.11.0
+built once), #609 (`oak-capture`: full-resolution colour MJPEG, both monos as PGM, the IMU
+raw, one process because the device cannot be shared) and #611 (2 fps: the OV9282 refuses
+1 fps, "min FPS of the sensor config: 1.687"). Gated on `/ipc/fc_armed` like the router, so
+the coordinator's `ready` on the bus is the OAK warm on all three cameras. Confirmed after
+the reboot of 2026-10-26: warm at 35 s, all three streams at 500 ms, no gaps. **Nothing has
+captured armed yet** -- the bench cycle's arm step quiesces the coordinator, which since #609
+stops oak-capture too, and `collect` only takes the campods. ground-platform-guy has been
+told.
+
+**Ledger lines now carry `decision`, not `kept`**: `warmup`, `paused`, `sync_wait`, `kept`,
+`dropped`, `encode_failed`. Both captures write it; any reader of `frames.jsonl` keyed on
+`kept` reads the old Python sessions only.
+
+**`capture-common` is shared source, not a shared image.** Each capture image compiles it
+with `add_subdirectory`. The campod build is a stage of its own Dockerfile from Debian plus
+the Pi archive (libcamera 0.7.2+rpt20261009 at the time of writing, checked by `ldd` against
+the runtime); the OAK's is `oak-capture-base`. A common C++ toolchain base was discussed and
+not built because the campod needs only stock packages.
+
+**Two docs/code disagreements found while reviewing the bus, neither fixed:** `pod-bus.md`
+says the MQTT keepalive is 60 s and `pod-link/main.go` sets 10 s; and the status period
+desire is only read on the status tick, so lowering it from 60 s takes up to 60 s. Also:
+every control-plane unit (pod-link, the broker) is `Restart=no`, so a pod-link that exits
+leaves its box off the bus until a power cycle. Reported to Seth, who did not rule on any of
+them.
 
 **Two campods expose simultaneously, and that is the headline.** Both pods pair 248-250
 frames per window within 50 us, median |delta| 25-33 us. The mechanism is worth holding
@@ -115,22 +156,26 @@ notebook: submit a `Workflow` with a `workflowTemplateRef` via `kubectl create`.
 knowledge, not the script's. Bundles land in
 `/home/jovyan/datasets/flights/rekon10/<flight>/` with a record per node in `collected/`.
 
-**`ready` is being redefined, in two PRs that must land in order.** #578: a campod
-published `camera.ready` meaning *warm*, while the arm gate had already learned to also
-require `sync_ready` -- so the front panel showed a ready pod for the ~80 s between
-warmup ending (frame 10) and the pair aligning (frame 94). `warm` is now that field's
-name and `ready` means warm AND synced, computed on the pod. #579 then rebuilds the panel
-around it: a `READY` banner, a row per pod with a letter per subsystem, and `ready` per
-pod published by pod-link because it is the process holding both the camera and the accel
-documents. #578 first.
+**`ready` means warm AND synced, decided on the pod.** #578 and #579 landed: a campod
+publishes `warm` and `sync_ready` as detail and `ready` as the verdict, pod-link combines it
+with the accelerometers, and the panel and fleet-control read that one field. The C++
+capture computes it the same way (`SessionConfig::sync`).
 
 **Sync is no longer optional.** `CAMPOD_SYNC_LEADER` is required and an unset one exits at
 start; applying the control is fatal rather than best-effort. Seth's call, and the trivial
 case is a server with no followers, which works. Electing a leader over the bus is #501.
 
-**Open and not built:** the libcamera tuning override that would cut `ready_frame` from
-100 to 50 and `sync_period` from 30 to 5 frames, via a generated tuning JSON and
-`LIBCAMERA_RPI_TUNING_FILE`. Asked for on 2026-10-19; nothing written.
+**The sync tuning override is built**: `sync_tuning.py` generates the imx708 tuning files
+with `ready_frame` 50 and `sync_period` 5 at image build, found through
+`LIBCAMERA_IPA_CONFIG_PATH`. Sync ready came 48-50 frames after warm on 2026-10-27.
+
+**FC side, still open from earlier sessions:** `docs/rekon10/ardupilot.md` says 4.7.0 and the
+PSC renames are not recorded; the `gps-compass.param` note that binding needs a boot is
+wrong (the id must be saved); the outdoor compass calibration is not pinned (needs an export,
+then a fragment PR); watch a 4.7.2 flight for `crash_dump.bin` / `Logging failed`.
+dotfiles-symm#94 (B0310 `camera_auto_detect=0`, `dtoverlay=imx708,vcm=off`, lands by reflash)
+and tiles#866 (Argo mutex for fc-log collect) were awaiting Seth on 2026-10-26. On the B0310's
+first power-up, check the `capture: libcamera sees` and lens lines.
 
 **Unexplained, and flagged rather than assigned:** campod-sw drops WiFi about 39 s after
 disarm; sw shows 300-500 ms gaps in both accel streams where se's worst is 12-40 ms; and
