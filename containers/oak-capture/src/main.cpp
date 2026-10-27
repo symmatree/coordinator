@@ -108,6 +108,7 @@ int main() {
         .flag_path = flag_path,
         .status_path = capture::env_path("OAK_STATUS_FILE", "/ipc/oak_capture_status"),
         .log_name = "oak-capture",
+        .writer_queue = static_cast<size_t>(env_int("OAK_WRITER_QUEUE", 12)),
     });
     session.publish();
 
