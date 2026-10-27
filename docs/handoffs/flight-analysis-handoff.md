@@ -68,12 +68,13 @@ where are that island's edges" terminates.
 
 ## Where things stand (2026-10-27)
 
-**Open PRs from this role:** coordinator#625 (layout doc: provenance per log), #626
-(spectrogram transfer function never interpolates across a hole), #627 (`tlog_read.py` and
-the three-observer section for #229), and tiles#874 (runner: DataFlash check, per-log provenance, timeouts, job
-deadline). Merged this session: #605 (row sharpness, band RMS), #607 (ledger topic 7),
-#613 (ledger measured baseline), #619 (notebook move + per-flight set), #620
-(`time-sync.ipynb`), tiles#871 (runner runs the per-flight set, extracts bundles).
+**Open PRs from this role:** coordinator#626 (spectrogram transfer function never
+interpolates across a hole) and #627 (`tlog_read.py` and the three-observer section for
+#229). Merged this session: #605 (row sharpness, band RMS), #607 (ledger topic 7), #613
+(ledger measured baseline), #619 (notebook move + per-flight set), #620
+(`time-sync.ipynb`), #625 (layout doc: provenance per log), tiles#871 (runner runs the
+per-flight set, extracts bundles), tiles#874 (runner: DataFlash check, per-log provenance,
+timeouts, job deadline). coordinator#211 closed as completed.
 
 **The one flight with everything on it is `2026-10-25-soft-mount-check-flight`:** three
 FC boots (`fc-log-20/21/22`), three coordinator sessions, two campods with arm and
