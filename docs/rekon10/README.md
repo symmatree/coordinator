@@ -22,7 +22,7 @@ on this pin" and "what can I move", not "tell me about timing".
 | What the **FLIR Blackfly S** on the rampod is -- its GPIO pins, power options, trigger | [flir-blackfly-s.md](flir-blackfly-s.md) |
 | **Why** a part or value was chosen, and what was tried before it | [flight-platform-build-log.md](flight-platform-build-log.md) |
 | Which **propeller set** is which, and what each one is | [props.md](props.md) |
-| How something is **mechanically mounted** -- the OAK-D, the arm pods | [oak-d-mount.md](oak-d-mount.md), [campod.md](../campod.md) |
+| How something is **mechanically mounted** -- the OAK-D, the arm pods, the raft pods | [oak-d-mount.md](oak-d-mount.md), [campod.md](../campod.md), [sensor-raft.md](sensor-raft.md) |
 | What a **blink pattern** means with no link up | [led-cheatsheet.md](led-cheatsheet.md) |
 | Who owns a hardware question, and what is open on the vehicle | [`docs/handoffs/flight-hardware-handoff.md`](../handoffs/flight-hardware-handoff.md) |
 
@@ -61,6 +61,7 @@ this directory: [`docs/time-base.md`](../time-base.md), [`docs/campod-software.m
 | Flight platform build log (chronicle, bench notes) | [flight-platform-build-log.md](flight-platform-build-log.md) |
 | Vibration and structural testing (chain validation, bump-test method) | [vibration-testing.md](vibration-testing.md) |
 | Propellers, by label (which sets exist and what they are) | [props.md](props.md) |
+| Sensor raft pod mounts (corner boss spacing, the wedge spec, Pi tie-down) | [sensor-raft.md](sensor-raft.md) |
 | ArduPilot configuration (params, serial, RC, tools) | [ardupilot.md](ardupilot.md) ; [`ardupilot/rekon10-methodi.param`](../../ardupilot/rekon10-methodi.param) |
 | EdgeTX REKON10 model | [`config/MODELS/model01.yml`](config/MODELS/model01.yml) |
 | EdgeTX FIREFLY16 model | [`config/MODELS/model02.yml`](config/MODELS/model02.yml) |
