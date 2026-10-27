@@ -1,9 +1,9 @@
-// What this service does to a node: converge it, stop it, reboot it, reimage it.
+// What this service does to a node: converge it, stop it, reboot it.
 //
-// Converge is the one that changes a device. THE OTHER THREE ARE NOT SMALLER CONVERGES --
+// Converge is the one that changes a device. THE OTHER TWO ARE NOT SMALLER CONVERGES --
 // they are the things a converge does to the device on its way past, offered on their own
 // because the operator wants them on their own: a stack that is off while you read the card,
-// a reboot that closes a capture session, a card that is rewritten.
+// a reboot that closes a capture session.
 //
 // Converge: ONE action, not two. `bootstrap` and `update` used to differ because a fresh card needed a
 // remount, an apt install, a clone, and an exit-1 reboot dance that an already-provisioned
@@ -248,38 +248,4 @@ export async function reboot(node: FleetNode, ctx: ActionContext, sink?: EventSi
  */
 export function rebootStarted(stderr: string): boolean {
   return /closed by remote host|Connection reset|Broken pipe/i.test(stderr);
-}
-
-/**
- * Reimage a node: stage a disk image in its FAT partition and arm the tryboot flasher.
- *
- * The play stages and arms; it does not verify (#324). Whether it worked is answered the
- * same way everything else is -- probe the machine afterwards and see what it says it is.
- * There is no in-flight state here worth protecting: the device drops off the network, comes
- * back or does not, and the status screen is the completion check.
- *
- * Worst case is a card pull, which is what a reflash costs today.
- */
-export async function reimage(
-  node: FleetNode,
-  ctx: ActionContext,
-  opts: { runId: string; image: { url: string; sha256: string; sha: string } },
-  sink?: EventSink,
-): Promise<void> {
-  const host = hostOf(node);
-  const { image } = opts;
-  note(sink, `reimaging ${node.name} (${host}) as ${node.role}`);
-  note(sink, `image built from ${image.sha.slice(0, 10)}`);
-  note(sink, `device fetches ${image.url}`);
-
-  await runPlaybookWorkflow(node, ctx, {
-    runId: opts.runId,
-    action: 'reimage',
-    playbook: 'reimage.yaml',
-    // The play asserts both of these before it quiesces anything, so a missing one fails
-    // there rather than part-way through a reflash.
-    extraVars: { reimage_image_url: image.url, reimage_image_sha256: image.sha256 },
-    sink,
-  });
-  note(sink, `${node.name} armed; it will drop off the network and come back on the new image`);
 }

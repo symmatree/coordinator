@@ -99,18 +99,6 @@ export async function refHead(repo: string, ref: string, token?: string): Promis
   return body.sha;
 }
 
-export async function isHeadOfRef(
-  repo: string,
-  ref: string,
-  sha: string,
-  token?: string,
-): Promise<{ head: string; current: boolean }> {
-  const body = (await api(`/repos/${repo}/commits/${encodeURIComponent(ref)}`, token)) as {
-    sha: string;
-  };
-  return { head: body.sha, current: body.sha === sha };
-}
-
 /**
  * The title of the PR a sha came from, which is what makes "the build I expected is not here
  * yet" legible as a title that has not appeared.
@@ -135,26 +123,6 @@ export async function commitTitle(repo: string, sha: string, token?: string): Pr
     commit?: { message?: string };
   };
   return (body.commit?.message ?? '').split('\n')[0] ?? '';
-}
-
-/** Download an artifact zip. The one call that needs a credential. */
-export async function downloadArtifact(opts: GithubOptions, artifactId: number): Promise<Response> {
-  if (!opts.token) {
-    throw new Error(
-      'downloading an artifact needs a GitHub token: listing is public but ' +
-        '/actions/artifacts/:id/zip answers 401 without one',
-    );
-  }
-  const res = await fetch(`${API}/repos/${opts.repo}/actions/artifacts/${artifactId}/zip`, {
-    headers: {
-      accept: 'application/vnd.github+json',
-      authorization: `Bearer ${opts.token}`,
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`GitHub ${res.status} downloading artifact ${artifactId}`);
-  }
-  return res;
 }
 
 // ---- registries -------------------------------------------------------------------------

@@ -8,7 +8,7 @@ import { converge, type ActionContext } from '../src/actions.js';
 /**
  * What a converge submits: which playbook, against which node, with what.
  *
- * `converge` and `reimage` had no test at all before this, which is why #534 could leave
+ * `converge` had no test at all before this, which is why #534 could leave
  * them calling ansible-runner while claiming otherwise.
  */
 

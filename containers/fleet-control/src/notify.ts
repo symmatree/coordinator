@@ -9,7 +9,7 @@
 //   run finished   the thing you started is over, and how it ended
 //   service started  the pod has been replaced, which ends a stop, reboot or ground in flight
 //                    and forgets every run in the registry, which is in memory. Workflows
-//                    (converge, provision, reimage, collect) carry on without it. Worth knowing
+//                    (converge, provision, collect) carry on without it. Worth knowing
 //                    before starting something, and worth knowing after a run vanishes.
 //
 // Apprise is already deployed in `tiles`. A notify with no `tag` matches zero targets, which is

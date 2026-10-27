@@ -50,8 +50,6 @@ export interface Lookups {
   head(repo: string, ref: string): Promise<string>;
   /** What a container tag points at now. */
   image(imageRef: string): Promise<RegistryImage | undefined>;
-  /** Head sha of the newest successful build of the disk image. */
-  buildSha(): Promise<string | undefined>;
 }
 
 export class LookupCache implements Lookups {
@@ -59,7 +57,6 @@ export class LookupCache implements Lookups {
   private readonly heads = new Map<string, { head: string; at: number }>();
   /** Registry answers move when a tag is repushed, so they expire like a ref does. */
   private readonly images = new Map<string, { img: RegistryImage | undefined; at: number }>();
-  private build?: { sha: string | undefined; at: number };
 
   constructor(
     token: string | undefined,
@@ -67,13 +64,10 @@ export class LookupCache implements Lookups {
     private readonly headTtlMs = 60_000,
     private readonly now: () => number = Date.now,
     /** The network, injectable so the caching itself can be tested without it. */
-    private readonly fetchers: Pick<Lookups, 'title' | 'head' | 'image'> & {
-      buildSha: () => Promise<string | undefined>;
-    } = {
+    private readonly fetchers: Lookups = {
       title: (repo, sha) => commitTitle(repo, sha, token),
       head: (repo, ref) => refHead(repo, ref, token),
       image: (ref) => registryImage(ref),
-      buildSha: async () => undefined,
     },
   ) {}
 
@@ -83,13 +77,6 @@ export class LookupCache implements Lookups {
     const img = await this.fetchers.image(imageRef);
     this.images.set(imageRef, { img, at: this.now() });
     return img;
-  }
-
-  async buildSha(): Promise<string | undefined> {
-    if (this.build && this.now() - this.build.at < this.headTtlMs) return this.build.sha;
-    const sha = await this.fetchers.buildSha();
-    this.build = { sha, at: this.now() };
-    return sha;
   }
 
   async title(repo: string, sha: string): Promise<string> {
@@ -124,7 +111,9 @@ export class LookupCache implements Lookups {
  *
  * - **container** -- the digest its tag points at now, versus the digest the device pulled.
  *   Exact, content-based, and needs no knowledge of which paths trigger which build.
- * - **disk image** -- the newest successful build of it, rather than the newest commit.
+ * - **disk image** -- no verdict. The right comparison is the newest successful BUILD of it,
+ *   which went with the reimage path; branch head is wrong for the same path-filter reason,
+ *   so rather than ask the wrong question the row shows what is installed and nothing else.
  * - **anything else** (the checkout, and the payload that will replace it) -- branch head,
  *   which is right for a whole-repo working tree because that genuinely is what it tracks.
  */
@@ -143,13 +132,7 @@ async function currency(
     return { head: now.revision, current: installed === now.digest };
   }
 
-  if (unit.kind === 'disk_image') {
-    const built = await cache.buildSha();
-    if (built === undefined) return {};
-    return { head: built, current: built === unit.revision };
-  }
-
-  if (unit.refName === undefined) return {};
+  if (unit.kind === 'disk_image' || unit.refName === undefined) return {};
   const head = await cache.head(repo, unit.refName);
   return { head, current: head === unit.revision };
 }
