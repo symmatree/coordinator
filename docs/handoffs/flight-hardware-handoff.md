@@ -104,11 +104,6 @@ frequency at twice the mass). Table and the isolator notes, including the Matric
 dampers held in reserve, are in `flight-platform-build-log.md` (2026-10-27). First pass is
 stacking the rubber isolators on hand.
 
-**Doc debt in this lane:** `docs/rtk-corrections-path.md` still presents the GCS-latch race
-as the leading theory for the no-RTK failures; coordinator#99's later comments say the live
-`ip.gcs` reads contradicted that and the root cause was WiFi association (AP fallback),
-since patched. The doc has not been reframed.
-
 ## What must not be dropped
 
 **AHC is not AHCT.** Same package, same pinout, one letter. AHCT is specified 4.5-5.5 V and is
