@@ -81,8 +81,9 @@
     # Every device: the coordinator's seconds source is the DS3234, the pods' is the
     # coordinator, and each takes the phase off its own leg of the one edge.
     - role: chrony
+    # A rampod runs the same pod plumbing with its own stack, stacks/rampod.
     - role: campod
-      when: device_role == 'campod'
+      when: device_role in ['campod', 'rampod']
     # Last: it records what the roles above installed.
     - role: device-sw-manifest
 
