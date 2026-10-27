@@ -18,7 +18,7 @@ vibration measurement.
 |--------|--------|------------|
 | colour | `CAM_A`, full sensor resolution, JPEG-encoded on the OAK | `<MxId>_color_<seq>_<utc>.jpg` |
 | left, right | `CAM_B`, `CAM_C`, full resolution, 8-bit | `<MxId>_left_<seq>_<utc>.pgm`, `..._right_...` |
-| IMU | the OAK's own, `ACCELEROMETER_RAW` + `GYROSCOPE_RAW` | `<MxId>_<session>.imu.jsonl` |
+| IMU | the OAK's own accelerometer, `ACCELEROMETER_RAW` (no gyro: see `src/main.cpp`) | `<MxId>_<session>.imu.jsonl` |
 | every frame retrieved, kept or not | | `<MxId>_<session>.frames.jsonl` |
 
 Each image has a JSON sidecar with the same stem. Everything goes into the session directory
@@ -50,9 +50,8 @@ factory colour intrinsics are for a different focus.
 | `max_exposure_us` | the ceiling it was given |
 | `lens_position`, `color_temperature_k`, `jpeg_quality` | colour only |
 
-IMU lines carry `t` (`a` accel m/s², `g` gyro rad/s), the report's `seq`, `monotonic_ns`,
-`device_timestamp_ns`, `x`/`y`/`z` and `accuracy`. A packet repeats the slower sensor's latest
-report, so only reports with a new sequence number are written.
+IMU lines carry `t` (`a`, accel m/s²), the report's `seq`, `monotonic_ns`,
+`device_timestamp_ns`, `x`/`y`/`z` and `accuracy`.
 
 ## Arm gate and status
 

@@ -37,7 +37,6 @@ Environment=OAK_LENS_POSITION=115
 Environment=OAK_MAX_EXPOSURE_US=1000
 Environment=OAK_JPEG_QUALITY=90
 Environment=OAK_IMU_ACCEL_HZ=250
-Environment=OAK_IMU_GYRO_HZ=400
 Environment=OAK_WARMUP_FRAMES=10
 # Written by coordinator-mavlink: "1" armed, "0" disarmed, absent until it has heard
 # the FC. Nothing is written unless it says armed.
