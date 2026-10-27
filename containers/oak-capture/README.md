@@ -30,7 +30,9 @@ both fixed) or auto exposure with a limit; it has no fixed-time, auto-gain mode 
 campods'. `OAK_MAX_EXPOSURE_US` is the limit on all three cameras, and every sidecar records
 the exposure and ISO the frame actually got.
 
-The colour lens is left as the camera sets it; each colour sidecar records `lens_position`.
+**Fixed focus.** Autofocus is off and the colour lens is held at the position stored in the
+device's calibration, the one its colour intrinsics were measured at. The startup line prints
+it, and each colour sidecar records the `lens_position` the frame got.
 
 ### Sidecar fields
 
