@@ -411,3 +411,74 @@ The compass calibration was the only thing the export could not restore on its o
 fragment held it and the device id is written by detection. It returns when the GPS/compass is
 reconnected -- the GPS runs on 4V5 so it is powered and therefore discovered over USB as well as
 in flight. Pinned in a fragment afterwards (#433).
+
+### FC reboot loop on every power-up, cleared by a reflash (2026-10-27)
+
+Two days after the 2026-10-25 soft-mount check flight the FC would not stay up: on battery and
+on USB alike it booted far enough to drive the SH1106 and show the no-GPS / pre-arm text, then
+reset, on a 3-4 s cycle. Mission Planner could not hold a connection long enough to flash it.
+Its "Force Bootloader" is a MAVLink reboot-to-bootloader command and needs the application
+alive to answer; the unplug-and-replug route races the ArduPilot bootloader's handoff to the
+application and lost every time.
+
+**What the card held.** `LOG_DISARMED=2` means every battery boot wrote a log, so the card had
+logs 65-69 plus a `crash_dump.bin`. They are kept at
+`datasets/flights/rekon10/bench-20261027-crashing/`. Each log stops at the same instant:
+1.736-1.738 s after boot in 65, 67 and 68, and past 3.96 s in 66, which was the boot that copied
+the dump to the card and ran a gyro calibration before its main loop started. Measured from the
+end of init (the `Relay4 LOW` event) both are about 0.66 s. With the watchdog on
+(`BRD_OPTIONS=1`) the cycle is: hard fault, watchdog reset two seconds later, bootloader,
+application, repeat.
+
+**What the dump held.** It is CrashCatcher format. The register block is intact; the memory
+part is not -- the first region header reads `0x00000000-0x30003400` and about 190 bytes of
+data follow before the flash region's erased `0xFF`, so there is no backtrace and no fault
+status register, and `CrashDebug` rejects the file. The registers say: HardFault (exception 3),
+in the main thread (process stack pointer inside `__main_thread_stack`), program counter
+`0x08081a3a`, which the published 4.7.2 ELF (`firmware.ardupilot.org/Copter/stable-4.7.2/
+TBS_LUCID_H7/arducopter.elf`) resolves to `NavEKF3_core::CovariancePrediction` + 0x44a5.
+The function had been entered normally: r5 holds `NavEKF_core_common::KHP`, which the
+function loads from its own literal pool, r0, r1, r3, r10, r11, r12 and lr all point inside
+`KHP`, and `this` is `0x200055c0`, a DTCM heap address with no symbol.
+
+**That code has no business running at 1.7 s.** EKF3 cores are allocated one second after the
+AHRS first runs and bootstrapped only once `setup_core` can get the GPS lag; in both 10-25 logs
+that is "EKF3 waiting for GPS config data" at 10.0 s and "EKF3 IMU0 initialised" at 15.4 s and
+16.6 s. The predictor's callers are `UpdateFilter`, `CovarianceInit` (bootstrap) and
+`resetQuatStateYawOnly`, all core code. So control was diverted into a function whose object
+did not exist, at the same moment on every boot.
+
+**What was the same as the good flights.** Firmware: `ArduCopter V4.7.2 (fb773567)` in the
+10-25 logs and in the crashing ones. Parameters: identical apart from auto-learned values
+(gyro offsets and cal temperatures, `BARO1_GND_PRESS`, `MOT_THST_HOVER` 0.35 to 0.19, the
+`STAT_*` counters). `STAT_BOOTCNT` went 74 to 117 with one 242 s flight between. MCU 3.28 V and
+38-44 C; IMU, baro and mag healthy to the last record. Boot type does not matter: 66 was a
+normal boot (gyro calibration ran and the offsets changed) and 67-69 were watchdog boots
+(calibration is skipped after a watchdog reset; the values carried over unchanged), and all of
+them died at the same place.
+
+**Resolution.** Reflashed with the published 4.7.2 `arducopter_with_bl.hex`. That image is one
+contiguous segment `0x08000000-0x0819B59C`; parameter storage is flash page 14, outside it,
+and the parameters survived. The board flew the same day. The same image written over the same
+image, with no parameter change, cleared it, so the working theory is that the flash contents
+had changed. Cause not established. The 2026-09-27 parameter wipe above is the earlier
+storage-shaped event on this chip.
+
+**For next time.**
+
+- The `WDG:` status text that carries the fault type, address and scheduler task goes out
+  before the logger opens, so it is not in the `.bin`. `mavproxy.py --master=<port>` prints
+  it the moment the port opens; Mission Planner's connect sequence is too slow to catch a
+  1.7 s boot.
+- The crash dump is written only if its flash region is blank, so one dump file does not mean
+  one crash, and later crashes in a loop leave nothing new.
+- With a `crash_dump.bin` on the card, 4.5.1 and later refuse to arm until it is deleted.
+- Below the application there is the STM32 ROM DFU: hold the bootloader button while plugging
+  in USB and the board enumerates as `STM32 BOOTLOADER` (0483:DF11). Mission Planner's "Load
+  custom firmware" offers DFU for a `.hex`; the one attempt here failed on the first DFU
+  control request before any erase. `dfu-util` takes a raw image at an address, and a
+  converted copy of the 4.7.2 image with its SHA256 is in the dataset folder under `flash/`:
+
+  ```
+  dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D arducopter_with_bl-4.7.2-TBS_LUCID_H7.bin
+  ```

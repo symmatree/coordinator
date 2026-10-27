@@ -23,7 +23,7 @@ Wheelbase **455 mm**, 30.5 mm FC pattern, 19 mm motor pattern. TPU in the kit fi
 
 **TBS Lucid H7 Flight Controller - ICM42688** -- [TBS product page](https://www.team-blacksheep.com/products/prod:lucid_h7?srsltid=AfmBOoqm1P3rKUduaVLpS7PoSnZ1OvNZD1bLFvPFrDRYj9yclz82P66P), [ArduPilot hardware doc](https://ardupilot.org/copter/docs/common-tbs-lucidh7.html). Manual: [attachments/tbs-lucid-manual.pdf](https://github.com/symmatree/fables/blob/main/Drones/rekon10/attachments/tbs-lucid-manual.pdf). Gorilla pattern PDF: [attachments/tbs-gorilla-mounting-pattern.pdf](https://github.com/symmatree/fables/blob/main/Drones/rekon10/attachments/tbs-gorilla-mounting-pattern.pdf).
 
-**Firmware flashed:** `https://firmware.ardupilot.org/Copter/stable-4.7.0/TBS_LUCID_H7/arducopter_with_bl.hex` (upgraded from 4.6.3 on 2026-07-27).
+**Firmware flashed:** Copter 4.7.2 (`fb773567`), `https://firmware.ardupilot.org/Copter/stable-4.7.2/TBS_LUCID_H7/arducopter_with_bl.hex`. Seen in the logs from 2026-10-25; reflashed with the same image on 2026-10-27 after the reboot loop ([build log](flight-platform-build-log.md#fc-reboot-loop-on-every-power-up-cleared-by-a-reflash-2026-10-27)). History: 4.6.3 to 4.7.0 on 2026-07-27; the 4.7.0 to 4.7.2 step is not recorded here.
 
 Default UART to SERIAL mapping is in the Lucid manual (ArduPilot column). **This aircraft's wiring** is summarized in the serial table below and in [ardupilot.md](ardupilot.md).
 
