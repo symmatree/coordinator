@@ -56,7 +56,8 @@ that space, even when it has the same shape as a capture. Concretely:
   <fc-log>.bin                      # SOURCE: the FC dataflash log (one per flight). Read-only.
   NOTES.md                          # optional human narrative for this flight
   manifest.json                     # flight-level index: sessions + artifact paths + key facts
-  polisher.json                     # flight-level provenance sidecar (flight-analysis run)
+  flight-analysis-<logstem>.polisher.json   # provenance of that log's flight-analysis run, one per log
+                                    # (was a single polisher.json per directory until tiles#874; coordinator#193)
 
   captures/                         # SOURCE (immutable): capture sessions (0..n), keyed by
                                     # the MACHINE that produced them -- its own hostname, which
@@ -155,7 +156,8 @@ Two rules make this navigable:
 | **coordinator-mavlink** (#208, #220) | in-flight, on the vehicle | FC MAVLink (MAV2) | `captures/<node>/<boot-id>/timesync.jsonl`, `.../vehicle.tlog` -- inside the session, which is where the tree above has always placed them. They were written to the captures root until #386, which put them outside everything `coord sessions package` collects |
 | **tlog-split** (tiles `mavproxy` env) | continuously, in the cluster | a mavproxy `--out` fan-out | one tlog per flight to `datasets/ground-tlogs`, cut at disarm ([#192](https://github.com/symmatree/coordinator/issues/192) rotation + durability; retention still open) |
 | **fleet-control** `POST /flights/:flight/ground` | post-flight, on request | `ground-tlogs`, Mimir | `ground/*` -- the tlogs named and the backpack series |
-| **flight-analysis** CronJob (tiles) | nightly 04:00 UTC | `<fc-log>.bin` | `flight-analysis-<logstem>.{ipynb,pdf}`, `manifest.json`, `polisher.json` |
+| **flight-analysis** CronJob (tiles) | nightly 04:00 UTC | `<fc-log>.bin` | `flight-analysis-<logstem>.{ipynb,pdf,polisher.json}`, `manifest.json` |
+| **flight-analysis** CronJob, per-flight set (tiles#871) | nightly, after the above | the `.tar.zst` bundles, every `.bin`, `captures/` | `captures/<node>/<session>/` (extracted), `derived/time-sync.*`, `derived/vibration-spectrogram-<pod>.*`, `derived/image-sharpness-vs-motion-<pod>.*`, `derived/polisher.json` |
 | **vio-offline** CronJob (tiles) | on-demand (manual `create job --from`; #139) | each `*.feat` | `derived/pose/<stem>.vinspose.csv` + sidecar (#139) |
 | `analysis/vio-quality.ipynb` | manual / after cron | pose CSV + `.bin` + `manifest.json` | `derived/vio-quality.json` (+ figures) |
 | `analysis/vio-online-offline-comparison.ipynb` | manual | pose CSV + `VISP` from `.bin` | `derived/vio-online-offline-comparison.json` (+ figures) |
@@ -166,7 +168,8 @@ Two rules make this navigable:
 **Provenance sidecars** (RO-Crate-ish field names, coordinator #40):
 - `derived/pose/<session>.vinspose.polisher.json` -- per pose: estimator source SHA, `vins_fusion`
   commit, fixture + config sha256, pose-row count. Freshness (skip-if-unchanged) is keyed on these.
-- `polisher.json` -- per flight-analysis run: notebook SHA, `.bin` sha256, output shas.
+- `flight-analysis-<logstem>.polisher.json` -- per flight-analysis run: notebook blob sha, `.bin` sha256, output shas.
+- `derived/polisher.json` -- one entry per derived product of the per-flight set, keyed by product name: notebook blob sha, every input sha, output shas.
 - `manifest.json` -- the flight-analysis notebook's own self-description: input file, parameters,
   and key flight facts (duration, armed time, GPS status, vibe, EKF errors). Consumed by
   `vio-quality` as the FC-truth summary rather than re-deriving it.
