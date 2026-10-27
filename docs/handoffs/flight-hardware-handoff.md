@@ -62,8 +62,9 @@ as the 10-25 flights, crash dump truncated. Reflashing the same 4.7.2 image fixe
 parameters survived; cause not established. Logs and dump at
 `datasets/flights/rekon10/bench-20261027-crashing/`, the full read in
 `flight-platform-build-log.md` under that date, including how to catch the `WDG:` line and the
-DFU route for next time. The board runs `ArduCopter V4.7.2 (fb773567)`; the 4.7.0 to 4.7.2
-step is not recorded in the docs.
+DFU route for next time. The board runs `ArduCopter V4.7.2 (fb773567)`, loaded 2026-10-24 as
+the fix for a flash error reported at every startup (`ardupilot/ardupilot-4.7.2-sys/` is the
+export taken right after).
 
 **Open PRs from this role:** the one carrying this handoff. Merged since the last handoff: #586 (props point at
 `props.md`; PC1's cause is not known), #587 (`docs/rekon10/flir-blackfly-s.md`, the Blackfly S

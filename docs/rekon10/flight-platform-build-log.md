@@ -461,8 +461,10 @@ them died at the same place.
 contiguous segment `0x08000000-0x0819B59C`; parameter storage is flash page 14, outside it,
 and the parameters survived. The board flew the same day. The same image written over the same
 image, with no parameter change, cleared it, so the working theory is that the flash contents
-had changed. Cause not established. The 2026-09-27 parameter wipe above is the earlier
-storage-shaped event on this chip.
+had changed. Cause not established. Two earlier flash-shaped events on this chip: the
+2026-09-27 parameter wipe above, and the flash error the FC reported at every startup that the
+4.7.0 to 4.7.2 upgrade on 2026-10-24 was the fix for (`ardupilot/ardupilot-4.7.2-sys/` is the
+`@SYS` export taken right after that upgrade).
 
 **For next time.**
 
