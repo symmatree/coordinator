@@ -10,6 +10,7 @@ exist because a notebook or a script here got it wrong first.
 | file | what |
 |------|------|
 | [`flight-analysis.ipynb`](flight-analysis.ipynb) | the per-flight FC-log notebook: sortie timeline, modes and arm events, GPS, vibration, ESC, attitude and EKF summaries, and the agent-readable `manifest.json` the other notebooks consume. Parameterized by `input_file` (the `.bin`). Run nightly by the tiles CronJob (below). |
+| [`time-sync.ipynb`](time-sync.ipynb) | every clock pairing on the vehicle for one flight, each against the figure `docs/time-base.md` advertises: FC `TimeUS` vs GPS (rate, residual, boot epoch), `CAM` PPS edges, each machine's `pps.log` (lock after boot, phase once locked), chrony per source from collectd, `timesync.jsonl` and `fc_time.jsonl` (the FC against the coordinator's PPS-disciplined clock, two routes), `frames.jsonl` and still sidecars (where in its second each exposure sat, pod against pod), and the closure -- a still's UTC label against GPS through the chain. Pairs each `.bin` to a coordinator session and FC boot by boot epoch rather than assuming one per session. Parameterized by `flight_dir`; emits `derived/time-sync.json` and figures. |
 | [`ardupilot_log.py`](ardupilot_log.py) | canonical `parse_log()` + ArduPilot message-type constants. Imported by the notebooks. |
 | [`feat_stream.py`](feat_stream.py) | decode a `.feat` estimator-input fixture: IMU/feature datagrams, **frame-loss accounting** against the device timestamp grid (E31, [#156](https://github.com/symmatree/coordinator/issues/156)), intrinsics recovered from the stream, stereo triangulation and depth stats (E32). CLI: `python3 analysis/feat_stream.py <fixture>`. |
 | [`capture_align.py`](capture_align.py) | put capture data on the FC clock: detect and **repair the boot-time NTP wall-clock step**, fit coordinator-wall -> FC time from `VISP.RTimeUS` (no GPS arithmetic), and derive the airborne window physically (E30). |
@@ -52,6 +53,7 @@ Locally (this machine): `~/tiles/tanka/environments/flight-analysis/`.
 | notebook | per | reads | writes |
 |---|---|---|---|
 | `flight-analysis.ipynb` | each `.bin` | the `.bin` | `flight-analysis-<stem>.{ipynb,pdf}`, `manifest.json`, `polisher.json` at the flight root |
+| `time-sync.ipynb` | the flight, first | every `.bin`, every `captures/<node>/<session>/`, `ground/` | `derived/time-sync.{ipynb,pdf,json}`, figures |
 | `vibration-spectrogram.ipynb` | each campod session with `accel-*.jsonl` | `captures/<pod>/<session>/`, the `.bin` | `derived/vibration-spectrogram-<pod>.{ipynb,pdf,json,png}` |
 | `image-sharpness-vs-motion.ipynb` | each campod session with stills | `captures/<pod>/<session>/`, the `.bin` | `derived/image-sharpness-vs-motion-<pod>.{ipynb,pdf,json,png}` |
 
