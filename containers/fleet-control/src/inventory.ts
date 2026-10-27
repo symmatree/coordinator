@@ -7,11 +7,11 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
 export const FleetNode = z.object({
-  /** Hostname as flashed: `coordinator`, `campod-ne`, ... */
+  /** Hostname as flashed: `coordinator`, `campod-ne`, `blackfly`, ... */
   name: z.string().min(1),
   /** Hostname or IP to connect to. Defaults to `name`. */
   host: z.string().min(1).optional(),
-  role: z.enum(['coordinator', 'campod']),
+  role: z.enum(['coordinator', 'campod', 'rampod']),
 });
 export type FleetNode = z.infer<typeof FleetNode>;
 

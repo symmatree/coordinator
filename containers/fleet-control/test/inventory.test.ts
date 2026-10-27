@@ -6,6 +6,7 @@ const ok = {
   nodes: [
     { name: 'coordinator', role: 'coordinator' },
     { name: 'campod-se', role: 'campod', host: '10.0.5.237' },
+    { name: 'blackfly', role: 'rampod', host: '10.0.2.198' },
   ],
 };
 
