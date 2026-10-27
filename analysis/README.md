@@ -9,6 +9,7 @@ exist because a notebook or a script here got it wrong first.
 
 | file | what |
 |------|------|
+| [`flight-analysis.ipynb`](flight-analysis.ipynb) | the per-flight FC-log notebook: sortie timeline, modes and arm events, GPS, vibration, ESC, attitude and EKF summaries, and the agent-readable `manifest.json` the other notebooks consume. Parameterized by `input_file` (the `.bin`). Run nightly by the tiles CronJob (below). |
 | [`ardupilot_log.py`](ardupilot_log.py) | canonical `parse_log()` + ArduPilot message-type constants. Imported by the notebooks. |
 | [`feat_stream.py`](feat_stream.py) | decode a `.feat` estimator-input fixture: IMU/feature datagrams, **frame-loss accounting** against the device timestamp grid (E31, [#156](https://github.com/symmatree/coordinator/issues/156)), intrinsics recovered from the stream, stereo triangulation and depth stats (E32). CLI: `python3 analysis/feat_stream.py <fixture>`. |
 | [`capture_align.py`](capture_align.py) | put capture data on the FC clock: detect and **repair the boot-time NTP wall-clock step**, fit coordinator-wall -> FC time from `VISP.RTimeUS` (no GPS arithmetic), and derive the airborne window physically (E30). |
@@ -31,21 +32,36 @@ exist because a notebook or a script here got it wrong first.
 
 ## The flight-analysis notebook runs as a nightly CronJob — it lives in `tiles`, not here
 
-**Don't go looking for a runner in this repo.** The initial per-flight analysis
-([`docs/rekon10/flight-analysis.ipynb`](../docs/rekon10/flight-analysis.ipynb), whose source now lives in
-**this** repo) is executed by a Kubernetes **CronJob** defined in the **`tiles`** repo:
+**Don't go looking for a runner in this repo.** The per-flight analysis
+([`flight-analysis.ipynb`](flight-analysis.ipynb), source in **this** repo) is executed by a
+Kubernetes **CronJob** defined in the **`tiles`** repo:
 
 > **`tiles/tanka/environments/flight-analysis/`** — [`main.jsonnet`](https://github.com/symmatree/tiles/blob/main/tanka/environments/flight-analysis/main.jsonnet), [`runner.py`](https://github.com/symmatree/tiles/blob/main/tanka/environments/flight-analysis/runner.py), [`README.md`](https://github.com/symmatree/tiles/blob/main/tanka/environments/flight-analysis/README.md) ← the authoritative doc.
 
-**The runner has not been repointed yet.** `tiles` `runner.py` still clones
-`https://github.com/symmatree/fables.git` and runs `Drones/rekon10/flight-analysis.ipynb`.
-The notebook moved here, so the nightly job breaks until `tiles` is changed. `instrument.sha`
-provenance follows the move: it starts tracking coordinator commits, not fables ones.
-Repointing the clone is the minimum fix; the coupling itself is the real smell -- a cron in
-one repo hard-coding another repo's URL and internal layout. Publishing the notebook as a
-release artifact (tarball or OCI image) the runner just pulls would decouple them.
+The runner clones this repo and reads the notebook at the path in its `NOTEBOOK_REL`
+(default `analysis/flight-analysis.ipynb`; it was `docs/rekon10/flight-analysis.ipynb`
+until 2026-10-27). `instrument.sha` in `polisher.json` is the notebook's git blob hash, so
+provenance follows the file, not the directory. The runner and its notebook set are
+flight-analysis's responsibility; they are checked into `tiles` because that is where the
+cluster's environments live, not because another role owns them.
 
 Locally (this machine): `~/tiles/tanka/environments/flight-analysis/`.
+
+### What runs on every flight
+
+| notebook | per | reads | writes |
+|---|---|---|---|
+| `flight-analysis.ipynb` | each `.bin` | the `.bin` | `flight-analysis-<stem>.{ipynb,pdf}`, `manifest.json`, `polisher.json` at the flight root |
+| `vibration-spectrogram.ipynb` | each campod session with `accel-*.jsonl` | `captures/<pod>/<session>/`, the `.bin` | `derived/vibration-spectrogram-<pod>.{ipynb,pdf,json,png}` |
+| `image-sharpness-vs-motion.ipynb` | each campod session with stills | `captures/<pod>/<session>/`, the `.bin` | `derived/image-sharpness-vs-motion-<pod>.{ipynb,pdf,json,png}` |
+
+The pods' sessions arrive as `<node>_<session>.tar.zst` at the flight root (indexed by
+`collected/<node>_<session>.json`); the runner extracts each into `captures/` -- the tar
+paths are `<node>/<session>/...`, so the result is the canonical
+`captures/<node>/<session>/` tree -- before running the per-pod notebooks.
+
+Not per flight: the `vio-*` notebooks and `estimator-input-audit.ipynb` (VIO is not flown),
+`ringdown.ipynb` (bench captures).
 
 ### What it does
 
@@ -79,7 +95,7 @@ when you don't want to wait for 04:00 UTC.
 ### Local papermill is a fallback, not the cron
 
 You *can* run the notebook by hand (any venv with papermill):
-`papermill docs/rekon10/flight-analysis.ipynb <out>.ipynb -p input_file <bin> -p debug false`.
+`papermill analysis/flight-analysis.ipynb <out>.ipynb -p input_file <bin> -p debug false`.
 But note it is **not** equivalent to the CronJob: it does **not** write `polisher.json`, and if you name
 outputs differently (`flight-analysis.html` / the notebook's own `manifest.json`) they will sit *next to*
 the cron's `flight-analysis-<stem>.{ipynb,pdf}` rather than replace them. Prefer the `kubectl` trigger so
@@ -89,7 +105,7 @@ provenance and naming stay consistent.
 
 | lives in | what |
 |----------|------|
-| **`coordinator`** `docs/rekon10/flight-analysis.ipynb` (here) | the per-flight FC-log analysis notebook (source of truth) |
+| **`coordinator`** `analysis/flight-analysis.ipynb` (here) | the per-flight FC-log analysis notebook (source of truth) |
 | **`tiles`** `tanka/environments/flight-analysis/` | the nightly CronJob that executes it (schedule, NFS PV, runner, provenance) |
 | **`tiles`** `containers/datascience-notebook-ssh/` | the runner image (papermill, playwright/Chromium, LaTeX) |
 | **`coordinator`** `analysis/` (here) | `parse_log()` helper + VIO-specific analysis (`vio-input-alignment.ipynb`) |
