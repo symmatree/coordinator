@@ -12,6 +12,9 @@ Wants=time-sync.target
 Image=ghcr.io/symmatree/coordinator-flir-camera:main
 ContainerName=rampod_camera
 Pull=never
+# The rampod image has no nft, so podman's default bridge network fails before the
+# container starts ("netavark: nftables error: unable to execute nft").
+Network=host
 # Aravis reaches the camera through libusb on /dev/bus/usb.
 PodmanArgs=--privileged --stop-timeout=90
 
