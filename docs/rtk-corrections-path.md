@@ -57,9 +57,13 @@ Endpoints: caster `ntrip.tiles.symmatree.com:2101/ATTIC`, Mission Planner TCP
   and should be taken if RTK Fixed does not improve: the constellations are worth more than the
   headroom if the uplink is not the constraint.
 - **ELRS telemetry budget** (Rekon10 profile): **333 Hz Full, 1:2 telemetry ratio,
-  ~13211 baud** reported on the radio. RTCM shares this uplink budget; the MSM4 set
-  above is chosen to fit. Keeping the message set lean matters -- a fatter set can
-  starve the link.
+  ~13211 baud** reported on the radio. The MAVLink uplink at that rate is **735 B/s with
+  RC** (1470 B/s downlink) per the
+  [ExpressLRS MAVLink page](https://www.expresslrs.org/software/mavlink/) -- the figure
+  coordinator#199 carried as second-hand, now read from the source. RTCM shares this
+  uplink budget; the MSM4 set above is chosen to fit (the full six-message set was 569 B/s
+  payload, ~632 B/s on the wire, 86% of budget). Keeping the message set lean matters -- a
+  fatter set can starve the link.
 - **Backpack MAVLink ports** (default): sends on **14550**, listens on **14555**.
   mavproxy's `udpin` binds **14550**, so the backpack's broadcast lands on mavproxy;
   mavproxy replies to the backpack's `:14555`. (This reply is what anchors the
@@ -169,6 +173,20 @@ same race, which would explain why it has sometimes taken more than one.
 Because the lock can't be pinned in firmware, keeping it from recurring is a network
 question -- whether an auto-connecting GCS can reach the backpack's subnet at all --
 and it is open: it depends on the site network and hasn't been chosen or tested.
+
+## Direction (2026-10-27): a dedicated corrections link
+
+The owner's current direction is to take the handheld radio out of this path: **mLRS at
+2.4 GHz** on a RadioMaster Ranger in the attic, fed MAVLink over serial from the attic host
+(acebase today; a PoE ESP32 doing UART-to-TCP is planned), to a second ELRS-hardware receiver
+flashed mLRS on the FC's unused **SERIAL7**, carrying RTCM only. The WiFi hop, the backpack
+firmware and the GCS latch above all leave the corrections path. 915 MHz stays open only if it
+measures better out of the attic; the Ranger is the one standalone-capable module on hand.
+It is gated on an attic-to-field RSSI survey with the Boxer. The case, the numbers (mLRS
+31 Hz mode = 2000 B/s uplink) and the option-1 steelman are in
+[coordinator#209](https://github.com/symmatree/coordinator/issues/209#issuecomment-6430447924).
+This addresses the 260814 coverage failure (coordinator#196, 2026-09-08 comment); it does not
+address Float-not-Fixed, which stays with coordinator#195.
 
 ## Related
 

@@ -49,22 +49,30 @@ times since the board was built; the two differ at hole level and **the board is
 authority**. Do not "correct" the doc toward the drawing, and do not infer hole-level detail
 about the built board -- ask.
 
-## Where things stand (2026-10-20)
+## Where things stand (2026-10-27)
 
 **The PPS chain works.** Board built, powered from the Coordinator, chrony holding
 `Reference ID: PPS` at stratum 1, 2.9 us RMS, both campods synced over the gadget link. Chip,
 SPI link, first-tier buffer and falling-edge capture all confirmed on hardware.
 
-**Open PRs from this role:** #520 (log message availability for GPS and RF), #558 (PPS board
-as-built status and what the LED tells you), #574 (campod accel harness runs one ground;
-campod-se resolution).
+**Open PRs from this role:** none. Merged since the last handoff: #586 (props point at
+`props.md`; PC1's cause is not known), #587 (`docs/rekon10/flir-blackfly-s.md`, the Blackfly S
+on the rampod: GPIO pinout, power options, trigger features, the Radxa Zero 3W USB facts from
+its schematic), #589 and #591 (the Coordinator header's 1x5 SH1106 shell and 1x3 FC-UART shell,
+in `central-hub.md`).
+
+**The rampod exists as a role.** First one carries the FLIR Blackfly S (`BFS-U3-244S8M-C`, Kowa
+LM16XC) on a Radxa Zero 3W; later ones carry MIPI modules. Decisions recorded in
+`flir-blackfly-s.md`: one ADXL345 on CS0, vendor kernel 6.1, PPS on header 37, SPI3_M1 on
+19/21/23. Not recorded yet: the lens's mass, and how its focus and iris are held. The Radxa's
+USB-C SuperSpeed mux is driven from a GPIO nothing in the kernel sets, so only one plug
+orientation gets USB 3 -- os-and-driver owns that (dotfiles-symm#91).
 
 Open on the hardware side:
 
-- **Two of the five PPS pigtail legs do not pass a signal.** Adapters excluded by swapping
-  them between legs. Candidates: that channel's `OE` tie to the GND bus, its input tie, the
-  series resistor or its joints, the pigtail solder, the connector pins. Neither package is
-  dead -- the Coordinator runs off U2, the LED off U3. Which two legs was not established.
+- **Two of the five PPS pigtail legs: cause found, fix pending.** U2 channels 3 and 4 (the NE and
+  NW legs in the design); the input jumper to `3A`/`4A` on the `T2_FRONT` net was free-floating.
+  He will reconnect it before the front two pods go on. Details in `central-hub.md`.
 - **The PPS board is not mounted.** Needs taping up and a location.
 - **The Coordinator connector is a 2x4 block on solid-core wire and has been knocked off
   once.** Solid core puts harness load straight into the header instead of flexing. Kapton
@@ -77,10 +85,29 @@ Open on the hardware side:
   micro-U.FL at the receiver. Mounting the SE pod has disturbed it before. **This is his to
   figure out and he has said so explicitly. Do not propose a fix.**
 
-Under consideration, his call and not a decision: a second radio carrying RTCM separately from
-the Boxer's telemetry -- a full-size RadioMaster Ranger as a fixed attic install running mLRS
-in modem mode, paired with a second receiver on the vehicle. 900 MHz was ruled out: losing
-2.4 GHz means losing control, so a corrections link that outlives it only logs the crash site.
+**Corrections link: direction settled 2026-10-27, nothing built.** mLRS at 2.4 GHz on a
+RadioMaster Ranger in the attic, fed over serial from the attic host (acebase today; a PoE
+ESP32 doing UART-to-TCP for both the base F9P and the module is planned, with the caster in a
+regular cluster pod), to a second ELRS-hardware receiver flashed mLRS on **SERIAL7**, RTCM
+only. 915 MHz is open only if it measures better from the attic. Gated on an attic-to-field
+RSSI survey with the Boxer at 1000 mW. The full case and numbers are a comment on
+coordinator#209; the short form is in `docs/rtk-corrections-path.md` under *Direction*. It is
+aimed at the 260814 coverage failure and does not touch Float-not-Fixed (coordinator#195).
+Open checks before buying: which connector carries mLRS serial on the Ranger target, the
+module's current draw, and whether two 1 W FHSS systems on 2.4 GHz with one on the vehicle
+degrade each other.
+
+**Sensor raft: battery on top, raft hung on rubber isolators, discussed with flight-analysis.**
+Material stays aluminum cheese plate, moving 9 mm to 10 mm; a 3/16" steel bar was considered
+and rejected (same `sqrt(E/rho)` as aluminum, so at half the thickness it is half the first-mode
+frequency at twice the mass). Table and the isolator notes, including the Matrice 400 ball
+dampers held in reserve, are in `flight-platform-build-log.md` (2026-10-27). First pass is
+stacking the rubber isolators on hand.
+
+**Doc debt in this lane:** `docs/rtk-corrections-path.md` still presents the GCS-latch race
+as the leading theory for the no-RTK failures; coordinator#99's later comments say the live
+`ip.gcs` reads contradicted that and the root cause was WiFi association (AP fallback),
+since patched. The doc has not been reframed.
 
 ## What must not be dropped
 
@@ -138,7 +165,18 @@ directly; `BATT_AMP_PERVLT` and `AMP_OFFSET` are analog-only. The scaling consta
 
 **TBS silkscreens `S5`-`S12` where ArduPilot says `M5`-`M12`**; there are no `M9`-`M13` pads.
 `S11` carries the PPS leg into the FC as `CAM1_FEEDBAK_PIN`. `SERIAL1`, `SERIAL7` and
-`SERIAL9` are unused.
+`SERIAL9` are unused; `SERIAL7` is spoken for by the corrections-link direction above.
+
+**The ELRS antenna is not "known" to be anchored anywhere but where he put it, and the
+handoff's 900 MHz line was wrong.** The previous version of this file said 900 MHz was "ruled
+out"; he corrected it to a preference with an exception. Record his rulings as he states them,
+not as the strongest version of them.
+
+**A 555 is still made.** Asked for a ~20 ms square-wave LED to check that the cameras fire
+together: NE555P (bipolar, 4.5-16 V) and TLC555CP (CMOS, 2-15 V, rail-to-rail output) are both
+active in PDIP-8. For 50% duty on a CMOS part, one resistor from pin 3 to the timing cap on
+pins 2/6, pin 7 open: period ~1.39 RC, so 15 k and 1 uF gives ~21 ms. Use a coloured LED, not
+white, so phosphor decay does not smear the edge.
 
 **A dead-seeming FC with all four ESCs beeping was a wiped parameter store**, not a brownout
 -- `FRAME_CLASS = 0` means no motors module, so no DShot. `STAT_BOOTCNT` told the story.

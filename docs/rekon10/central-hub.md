@@ -83,11 +83,12 @@ hardware.
 
 Open on the hardware side:
 
-- **Two of the five pigtail legs do not pass a signal.** The adapters are excluded -- swapping the
-  mini-connector-to-DuPont adapters between legs moved nothing, so the fault follows the leg.
-  Candidates are that channel's `OE` tie to the GND bus, its input tie, the series resistor or its
-  joints, the pigtail solder, or the connector pins. Neither package is dead: the Coordinator runs
-  off U2 and the LED off U3.
+- **Two of the five pigtail legs do not pass a signal -- cause found, not yet fixed.** The
+  adapters were excluded first (swapping the mini-connector-to-DuPont adapters between legs moved
+  nothing), then measured: grounds good, each signal leg 1k to its `Y` pin. The dead legs are U2's
+  channels 3 and 4 (pins 8-13; the NE and NW legs in the design). The input jumper feeding `3A`/`4A`
+  (pins 9 and 12, the `T2_FRONT` net) was free-floating, so those two inputs were never driven.
+  He will reconnect it before the front two pods are attached.
 - **The board is not mounted.** It needs taping up and a location.
 - **The Coordinator connector is a 2x4 block on solid-core wire, and it has been knocked off once.**
   Solid core transmits any load on the harness straight into the header rather than flexing, so the
