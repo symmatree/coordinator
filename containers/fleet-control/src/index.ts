@@ -7,7 +7,7 @@ const cfg = loadConfig();
 const app = buildServer(cfg);
 await app.listen({ port: cfg.port, host: cfg.host });
 
-// Announce the restart: it ends any stop, reboot or ground in flight, and the run registry.
+// Announce the restart: it ends any stop, reboot or ground that was mid-request.
 // After listening, so the notification means "reachable" rather than "starting".
 const [title, body] = serviceStarted(build());
 void notify(cfg.notify, title, body);

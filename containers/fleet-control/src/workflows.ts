@@ -1,12 +1,9 @@
-// Running a playbook as an Argo Workflow instead of as a child of this process.
+// Fleet operations as Argo Workflows: submit one, read it back, follow it, lock on it.
 //
-// coordinator#504. The template is declared in tiles
-// (`tanka/environments/fleet-control`, `fleet-control-playbook`); this submits against it,
-// follows it, and finds it again afterwards.
-//
-// WHY IT IS FOUND BY LABEL. The run that matters is the one in the cluster, not the entry in
-// this process's memory -- which a pod roll takes with it while the workflow carries on. So
-// nothing here may be the only record of a running workflow.
+// coordinator#504 moved the plays into workflow pods and coordinator#566 removed the run
+// registry that used to shadow them, so THE WORKFLOW IS THE ONLY RECORD. This service
+// submits against the templates declared in tiles (`tanka/environments/fleet-control`) and
+// then asks the cluster whenever it wants to know anything -- nothing here holds a copy.
 //
 // Shelling out to kubectl rather than using a Kubernetes client, for the reason the
 // Dockerfile gives about ansible and ssh: one credential path, and the automated steps are
@@ -19,7 +16,6 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 
 /** Labels we set, and then select on. */
-const RUN_LABEL = 'fleet-control.symmatree.com/run-id';
 const NODE_LABEL = 'fleet-control.symmatree.com/node';
 const ACTION_LABEL = 'fleet-control.symmatree.com/action';
 /**
@@ -56,7 +52,6 @@ export function workflowUrl(cfg: WorkflowConfig, name: string): string {
 }
 
 export interface PlaybookRequest {
-  runId: string;
   node: string;
   /** converge | provision -- a label, for finding it later. */
   action: string;
@@ -71,14 +66,22 @@ export interface PlaybookRequest {
   extraVars?: Record<string, string>;
 }
 
-/** What the cluster says about a submitted workflow. */
+/** What the cluster says about a workflow. */
 export interface WorkflowState {
   name: string;
   /** Argo's phase: Pending, Running, Succeeded, Failed, Error. Absent before it is set. */
   phase?: string;
   message?: string;
+  /** What this service labelled it with at submit. Absent on one it did not submit. */
+  action?: string;
+  node?: string;
+  createdAt?: string;
+  startedAt?: string;
   finishedAt?: string;
 }
+
+/** Where a workflow's step output goes while it is followed. */
+export type LogSink = (stream: 'stdout' | 'stderr', line: string) => void;
 
 function kubectl(cfg: WorkflowConfig, args: string[]): string[] {
   return ['-n', cfg.namespace, ...args];
@@ -93,6 +96,10 @@ function kubectlStdin(cfg: WorkflowConfig, args: string[], input: string): Promi
     child.stdout.on('data', (c: Buffer) => { out += c.toString(); });
     child.stderr.on('data', (c: Buffer) => { err += c.toString(); });
     child.on('error', reject);
+    // A kubectl that dies before reading its stdin -- refused, misconfigured -- closes the
+    // pipe under the write, which surfaces as EPIPE on stdin rather than as the exit code.
+    // The exit code is the answer; `close` below reports it.
+    child.stdin.on('error', () => {});
     child.on('close', (code) =>
       code === 0
         ? resolve(out)
@@ -101,12 +108,22 @@ function kubectlStdin(cfg: WorkflowConfig, args: string[], input: string): Promi
   });
 }
 
+/** `kubectl create` a Workflow manifest and return the name the cluster gave it. */
+async function create(cfg: WorkflowConfig, manifest: unknown, what: string): Promise<string> {
+  const stdout = await kubectlStdin(cfg, ['create', '-o', 'json', '-f', '-'], JSON.stringify(manifest));
+  const created = JSON.parse(stdout) as { metadata?: { name?: string } };
+  const name = created.metadata?.name;
+  if (name === undefined || name === '') {
+    throw new Error(`kubectl created a ${what} workflow but reported no name`);
+  }
+  return name;
+}
+
 /**
  * Submit one playbook run. Returns as soon as the cluster has accepted it.
  *
- * Deliberately does not wait: the point of the move is that the work outlives whoever asked
- * for it, so the submit and the watch are separate steps and only the first one matters for
- * the work actually happening.
+ * Deliberately does not wait: the work outlives whoever asked for it, and the name that
+ * comes back is the handle for everything afterwards -- the phase, the log, the link.
  */
 export async function submitPlaybook(
   cfg: WorkflowConfig,
@@ -118,7 +135,6 @@ export async function submitPlaybook(
     metadata: {
       generateName: `${req.action}-${req.node}-`,
       labels: {
-        [RUN_LABEL]: req.runId,
         [NODE_LABEL]: req.node,
         [ACTION_LABEL]: req.action,
         ...touches([req.node]),
@@ -138,14 +154,7 @@ export async function submitPlaybook(
       },
     },
   };
-
-  const stdout = await kubectlStdin(cfg, ['create', '-o', 'json', '-f', '-'], JSON.stringify(manifest));
-  const created = JSON.parse(stdout) as { metadata?: { name?: string } };
-  const name = created.metadata?.name;
-  if (name === undefined || name === '') {
-    throw new Error('kubectl created a workflow but reported no name');
-  }
-  return name;
+  return create(cfg, manifest, 'playbook');
 }
 
 /** Read one workflow's state. Undefined if it is not there -- deleted, or never submitted. */
@@ -166,27 +175,11 @@ export async function readWorkflow(
 }
 
 /**
- * Find a run's workflow without having been told its name.
- *
- * This is what makes a pod roll survivable: the service can come back, ask the cluster what
- * is running on its behalf, and re-attach. Held in memory instead, the mapping would die
- * with the thing it exists to outlive.
- */
-export async function findByRun(
-  cfg: WorkflowConfig,
-  runId: string,
-): Promise<WorkflowState | undefined> {
-  const found = await listWorkflows(cfg, `${RUN_LABEL}=${runId}`);
-  return found[0];
-}
-
-/** Every workflow this service submitted, newest first. */
-/**
  * A workflow still driving this node, if there is one.
  *
- * The device lock's authority, because a workflow outlives the process that submitted it:
- * after a restart nothing in memory knows a converge is still running, and without this a
- * second one would be accepted against the same box.
+ * THE DEVICE LOCK, and the whole of it. A workflow outlives the process that submitted it,
+ * so the only place "is something driving this box" can be answered is the cluster -- a
+ * copy here would be the thing being avoided.
  *
  * Returns a description for the refusal, not the state -- the caller is deciding whether to
  * refuse, not reporting on the workflow.
@@ -259,39 +252,43 @@ export async function submitCollect(
       },
     },
   };
-
-  const stdout = await kubectlStdin(cfg, ['create', '-o', 'json', '-f', '-'], JSON.stringify(manifest));
-  const created = JSON.parse(stdout) as { metadata?: { name?: string } };
-  const name = created.metadata?.name;
-  if (name === undefined || name === '') {
-    throw new Error('kubectl created a collect workflow but reported no name');
-  }
-  return name;
+  return create(cfg, manifest, 'collect');
 }
 
+/**
+ * Workflows in the namespace, newest first. All of them by default -- the bench cycle
+ * submits its own, and a screen that showed only this service's would hide the thing that
+ * is actually holding the campods.
+ */
 export async function listWorkflows(
   cfg: WorkflowConfig,
-  selector = RUN_LABEL,
+  selector?: string,
 ): Promise<WorkflowState[]> {
   const { stdout } = await run(
     'kubectl',
-    kubectl(cfg, ['get', 'workflows', '-l', selector, '-o', 'json']),
+    kubectl(cfg, ['get', 'workflows', ...(selector === undefined ? [] : ['-l', selector]), '-o', 'json']),
     { maxBuffer: 64 * 1024 * 1024 },
   );
   const body = JSON.parse(stdout) as { items?: Array<Record<string, unknown>> };
   return (body.items ?? [])
     .map(stateOf)
-    .sort((a, b) => (a.name < b.name ? 1 : -1));
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '') || (a.name < b.name ? 1 : -1));
 }
 
 function stateOf(obj: Record<string, unknown>): WorkflowState {
   const meta = (obj.metadata ?? {}) as Record<string, unknown>;
+  const labels = (meta.labels ?? {}) as Record<string, unknown>;
   const status = (obj.status ?? {}) as Record<string, unknown>;
+  const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
   return {
     name: String(meta.name ?? ''),
-    phase: typeof status.phase === 'string' ? status.phase : undefined,
-    message: typeof status.message === 'string' ? status.message : undefined,
-    finishedAt: typeof status.finishedAt === 'string' ? status.finishedAt : undefined,
+    phase: str(status.phase),
+    message: str(status.message),
+    action: str(labels[ACTION_LABEL]),
+    node: str(labels[NODE_LABEL]),
+    createdAt: str(meta.creationTimestamp),
+    startedAt: str(status.startedAt),
+    finishedAt: str(status.finishedAt),
   };
 }
 
@@ -301,7 +298,7 @@ export function isFinished(phase: string | undefined): boolean {
 }
 
 /**
- * Follow a workflow to its end: its step's output into `sink`, then its phase.
+ * Follow a workflow to its end: its steps' output into `sink`, then its phase.
  *
  * The log is the step's pod log, which Alloy also ships to Loki -- so this is the live view
  * and Loki is the durable one. Losing this stream loses nothing that is not written down
@@ -310,7 +307,7 @@ export function isFinished(phase: string | undefined): boolean {
 export async function follow(
   cfg: WorkflowConfig,
   name: string,
-  sink: (stream: 'stdout' | 'stderr', line: string) => void,
+  sink: LogSink,
   opts: { pollMs?: number; retryMs?: number; signal?: AbortSignal } = {},
 ): Promise<WorkflowState> {
   const pollMs = opts.pollMs ?? 5_000;
@@ -350,7 +347,7 @@ export async function follow(
 function streamLogs(
   cfg: WorkflowConfig,
   name: string,
-  sink: (stream: 'stdout' | 'stderr', line: string) => void,
+  sink: LogSink,
   signal?: AbortSignal,
   retryMs = 5_000,
 ): Promise<void> {
@@ -372,6 +369,8 @@ function streamLogs(
           '-c', 'main',
           '--tail=-1',
           '--max-log-requests=5',
+          // A collect has a pod per target and the exit handler is one more; say which.
+          '--prefix',
         ]),
         { stdio: ['ignore', 'pipe', 'pipe'] },
       );

@@ -5,8 +5,7 @@ import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
 import { findNode } from './inventory.js';
-import { RunRegistry, echoToProcess, sinkFor } from './runs.js';
-import { converge, reboot, stop } from './actions.js';
+import { converge, reboot, stop, type ConvergeKind } from './actions.js';
 import { probeAll, probeNode } from './probe.js';
 import { deleteSessions, listSessions, stopCapture } from './sessions.js';
 import { listLogs } from './fclog.js';
@@ -14,24 +13,14 @@ import { readNotes, validFlightName, writeNotes } from './offload.js';
 import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { collectGround, listTlogs } from './cluster.js';
 import { configured as busConfigured, readPods, setDesired } from './bus.js';
-import { findByRun, nodeBusyWith, readWorkflow, submitCollect, workflowUrl, type CollectTarget } from './workflows.js';
+import {
+  follow, listWorkflows, nodeBusyWith, readWorkflow, submitCollect, workflowUrl,
+  type CollectTarget,
+} from './workflows.js';
 import { build } from './build.js';
-import { notify, runEnded } from './notify.js';
 import { commitTitle, refHead, registryImage } from './github.js';
 
-export function buildServer(
-  cfg: Config,
-  // A run's ending is announced from HERE, not from the page: the point of a notification is that
-  // it reaches you when no browser is attached.
-  runs = new RunRegistry(
-    echoToProcess,
-    (run) => {
-      const [title, body] = runEnded(run.action, run.node, run.status, run.lines.at(-1)?.line);
-      void notify(cfg.notify, title, body);
-    },
-    (node) => nodeBusyWith(cfg.action.workflows, node),
-  ),
-): FastifyInstance {
+export function buildServer(cfg: Config): FastifyInstance {
   const app = Fastify({ logger: true });
 
   app.get('/healthz', async () => ({ ok: true }));
@@ -75,89 +64,79 @@ export function buildServer(
   // ran `site.yaml` for both -- so a routine converge paid the fresh-card path.
 
   /**
-   * Config, stack definitions and image pulls. The routine one, and the default.
+   * Submit a playbook workflow against a node, unless something is already driving it.
+   *
+   * THE LOCK IS THE CLUSTER'S. `nodeBusyWith` asks for a live workflow carrying this node's
+   * label; there is no copy here to go stale across a restart. Two converges against one
+   * device fight over the docker daemon, so a busy node is a 409 -- and the answer names
+   * what is holding it, which is where to go and look.
+   *
+   * 202 with the workflow, because that is the handle for everything afterwards: the
+   * phase at `/workflows/:name`, the play's output at `/workflows/:name/log`, and the link.
    */
-  app.post<{ Params: { name: string } }>('/nodes/:name/converge', async (req, reply) => {
-    const node = findNode(cfg.inventory, req.params.name);
-    if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-    try {
-      const run = await runs.start('converge', node.name, (emit, runId) =>
-        converge(node, cfg.action, { runId, kind: 'converge' }, sinkFor(emit)));
-      return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
-    } catch (err) {
-      return reply.code(409).send({ error: (err as Error).message });
+  async function submitFor(name: string, kind: ConvergeKind, reply: import('fastify').FastifyReply) {
+    const node = findNode(cfg.inventory, name);
+    if (!node) return reply.code(404).send({ error: `no such node: ${name}` });
+    const busy = await nodeBusyWith(cfg.action.workflows, node.name);
+    if (busy !== undefined) {
+      return reply.code(409).send({ error: `${node.name} is already being driven by ${busy}. Wait for it, or look at why it is stuck.` });
     }
-  });
+    try {
+      const sub = await converge(node, cfg.action, kind);
+      return reply.code(202).send({ ...sub, node: node.name, action: kind });
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  }
+
+  /** Config, stack definitions and image pulls. The routine one, and the default. */
+  app.post<{ Params: { name: string } }>('/nodes/:name/converge', (req, reply) =>
+    submitFor(req.params.name, 'converge', reply));
 
   /**
    * A fresh card, end to end -- `site.yaml`, provision then deploy, because a bare card needs
    * both. Reboots partway, at the hand-off between them.
    */
-  app.post<{ Params: { name: string } }>(
-    '/nodes/:name/provision',
-    async (req, reply) => {
-      const node = findNode(cfg.inventory, req.params.name);
-      if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-      try {
-        const run = await runs.start('provision', node.name, (emit, runId) =>
-          converge(node, cfg.action, { runId, kind: 'provision' }, sinkFor(emit)));
-        return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
-      } catch (err) {
-        return reply.code(409).send({ error: (err as Error).message });
-      }
-    },
-  );
+  app.post<{ Params: { name: string } }>('/nodes/:name/provision', (req, reply) =>
+    submitFor(req.params.name, 'provision', reply));
 
   /**
-   * Stop the container set, and nothing else.
+   * Stop the container set, and nothing else. Synchronous: it returns when the device
+   * reports its units are out, which is seconds, and there is nothing to follow.
    *
    * Its own route rather than a flag on converge, because the operator wants it on its own:
-   * a converge is twenty minutes of apt to achieve a stop, and a card that has never been
-   * converged can still be stopped -- a signal needs nothing installed.
+   * a converge is twenty minutes of apt to achieve a stop.
    */
   app.post<{ Params: { name: string } }>('/nodes/:name/stop', async (req, reply) => {
     const node = findNode(cfg.inventory, req.params.name);
     if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
     try {
-      const run = await runs.start('stop', node.name, (emit) => stop(node, cfg.action, sinkFor(emit)));
-      return reply.code(202).send({ id: run.id, action: run.action, node: run.node });
+      await stop(node, cfg.action);
+      return { node: node.name, stopped: true };
     } catch (err) {
-      return reply.code(409).send({ error: (err as Error).message });
+      return reply.code(502).send({ error: (err as Error).message });
     }
   });
 
   /**
-   * Stop the stack and reboot. Returns once the device has taken the request.
+   * Reboot. Returns once the device has taken the request; nothing waits for it to come back.
    *
-   * Nothing waits for it to come back -- the status screen is the check, as for everything
-   * else here. A stop that fails does not stop the reboot: being unable to quiesce is one of
-   * the states this gets pressed in.
+   * A REBOOT IS NEVER REFUSED FOR BEING BUSY, because busy is the case it exists for. A
+   * converge that wedged held this node's slot, and the one action that would have got the box
+   * back to a known state was the one the lock blocked -- both here and on the screen, which
+   * disabled the button (#424). A workflow still driving the node is reported in the answer,
+   * not acted on: rebooting the box ends whatever it was doing, and the workflow records that
+   * itself when its step loses the device.
    */
   app.post<{ Params: { name: string } }>('/nodes/:name/reboot', async (req, reply) => {
     const node = findNode(cfg.inventory, req.params.name);
     if (!node) return reply.code(404).send({ error: `no such node: ${req.params.name}` });
-    // A REBOOT IS NEVER REFUSED FOR BEING BUSY, because busy is the case it exists for. A
-    // converge that wedged held this node's slot, and the one action that would have got the box
-    // back to a known state was the one the lock blocked -- both here and on the screen, which
-    // disabled the button (#424).
-    //
-    // Abandoning first is what frees the slot, so there is no second path around the lock to
-    // keep working: the runs are ended because the reboot is about to end them, which is true.
-    const ended = runs.abandonFor(node.name, `[fleet-control] abandoned: rebooting ${node.name}`);
+    const wasRunning = await nodeBusyWith(cfg.action.workflows, node.name).catch(() => undefined);
     try {
-      const run = await runs.start('reboot', node.name, (emit) => {
-        const say = sinkFor(emit);
-        // Said in the reboot's own log, because that is the run someone reads afterwards when
-        // wondering where the converge went.
-        for (const r of ended) say('stderr', `abandoned ${r.action} (run ${r.id.slice(0, 8)}), which this reboot ends`);
-        return reboot(node, cfg.action, say);
-      }, { whateverIsRunning: true });
-      return reply.code(202).send({
-        id: run.id, action: run.action, node: run.node,
-        abandoned: ended.map((r) => ({ id: r.id, action: r.action })),
-      });
+      const done = await reboot(node, cfg.action);
+      return { node: node.name, ...done, ...(wasRunning === undefined ? {} : { wasRunning }) };
     } catch (err) {
-      return reply.code(409).send({ error: (err as Error).message });
+      return reply.code(502).send({ error: (err as Error).message });
     }
   });
 
@@ -413,26 +392,22 @@ export function buildServer(
     const tlogs = req.query.tlog === undefined
       ? []
       : Array.isArray(req.query.tlog) ? req.query.tlog : [req.query.tlog];
+    // SYNCHRONOUS. A copy between two mounted shares plus one Mimir query: seconds, holding
+    // no device, so there is nothing to submit and nothing to follow. The answer is the
+    // result, with what was said along the way.
+    const notes: string[] = [];
     try {
-      const run = await runs.start('ground', flight, (emit) =>
-        collectGround(cfg, flight, {
-          flightsDir: cfg.flightsDir,
-          tlogs,
-          start,
-          end,
-          note: (line) => sinkFor(emit)('stdout', line),
-        }).then(({ collected, failed, range }) => {
-          const say = sinkFor(emit);
-          say('stdout', `collected ${collected.length}: ${collected.map((c) => c.file).join(', ')}`);
-          for (const f of failed) say('stderr', `not collected -- ${f}`);
-          say('stdout', range === undefined
-            ? 'no range, so no backpack series'
-            : `range ${range.start} -> ${range.end} (${range.from})`);
-        }),
-      );
-      return reply.code(202).send({ id: run.id, action: run.action, flight, tlogs });
+      const { collected, failed, range } = await collectGround(cfg, flight, {
+        flightsDir: cfg.flightsDir,
+        tlogs,
+        start,
+        end,
+        note: (line) => notes.push(line),
+      });
+      for (const l of notes) process.stdout.write(`[fleet-control] ground ${flight}: ${l}\n`);
+      return { flight, collected, failed, range, notes };
     } catch (err) {
-      return reply.code(409).send({ error: (err as Error).message });
+      return reply.code(502).send({ error: (err as Error).message, notes });
     }
   });
 
@@ -498,70 +473,59 @@ export function buildServer(
     }
   });
 
-  app.get('/runs', async () =>
-    runs.list().map(({ lines, ...rest }) => ({ ...rest, lineCount: lines.length })),
-  );
+  // ---- what ran, and what is running -----------------------------------------------------
+  //
+  // Read from the cluster on every call. This service holds no record of a run
+  // (coordinator#566): the Workflow is the record, it outlives this pod, and a copy here
+  // would be the thing that went stale across a restart. `ttlStrategy` on the templates is
+  // how far back this can answer.
 
   /**
-   * One run -- and when this process has never heard of it, where the work actually is.
-   *
-   * The registry is in memory, so a pod roll loses every run in it while the Workflow each
-   * one submitted carries on in a pod of its own. The run id is then the only handle a
-   * caller has left, because the link was in the lines that died with the registry.
-   *
-   * Still a 404: this service does not have that run. It does not invent one either --
-   * reporting a Workflow's state in the registry's vocabulary would be a second, worse
-   * account of something the workflow already describes. What it adds is the link, so the
-   * answer is "not here, and here is where it is" rather than "no".
+   * Every workflow in the namespace, newest first -- this service's and the bench cycle's
+   * alike, because a screen that showed only ours would hide the thing holding the campods.
    */
-  app.get<{ Params: { id: string } }>('/runs/:id', async (req, reply) => {
-    const run = runs.get(req.params.id);
-    if (run) return run;
-
-    const found = await findByRun(cfg.action.workflows, req.params.id).catch(() => undefined);
-    return reply.code(404).send({
-      error: `no such run: ${req.params.id}`,
-      ...(found === undefined
-        ? {}
-        : { workflow: workflowUrl(cfg.action.workflows, found.name) }),
-    });
+  app.get('/workflows', async (_req, reply) => {
+    try {
+      const all = await listWorkflows(cfg.action.workflows);
+      return { workflows: all.map((w) => ({ ...w, url: workflowUrl(cfg.action.workflows, w.name) })) };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
   });
 
-  /** Server-sent events, so a run can be watched live rather than polled. */
-  app.get<{ Params: { id: string } }>('/runs/:id/stream', (req, reply) => {
-    const run = runs.get(req.params.id);
-    if (!run) {
-      void reply.code(404).send({ error: `no such run: ${req.params.id}` });
-      return;
+  /**
+   * One workflow's steps' output, live, as server-sent events; then `done` with its phase.
+   *
+   * The same `follow` a converge used to run inside a registry entry, now on demand for
+   * whoever asks and holding nothing when they stop. The log is the pods' own, which Alloy
+   * also ships to Loki -- so this is the live view and nothing is lost if the stream drops.
+   *
+   * Named terminal event rather than a bare close, because EventSource RECONNECTS when a
+   * server closes the connection and `--tail=-1` would replay the whole log on each attach.
+   */
+  app.get<{ Params: { name: string } }>('/workflows/:name/log', async (req, reply) => {
+    const name = req.params.name;
+    const state = await readWorkflow(cfg.action.workflows, name);
+    if (state === undefined) {
+      return reply.code(404).send({ error: `no such workflow: ${name}` });
     }
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     });
-    const send = (l: unknown) => reply.raw.write(`data: ${JSON.stringify(l)}\n\n`);
-    /**
-     * A named terminal event, then close.
-     *
-     * Named rather than just closing, because EventSource RECONNECTS when a server closes the
-     * connection -- so an unannounced close would have the browser reattach, get the replayed
-     * lines, and be closed again, forever. The client closes on this event instead.
-     *
-     * It also means a watcher does not have to recognise the text of the last line to know the
-     * run is over, which is what the page was doing.
-     */
-    const finish = (status: string) => {
-      reply.raw.write(`event: done\ndata: ${JSON.stringify({ id: run.id, status })}\n\n`);
+    const send = (stream: string, line: string) =>
+      reply.raw.write(`data: ${JSON.stringify({ t: new Date().toISOString(), stream, line })}\n\n`);
+    const stop = new AbortController();
+    req.raw.on('close', () => stop.abort());
+    // A finished workflow still streams its log: `follow` reads the pods' logs once and the
+    // phase poll returns on the first read, so this is the same path with no waiting.
+    const end = await follow(cfg.action.workflows, name, send, { signal: stop.signal });
+    if (!stop.signal.aborted) {
+      reply.raw.write(`event: done\ndata: ${JSON.stringify({ name, phase: end.phase, message: end.message })}\n\n`);
       reply.raw.end();
-    };
-
-    for (const l of run.lines) send(l);
-    if (run.status !== 'running') {
-      finish(run.status);
-      return;
     }
-    const unsubscribe = runs.subscribe(run.id, send, () => finish(runs.get(run.id)?.status ?? 'unknown'));
-    req.raw.on('close', unsubscribe);
+    return reply;
   });
 
   return app;

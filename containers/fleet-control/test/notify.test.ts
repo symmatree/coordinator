@@ -1,10 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { RunRegistry } from '../src/runs.js';
 import { notify, runEnded, serviceStarted } from '../src/notify.js';
-
-const settle = () => new Promise((r) => setTimeout(r, 30));
 
 /** A one-shot apprise stand-in that records what it was sent. */
 function listener(status = 200) {
@@ -46,24 +43,6 @@ test('notify NEVER throws -- a converge that worked and could not be announced s
 
 test('an empty url disables notification without pretending to send', async () => {
   await notify({ url: '', tag: 'tiles' }, 'x', 'y');   // resolves, sends nothing, no throw
-});
-
-test('the registry announces a run ending, server-side', async () => {
-  const seen: string[] = [];
-  const runs = new RunRegistry(() => {}, (run) => seen.push(`${run.node}:${run.action}:${run.status}`));
-  runs.start('converge', 'campod-sw', async () => {});
-  runs.start('reboot', 'coordinator', async () => { throw new Error('nope'); });
-  await settle();
-  assert.deepEqual(seen.sort(), ['campod-sw:converge:succeeded', 'coordinator:reboot:failed']);
-});
-
-test('a throwing notifier does not break the run it was reporting on', async () => {
-  const runs = new RunRegistry(() => {}, () => { throw new Error('apprise exploded'); });
-  const run = await runs.start('converge', 'campod-sw', async () => {});
-  await settle();
-  // The run still reached its terminal state and is still queryable.
-  assert.equal(runs.get(run.id)?.status, 'succeeded');
-  assert.ok(runs.get(run.id)?.endedAt);
 });
 
 test('a restart is announced as the build, since that is the reason to care', () => {

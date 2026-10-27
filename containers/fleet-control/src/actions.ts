@@ -11,16 +11,20 @@
 // running one, and presenting two buttons that run identical commands would be a lie about
 // what the service does.
 //
+// NOTHING HERE IS A RUN. A converge is submitted and the workflow's name comes back; stop and
+// reboot do their one thing and return. The service used to wrap all of these in an
+// in-memory run with a log and a status (coordinator#566), which a pod roll lost -- and the
+// workflow it shadowed did not need shadowing. What a workflow did is read from the cluster.
+//
 // What the playbook does is documented with the playbook -- `host/ansible/` and
-// docs/deployment-model.md. Here, exit 0 means converged; the device's own state comes off the
-// pod bus, not from anything this file believes about the play.
+// docs/deployment-model.md. Here, a submitted workflow is a submitted workflow; the device's
+// own state comes off the pod bus, not from anything this file believes about the play.
 
 import { hostOf, type FleetNode, type Inventory } from './inventory.js';
 import { configured as busConfigured, requestReboot, type BusConfig } from './bus.js';
-import type { EventSink } from './runs.js';
 import { SSH_NO_HOST_KEY_ARGS } from './ssh.js';
 import { latestPlaybook } from './playbookartifact.js';
-import { follow, submitPlaybook, workflowUrl, type WorkflowConfig } from './workflows.js';
+import { submitPlaybook, workflowUrl, type WorkflowConfig } from './workflows.js';
 import type { GithubOptions } from './github.js';
 import { stopCapture } from './sessions.js';
 import { execFile } from 'node:child_process';
@@ -50,10 +54,6 @@ export interface ActionContext {
   bus: BusConfig;
 }
 
-function note(sink: EventSink | undefined, msg: string): void {
-  sink?.('stdout', `[fleet-control] ${msg}`);
-}
-
 /**
  * Two operations, not one at two sizes.
  *
@@ -69,74 +69,48 @@ const PLAYBOOK: Record<ConvergeKind, string> = {
   provision: 'site.yaml',
 };
 
-
-/**
- * Submit one playbook run and watch it to its end.
- *
- * SUBMIT AND WATCH ARE DIFFERENT THINGS. Once the cluster has accepted the Workflow the
- * work is happening whether this process is still here or not, which is the point. What
- * follows is a watcher: it streams the step's log and waits for a phase. Losing it loses
- * the live view, and `findByRun` in workflows.ts is how a later process gets it back.
- */
-async function runPlaybookWorkflow(
-  node: FleetNode,
-  ctx: ActionContext,
-  opts: {
-    runId: string;
-    action: string;
-    playbook: string;
-    extraVars?: Record<string, string>;
-    sink?: EventSink;
-  },
-): Promise<void> {
-  const host = hostOf(node);
-  const artifact = await latestPlaybook(ctx.github);
-  note(
-    opts.sink,
-    `${opts.playbook} from ${artifact.revision.slice(0, 10)}, built ${artifact.createdAt}`,
-  );
-
-  const name = await submitPlaybook(ctx.workflows, {
-    runId: opts.runId,
-    node: node.name,
-    action: opts.action,
-    playbook: opts.playbook,
-    host,
-    deviceRole: node.role,
-    artifactUrl: artifact.url,
-    revision: artifact.revision,
-    extraVars: opts.extraVars,
-  });
-  // A LINK, SAID BEFORE ANYTHING IS WAITED ON. The workflow outlives this process, so a run
-  // whose watcher died still needs a handle -- and the UI is the thing that knows how to
-  // show a workflow and its logs, which is not a thing this service should be explaining.
-  const link = workflowUrl(ctx.workflows, name);
-  note(opts.sink, `workflow ${link}`);
-
-  const state = await follow(ctx.workflows, name, (stream, line) => opts.sink?.(stream, line));
-  if (state.phase !== 'Succeeded') {
-    throw new ActionError(
-      `${node.name}: ${opts.action} ${state.phase ?? 'ended with no phase'}` +
-        `${state.message !== undefined ? ` -- ${state.message}` : ''}. ${link}`,
-    );
-  }
+/** What a submit hands back: the handle, and what it was told to run. */
+export interface Submitted {
+  workflow: string;
+  url: string;
+  playbook: string;
+  /** The commit the playbook archive was built from. */
+  revision: string;
 }
 
+/**
+ * Submit one playbook run against a node. Returns once the cluster has accepted it.
+ *
+ * SUBMIT IS THE WHOLE ACTION. Once the cluster has the Workflow the work happens whether
+ * this process is still here or not, so there is nothing for this side to hold. The name
+ * is the handle: `GET /workflows/:name` for the phase, `/workflows/:name/log` for the play's
+ * own output, and the Argo UI for everything else.
+ *
+ * Which playbook archive runs is the newest published on the tracked ref, not this
+ * service's revision -- a playbook merge does not move ours.
+ */
 export async function converge(
   node: FleetNode,
   ctx: ActionContext,
-  opts: { runId: string; kind: ConvergeKind },
-  sink?: EventSink,
-): Promise<void> {
-  const playbook = PLAYBOOK[opts.kind];
-  note(sink, `${opts.kind} on ${node.name} (${hostOf(node)}) as ${node.role} -- ${playbook}`);
-  await runPlaybookWorkflow(node, ctx, {
-    runId: opts.runId,
-    action: opts.kind,
+  kind: ConvergeKind,
+): Promise<Submitted> {
+  const playbook = PLAYBOOK[kind];
+  const artifact = await latestPlaybook(ctx.github);
+  const workflow = await submitPlaybook(ctx.workflows, {
+    node: node.name,
+    action: kind,
     playbook,
-    sink,
+    host: hostOf(node),
+    deviceRole: node.role,
+    artifactUrl: artifact.url,
+    revision: artifact.revision,
   });
-  note(sink, `${node.name} ${opts.kind === 'converge' ? 'converged' : 'provisioned'}`);
+  const url = workflowUrl(ctx.workflows, workflow);
+  // The pod's own log is where a submit is recorded; the workflow is the record of the run.
+  process.stdout.write(
+    `[fleet-control] ${kind} ${node.name}: ${playbook} from ${artifact.revision.slice(0, 10)} -> ${url}\n`,
+  );
+  return { workflow, url, playbook, revision: artifact.revision };
 }
 
 /**
@@ -161,11 +135,14 @@ export async function converge(
  * each unit is inactive before it answers, so there is one definition of what stopping means
  * and it is held where the units are.
  */
-export async function stop(node: FleetNode, ctx: ActionContext, sink?: EventSink): Promise<void> {
-  const host = hostOf(node);
-  note(sink, `stopping the stack on ${node.name} (${host})`);
+export async function stop(node: FleetNode, ctx: ActionContext): Promise<void> {
   await stopCapture(node, ctx);
-  note(sink, `${node.name} stopped; it will come back up on the next boot`);
+}
+
+/** How a reboot was requested, and the one thing worth saying about it. */
+export interface Rebooted {
+  via: 'bus' | 'ssh';
+  note: string;
 }
 
 /**
@@ -195,20 +172,19 @@ export async function stop(node: FleetNode, ctx: ActionContext, sink?: EventSink
  * race is not fully closable from here, so a connection that drops is read as the reboot
  * starting.
  */
-export async function reboot(node: FleetNode, ctx: ActionContext, sink?: EventSink): Promise<void> {
+export async function reboot(node: FleetNode, ctx: ActionContext): Promise<Rebooted> {
   const host = hostOf(node);
-  note(sink, `rebooting ${node.name} (${host})`);
+  let busFailed: string | undefined;
 
   if (busConfigured(ctx.bus)) {
     try {
       await requestReboot(ctx.bus, node.name, `fleet-control: reboot ${node.name}`);
-      note(sink, 'requested over the pod bus; uptime going backwards is the confirmation');
-      return;
+      return { via: 'bus', note: 'requested over the pod bus; uptime going backwards is the confirmation' };
     } catch (err) {
       // Fall through to ssh: the broker lives on the coordinator, so a coordinator that is
       // already down or rebooting takes the bus with it, and that is exactly when a reboot
       // of something else is being asked for.
-      note(sink, `bus reboot failed (${(err as Error).message}); falling back to ssh`);
+      busFailed = (err as Error).message;
     }
   }
 
@@ -232,10 +208,18 @@ export async function reboot(node: FleetNode, ctx: ActionContext, sink?: EventSi
     if (!rebootStarted(why)) {
       throw new ActionError(`${node.name}: ${why.split('\n').slice(-2).join(' ').slice(0, 300)}`);
     }
-    note(sink, 'connection dropped, which is what a reboot looks like from here');
+    return {
+      via: 'ssh',
+      note: `${busFailed === undefined ? '' : `bus reboot failed (${busFailed}); `}` +
+        'connection dropped, which is what a reboot looks like from here',
+    };
   }
 
-  note(sink, `${node.name} is going down; refresh status to see it come back`);
+  return {
+    via: 'ssh',
+    note: `${busFailed === undefined ? '' : `bus reboot failed (${busFailed}); `}` +
+      `${node.name} is going down; refresh status to see it come back`,
+  };
 }
 
 /**

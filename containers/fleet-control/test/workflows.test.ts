@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findByRun, follow, isFinished, submitPlaybook } from '../src/workflows.js';
+import { follow, isFinished, listWorkflows, submitPlaybook } from '../src/workflows.js';
 
 const CFG = { namespace: 'fleet-control', template: 'fleet-control-playbook' };
 
@@ -50,7 +50,6 @@ function withPath<T>(dir: string, fn: () => Promise<T>): Promise<T> {
 }
 
 const REQ = {
-  runId: 'run-abc',
   node: 'campod-se',
   action: 'converge',
   playbook: 'deploy.yaml',
@@ -89,15 +88,15 @@ test('submitting names the template and passes every parameter', async () => {
   });
 });
 
-test('the run id goes on as a label, which is how it is found again', async () => {
-  // THE POINT OF THE WHOLE CHANGE. A workflow outlives this process, so the mapping from a
-  // run to its workflow cannot live in this process. If it is not a label it is lost.
+test('the node and action go on as labels, which is how the lock and the list find it', async () => {
+  // A workflow outlives this process, so what it is and what it drives cannot live in this
+  // process. If it is not a label it is lost.
   const k = fakeKubectl(CREATED);
   await withPath(k.dir, () => submitPlaybook(CFG, REQ));
   const labels = (JSON.parse(k.stdin()).metadata as { labels: Record<string, string>; generateName: string });
-  assert.equal(labels.labels['fleet-control.symmatree.com/run-id'], 'run-abc');
   assert.equal(labels.labels['fleet-control.symmatree.com/node'], 'campod-se');
   assert.equal(labels.labels['fleet-control.symmatree.com/action'], 'converge');
+  assert.equal(labels.labels['fleet-control.symmatree.com/touches-campod-se'], 'true');
   // generateName, not name: two converges of one node must not collide.
   assert.equal(labels.generateName, 'converge-campod-se-');
 });
@@ -132,22 +131,28 @@ if "create" in argv:
   );
 });
 
-test('a run is found by its label without being told the workflow name', async () => {
+test('the list is every workflow in the namespace, newest first, labels read back', async () => {
+  // All of them, not only ours: the bench cycle submits its own and holds the campods
+  // while it runs, so a list that filtered on our label would hide what is in the way.
   const k = fakeKubectl(`
-print(json.dumps({"items": [{"metadata": {"name": "converge-campod-se-xyz12"},
-                             "status": {"phase": "Running"}}]}))
+print(json.dumps({"items": [
+  {"metadata": {"name": "bench-simflight-1", "creationTimestamp": "2026-10-19T12:29:38Z"},
+   "status": {"phase": "Succeeded", "startedAt": "2026-10-19T12:29:38Z", "finishedAt": "2026-10-19T12:58:58Z"}},
+  {"metadata": {"name": "converge-campod-se-c8v98", "creationTimestamp": "2026-10-19T12:29:51Z",
+                "labels": {"fleet-control.symmatree.com/node": "campod-se",
+                           "fleet-control.symmatree.com/action": "converge"}},
+   "status": {"phase": "Running"}}
+]}))
 `);
-  const found = await withPath(k.dir, () => findByRun(CFG, 'run-abc'));
-  assert.equal(found?.name, 'converge-campod-se-xyz12');
-  assert.equal(found?.phase, 'Running');
+  const all = await withPath(k.dir, () => listWorkflows(CFG));
   const [argv] = k.calls();
-  assert.ok(argv.includes('-l'), argv.join(' '));
-  assert.equal(argv[argv.indexOf('-l') + 1], 'fleet-control.symmatree.com/run-id=run-abc');
-});
-
-test('a run with no workflow is undefined, not an invented one', async () => {
-  const k = fakeKubectl('print(json.dumps({"items": []}))');
-  assert.equal(await withPath(k.dir, () => findByRun(CFG, 'run-nope')), undefined);
+  assert.ok(!argv.includes('-l'), `no selector: ${argv.join(' ')}`);
+  assert.deepEqual(all.map((w) => w.name), ['converge-campod-se-c8v98', 'bench-simflight-1']);
+  assert.equal(all[0]?.node, 'campod-se');
+  assert.equal(all[0]?.action, 'converge');
+  assert.equal(all[0]?.phase, 'Running');
+  assert.equal(all[1]?.node, undefined, 'a workflow we did not submit carries no node');
+  assert.equal(all[1]?.finishedAt, '2026-10-19T12:58:58Z');
 });
 
 test('following returns the terminal phase and its message', async () => {

@@ -120,24 +120,16 @@ otherwise done by hand over ssh or by pulling power -- so it must not depend on 
 working. The containers get systemd's shutdown signal on the way down; press **Stop** first if
 you want them to go on our timeout instead.
 
-**Including not gated on the node being busy, and it abandons what was running.** One action per
-node is the rule everywhere else, and for a while it applied here too -- so a converge that wedged
-held the slot and Reboot, the way out, was the one thing refused. Both here and on the screen,
-which disabled the button ([#424](https://github.com/symmatree/coordinator/issues/424)). Now the
-node's in-flight runs are marked abandoned first, which is what frees the slot, and that is a fact
-rather than a licence: **rebooting the box ends those runs**, so a run still reading `running`
-afterwards is wrong and holds the slot against a converge or stop that would now work. The
-confirmation names what it is about to end.
+**Including not gated on the node being busy.** One action per node is the rule everywhere else,
+and for a while it applied here too -- so a converge that wedged held the slot and Reboot, the
+way out, was the one thing refused. Both here and on the screen, which disabled the button
+([#424](https://github.com/symmatree/coordinator/issues/424)). A workflow still driving the node
+is named in the answer (`wasRunning`) and in the confirmation, not acted on: rebooting the box
+ends whatever its step was doing, and the workflow records that itself when the step loses the
+device. There is no run here to mark abandoned, because there is no run here.
 
-Converge and Stop keep the lock. Two converges against one device fight over the docker daemon.
-
-**An abandoned run stays abandoned.** Ansible does not stop because this stopped believing in it,
-so the play settles later -- and without a guard that would flip the status back and send a second
-notification for a run the operator already watched end. First writer wins.
-
-**Only reboots this service performs.** A device that went down to a power cut, a hand-run
-`reboot`, or the playbook's own reboot still leaves a run that only a pod restart clears. Nothing
-tells this service a box went away, so that gap is not closable from here.
+Converge keeps the lock, and the lock is the cluster's: a live workflow carrying the node's label.
+Two converges against one device fight over the docker daemon.
 
 **Nothing waits for it to come back.** Same as everything else here: the device answers again
 or it does not, and the status screen is the check
@@ -303,18 +295,22 @@ fleet unless somebody asked.
 ## Converge and full provision run in a pod of their own
 
 [#504](https://github.com/symmatree/coordinator/issues/504). The service submits an Argo
-`Workflow` against the `fleet-control-playbook` template and then watches it. **The template,
-the service accounts and the RBAC are described where they are declared**, in
+`Workflow` against the `fleet-control-playbook` template, and that is the whole action: the
+response is the workflow's name and link. **The template, the service accounts and the RBAC
+are described where they are declared**, in
 [tiles `tanka/environments/fleet-control`](https://github.com/symmatree/tiles/tree/main/tanka/environments/fleet-control).
 
-Submitting and watching are different things: once the cluster has accepted the workflow the
-work is happening whether this process is still here or not, which is the point. A pod roll
-costs the watcher and nothing else.
+**There is no run here.** Until [#566](https://github.com/symmatree/coordinator/issues/566)
+every action was wrapped in an in-memory run with its own id, log and status, which a pod roll
+lost -- and for a converge it only shadowed a workflow that was the real record anyway. Now
+the workflow is the only record: `GET /workflows` lists them, `GET /workflows/:name` reads one,
+`GET /workflows/:name/log` streams its steps' output, and the Argo UI shows the same thing.
+Nothing in this process has to survive a restart, because nothing in it is a record.
 
-**The run is findable without this process.** Each workflow carries
-`fleet-control.symmatree.com/run-id`, `/node` and `/action` as labels, so a restarted service can
-ask the cluster what is running on its behalf rather than having lost the mapping with its
-memory. `findByRun` is that lookup.
+**The lock is the cluster's.** Each workflow carries `fleet-control.symmatree.com/node` and
+`/action` as labels, plus a `touches-<node>` label per device it drives, and a submit is
+refused with `409` while a live workflow carries the node's label. There is no second copy of
+that answer to go stale.
 
 **Which playbook it runs** is the newest published archive on `main`, resolved from the
 `ansible-payload.yaml` workflow's artifacts, rather than this service's own revision — which a
@@ -331,50 +327,22 @@ later-wins merge means a caller cannot change which role's config a device gets.
 
 ### The log is what ansible printed
 
-Not rendered — it is what you get running the play yourself, tuned at the playbook.
+`GET /workflows/:name/log` is `kubectl logs -f` on the workflow's pods, as server-sent events,
+ending with a `done` event carrying the phase. Not rendered -- it is what you get running the
+play yourself, tuned at the playbook. Each line is stamped with the time it was read, and
+`--prefix` names the pod, since a collect has one per target. The stream is the live view;
+Loki holds the durable copy, so a dropped stream loses nothing.
 
-Every run carries a link to its workflow, said at submit before anything is waited on, so a
-run whose watcher died still has a handle.
+A finished workflow streams its whole log and ends at once, which is how the page's Runs list
+reads an old one.
 
-### The log says when
+### The screen shows what the cluster is doing
 
-Every line carries the time of day, and the top of an adopted log says what run it is, how it
-ended and how long ago:
-
-```
-[fleet-control] converge failed in 3s -- started 2026-10-13 12:10:53Z, 10m03s ago
-12:10:55  TASK Stop data collection for the duration of the deploy
-12:10:56  UNREACHABLE: 10.0.2.49 -- Failed to connect to the host via ssh
-```
-
-The stamp was always on the wire -- `/runs/:id` returns a `t` per line and the event stream sends
-the whole object -- and the page dropped it. Without it a run that finished two days ago and one
-that finished in three seconds read identically, so "is this card stale or was it just fast" could
-only be answered from the pod's own log.
-
-**A button press clears the log and forgets the adopted run**, so the next render cannot put the
-old one back underneath the new one.
-
-### The screen picks up what the service is already doing
-
-On load, the page asks `/runs` and shows the newest run per node -- in flight or just finished.
-A still-running one is reattached and followed to its end.
-
-Before this, the page's memory of a run lived entirely in one in-memory Map, so switching away on
-a phone or reloading threw away information the service still had. `/runs` keeps the last 50 with
-their logs and their final status, so a converge that finished in the background is recoverable
-rather than lost.
-
-### The run log outlives the run
-
-Every line a run produces also goes to **the pod's own stdout/stderr**, tagged
-`[<action> <node> <run-id8>]`, as well as to `/runs/:id` and the event stream. The registry is
-in memory, so a pod restart takes its whole history with it -- and that is exactly the run
-someone comes asking about afterwards. Writing to the pod's streams is what makes a run
-legible to whatever collects them.
-
-A run also carries a link to its workflow, which is where to look for anything this process
-did not keep.
+On load, the page asks `/workflows` and lists them, newest first -- this service's and the
+bench cycle's alike, since a list that showed only ours would hide the thing holding the
+campods. A node with a live workflow carrying its label is busy, and its card follows that
+workflow's phase to the end; tapping a row in the list streams its log. Reloading the page
+finds all of this again in the cluster, because nothing was in the page or in this process.
 
 ## The flight's description
 
@@ -403,16 +371,18 @@ append-only file turns that into an archaeology problem. A caller that wants to 
 A campod converge is twenty minutes or more. The screen can say what happened when you come back
 to it; a notification means you do not have to come back.
 
-| event | why |
-|---|---|
-| a run finished | the thing you started is over, and how it ended |
-| the service started | **a restart ends the runs this process does itself** -- stop, reboot and ground -- and forgets every run in the registry, which is in memory. Converge, provision and collect are workflows and carry on; their record is the workflow. Worth knowing before starting something, and after a run vanishes from the screen |
+| event | said by | why |
+|---|---|---|
+| a workflow finished | the workflow's own `onExit` step, `notify-step.js` out of this image | the thing you started is over, and how it ended. The workflow says it because the workflow outlives this pod; a notification sent from here would die with the pod the way the run registry did |
+| the service started | this process | the pod has been replaced. Workflows carry on; a stop, reboot or ground mid-request is ended, and so is any log stream someone had open |
 
 The start notification carries the build, because the reason to care is "did the roller replace me,
 and with what".
 
-Announced **server-side**, from the run registry rather than the page -- the point is that it
-reaches you when no browser is attached.
+Both are announced **server-side**, never from the page -- the point is that they reach you when
+no browser is attached. The exit handler takes the workflow's name, action, subject and phase as
+arguments and reads `FLEET_NOTIFY_URL` / `FLEET_NOTIFY_TAG` from the step's environment; which
+workflows carry it is declared with the templates in tiles.
 
 | env | default | |
 |---|---|---|
@@ -442,8 +412,8 @@ quoted table the devices carry, read with the same parser. `GIT_SHA` and `GIT_RE
 The UI is one client of the routes; it has no private endpoints.
 
 ```sh
-curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/converge"
-curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
+curl -sXPOST "https://fleet.tiles.symmatree.com/nodes/campod-se/converge"   # -> {workflow, url, ...}
+curl -sN     "https://fleet.tiles.symmatree.com/workflows/<workflow>/log"
 ```
 
 | route | |
@@ -454,30 +424,28 @@ curl -sN     "https://fleet.tiles.symmatree.com/runs/<id>/stream"
 | `GET /nodes` | the roster |
 | `GET /pods` | what the devices say they are doing, off the bus. Costs them nothing |
 | `POST /nodes/:name/stack?desired=` | `running` or `stopped`, published retained to the bus |
-| `POST /nodes/:name/converge` | config, stacks and images -> `202 {id}` |
-| `POST /nodes/:name/provision` | a fresh card, end to end -> `202 {id}` |
-| `POST /nodes/:name/stop` | signal the container set and wait for it to exit |
-| `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first, and abandons this node's in-flight runs |
+| `POST /nodes/:name/converge` | config, stacks and images -- submits the playbook workflow -> `202 {workflow,url,playbook,revision}` |
+| `POST /nodes/:name/provision` | a fresh card, end to end -- same shape |
+| `POST /nodes/:name/stop` | ask the device to stop its units and wait until it says they are out -> `200 {stopped}` |
+| `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first, never refused -> `200 {via, note, wasRunning?}` |
 | `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |
 | `GET /ground/tlogs` | what the ground-tlog share holds |
-| `POST /flights/:flight/ground[?tlog=&tlog=&start=&end=]` | collect the tlogs named, over the range given -> `202 {id}` |
+| `POST /flights/:flight/ground[?tlog=&tlog=&start=&end=]` | collect the tlogs named, over the range given; synchronous -> `200 {collected,failed,range,notes}` |
 | `POST /flights/:flight/collect` | body `{targets:[{node,kind,id}]}`, kind `session` or `fc-log` -- submits the collect workflow -> `202 {workflow,url}` |
-| `GET /runs` / `GET /runs/:id` | run list / one run with its log |
-| `GET /runs/:id/stream` | live output, server-sent events |
+| `GET /workflows` | every workflow in the namespace, newest first, with phase, labels and link |
 | `GET /workflows/:name` | one workflow's phase, read from the cluster each time |
+| `GET /workflows/:name/log` | its steps' output, server-sent events, then `done` with the phase |
 
-One action per node at a time; a second `POST` against a busy node is a `409`. **Except reboot**,
-which is the way out of a stuck box and so cannot be the thing a stuck box refuses.
+One workflow per node at a time; a submit against a busy node is a `409` naming the workflow
+holding it. **Except reboot**, which is the way out of a stuck box and so cannot be the thing a
+stuck box refuses.
 
-**That lock asks the cluster, not its own memory.** A workflow outlives this process, so a
-converge submitted before a restart is still driving its device while nothing here remembers
-it. `nodeBusyWith` looks for a non-terminal workflow carrying the node's label. Reboot skips
-the check, because busy is the case a reboot exists for.
+**That lock asks the cluster; there is no memory to ask.** `nodeBusyWith` looks for a
+non-terminal workflow carrying the node's label. A collect drives both campods, which one
+`node` label cannot say, so every workflow also carries a `touches-<node>` label per device it
+will drive and the lock checks both forms.
 
-A collect drives both campods, which one `node` label cannot say, so every workflow also
-carries a `touches-<node>` label per device it will drive and the lock checks both forms.
-
-Stop is not capped; it signals and waits and holds nothing.
+Stop and reboot are synchronous and hold nothing.
 
 ## Collecting a flight
 
@@ -564,9 +532,9 @@ like everything else that moves bytes, not a route in this process.
 
 ## Known limitations
 
-**The run record lives in this process, though the run does not.** A pod restart loses the
-registry; the workflow carries on in its own pod. `GET /runs/:id` for a run this process never
-saw answers 404 with a link to the workflow, which is where its state and its log are.
+**How far back `GET /workflows` reaches is the templates' `ttlStrategy`** -- seven days at
+the time of writing, declared in tiles. There is no workflow archive; Loki holds the logs for
+longer.
 
 **There is no overall ceiling on a converge.** Ansible's own timeouts bound it, and that is
 deliberate: a 60-minute ceiling once reported a *successful* converge as a failure while the
