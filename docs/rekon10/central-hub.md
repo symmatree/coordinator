@@ -83,16 +83,16 @@ hardware.
 
 Open on the hardware side:
 
-- **Two of the five pigtail legs do not pass a signal -- cause found, not yet fixed.** The
-  adapters were excluded first (swapping the mini-connector-to-DuPont adapters between legs moved
-  nothing), then measured: grounds good, each signal leg 1k to its `Y` pin. The dead legs are U2's
-  channels 3 and 4 (pins 8-13; the NE and NW legs in the design). The input jumper feeding `3A`/`4A`
-  (pins 9 and 12, the `T2_FRONT` net) was free-floating, so those two inputs were never driven.
-  He will reconnect it before the front two pods are attached.
 - **The board is not mounted.** It needs taping up and a location.
 - **The Coordinator connector is a 2x4 block on solid-core wire, and it has been knocked off once.**
   Solid core transmits any load on the harness straight into the header rather than flexing, so the
   block backs off as a unit. Kapton tape over it for flight; the connector itself is sound.
+
+Resolved: all five pigtail legs now pass the signal. Two did not at first (U2 channels 3 and 4,
+pins 8-13, the NE and NW legs in the design). The adapters were excluded by swapping them between
+legs, then the legs measured good -- grounds solid, 1k from each signal pin to its `Y` -- which left
+the input side: the jumper feeding `3A`/`4A` (pins 9 and 12, the `T2_FRONT` net) was free-floating,
+so those two inputs were never driven. Reconnected 2026-10.
 
 **Buffer:** 3.3 V quad 3-state buffer, **SN74AHC125N** (PDIP-14), powered from the Coordinator's
 3.3 V rail. **AHC, not AHCT** -- the AHCT part shares the package and pinout but is specified for
@@ -563,7 +563,7 @@ shape from the campod's 2x5 on the same ten positions, so the two harnesses cann
 | header pin | BCM | signal | to |
 |------------|-----|--------|-----|
 | 17 | -- | 3V3 | board +3V3 bus (RTC + all buffers), at `M-10` |
-| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW, at `C-10`. Overlay line is `dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1` -- **the `assert_falling_edge` half is not in the flashed image yet** (dotfiles-symm#81); everything else in this table is as-built |
+| 18 | GPIO24 | **PPS in** | U2 pin 6 -- a buffered output, not SQW, at `C-10`. Overlay line is `dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1` (dotfiles-symm#81, merged and flashed; falling-edge readings in [time-base.md](../time-base.md)) |
 | 19 | GPIO10 | MOSI | `JP1.2`, at `O-06` |
 | 20 | -- | GND | board GND bus, at `A-13` |
 | 21 | GPIO9 | MISO | `JP1.3`, at `O-05` |
