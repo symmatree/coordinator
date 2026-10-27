@@ -281,6 +281,10 @@ def main():
         return 0
 
     camera = Aravis.Camera.new(device_id)
+    # A run that ended without stopping acquisition (a kill, a crash) leaves the camera
+    # acquiring, and while it acquires PixelFormat is locked: the write below fails
+    # access-denied. Stopping an idle camera is a no-op.
+    camera.stop_acquisition()
     camera.set_pixel_format(Aravis.PIXEL_FORMAT_MONO_8)
     # Aravis's FLIR branch sets AcquisitionFrameRateEnable and turns AcquisitionFrameRateAuto
     # off before writing the rate, and clamps to the camera's bounds; read back what it got.
