@@ -120,6 +120,11 @@ specifically on its usability for still imagery not VIO.
 
 The dominant vibration source is the 2-blade props. At hover (~50% throttle), the motors spin at roughly 900 KV * 22 V * 0.5 = ~9900 RPM, giving a 2-per-rev fundamental of ~330 Hz. At this frequency, vibration amplitude on a stiff carbon fiber structure at the arm-frame junction (not the motor end) is expected to be in the tens-of-microns range.
 
+*Measured 2026-10-25 (fc-log-22, hover, three-blade set B):* throttle output 0.18; motors 4964 to
+6899 rpm, so once-per-rev lines at 83 to 115 Hz and blade-pass at 250 to 345 Hz. The per-motor
+figures and the camera-mount accelerations are in
+[`analysis/image-quality-experiments.md`](../analysis/image-quality-experiments.md), *Measured baseline*.
+
 At ~1 cm GSD, one pixel corresponds to ~7.5 mm of camera displacement. Even 0.1 mm (100 microns) of vibration amplitude at the camera = ~0.013 pixels. Millimeter-scale displacement would be needed for visible effects in imagery, and at 330 Hz that would be catastrophically violent -- audible, tactile, and likely destructive.
 
 The harmonic notch filter (fed by bidirectional DShot RPM telemetry from the AM32 ESCs) removes motor vibration from the FC's control loop, preventing the FC from amplifying vibration through feedback. This doesn't physically reduce frame vibration, but it prevents the control system from making it worse.
@@ -144,6 +149,11 @@ This is a **different failure mode** from rolling shutter geometry:
 
 **Why this is expected to be benign at operating RPM:** Phone-class VCM actuators (the CM3 uses the same construction) have a mechanical resonance set by the lens mass and leaf-spring stiffness, typically in the **80-200 Hz** range. The prop fundamental at hover (~330 Hz for 2-blade, higher for 3-blade) sits **above** that resonance by roughly 2-4x. Above resonance, transmissibility **rolls off** -- the lens group is too heavy to follow the housing, so the VCM suspension acts as a **passive lowpass filter** at operating RPM. The lens stays relatively still while the housing vibrates around it. During motor spinup the RPM sweeps **through** resonance transiently, but mapping captures do not happen during spinup.
 
+*Measured 2026-10-25:* the once-per-rev lines sit at 83 to 115 Hz, inside the 80-200 Hz range given
+above for the VCM resonance. From 2026-10-26 the campods carry Arducam B0310 modules (IMX708 behind a
+fixed M12 lens, no VCM); the paragraphs in this section apply to the Camera Module 3 and to the OAK-D
+colour camera.
+
 **Survivability:** The VCM will not be physically damaged by frame vibration at these amplitudes. Phone cameras with the same actuator architecture survive walking, pocket vibration, car rides, and drop impacts -- environments with far more energy at far more problematic (low) frequencies than a carbon fiber frame at ~330 Hz and tens-of-microns amplitude. Tens of microns of axial lens shift also produce no detectable defocus at mapping altitudes (depth of field at 25 m AGL is meters deep). "Destroy the VCM" or "overwhelm its ability to hold focus" would require energy orders of magnitude beyond what the arm-frame junction delivers.
 
 Whether prop-band vibration actually excites the VCM suspension enough to cause **subtle** image softness on this mount remains an **empirical** question. The **Pod-integrated vibration logging** plan ties mechanical spectra **at the camera load path** to image quality (sharpness, AF behavior) so this is testable rather than hand-waved.
@@ -152,7 +162,7 @@ Whether prop-band vibration actually excites the VCM suspension enough to cause 
 
 ### What we don't know
 
-- **Actual vibration amplitudes.** The first-principles estimate above is reasonable but unverified. The FC has floating-hole isolator mounts, but its accelerometer and gyro data will still be useful for characterizing frame vibration when the motors first spin up.
+- **Actual vibration amplitudes.** The first-principles estimate above is reasonable but unverified. The FC has floating-hole isolator mounts, but its accelerometer and gyro data will still be useful for characterizing frame vibration when the motors first spin up. *Measured 2026-10-25* at the camera mounting on each campod: band RMS 0.5 to 0.8 m/s^2 at the once-per-rev lines and up to 4.0 m/s^2 at blade-pass, against a bench floor of 0.02 to 0.03 m/s^2 in the same bands (`analysis/image-quality-experiments.md`, *Measured baseline*).
 - **2-blade vs 3-blade props.** 3-blade props shift the fundamental to 3x RPM (potentially different amplitude and frequency). Comparing FC vibration data between 2-blade and 3-blade configurations would be informative.
 - **Resonant modes of the pod itself.** The clamshell pod has its own structural dynamics. If a pod resonance happens to coincide with the prop frequency, local amplification could occur. Test imagery will reveal this.
 - **VCM suspension at prop-band frequencies.** Whether the floating lens group picks up enough relative motion during a still exposure to soften imagery is unknown without correlation between **pod-path accel** logs and sharpness / AF state.
