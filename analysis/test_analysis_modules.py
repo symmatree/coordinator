@@ -21,6 +21,7 @@ import capture_align
 import feat_stream
 import local_pose
 import still_banding
+import tlog_read
 
 
 # ---------------------------------------------------------------- fixture builders
@@ -257,6 +258,63 @@ def test_integrate_never_bridges_a_gap():
     segs = local_pose.integrate(poses, min_poses=10)
     assert len(segs) == 2
     assert segs[0]["t"][-1] < segs[1]["t"][0]
+
+
+# ---------------------------------------------------------------- tlog_read
+
+def _tlog_bytes(frames):
+    """A tlog from (stamp_s, sysid, compid, seq, msgid) tuples: 8-byte BE microseconds then a
+    MAVLink v2 frame with an empty payload. Same layout coordinator-mavlink's log_frame writes."""
+    out = bytearray()
+    for stamp_s, sysid, compid, seq, msgid in frames:
+        frame = bytes([0xFD, 0, 0, 0, seq, sysid, compid, msgid & 0xFF, (msgid >> 8) & 0xFF, msgid >> 16]) + b"\x00\x00"
+        out += struct.pack(">Q", int(stamp_s * 1e6)) + frame
+    return bytes(out)
+
+
+def test_tlog_seq_loss_counts_the_gaps(tmp_path):
+    """Every 7th frame from one sender missing; the sequence numbers say so, exactly."""
+    t0 = 1_700_000_000.0
+    frames = [(t0 + i * 0.5, 1, 1, i % 256, 0) for i in range(600) if i % 7 != 3]
+    p = tmp_path / "vehicle.tlog"; p.write_bytes(_tlog_bytes(frames))
+    assert tlog_read.is_tlog(p)
+    df, info = tlog_read.read_tlog(p)
+    assert info["frames"] == len(frames) and info["bytes_skipped"] == 0
+    loss = tlog_read.seq_loss(df)
+    expected = sum(1 for i in range(600) if i % 7 == 3)      # 86, including the wrap past 255
+    assert int(loss.lost.iloc[0]) == expected, (int(loss.lost.iloc[0]), expected)
+    assert abs(float(loss.loss_frac.iloc[0]) - expected / 600) < 1e-9
+
+
+def test_tlog_reads_by_content_not_suffix_and_slices_by_offset(tmp_path):
+    """A .log-suffixed tlog still reads; a window by time decodes only that window's frames;
+    an empty file is an empty table."""
+    t0 = 1_700_000_000.0
+    frames = [(t0 + i * 0.25, 1, 1, i % 256, 33 if i % 2 else 30) for i in range(4000)]
+    p = tmp_path / "mavproxy.log"; p.write_bytes(_tlog_bytes(frames))
+    assert tlog_read.is_tlog(p)
+    df, info = tlog_read.read_tlog(p, t0 + 100.0, t0 + 110.0)
+    assert info["frames"] == 41 and abs(df.stamp_s.min() - (t0 + 100.0)) < 1e-6, info
+    tab = tlog_read.message_table(df, t0 + 100.0, t0 + 110.0)
+    assert set(tab.msg) == {"GLOBAL_POSITION_INT", "ATTITUDE"} and abs(tab.rate_hz.sum() - 4.1) < 1e-6
+    e = tmp_path / "empty.tlog"; e.write_bytes(b"")
+    assert not tlog_read.is_tlog(e)
+    df, info = tlog_read.read_tlog(e)
+    assert info["frames"] == 0 and len(df) == 0
+
+
+def test_tlog_skips_junk_bytes_and_counts_them(tmp_path):
+    """Bytes that are not a stamped frame (the BAD_DATA case) are stepped over and counted,
+    and the frames on either side are all still read."""
+    t0 = 1_700_000_000.0
+    good = _tlog_bytes([(t0 + i, 1, 1, i, 0) for i in range(10)])
+    rec = 8 + 12                                   # stamp + a v2 frame with an empty payload
+    assert len(good) == 10 * rec
+    junk = b"\xff" * 14                            # no 8 of these read as a plausible stamp
+    p = tmp_path / "noisy.tlog"; p.write_bytes(good[:5 * rec] + junk + good[5 * rec:])
+    df, info = tlog_read.read_tlog(p)
+    assert info["frames"] == 10 and info["bytes_skipped"] == len(junk), info
+    assert int(tlog_read.seq_loss(df).lost.iloc[0]) == 0
 
 
 # ---------------------------------------------------------------- runner
