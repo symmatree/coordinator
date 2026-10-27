@@ -1,14 +1,13 @@
 # RTK corrections delivery path (base station -> NTRIP -> ELRS -> F9P)
 
 How RTCM3 corrections get from the ground base station to the rover's ZED-F9P, the
-rates involved, and the leading theory for the failure that keeps recurring (RTK
-never coming up): the ELRS TX backpack anchoring its MAVLink stream to the wrong
-ground station.
+rates involved, and what has actually been observed to break on the way: the ELRS TX
+backpack's WiFi association, and its coverage once the operator walks away from the
+house.
 
-The path, workloads, and rates below are documented state. The failure-cause is a
-**leading theory, not a confirmed diagnosis** -- it is consistent with the two cases
-we have and with a firmware read, but has not been caught in the act; see the caveats
-in that section. This is the reference for the correction path. The physical ground
+The path, workloads, and rates below are documented state. The failure section
+distinguishes what was observed from what was read in firmware. This is the reference
+for the correction path. The physical ground
 kit (radio, backpack, IPs, ELRS profiles) is inventoried in
 [`rekon10/ground-station.md`](rekon10/ground-station.md); the FC-side RTK/serial wiring in
 [`rekon10/ardupilot.md`](rekon10/ardupilot.md); the under-canopy operational doctrine ("RTCM must
@@ -69,65 +68,45 @@ Endpoints: caster `ntrip.tiles.symmatree.com:2101/ATTIC`, Mission Planner TCP
   mavproxy replies to the backpack's `:14555`. (This reply is what anchors the
   backpack -- see below.)
 
-## Leading theory: the backpack anchors to the wrong GCS
+## What breaks, as observed
 
-**Symptom (observed).** Rover never reaches RTK; GPS Status stalls at 3D/DGPS, RTK
-LED never lights, and mavproxy shows only `no link` for the whole flight -- it
-received zero MAVLink from the vehicle. Everything upstream (base, caster, mavproxy
-NTRIP client) verified healthy. Occurrences:
-[#99](https://github.com/symmatree/coordinator/issues/99) (2026-07-12), tiles #664
-(2026-07-30, first no-laptop flight; closed -> tracked in #99), and the field notes in
-[`rekon10/flight-platform-build-log.md`](rekon10/flight-platform-build-log.md) (Flights 1 and later).
+The failure this doc was first written around -- rover never reaches RTK, mavproxy shows
+`no link` for the whole flight, everything upstream verified healthy
+([#99](https://github.com/symmatree/coordinator/issues/99) 2026-07-12, tiles#664
+2026-07-30) -- has been seen on the backpack's own status endpoint since, and it is
+**the backpack's WiFi association**, not where its MAVLink goes once associated.
 
-**Candidate mechanism, read from the firmware source.** ExpressLRS/Backpack
-[`lib/WIFI/devWIFI.cpp`](https://github.com/ExpressLRS/Backpack/blob/1.5.9/lib/WIFI/devWIFI.cpp).
-The backpack runs the build in [`firmware/backpack/`](../firmware/backpack/README.md) --
-upstream tag **1.5.9** plus our WiFi patch -- so this is the source that runs. The latch
-logic (`gcsIP` / `gcsIPSet`, lines 118-119, 582-583, 894-896, 932-933) is byte-identical
-between 1.5.9 and master, so the reading below applies to either:
+**1. Association, observed 2026-08-03 (#99).** The backpack had fallen back to its own AP
+(an `ExpressLRS TX Backpack` SSID visible in the yard), acebase could not reach it, and
+its ARP entry was stale. From the 1.5.9 source: a `WL_CONNECTION_LOST` went straight to AP
+fallback with no reconnect, and WiFi power-save was left on. The build in
+[`firmware/backpack/`](../firmware/backpack/README.md) (upstream 1.5.9 plus our patch,
+#173/#204) reconnects instead of falling back, disables power-save, and exposes the link
+state on `/mavlink`. The reconnect was seen working on 2026-08-12 (`reconnects` incremented
+while still in STA). It is reduced, not gone: on 2026-09-23 the backpack rebooted
+mid-session (`uptime_ms` reset, counters reset) and re-associated 23 s before arm.
 
-- On boot `gcsIPSet = false`, so the backpack **broadcasts** MAVLink to the subnet
-  (`WiFi.broadcastIP()` in STA mode) on the send port -- discovery.
-- The **first** UDP packet from any GCS latches it:
-  `gcsIP = mavlinkUDP.remoteIP(); gcsIPSet = true;` -- and from then on it **unicasts
-  only to that IP**.
-- `gcsIPSet` is **never cleared** -- no timeout, no heartbeat-loss reset. It stays
-  locked to that first responder until the backpack reboots / WiFi reconnects.
+**2. Coverage, observed 2026-08-14 (#196, 2026-09-08 comment).** Walking into the woods,
+backpack RSSI went -72 -> -87 dBm, it stopped answering at FC t~137 s and never came back;
+`GPA.RTCMFU` stopped advancing across the deep-woods window; RTK coasted ~40 s on the last
+corrections and collapsed. `overflows_down` was 0 throughout, so it was not congestion. This
+is the one in-flight loss of corrections in the record. (The 2026-08-12 "RTCM lost between
+mavproxy and the FC" finding was retracted on #195: `RTCMFU` counts only fragmented RTCM,
+and the byte stream was continuous.)
 
-So it is a **first-responder race**. mavproxy (`udpin` -- hears the broadcast, replies
-with heartbeats) races any other GCS on the LAN. A Mission Planner or QGroundControl
-with UDP auto-connect (which the ELRS docs actively tell people to enable) answers
-instantly and can win. If a stray GCS wins, the backpack unicasts to *it* for the
-entire session; mavproxy is starved, nothing looks broken (the backpack **is**
-connected -- just to the wrong host), and no RTCM reaches the FC.
+**3. The GCS latch: real in the source, never caught, easy to avoid.** The backpack
+broadcasts MAVLink until the first UDP packet from any GCS arrives, then unicasts to that
+address only, and `gcsIPSet` is never cleared until it reboots
+([`lib/WIFI/devWIFI.cpp`](https://github.com/ExpressLRS/Backpack/blob/1.5.9/lib/WIFI/devWIFI.cpp),
+byte-identical in 1.5.9 and master). So a Mission Planner with UDP auto-connect on the
+same subnet could capture the stream. Every `ip.gcs` sample taken since the endpoint became
+readable has shown the mavproxy host, including through the 2026-08-14 loss and across the
+whole 2026-09-23 armed window (Mimir, `backpack_mavlink_gcs_info`). The avoidance is not
+running another GCS against the backpack's subnet while flying. It was never a major
+problem; it stays here so nobody re-derives it from the source.
 
-If it holds, this would unify the two competing field hypotheses recorded separately
-(`flight-platform-build-log.md`): "Mission Planner beat mavproxy to the connection"
-and "a *radio* power-cycle fixed it, so it's the ELRS uplink stalling, not GCS
-contention." Under this mechanism they are the same thing -- a radio/backpack
-power-cycle clears `gcsIPSet` and re-runs the race, so "power-cycle fixed it" would
-not be evidence against contention, and the stochastic recovery ("sometimes N
-power-cycles") is just re-rolling the race. This was already the standing field theory
-before the firmware read; the code makes it more plausible, it does not confirm it.
+## Reading the backpack's status endpoint
 
-### What would confirm it (not yet in hand)
-
-The two cases are *consistent* with this theory but do not prove it. Still missing:
-
-- **No GCS caught red-handed** -- `ip.gcs` pointing at a non-acebase host during a
-  failure is the direct evidence, and it has not been seen. Every sample taken since
-  the endpoint became readable has shown acebase, `10.0.99.14` at the time, including
-  through the 2026-08-14 link loss -- so that particular failure was *not* this mechanism.
-- The predicted recovery (down the offender -> power-cycle -> mavproxy wins) has not
-  been run as a deliberate predict-then-confirm.
-
-Until one of those lands this is the leading theory, not a diagnosis. Current thinking
-concentrates here; new evidence should update this section.
-
-## Diagnosing it next time (ask the backpack directly)
-
-Under this theory the backpack is not failing -- it is talking to the wrong GCS -- so
-its own status endpoint should name that GCS, without any packet capture.
 `GET http://boxer-txbp.local.symmatree.com/mavlink` (route `server.on("/mavlink", ...)`,
 `WebMAVLinkHandler`) returns:
 
@@ -144,10 +123,11 @@ its own status endpoint should name that GCS, without any packet capture.
 The `link` block is our patch's addition, not stock -- its presence is also how you tell
 which firmware is on the unit.
 
-- `ip.gcs` would be the offender -- the GCS it anchored to. If it is not the address of
-  whichever host is running mavproxy, that host has the link. **Resolve that address rather
-  than comparing against a remembered one:** acebase's is DHCP-assigned and has changed.
-  `"IP UNSET"` means it hasn't latched yet.
+- `ip.gcs` is the GCS it latched to. It should be the address of whichever host is running
+  mavproxy. **Resolve that address rather than comparing against a remembered one:**
+  acebase's is DHCP-assigned and has changed. `"IP UNSET"` means it hasn't latched yet.
+- `link.rssi`, `link.bssid` and `link.reconnects` are the association story. `reconnects`
+  lands at 1 on a clean boot; only increments above that are link losses.
 - `counters` need care, and have already produced wrong readings. `drops_down` is one
   global sequence counter across three interleaving MAVLink sources, so per-source gaps
   read as huge losses -- **use `overflows_down`**. And `packets_up` is **not** proof of
@@ -162,17 +142,18 @@ traps above in more detail.
 
 ## Recovery
 
-If the mechanism above is right, recovery follows from it (and running it is also how
-you'd confirm the theory). In the source the target is learned, not settable -- the
-firmware latches to whoever answers the discovery broadcast first and holds that lock
-until it reboots. So: read `/mavlink`, note `ip.gcs`; if it isn't acebase, take that
-host off the link, then power-cycle the backpack so it re-broadcasts and mavproxy can
-win the fresh race. A power-cycle without removing the other GCS just re-rolls the
-same race, which would explain why it has sometimes taken more than one.
+Read `/mavlink` first, or the `job="backpack"` series in Mimir, before power-cycling anything.
 
-Because the lock can't be pinned in firmware, keeping it from recurring is a network
-question -- whether an auto-connecting GCS can reach the backpack's subnet at all --
-and it is open: it depends on the site network and hasn't been chosen or tested.
+- **Not answering at all**, or an `ExpressLRS TX Backpack` AP is visible: it is off the house
+  WiFi. Power-cycle the Boxer; the patched firmware should then associate and stay. Entering
+  the home WiFi credentials at flash time has been more reliable than setting them at runtime.
+- **Answering, `ip.gcs` is not the mavproxy host:** the latch went elsewhere. Take that host
+  off the link and power-cycle the backpack so it re-broadcasts. Not yet seen in practice.
+- **Answering, `ip.gcs` correct, RSSI falling:** that is coverage, and there is nothing to
+  reset. The dedicated link below is the answer to this one.
+
+The backpack's Telem mode must be **WiFi** for any of this to apply; a reflash resets it to
+Off, and "Enable Backpack WiFi" in the Lua is the config/update session, not the bridge.
 
 ## Direction (2026-10-27): a dedicated corrections link
 
