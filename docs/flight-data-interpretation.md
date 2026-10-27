@@ -128,7 +128,7 @@ own timestamps are wall clock and inherit the problem above; `timesync.jsonl` is
 | `EXTRA1` | 2 Hz | `ATTITUDE`, `AHRS2`, `PID_TUNING`, **`ESC_TELEMETRY`** |
 | `EXTRA2` | 2 Hz | `VFR_HUD` |
 | `EXTRA3` | 2 Hz | `AHRS`, `DISTANCE_SENSOR`, **`SYSTEM_TIME`**, `BATTERY_STATUS`, **`EKF_STATUS_REPORT`**, **`VIBRATION`** |
-| `RC_CHANNELS` | **0** | `SERVO_OUTPUT_RAW`, `RC_CHANNELS` -- off, so neither is arriving |
+| `RC_CHANNELS` | **0** in that source; **2 Hz on the wire, 2026-10-25** | `SERVO_OUTPUT_RAW`, `RC_CHANNELS` -- both arrived at 2.00 Hz in `vehicle.tlog` on 2026-10-25 (`time-sync.ipynb`, observers section), so the stream rate was not 0 on that flight's firmware and parameters |
 | `RAW_SENSORS` | **0** | off |
 
 ### `GPS_RTK` is not populated by the u-blox driver
