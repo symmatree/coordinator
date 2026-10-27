@@ -52,22 +52,29 @@ check("an empty list gives None", bc.pick_session([]) is None)
 # ---- liveness -------------------------------------------------------------------------
 # Bus documents are RETAINED, so a pod that is down still publishes its last state. A check
 # for presence declared the cameras up mid-reboot and the trial ran against stale data.
-_UP = [{"raw": {"as_of_boot_s": 7366.0}}, {"raw": {"as_of_boot_s": 7365.0}}]
-_FRESH = [{"raw": {"as_of_boot_s": 105.0}}, {"raw": {"as_of_boot_s": 100.0}}]
+_UP = [{"raw": {"as_of_boot_s": 7366.0}}, {"raw": {"as_of_boot_s": 7365.0}},
+       {"raw": {"as_of_boot_s": 7364.0}}]
+_FRESH = [{"raw": {"as_of_boot_s": 105.0}}, {"raw": {"as_of_boot_s": 100.0}},
+          {"raw": {"as_of_boot_s": 40.0}}]
 check("retained pre-reboot documents are not mistaken for a fresh boot",
       not bc.is_fresh(_UP, 7000.0))
 check("uptime going backwards is a fresh boot", bc.is_fresh(_FRESH, 7000.0))
 check("one pod still stale fails the whole check",
-      not bc.is_fresh([_FRESH[0], _UP[0]], 7000.0))
-check("a document with no uptime is not fresh", not bc.is_fresh([{"raw": {}}], 7000.0))
+      not bc.is_fresh([_FRESH[0], _FRESH[1], _UP[0]], 7000.0))
+check("a document with no uptime is not fresh",
+      not bc.is_fresh([_FRESH[0], _FRESH[1], {"raw": {}}], 7000.0))
 check("no documents at all is not fresh", not bc.is_fresh([], 7000.0))
 # A pod that is ABSENT is not a fresh boot either, and this is how it got through: collect
 # reboots the coordinator, the broker runs there, and the retained documents are gone until
 # each pod republishes -- so the pod whose reboot FAILED is the one that is missing, and
 # `all()` over the one that came back is true. 2026-10-18: "a fresh boot on both campods:
 # ok" with campod-sw still up on its old boot and its ssh dead.
-check("one pod missing is not a fresh boot, however fresh the other looks",
-      not bc.is_fresh([_FRESH[0]], 7000.0))
+check("one pod missing is not a fresh boot, however fresh the others look",
+      not bc.is_fresh(_FRESH[:2], 7000.0))
+# The coordinator is one of the three now: it is rebooted with the campods and its
+# session is collected, so its boot has to be seen going backwards like theirs.
+check("the count is every node in the cycle, the coordinator included",
+      len(bc.NODES) == 3 and "coordinator" in bc.NODES)
 
 # ---- camera readiness -----------------------------------------------------------------
 # ONE FIELD, DECIDED ON THE POD. `camera.ready` is warm AND synced, combined by the campod
@@ -83,19 +90,20 @@ def _cam(ready=True):
     return {"raw": {"camera": {"ready": ready}}}
 
 
-check("both ready is ready", bc.cameras_ready([_cam(), _cam()]))
-check("one pod not ready is not ready", not bc.cameras_ready([_cam(), _cam(ready=False)]))
+check("all three ready is ready", bc.cameras_ready([_cam(), _cam(), _cam()]))
+check("one pod not ready is not ready",
+      not bc.cameras_ready([_cam(), _cam(), _cam(ready=False)]))
 check("a camera with no document is not ready",
-      not bc.cameras_ready([_cam(), {"raw": {}}]))
-check("one pod reporting is not both", not bc.cameras_ready([_cam()]))
+      not bc.cameras_ready([_cam(), _cam(), {"raw": {}}]))
+check("two pods reporting is not all three", not bc.cameras_ready([_cam(), _cam()]))
 # Absent, not false: a pod running an image from before #577 publishes no `ready` at all,
 # and "the field is missing" must not read as ready.
 check("a missing ready field is not ready",
-      not bc.cameras_ready([_cam(), {"raw": {"camera": {"warm": True}}}]))
+      not bc.cameras_ready([_cam(), _cam(), {"raw": {"camera": {"warm": True}}}]))
 # The halves are detail now. A gate that still looked at them would be the second
 # definition this change exists to delete.
 check("warm and sync_ready cannot make a pod ready on their own",
-      not bc.cameras_ready([_cam(),
+      not bc.cameras_ready([_cam(), _cam(),
                             {"raw": {"camera": {"warm": True, "sync_ready": True}}}]))
 
 # ---- every stage actually runs ---------------------------------------------------------
@@ -128,7 +136,8 @@ _REAL_SHAPES = {
 
 class _FakeFleet:
     """Records calls; answers in the service's shapes. Uptime falls on each /pods poll, so
-    `is_fresh` can see a reboot, and both cameras are ready from the start."""
+    `is_fresh` can see a reboot, and every camera -- the OAK's included -- is ready from
+    the start."""
 
     def __init__(self):
         self.calls = []
@@ -145,7 +154,7 @@ class _FakeFleet:
             return {"pods": [{"node": n, "raw": {"as_of_boot_s": max(self._boot, 20.0),
                                                  "camera": {"ready": True,
                                                             "ready_at_mono_s": 126.9}}}
-                             for n in bc.CAMPODS]}
+                             for n in bc.NODES]}
         if path.endswith("/collect"):
             return {"workflow": "collect-f-abcde", "url": "https://argo/w/collect-f-abcde",
                     "flight": "f", "targets": (body or {}).get("targets", [])}
@@ -197,23 +206,29 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
         continue
 
     if stage == "deploy":
-        # Both submitted before either is watched: the fleet-wide cap on playbook runs is
-        # gone, so the deploy costs one converge's wall time rather than two.
+        # All submitted before any is watched: the fleet-wide cap on playbook runs is
+        # gone, so the deploy costs one converge's wall time rather than three.
         conv = [i for i, c in enumerate(calls) if c[1].endswith("/converge")]
         first_watch = next(i for i, c in enumerate(calls) if c[1].startswith("/workflows/"))
-        check("deploy converges both pods",
+        check("deploy converges the coordinator and both pods",
               [calls[i] for i in conv]
-              == [("POST", f"/nodes/{n}/converge") for n in bc.CAMPODS])
-        check("both converges are submitted before either is watched",
+              == [("POST", f"/nodes/{n}/converge") for n in bc.NODES])
+        check("every converge is submitted before any is watched",
               max(conv) < first_watch, f"converges at {conv}, first watch at {first_watch}")
-        check("deploy reboots both pods",
+        check("deploy reboots all three",
               sorted(c[1] for c in calls if c[1].endswith("/reboot"))
-              == sorted(f"/nodes/{n}/reboot" for n in bc.CAMPODS))
+              == sorted(f"/nodes/{n}/reboot" for n in bc.NODES))
     if stage == "arm":
-        check("arm stops the FC talker before writing the file",
-              ("POST", "/nodes/coordinator/stop-capture") in calls
-              and calls.index(("POST", "/nodes/coordinator/stop-capture"))
-              < len(calls))
+        # NOT the bus quiesce. Since #609 the coordinator's collection units are the router
+        # AND oak-capture, and `stop-capture` stops both -- so the first C++ bench cycle
+        # (bench-20261027-campod-cpp-2) ran its window with the OAK stopped and the
+        # coordinator's session had nothing of the OAK's in it. Only the router, which owns
+        # the arm file, is stopped, and over the same ssh that writes the file.
+        check("arm does not quiesce the coordinator",
+              ("POST", "/nodes/coordinator/stop-capture") not in calls, str(calls))
+        check("arm stops the FC talker, by unit, before writing the file",
+              any(f"systemctl stop {bc.FC_TALKER_UNIT} && echo 1 |" in c for c in sent),
+              str(sent))
         check("arm writes 1 to the arm file", any("echo 1 |" in c for c in sent), str(sent))
     if stage == "disarm":
         check("disarm writes 0 to the arm file", any("echo 0 |" in c for c in sent), str(sent))
@@ -225,13 +240,15 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
         check("collect reboots all three",
               sorted(c[1] for c in calls if c[1].endswith("/reboot"))
               == sorted(f"/nodes/{n}/reboot" for n in ("campod-se", "campod-sw", "coordinator")))
-        # ONE submission carrying BOTH campods, not one call per node: the offloads are
-        # steps of a single workflow, which is what lets them run at the same time.
+        # ONE submission carrying ALL THREE nodes, not one call per node: the offloads are
+        # steps of a single workflow, which is what lets them run at the same time. The
+        # coordinator's session is in it: the OAK's frames and IMU, the router's tlog and
+        # timesync, under captures/coordinator/<boot-id>/ like a campod's.
         submits = [c for c in calls if c[1].endswith("/collect")]
         check("collect submits one workflow for the whole flight", len(submits) == 1, str(submits))
         sent_targets = next(b for b in bodies if b and "targets" in b)["targets"]
-        check("and it names the chosen session for every campod",
-              sorted(t["node"] for t in sent_targets) == sorted(bc.CAMPODS)
+        check("and it names the chosen session for every node, the coordinator included",
+              sorted(t["node"] for t in sent_targets) == sorted(bc.NODES)
               and all(t["kind"] == "session" and t["id"] == "aaaa" for t in sent_targets),
               str(sent_targets))
         check("then follows the workflow rather than a run of its own",
@@ -339,13 +356,13 @@ _fail_calls = []
 
 
 class _FailingFleet(_FakeFleet):
-    """campod-se's run fails; campod-sw's is still running when it does."""
+    """The coordinator's run, watched first, fails; both campods' are still running."""
 
     def __call__(self, path, method="GET", timeout=300, body=None):
         _fail_calls.append(path)
         if path.startswith("/workflows/"):
             name = path.split("/")[2]
-            if name.endswith("se"):
+            if name.endswith("coordinator"):
                 return {"name": name, "phase": "Failed", "message": "step main exited 2"}
             return {"name": name, "phase": "Running"}
         if path.endswith("/converge"):
