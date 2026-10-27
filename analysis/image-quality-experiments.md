@@ -3,8 +3,8 @@
 *Why the stills are not usable. Open topics, each with what has actually been observed and what
 would decide it. Form follows `fables/Datasets/experiments-house-model.md`.*
 
-**Nothing here is marked confirmed.** There is one powered flight with instrumented arms (260923) and
-one bench run (260926) whose analysis is barely started. A thing that happened once in one flight is
+**Nothing here is marked confirmed.** There are two powered flights with instrumented arms (260923
+and 2026-10-25) and two bench runs (260926, bench-20261023-simflight-21). A thing that happened once in one flight is
 an observation; a claim about how the airframe behaves is something else, and it earns that status by
 surviving attempts to falsify it across a range of conditions -- not by being written down.
 
@@ -22,22 +22,33 @@ Both are wanted. **Good stills off either would be welcome, and off the Pi Zero 
 |---|---|---|
 | sensor | IMX378 | IMX708 |
 | readout | 33 ms over 3040 rows | 68.1 ms over 2592 rows |
-| focus | VCM, pinned to a fixed value in software | VCM, pinned to a fixed value in software |
+| focus, through 2026-10-25 | VCM, pinned to a fixed value in software | VCM, pinned to a fixed value in software (`infinity` from #419) |
+| focus, from 2026-10-26 | unchanged | Arducam B0310: IMX708 behind a fixed M12 lens, 120 deg H; no VCM, no `LensPosition` |
 | mount, 260923 | hub, on bobbins | **VHB to the left-rear arm** |
+| mount, 2026-10-25 | hub, on bobbins | clamshell at the arm-frame junction; campod-sw on the rear-left (Motor2) arm |
 
 They are not the same instrument, but the differences that matter are narrower than I previously
-wrote: **the focus mechanism is the same** -- a voice coil pinned by software in both cases -- and the
-readout differs by a factor of two, which changes band arithmetic and nothing else on its own.
+wrote. Through 2026-10-25 **the focus mechanism was the same** -- a voice coil pinned by software in
+both cases -- and the readout differs by a factor of two, which changes band arithmetic and nothing
+else on its own. From 2026-10-26 the campod has no voice coil and the OAK-D still does. The B0310's
+factory focus setting is not known; the one bench frame seen so far (indoor, about 1 m) read soft
+(operator). Its lens is wider than the `imx708_wide` it replaced, about 0.45 mrad per pixel on
+average against about 0.39, so pixel amplitudes are not comparable across the change.
 
 **The 260923 campod mount was VHB, deliberately.** Not a hard mount: the prior was that hard-mounting
 would not work, and VHB was the simplest first step of a soft one. Cameras will be on more arms than
 one, so a result from this flight is a result about this mount on this arm.
 
-**The vibration field at either camera is not known.** The arm ADXL345 pair sits on the arm, not on
-top of the VHB layer the camera sits on. The OAK-D has its own low-rate IMU whose data has not been
-examined. The FC's IMU is low-rate and on bobbins. Nothing available measures what either sensor
-actually experiences, so any statement of the form "this camera sits in an X-dominated field" is a
-theory and is treated as one below.
+**The vibration field at either camera was not measured on 260923.** The arm ADXL345 pair sat on
+the arm, not on top of the VHB layer the camera sat on. The OAK-D has its own low-rate IMU whose data
+has not been examined. The FC's IMU is low-rate and on bobbins.
+
+**On 2026-10-25 each campod carried two ADXL345s:** one on the arm and one on the camera mounting,
+near the camera. The camera-side sensor is on the mounting, not on the camera module and not on the
+lens; it measures what the mounting does and cannot see motion inside the module. Its band RMS at
+the motor lines is in *Measured baseline* below. For the fixed-lens modules an ADXL is taped
+directly to the module housing (operator), which on a fixed-lens module rides with the lens and
+sensor.
 
 ---
 
@@ -61,6 +72,66 @@ Two consequences worth keeping separate from any theory. The campod's longer rea
 same frequency over more bands, so counting is easier there. And **frequencies close in Hz are close
 in band count** -- 153 and 175 Hz differ by 14% in pitch -- so band counting cannot distinguish
 candidates that near each other.
+
+---
+
+## Measured baseline, 2026-10-25
+
+Flight `2026-10-25-soft-mount-check-flight`, `fc-log-22.bin`, three-blade set B, motor soft mounts,
+campod focus `infinity`, 5 ms exposure. Hover window FC t 252.3-260.3 s. Notebooks and JSON are in
+that flight's `derived/`. ESC instance to motor: 0 = Motor1 front-right, 1 = Motor3 front-left,
+2 = Motor4 rear-right, 3 = Motor2 rear-left, from `SERVOn_FUNCTION` and the pitch and yaw pairs.
+
+**Motors.** Throttle output (`CTUN.ThO`) median 0.18; `MOT_THST_HOVER` in the param file is 0.35.
+
+| motor | median rpm | once-per-rev | twice-per-rev | blade-pass (x3) |
+|---|---|---|---|---|
+| Motor1 front-right | 6443 | 107.4 Hz | 214.8 | 322.2 |
+| Motor3 front-left | 6899 | 115.0 | 230.0 | 345.0 |
+| Motor4 rear-right | 5728 | 95.5 | 190.9 | 286.4 |
+| Motor2 rear-left | 4964 | 82.7 | 165.5 | 248.2 |
+
+Thrust split by rpm^2: front/rear 1.55, left/right 0.97, Motor1+Motor2 against Motor3+Motor4 (the
+two spin directions) 0.82. On a square X with 161 mm fore-aft half-spacing, the front/rear figure
+puts the CG about 35 mm forward of the motor centre; the spin-direction figure is a steady yaw
+moment and is not a CG effect. With the CG centred and the same total thrust the four rpm^2 values
+average 36.6M, about 6050 rpm, 101 Hz. `docs/campod.md` was written against an assumed ~9900 rpm
+and a 330 Hz two-blade fundamental.
+
+**Acceleration at the lines**, band RMS in m/s^2 over +/- the notebook half-band, hover window. The
+floor row is the median over 37 off-line bands of equal width. Bench floors are from
+`bench-20261023-simflight-21`, same bands, motors off.
+
+| | FC IMU0 | FC IMU1 | SE arm | SE camera mount | SW arm | SW camera mount |
+|---|---|---|---|---|---|---|
+| bench floor | -- | -- | 0.027 | 0.028 | 0.012 | 0.022 |
+| flight floor | 0.058 | 0.058 | 0.841 | 0.479 | 0.711 | 0.373 |
+| Motor2 once-per-rev | 0.696 | 0.787 | 1.045 | 0.618 | 1.243 | 0.475 |
+| Motor4 once-per-rev | 0.568 | 0.607 | 0.797 | 0.843 | 1.079 | 0.625 |
+| largest blade-pass | | | | 2.324 (Motor3) | 2.371 (Motor3) | 4.035 (Motor1) |
+
+**Bands in the stills** (`still_banding.row_sharpness`, in-flight frames):
+
+- SE: 215 of 230 frames fit a band, median 82.0 Hz (464-row pitch). Per frame the band frequency
+  tracks Motor2's rev: r = 0.80, median |difference| 1.4 Hz; the best single scale against Motor2 is
+  0.994 (residual 2.8 Hz) and against Motor4 1.113 (6.3 Hz); Motor2 and Motor4 revs are
+  uncorrelated across frames (r = -0.05). Band amplitude is 0.42 when Motor2 runs 76-79 Hz and
+  0.28-0.32 at its other speeds.
+- SW: 86 of 236 frames fit a band, median 77.3 Hz; no per-frame tracking.
+- Operator's read of the frames: about a tenth of each frame is sharp, and which rows those are
+  changes from frame to frame.
+
+**Displacement at the band pitch** (`derived/bands/radial_shift.py`, six strips per frame, uniform
+shift U plus magnification term M): SE 214 frames, |U| 1.6 px, |M| 1.8 px per 1000 px; SW 85
+frames, about 2 px for both. Per-strip amplitudes: 4.1 px in flight, 2.9 px armed on the ground,
+2.8 and 5.7 px at wrong-pitch nulls. The synthetic check recovers about 70% of a known amplitude
+with 1.2-1.7 px of leakage between U and M.
+
+**Exposure arithmetic for the same lines.** For a swing of p at f Hz over an exposure t the smear is
+p sin(pi f t). At 5 ms the 82 Hz line smears 0.96 p; at 1 ms, 0.26 p. Blade-pass at 250-345 Hz
+smears the full swing at 5 ms and 0.71-0.88 p at 1 ms. Rolling-shutter waviness does not change
+with exposure. Scaling this flight's gains by 5 for a 1 ms exposure: SE median 1.46 to 7.3, SW 1.12
+to 5.6, 4% of frames above 16 on each pod.
 
 ---
 
@@ -312,9 +383,14 @@ regeneration is what makes it checkable when a sensor is moved or a session is r
 
 ## Topic 2 -- Is the blur largely a focus problem?
 
-**Current stance (operator):** probably substantially, on the campod. No sharp still has been seen off
-that camera under any circumstances, including stationary capture -- which is what makes focus the
-first suspect rather than motion or vibration.
+**Stance when written (operator):** probably substantially, on the campod. Through 260926 no sharp
+still had been seen off that camera under any circumstances, including stationary capture -- which
+is what made focus the first suspect rather than motion or vibration.
+
+**Since then:** the campod was found focused at 1.25 m while photographing the ground at flight
+altitude, a defocus floor on every survey frame to that date; #419 set `infinity`, and 2026-10-25
+flew at that setting. From 2026-10-26 the campods carry fixed-lens B0310 modules, so for them the
+question becomes whether the factory focus is at infinity, which is not known.
 
 **Observed:**
 
@@ -339,10 +415,14 @@ the flight value can be set from the measurement.
 
 ## Topic 3 -- Is the blur structured as bands of blur and sharpness?
 
-Carried forward from the OAK-D, where it was seen by eye. **Whether it is even present in the campod
-stills is unknown**, and may not be testable with the stills so far if they are uniformly soft --
+Carried forward from the OAK-D, where it was seen by eye. When written, **whether it was even present
+in the campod stills was unknown**, and might not have been testable if they were uniformly soft --
 banding is a *contrast* between bands, and there is no contrast to find in a frame that is soft
 throughout.
+
+**Observed, campod, 2026-10-25:** present. 215 of 230 in-flight SE frames and 86 of 236 SW frames
+fit a band; the numbers are in *Measured baseline*. The OAK-D mono cameras are global-shutter, so
+their never showing bands says nothing about the mechanism.
 
 **Observed, OAK-D only:**
 
@@ -366,8 +446,8 @@ operator's eye-marked bands on the campod frames it was first checked against, w
 Laplacian-energy ratio had put its crests on visibly blurry rows. That is agreement on a handful of
 frames, not a validation; the module docstring records what it does and does not fix.
 
-**What would discriminate it:** whether any campod still shows a sharpness *contrast* between rows at
-all. If none does, the topic is not yet testable on that camera and waits on topic 2.
+**What would have discriminated it:** whether any campod still shows a sharpness *contrast* between
+rows at all. 2026-10-25 answered that; see above.
 
 ---
 
@@ -379,6 +459,12 @@ it was told to hold, under vibration, for the duration of an exposure and across
 **Why it is open:** there is no evidence either way. A voice coil holds position against a spring by
 applied current; it is not a mechanical stop. Nothing has verified the achieved position in flight,
 by VCM readback or driver state.
+
+**From 2026-10-26** the campod modules have no voice coil, so this topic applies to the OAK-D colour
+camera and to campod stills through 2026-10-25. The 2026-10-25 band amplitude peak at Motor2 76-79 Hz
+(*Measured baseline*) is the one observation that bears on it: a lens on leaf springs is a resonator
+in the 80-200 Hz range `docs/campod.md` cites, and so is the mounting; the camera-mount ADXL has not
+been checked frame by frame for a peak at the same rev rate.
 
 **What would discriminate it:** image a fixed target on the bench with motors running and compare
 sharpness to motors-off at the same commanded position. If it degrades with the motors on while the
@@ -394,9 +480,19 @@ to predict different outcomes.
 The interesting form of the question is **whether the banding frequency follows whichever vibration
 component is largest where the camera sits.** That is testable in principle and would explain a
 rev-rate result on one camera and something else on another. It needs the vibration field at the
-camera, which as noted above nothing currently measures.
+camera, which from 2026-10-25 the camera-mount ADXL gives at the mounting.
 
-**Observed:**
+**Observed, 2026-10-25:**
+
+- The SE band frequency follows Motor2's rev rate frame by frame (r = 0.80, median difference
+  1.4 Hz) and not Motor4's, whose rev is uncorrelated with Motor2's across frames. Motor2 is the
+  slowest motor (82.7 Hz in hover) and the one whose arm carries campod-sw.
+- At the SE camera mount, Motor2's rev line is 0.618 m/s^2 against a 0.479 floor and Motor4's is
+  0.843; the largest line there is Motor3's blade-pass at 2.324. The band frequency is not the
+  largest line at that sensor.
+- Band amplitude against Motor2's rev: 0.42 at 76-79 Hz, 0.28-0.32 at the other speeds flown.
+
+**Observed, earlier:**
 
 - 260923, the arm sensor on the left-rear arm: the largest line at that sensor is its own motor's
   blade-pass, larger than that motor's rev line. That sensor sits in prop wash on the arm carrying the
@@ -422,8 +518,11 @@ camera, which as noted above nothing currently measures.
   compared against it.
 
 **What would discriminate it:** a banding frequency measured from an image, on a camera whose local
-vibration is also measured, on two configurations that move the candidate lines apart. Nothing
-currently satisfies all three.
+vibration is also measured, on two configurations that move the candidate lines apart. 2026-10-25
+gives the first two on one configuration. Moving the lines: 8-inch props at the same thrust raise
+rpm by about 1.56 (thrust goes as n^2 D^4), 83 to about 129 Hz; two-blade 10-inch props move
+blade-pass from 3x to 2x rev, onto the 165-230 Hz twice-per-rev family; centring the CG moves the
+lowest line from 83 to about 96-101 Hz and brings the four lines together.
 
 ---
 
@@ -458,6 +557,10 @@ constant across the exposure, `f*t_exp` below about 0.45, which is ~90 Hz at 5 m
 motion reverses within the exposure and the smear saturates while the formula keeps growing: it
 overstates by 1.48x at 120 Hz and 8.89x at 800 Hz. Every rotor-band blur figure computed that way was
 inflated.
+
+**One exposure datum from the OAK-D, 260730 (coordinator#158):** the global-shutter monos ran at a
+median 0.75 ms and were sharp while the colour still, pinned at the 5 ms cap, was not. The monos
+have no rolling shutter and coarser pixels, so this bears on exposure and not on the rest.
 
 ---
 
