@@ -89,7 +89,7 @@ int main() {
     if (lens_position < 0 || lens_position > 255) throw std::invalid_argument("OAK_LENS_POSITION must be 0..255");
     const int max_exposure_us = env_int("OAK_MAX_EXPOSURE_US", 1000);
     const int jpeg_quality = env_int("OAK_JPEG_QUALITY", 90);
-    const int accel_hz = env_int("OAK_IMU_ACCEL_HZ", 480);
+    const int accel_hz = env_int("OAK_IMU_ACCEL_HZ", 250);
     const int gyro_hz = env_int("OAK_IMU_GYRO_HZ", 400);
     const auto flag_path = capture::env_path("OAK_CAPTURE_FLAG", "/ipc/fc_armed");
 
@@ -177,6 +177,11 @@ int main() {
         // The IMU in its own frame, with nothing applied: the raw streams are the sensor's
         // output before DepthAI's alignment or calibration, which is what a vibration
         // spectrum wants.
+        //
+        // The accel stays below the gyro. With accel 480 (the BNO086 ran it at 507 Hz) and
+        // gyro 400, bench-20261027-three-node got exactly as many accel records as gyro
+        // records, and the accel sequence skipped one sample in five: the packets came at
+        // the gyro's rate with the newest accel report in each.
         auto imu = pipeline.create<dai::node::IMU>();
         imu->enableIMUSensor(dai::IMUSensor::ACCELEROMETER_RAW, accel_hz);
         imu->enableIMUSensor(dai::IMUSensor::GYROSCOPE_RAW, gyro_hz);
