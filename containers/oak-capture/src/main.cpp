@@ -85,6 +85,8 @@ int main() {
     const std::string node = capture::node_name("OAK_NODE_NAME", "/etc/host-hostname");
     const fs::path out_dir = std::getenv("OAK_CAPTURE_DIR") ? std::getenv("OAK_CAPTURE_DIR") : "/captures";
     const float fps = static_cast<float>(env_double("OAK_FPS", 2.0));
+    const int lens_position = env_int("OAK_LENS_POSITION", 115);
+    if (lens_position < 0 || lens_position > 255) throw std::invalid_argument("OAK_LENS_POSITION must be 0..255");
     const int max_exposure_us = env_int("OAK_MAX_EXPOSURE_US", 1000);
     const int jpeg_quality = env_int("OAK_JPEG_QUALITY", 90);
     const int accel_hz = env_int("OAK_IMU_ACCEL_HZ", 480);
@@ -154,11 +156,9 @@ int main() {
         // the rest -- and may go shorter in bright light. Every frame records what it got.
         auto color = pipeline.create<dai::node::Camera>()->build(dai::CameraBoardSocket::CAM_A, std::nullopt, fps);
         color->initialControl.setAutoExposureLimit(static_cast<uint32_t>(max_exposure_us));
-        // Fixed focus: AF off, the lens held where it was when the device was calibrated, so
-        // the stored colour intrinsics describe every frame.
-        const uint8_t lens_position = device->readCalibration().getLensPosition(dai::CameraBoardSocket::CAM_A);
+        // Fixed focus: AF off, the lens held at OAK_LENS_POSITION.
         color->initialControl.setAutoFocusMode(dai::CameraControl::AutoFocusMode::OFF);
-        color->initialControl.setManualFocus(lens_position);
+        color->initialControl.setManualFocus(static_cast<uint8_t>(lens_position));
         auto* color_out = color->requestFullResolutionOutput(dai::ImgFrame::Type::NV12, fps);
         auto encoder = pipeline.create<dai::node::VideoEncoder>()->build(*color_out);
         encoder->setDefaultProfilePreset(fps, dai::VideoEncoderProperties::Profile::MJPEG);
@@ -193,7 +193,7 @@ int main() {
         pipeline.start();
         std::cout << "oak-capture: node=" << node << " dir=" << session_dir.string() << " fps=" << fps
                   << " max_exposure_us=" << max_exposure_us << " jpeg_quality=" << jpeg_quality
-                  << " lens_position=" << static_cast<int>(lens_position) << " (calibration, AF off)"
+                  << " lens_position=" << lens_position << " (AF off)"
                   << " imu accel=" << accel_hz << "Hz gyro=" << gyro_hz << "Hz"
                   << " gate=" << (flag_path ? flag_path->string() : "none") << std::endl;
 

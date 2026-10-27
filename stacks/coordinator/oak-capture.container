@@ -28,6 +28,10 @@ Volume=/etc/fleet-image:/etc/fleet-image:ro
 # frame is kept. Not 1: the OV9282 monos refuse anything under 1.687 fps (measured
 # 2026-10-26, "Desired FPS 1 is lower than min FPS of the sensor config: 1.687").
 Environment=OAK_FPS=2
+# Colour lens position, 0..255, autofocus off; lower is farther. 115 is the far end of
+# Luxonis's fitted lens-position-vs-distance curve for the OAK-D (about 3 m; their
+# depth-driven-focus example).
+Environment=OAK_LENS_POSITION=115
 # Shutter ceiling in us, for all three cameras. A ceiling, not a fixed time: DepthAI has
 # no fixed-time, auto-gain mode (src/main.cpp).
 Environment=OAK_MAX_EXPOSURE_US=1000
