@@ -50,6 +50,11 @@ RC5_OPTION,153
 RC7_OPTION,18
 # CH8 = lost-vehicle buzzer while SF held.
 RC8_OPTION,30
+# CH10/SC = AUTO (16), the stored mission. Toward the pilot engages it, as SD does Land;
+#   middle and away both return to SB's mode (RC_Channel_Copter.cpp
+#   do_aux_function_change_mode: HIGH sets the mode, anything else resets to the mode
+#   switch if in that mode). Was 90, EKF source-set select, inert since VIO came out.
+RC10_OPTION,16
 #
 # --- Arming ---
 # Rudder arm/disarm off -- arming is on the CH5 latch, so a rudder gesture must not arm.
