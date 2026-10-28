@@ -44,6 +44,7 @@ cam_depression_deg = 90 - cam_vfov_deg / 2;   // 69.5: nadir at the bottom of th
 // ---------------------------------------------------------------- the camera
 cam_hole_dx = 21;               // M2 pattern, measured on the module (spec)
 cam_hole_dy = 13;
+cam_hole_d = 2.2;               // the module's hole; the plane margin is measured from its edge
 cam_board_w = 25;               // CM3 standard PCB, preview only
 cam_board_h = 24;
 cam_board_t = 1.1;
@@ -53,7 +54,7 @@ m2_pilot_depth = 4.0;           // not in spec
 
 // ---------------------------------------------------------------- the body
 face_centre_depth = 14;         // not in spec: camera plane below the mating face, on the bolt axis
-face_past_upper = 1.5;          // plane ends this far past the upper hole centres (spec)
+face_past_upper = 1.5;          // plane ends this far past the outer edge of the upper holes (spec)
 face_past_lower = 1.5;          // not in spec: same margin past the lower holes
 face_half_width = 14;           // not in spec: 12.5 board half-width + 1.5
 trunc_normal_len = 6;           // from the plane's upper edge, normal to the plane, then vertical (spec)
@@ -85,8 +86,8 @@ C = [0, 0, -face_centre_depth];                          // centre of the M2 pat
 
 // Section through the bolt axis in the (h, z) plane, h along hv.
 // The plane rises going outboard: z = -face_centre_depth + h * cot(p).
-u_max = cam_hole_dy / 2 + face_past_upper;
-u_min = -(cam_hole_dy / 2 + face_past_lower);
+u_max = cam_hole_dy / 2 + cam_hole_d / 2 + face_past_upper;
+u_min = -(cam_hole_dy / 2 + cam_hole_d / 2 + face_past_lower);
 function plane_pt(u) = [u * sin(p), -face_centre_depth + u * cos(p)];
 E = plane_pt(u_max);                                     // upper edge of the plane
 T = E + trunc_normal_len * [-cos(p), sin(p)];            // end of the normal drop
@@ -107,7 +108,7 @@ echo(str("inboard face height ", -P_in[1], " mm; outboard vertical face height "
          " mm; outboard face ", T[0], " mm from the bolt axis"));
 echo(str("seat floor ", -seat_floor_z, " mm below the mating face (material over the head); ",
          "seat wall to the outboard face ", T[0] - seat_d / 2, " mm at the floor"));
-echo(str("upper insert pilot edge to plane edge ", face_past_upper - m2_pilot_d / 2, " mm"));
+echo(str("upper insert pilot edge to plane edge ", cam_hole_d / 2 + face_past_upper - m2_pilot_d / 2, " mm"));
 
 // ================================================================ frames
 // Body frame: x = hv (out), y = -rv, z = up.
