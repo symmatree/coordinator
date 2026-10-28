@@ -1,9 +1,10 @@
-# FLIR Blackfly S BFS-U3-244S8M-C (rampod camera)
+# FLIR Blackfly S BFS-U3-244S8M-C
 
 [Back to index](README.md)
 
-The camera on the first **rampod** (Radxa Zero 3W camera pod). Later rampods carry Pi-style MIPI
-modules instead, so this is a per-unit fact, not a property of the role.
+The camera itself: what the product is, what FLIR documents, and what this unit does that the
+documents do not say. How it is mounted, powered, wired and run on the vehicle -- the pod
+called **blackfly** -- is in [blackfly.md](../blackfly.md).
 
 It is unlike every other camera on the vehicle in four ways, and each one changes how it is
 powered, wired or used:
@@ -12,8 +13,7 @@ powered, wired or used:
   every pixel, and there is no rolling-shutter readout to interact with vibration.
 - **Monochrome.** No Bayer filter.
 - **Large sensor, C-mount lens.** A 1.2" sensor behind an interchangeable machine-vision lens.
-- **USB3 only.** At full resolution it needs a USB3 host -- the reason the rampod is a Radxa
-  rather than a Zero 2 W.
+- **USB3 only.** At full resolution it needs a USB3 host.
 
 Sources are the model's own pages on Teledyne FLIR's documentation site, linked per section.
 Where a number is arithmetic on a published figure rather than a published figure, it says so.
@@ -95,24 +95,11 @@ present, it runs from VAUX.** The family GPIO page for a sibling model gives VAU
 ([BFS-U3-200S6](https://softwareservices.flir.com/BFS-U3-200S6/latest/Family/GPIOConnector.htm));
 the 244S8's own pages give 4.2 W for the camera overall and nothing separate for VAUX.
 
-The rest of the payload runs on 5 V pigtails from the UBEC ([central-hub.md](central-hub.md)).
-Against that, three ways to feed it:
-
-1. **USB bus power from the Radxa's USB3 port.** The Radxa takes its 5 V from a pigtail and
-   passes the camera's draw through its own input. The port's limit is set in hardware well above
-   840 mA -- see the host port below -- so the switch does not cap it. The camera's current then
-   shares the Radxa's single 5 V input with the board itself. FLIR's family docs say some hosts
-   and long cables cannot supply enough over USB and that GPIO power is required for those
-   systems ([BFS-U3-200S6](https://softwareservices.flir.com/BFS-U3-200S6/latest/Family/GPIOConnector.htm)),
-   and a Radxa forum user reported the host port sagging to about 4.2 V at about 1 A, supply
-   unknown
-   ([thread](https://forum.radxa.com/t/how-do-i-make-the-usb-c-port-offer-a-higher-maximum-current/24160)).
-2. **5 V to the camera's VBUS directly from a UBEC pigtail,** with the cable's VBUS conductor
-   broken on the Radxa side so the two sources are not tied. Data pairs pass through untouched.
-   The camera's current never passes through the Radxa.
-3. **VAUX.** 8 V minimum, so a 5 V pigtail cannot feed it directly, and a full 6S pack (25.2 V)
-   is over the 24 V maximum. Needs a 5 V to roughly 12 V boost converter, wired into the same
-   Hirose cable the trigger uses. Costs Line 3.
+VAUX takes 8-24 V, and powering from it costs Line 3 (the table above). FLIR's family docs say
+some hosts and long cables cannot supply enough over USB and that GPIO power is required for
+those systems
+([BFS-U3-200S6](https://softwareservices.flir.com/BFS-U3-200S6/latest/Family/GPIOConnector.htm)).
+Which of these the vehicle uses is in [blackfly.md](../blackfly.md).
 
 ## Trigger
 
@@ -140,23 +127,34 @@ blocks. Outputs are Line 1 (opto) or Line 2 (open drain).
 accept it with 1 us propagation delay and no stated current. OPTOIN accepts 3.3 V too but needs
 3.5-7 mA from the driver and adds 9-18 us.
 
-## The host port it plugs into (Radxa Zero 3W)
+## Status LED
 
-Read from the [v1.11 schematic](https://dl2.radxa.com/zero3/docs/hw/3w/radxa_zero_3w_v1110_schematic.pdf)
-(sheet 17, *USB Port*; sheet 22, *Power_DC IN*; sheet 20, *CONNECTOR*). Recorded here until the
-rampod has a hardware doc of its own.
+The model's own documentation has no LED page (its URL answers 404). The family page for a
+sibling model ([BFS-U3-200S6](https://softwareservices.flir.com/BFS-U3-200S6/latest/Family/StatusLED.htm)):
 
-- **The USB3 Type-C (J9) is `USB3_HOST1`.** Its VBUS comes from `VCC_SYS` through an
-  **SY6280AAC** load switch with EN pulled high (always on) and a 4.7 kOhm set resistor. The
-  datasheet gives `Ilim = 6800 / Rset`, so about **1.45 A** nominal; at the datasheet's +/-25 %
-  on its 1 A point, roughly 1.1-1.8 A. The "500 mA" in Radxa's
-  [product brief](https://dl2.radxa.com/zero3/docs/hw/3w/radxa_zero_3w_product_brief.pdf) is the
-  USB 3.0 specification figure, not this setting.
-  ([SY6280 datasheet](https://olimex.com/Products/Components/IC/SY6280/resources/SY6280AAC.PDF))
-- **SuperSpeed orientation is switched in software.** J9's SuperSpeed pairs pass through a
-  **CH482D** 2:1 mux whose `SEL` is driven from GPIO net `USB3.0_EN_H` through an N-FET; plug
-  orientation is detected by an **ET7301B** CC controller on I2C3. Consistent with plug
-  orientation deciding 480M vs 5000M enumeration.
-- **Header pins 2 and 4 and the OTG Type-C's VBUS are one net,** `+5V_INPUT`, which feeds
-  `VCC_SYS` through a 3 A ferrite. Powering the board from the header puts that 5 V on the OTG
-  port's VBUS as well.
+| LED | Meaning |
+|---|---|
+| Off | No power, or LED inactive |
+| Green, 1 / 2 / 3 blinks | USB1 / USB2 / USB3 link |
+| Solid green | Acquisition started |
+| Rapid flashing green | Firmware update in progress |
+| Green and red alternating | General error |
+
+The family page has no yellow. This unit showed yellow briefly at power-on, then blinking green.
+
+## This unit
+
+Serial **25034093** (`017DFD6D` in the USB device id), bought used. Read from SpinView on
+Windows and from Aravis on blackfly, 2026-10-27:
+
+- **Firmware 2103.0.628.0**, the version the spec page above is published for.
+- **Settings as found:** `UserSetDefault = Default`, `TriggerMode = Off`, `ExposureAuto` and
+  `GainAuto` `Continuous`, with `AutoExposureExposureTimeUpperLimit` 15000 us and
+  `AutoExposureGainUpperLimit` 18 dB. Indoors, auto exposure sat at both limits.
+- **On a USB 2.0 link** the camera reports `DeviceLinkThroughputLimit` 43,000,000 B/s and
+  caps `AcquisitionFrameRate` at 1.757 Hz at full resolution in Mono8.
+- **A camera left acquiring refuses `PixelFormat`.** The write fails `access-denied`. The XML
+  locks it on `TLParamsLocked || PixelFormat_Lck`, and `PixelFormat_Lck` is bit 28 of register
+  `0x86000`, which read `0xf8000009` (set) until `AcquisitionStop`, then `0xe8000009`. A
+  process that exits without stopping acquisition leaves the camera in that state.
+- **A dark reflective ND filter** was on the lens when it arrived.

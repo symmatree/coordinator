@@ -1,12 +1,15 @@
 # coordinator-flir-camera
 
-Still capture for a FLIR Blackfly S on USB3 Vision, written for the first rampod's
-BFS-U3-244S8M-C (Sony IMX540, mono, 5320x4600, global shutter). Captures free-running at
-a fixed rate (default 1 Hz) and writes each frame as a single-channel JPEG plus a JSON
-sidecar to local storage.
+Still capture for a FLIR Blackfly S on USB3 Vision. Captures free-running at a fixed rate
+(default 1 Hz) and writes each frame as a single-channel JPEG plus a JSON sidecar to local
+storage. The camera is described in
+[docs/rekon10/flir-blackfly-s.md](../../docs/rekon10/flir-blackfly-s.md); the pod that runs
+this image, its host configuration and its stack are in [docs/blackfly.md](../../docs/blackfly.md).
 
-**Status: tested only against Aravis's simulated camera.** No rampod board or FLIR camera
-has run it. The blackfly stack runs it as `blackfly-camera` (`stacks/blackfly/blackfly-camera.container`).
+**Status:** the blackfly stack runs it as `blackfly-camera`
+(`stacks/blackfly/blackfly-camera.container`). On 2026-10-28, under the stack's earlier
+`rampod` name, it ran on blackfly against the real camera: on the pod bus `ready`, streaming
+at 1.0 Hz, 5320x4600 Mono8. No armed capture has gone through the bus yet.
 
 ## What it does
 
@@ -51,10 +54,6 @@ it: a trigger input on Lines 0/2/3, or an `ExposureActive` output on Line 1/2.
 
 ## What the device has to provide
 
-- **USB access:** Aravis talks to the camera through libusb, so the container needs
-  `/dev/bus/usb` (campod-camera runs `--privileged`).
-- **usbfs buffer:** the host's `usbcore.usbfs_memory_mb` limits how much USB transfer
-  memory there is. The default is 16 MB, smaller than one 24.5 MB frame, and FLIR
-  recommends 1000.
-
-Both are host configuration, not this image's.
+USB access to the camera (Aravis goes through libusb on `/dev/bus/usb`) and a usbfs buffer
+limit above one frame. Both are host configuration, set where
+[docs/blackfly.md](../../docs/blackfly.md) says.
