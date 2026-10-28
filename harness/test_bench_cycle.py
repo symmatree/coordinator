@@ -53,16 +53,16 @@ check("an empty list gives None", bc.pick_session([]) is None)
 # Bus documents are RETAINED, so a pod that is down still publishes its last state. A check
 # for presence declared the cameras up mid-reboot and the trial ran against stale data.
 _UP = [{"raw": {"as_of_boot_s": 7366.0}}, {"raw": {"as_of_boot_s": 7365.0}},
-       {"raw": {"as_of_boot_s": 7364.0}}]
+       {"raw": {"as_of_boot_s": 7364.0}}, {"raw": {"as_of_boot_s": 7363.0}}]
 _FRESH = [{"raw": {"as_of_boot_s": 105.0}}, {"raw": {"as_of_boot_s": 100.0}},
-          {"raw": {"as_of_boot_s": 40.0}}]
+          {"raw": {"as_of_boot_s": 40.0}}, {"raw": {"as_of_boot_s": 35.0}}]
 check("retained pre-reboot documents are not mistaken for a fresh boot",
       not bc.is_fresh(_UP, 7000.0))
 check("uptime going backwards is a fresh boot", bc.is_fresh(_FRESH, 7000.0))
 check("one pod still stale fails the whole check",
-      not bc.is_fresh([_FRESH[0], _FRESH[1], _UP[0]], 7000.0))
+      not bc.is_fresh([_FRESH[0], _FRESH[1], _FRESH[2], _UP[0]], 7000.0))
 check("a document with no uptime is not fresh",
-      not bc.is_fresh([_FRESH[0], _FRESH[1], {"raw": {}}], 7000.0))
+      not bc.is_fresh([_FRESH[0], _FRESH[1], _FRESH[2], {"raw": {}}], 7000.0))
 check("no documents at all is not fresh", not bc.is_fresh([], 7000.0))
 # A pod that is ABSENT is not a fresh boot either, and this is how it got through: collect
 # reboots the coordinator, the broker runs there, and the retained documents are gone until
@@ -70,11 +70,11 @@ check("no documents at all is not fresh", not bc.is_fresh([], 7000.0))
 # `all()` over the one that came back is true. 2026-10-18: "a fresh boot on both campods:
 # ok" with campod-sw still up on its old boot and its ssh dead.
 check("one pod missing is not a fresh boot, however fresh the others look",
-      not bc.is_fresh(_FRESH[:2], 7000.0))
-# The coordinator is one of the three now: it is rebooted with the campods and its
-# session is collected, so its boot has to be seen going backwards like theirs.
-check("the count is every node in the cycle, the coordinator included",
-      len(bc.NODES) == 3 and "coordinator" in bc.NODES)
+      not bc.is_fresh(_FRESH[:3], 7000.0))
+# The coordinator and blackfly are rebooted with the campods and their sessions are
+# collected, so their boots have to be seen going backwards like the campods'.
+check("the count is every node in the cycle, the coordinator and blackfly included",
+      len(bc.NODES) == 4 and "coordinator" in bc.NODES and "blackfly" in bc.NODES)
 
 # ---- camera readiness -----------------------------------------------------------------
 # ONE FIELD, DECIDED ON THE POD. `camera.ready` is warm AND synced, combined by the campod
@@ -90,20 +90,20 @@ def _cam(ready=True):
     return {"raw": {"camera": {"ready": ready}}}
 
 
-check("all three ready is ready", bc.cameras_ready([_cam(), _cam(), _cam()]))
+check("every node ready is ready", bc.cameras_ready([_cam(), _cam(), _cam(), _cam()]))
 check("one pod not ready is not ready",
-      not bc.cameras_ready([_cam(), _cam(), _cam(ready=False)]))
+      not bc.cameras_ready([_cam(), _cam(), _cam(), _cam(ready=False)]))
 check("a camera with no document is not ready",
-      not bc.cameras_ready([_cam(), _cam(), {"raw": {}}]))
-check("two pods reporting is not all three", not bc.cameras_ready([_cam(), _cam()]))
+      not bc.cameras_ready([_cam(), _cam(), _cam(), {"raw": {}}]))
+check("three pods reporting is not all four", not bc.cameras_ready([_cam(), _cam(), _cam()]))
 # Absent, not false: a pod running an image from before #577 publishes no `ready` at all,
 # and "the field is missing" must not read as ready.
 check("a missing ready field is not ready",
-      not bc.cameras_ready([_cam(), _cam(), {"raw": {"camera": {"warm": True}}}]))
+      not bc.cameras_ready([_cam(), _cam(), _cam(), {"raw": {"camera": {"warm": True}}}]))
 # The halves are detail now. A gate that still looked at them would be the second
 # definition this change exists to delete.
 check("warm and sync_ready cannot make a pod ready on their own",
-      not bc.cameras_ready([_cam(), _cam(),
+      not bc.cameras_ready([_cam(), _cam(), _cam(),
                             {"raw": {"camera": {"warm": True, "sync_ready": True}}}]))
 
 # ---- every stage actually runs ---------------------------------------------------------
@@ -237,10 +237,11 @@ for stage, extra in (("deploy", ()), ("arm", ()), ("disarm", ()),
         check("it addresses the coordinator by the roster's own host field",
               any("10.0.99.75" in c for c in sent), str(sent))
     if stage == "collect":
-        check("collect reboots all three",
+        check("collect reboots every node",
               sorted(c[1] for c in calls if c[1].endswith("/reboot"))
-              == sorted(f"/nodes/{n}/reboot" for n in ("campod-se", "campod-sw", "coordinator")))
-        # ONE submission carrying ALL THREE nodes, not one call per node: the offloads are
+              == sorted(f"/nodes/{n}/reboot"
+                        for n in ("campod-se", "campod-sw", "coordinator", "blackfly")))
+        # ONE submission carrying EVERY node, not one call per node: the offloads are
         # steps of a single workflow, which is what lets them run at the same time. The
         # coordinator's session is in it: the OAK's frames and IMU, the router's tlog and
         # timesync, under captures/coordinator/<boot-id>/ like a campod's.
