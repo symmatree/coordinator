@@ -1,13 +1,13 @@
 # Carries capture intent from the coordinator and publishes this pod's state.
-# docs/pod-bus.md. The rampod's is the campod's (stacks/campod/pod-link.container, where
+# docs/pod-bus.md. The blackfly's is the campod's (stacks/campod/pod-link.container, where
 # each setting is explained) with its own collection unit and no accelerometer.
 [Unit]
-Description=rampod bus link
+Description=blackfly bus link
 # NOT PartOf the stack target: the control plane is not the payload (docs/pod-bus.md).
 
 [Container]
 Image=ghcr.io/symmatree/coordinator-pod-link:main
-ContainerName=rampod_pod_link
+ContainerName=blackfly_pod_link
 Pull=never
 Network=host
 PodmanArgs=--pid=host --stop-timeout=20
@@ -16,11 +16,11 @@ Volume=/tmp:/tmp
 Volume=/etc/hostname:/etc/host-hostname:ro
 Volume=/etc/fleet-image:/etc/fleet-image:ro
 Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket
-Volume=/var/lib/campod/captures:/captures:ro
+Volume=/var/lib/blackfly/captures:/captures:ro
 
 Environment=POD_LINK_ROLE=subscriber
 # The collectors a quiesce stops. Not pod-link itself.
-Environment=POD_LINK_COLLECTION_UNITS=rampod-camera
+Environment=POD_LINK_COLLECTION_UNITS=blackfly-camera
 Environment=POD_LINK_BROKER=tcp://10.55.0.1:1883
 Environment=POD_LINK_FLAG_FILE=/tmp/campod_capture
 Environment=POD_LINK_CAMERA_STATUS_FILE=/tmp/campod_camera_status

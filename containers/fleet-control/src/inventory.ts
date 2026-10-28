@@ -11,7 +11,7 @@ export const FleetNode = z.object({
   name: z.string().min(1),
   /** Hostname or IP to connect to. Defaults to `name`. */
   host: z.string().min(1).optional(),
-  role: z.enum(['coordinator', 'campod', 'rampod']),
+  role: z.enum(['coordinator', 'campod', 'blackfly']),
 });
 export type FleetNode = z.infer<typeof FleetNode>;
 

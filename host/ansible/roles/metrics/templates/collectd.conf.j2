@@ -90,8 +90,8 @@ LoadPlugin chrony
   # collectd runs on the host in the host PID namespace, so container processes
   # appear here with their host PIDs; nothing has to reach into a container.
   # "capture" is each pod's still capture, one name across the fleet: the campods'
-  # C++ binary, or the rampod's FLIR capture (containers/flir-camera, its image CMD).
-{% if device_role == 'rampod' %}
+  # C++ binary, or the blackfly's FLIR capture (containers/flir-camera, its image CMD).
+{% if device_role == 'blackfly' %}
   ProcessMatch "capture" "python3 /opt/flir/capture.py"
 {% else %}
   ProcessMatch "capture" "/opt/campod/campod-capture"

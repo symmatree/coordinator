@@ -2,23 +2,23 @@
 # contract -- the capture flag it reads, the camera status document pod-link publishes,
 # captures/<node>/<boot id>/ -- so the bus and session collection treat it as a pod.
 [Unit]
-Description=rampod still capture (FLIR Blackfly S)
-PartOf=rampod-stack.target
+Description=blackfly still capture (FLIR Blackfly S)
+PartOf=blackfly-stack.target
 # Frames are stamped with the wall clock, so wait for chrony as the campod capture does.
 After=time-sync.target
 Wants=time-sync.target
 
 [Container]
 Image=ghcr.io/symmatree/coordinator-flir-camera:main
-ContainerName=rampod_camera
+ContainerName=blackfly_camera
 Pull=never
-# The rampod image has no nft, so podman's default bridge network fails before the
+# The blackfly image has no nft, so podman's default bridge network fails before the
 # container starts ("netavark: nftables error: unable to execute nft").
 Network=host
 # Aravis reaches the camera through libusb on /dev/bus/usb.
 PodmanArgs=--privileged --stop-timeout=90
 
-Volume=/var/lib/campod/captures:/captures
+Volume=/var/lib/blackfly/captures:/captures
 Volume=/etc/hostname:/etc/host-hostname:ro
 Volume=/etc/fleet-image:/etc/fleet-image:ro
 Volume=/tmp:/tmp
@@ -33,4 +33,4 @@ TimeoutStopSec=120
 Restart=no
 
 [Install]
-WantedBy=rampod-stack.target
+WantedBy=blackfly-stack.target

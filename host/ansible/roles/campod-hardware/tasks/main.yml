@@ -123,8 +123,8 @@
       # autoload anyway; naming it is harmless and makes the pair legible in one place.
       dwc2
       {% endif %}
-      # On a rampod the controller is the RK3566's DWC3, put in peripheral mode by
-      # the rampod image's overlay; only the gadget function is loaded here.
+      # On the blackfly (a Radxa Zero 3W) the controller is the RK3566's DWC3, put in
+      # peripheral mode by its image's overlay; only the gadget function is loaded here.
       g_ether
 
 - name: Pin the g_ether MAC addresses
