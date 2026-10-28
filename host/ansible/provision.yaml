@@ -66,10 +66,10 @@
     - role: no-scheduled-maintenance
     - role: coordinator-hardware
       when: device_role == 'coordinator'
-    # A rampod is a camera pod on another board: same gadget link, same console and
-    # power handling. The board's own device tree comes from its image.
+    # The blackfly is a camera pod on another board (a Radxa Zero 3W): same gadget link,
+    # same console and power handling. The board's own device tree comes from its image.
     - role: campod-hardware
-      when: device_role in ['campod', 'rampod']
+      when: device_role in ['campod', 'blackfly']
 
   post_tasks:
     # NO REBOOT. This play used to end with reboot-and-wait, which put it in the middle of

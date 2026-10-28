@@ -6,7 +6,7 @@ a fixed rate (default 1 Hz) and writes each frame as a single-channel JPEG plus 
 sidecar to local storage.
 
 **Status: tested only against Aravis's simulated camera.** No rampod board or FLIR camera
-has run it. The rampod stack runs it as `rampod-camera` (`stacks/rampod/rampod-camera.container`).
+has run it. The blackfly stack runs it as `blackfly-camera` (`stacks/blackfly/blackfly-camera.container`).
 
 ## What it does
 
