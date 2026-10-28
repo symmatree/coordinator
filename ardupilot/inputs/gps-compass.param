@@ -2,9 +2,8 @@
 #
 # One device on the mast that ArduPilot sees as several things: the ZED-F9P GNSS
 # receiver, an onboard I2C compass, and the connector's safety button + LED. All of
-# its config is grouped here. Wiring: flight-platform.md. Per-vehicle compass
-# calibration (offsets/scale/device IDs) is produced by the compass cal and lives
-# only in the ground-truth export, not here.
+# its config is grouped here. Wiring: flight-platform.md. The compass calibration's
+# numbers are pinned below; its device IDs live only in the ground-truth export.
 #
 # --- Serial link (SERIAL2, the old M100 port) ---
 # Proto 5 = GPS. RTK/RTCM corrections are forwarded to the F9P on this UART.
@@ -71,20 +70,18 @@ COMPASS_ORIENT2,6
 # Instance 2 carries offsets and a scale but default diagonals and off-diagonals --
 # that is what was in the export, not an omission here.
 #
-# provenance: 3856c84 2026-09-23, the last export taken before the parameter store was
-# wiped (612c687 "Params after reset" zeroed all of these). These values are ahead of
-# the current export on purpose, which is the documented fragment-ahead-of-export state;
-# re-apply and re-export to bring them level, or supersede them with a fresh cal.
-COMPASS_OFS_X,-102.7058
-COMPASS_OFS_Y,31.46312
-COMPASS_OFS_Z,-24.97577
-COMPASS_DIA_X,0.9816729
-COMPASS_DIA_Y,0.9980292
-COMPASS_DIA_Z,1.031415
-COMPASS_ODI_X,-0.00401965
-COMPASS_ODI_Y,0.0365227
-COMPASS_ODI_Z,0.02941244
-COMPASS_SCALE,1.062919
+# provenance: instance 1 from the on-vehicle cal exported in 943837b 2026-10-27,
+# superseding the 3856c84 2026-09-23 values. Instance 2 is unchanged by that cal.
+COMPASS_OFS_X,-78.60564
+COMPASS_OFS_Y,40.36612
+COMPASS_OFS_Z,-17.63679
+COMPASS_DIA_X,0.994186
+COMPASS_DIA_Y,1.009791
+COMPASS_DIA_Z,1.045338
+COMPASS_ODI_X,6.181582E-05
+COMPASS_ODI_Y,0.03565602
+COMPASS_ODI_Z,0.02892364
+COMPASS_SCALE,1.043067
 COMPASS_OFS2_X,173.6031
 COMPASS_OFS2_Y,-115.2469
 COMPASS_OFS2_Z,-1.972043
