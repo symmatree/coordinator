@@ -44,6 +44,20 @@ From the [BFS-U3-244S8 spec](https://softwareservices.flir.com/BFS-U3-244S8/late
 A full frame is 24.47 MB in Mono8 and 36.7 MB in Mono12p (*arithmetic*). At 15 fps Mono8 that is
 367 MB/s, which is the link limit the frame-rate table was measured at.
 
+## Mounting holes
+
+From the model's [dimensional drawing](https://softwareservices.flir.com/BFS-U3-244S8/latest/40-Installation/Dimensions.htm)
+(Large Format; lens barrel "A" 6.5 mm ahead of the 39 mm body):
+
+- **Bottom:** 4x M3 x 0.5, 4.00 mm deep, on a 33.00 mm (front to back) x 23.00 mm (side to side)
+  rectangle. Centred on the 29 x 39 mm face, that is 3 mm in from every edge (*arithmetic*; the
+  drawing dimensions the 3 mm only on the top face).
+- **Top:** 2x M3 x 0.5, 4.00 mm deep, 23.00 mm apart side to side, 3.00 mm behind the body's front
+  face.
+
+The model's [Mounting](https://softwareservices.flir.com/BFS-U3-244S8/latest/40-Installation/Mounting.htm)
+page says otherwise -- two M2 x 2 mm on top, three M3 x 2.5 mm and four M2 x 2 mm on the bottom.
+
 ## Lens: Kowa LM16XC
 
 16 mm, f/2.0-f/22, C-mount, rated for 4/3" with a **23 mm image circle**, which covers the
