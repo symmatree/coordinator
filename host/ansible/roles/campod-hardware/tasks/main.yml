@@ -118,14 +118,11 @@
     mode: "0644"
     content: |
       # Managed by roles/campod-hardware.
-      {% if device_role == 'campod' %}
       # dwc2 is bound by the device-tree overlay in the campod image and would
       # autoload anyway; naming it is harmless and makes the pair legible in one place.
       dwc2
-      {% endif %}
-      # On the blackfly (a Radxa Zero 3W) the controller is the RK3566's DWC3, put in
-      # peripheral mode by its image's overlay; only the gadget function is loaded here.
       g_ether
+  when: device_role == 'campod'
 
 - name: Pin the g_ether MAC addresses
   ansible.builtin.copy:
@@ -135,6 +132,82 @@
       # Managed by roles/campod. Derived from the hostname; see the task comment.
       # Must exist before the module loads, which modules-load.d guarantees.
       options g_ether dev_addr={{ campod_dev_addr | trim }} host_addr={{ campod_host_addr | trim }}
+  when: device_role == 'campod'
+
+# blackfly: a CDC ECM gadget built in configfs instead of g_ether.
+#
+# Stock g_ether on blackfly's kernel presents two configurations, RNDIS first (value 2)
+# and CDC ECM second (value 1). On 2026-10-28, after the coordinator and blackfly
+# rebooted together, the coordinator selected the RNDIS one; cdc_subset took its data
+# interface, rndis_host then failed to probe with -16, and no frame crossed the link.
+# The Pi gadget presents no RNDIS configuration, which is why the campods never see
+# this. ECM alone gives the coordinator one configuration, the one cdc_ether binds on
+# the campods. libcomposite, u_ether and usb_f_ecm are built into the vendor kernel and
+# configfs is mounted, so there is nothing to load.
+- name: Remove the g_ether boot configuration on blackfly
+  # A provision before this change wrote them. Left in place, g_ether loads at boot
+  # and takes the controller before the configfs gadget can.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/modules-load.d/campod-gadget.conf
+    - /etc/modprobe.d/campod-g_ether.conf
+  when: device_role == 'blackfly'
+
+- name: Install the blackfly gadget script
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/blackfly-gadget
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by roles/campod-hardware. A CDC ECM gadget on the OTG controller, with
+      # the hostname-derived MACs g_ether used to take as module options.
+      set -eu
+      g=/sys/kernel/config/usb_gadget/blackfly
+      if [ -e "$g/UDC" ] && [ -n "$(cat "$g/UDC")" ]; then
+        exit 0
+      fi
+      mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/ecm.usb0"
+      # Linux Foundation's CDC Ethernet gadget id, the same pair g_ether uses for its
+      # ECM-only build.
+      echo 0x0525 > "$g/idVendor"
+      echo 0xa4a1 > "$g/idProduct"
+      echo "{{ ansible_hostname }}" > "$g/strings/0x409/product"
+      echo "CDC Ethernet" > "$g/configs/c.1/strings/0x409/configuration"
+      echo "{{ campod_dev_addr | trim }}" > "$g/functions/ecm.usb0/dev_addr"
+      echo "{{ campod_host_addr | trim }}" > "$g/functions/ecm.usb0/host_addr"
+      [ -e "$g/configs/c.1/ecm.usb0" ] || ln -s "$g/functions/ecm.usb0" "$g/configs/c.1/"
+      echo fcc00000.usb > "$g/UDC"
+  when: device_role == 'blackfly'
+
+- name: Install the blackfly gadget unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/blackfly-gadget.service
+    mode: "0644"
+    content: |
+      # Managed by roles/campod-hardware.
+      [Unit]
+      Description=CDC ECM USB gadget to the coordinator
+      Requires=sys-kernel-config.mount
+      After=sys-kernel-config.mount
+      Before=NetworkManager.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/local/sbin/blackfly-gadget
+
+      [Install]
+      WantedBy=multi-user.target
+  when: device_role == 'blackfly'
+
+- name: Enable the blackfly gadget unit
+  ansible.builtin.systemd:
+    name: blackfly-gadget.service
+    enabled: true
+    daemon_reload: true
+  when: device_role == 'blackfly'
 
 - name: Give the gadget interface its static address
   # Static both ends, no DHCP, nothing to run on the coordinator (#211). A keyfile
@@ -215,8 +288,20 @@
   # The options file above is already written, so this picks up the pinned MACs.
   ansible.builtin.command: modprobe g_ether
   when:
+    - device_role == 'campod'
     - "'g_ether' not in campod_lsmod.stdout"
   changed_when: true
+
+- name: Start the blackfly gadget now
+  # Only when g_ether is not holding the controller. On a blackfly provisioned before
+  # this change it is, and unloading it would drop a live link; the reboot after
+  # provisioning starts the unit with g_ether gone.
+  ansible.builtin.systemd:
+    name: blackfly-gadget.service
+    state: started
+  when:
+    - device_role == 'blackfly'
+    - "'g_ether' not in campod_lsmod.stdout"
 
 - name: Note that pinned MACs need a reload if the module was already up
   # modprobe will not re-read options for an already-loaded module, and unloading
@@ -227,6 +312,16 @@
       g_ether was already loaded, so any change to the pinned MAC addresses takes
       effect on the next reboot.
   when:
+    - device_role == 'campod'
+    - "'g_ether' in campod_lsmod.stdout"
+
+- name: Note that blackfly switches from g_ether to the configfs gadget at reboot
+  ansible.builtin.debug:
+    msg: >-
+      g_ether is loaded and holds the controller, so blackfly-gadget.service did not
+      start; the next reboot comes up on the CDC ECM gadget.
+  when:
+    - device_role == 'blackfly'
     - "'g_ether' in campod_lsmod.stdout"
 
 - name: Warn when this node has no gadget address assigned
