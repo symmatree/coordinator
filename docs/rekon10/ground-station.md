@@ -153,20 +153,20 @@ output for these switches:
 The shoulder switches (SE, SF) follow the same convention but are oriented
 differently on the radio body.
 
-All front-switch mixes use `weight: -100` to invert the raw signal so that
-the CRSF channel output is: **toward = low, away = high**. This means the
-FC-side configuration (Betaflight mode ranges, ArduPilot RC params) sees a
-consistent convention: low channel value = safe/toward, high = hot/away.
+The switch mixes in the REKON10 model ([`config/MODELS/model01.yml`](config/MODELS/model01.yml))
+are `weight: 100` with no output reversal, so the channel follows the raw switch:
+**toward = high, away = low**. An ArduPilot aux option acts on high, so on SD (Land)
+and SC (AUTO) toward the pilot engages and away is normal flight.
 
 **Switch layout (shared by both models):**
 
 Rekon10 **FC** parameters that must match this layout (`FLTMODE*`, `RCx_OPTION`, relay, etc.) are tracked in [ardupilot.md](ardupilot.md) as **remaining Mission Planner work** on top of this radio design.
 
-| Switch | Toward pilot (safe) | Away from pilot (hot) | Mix weight | Channel |
+| Switch | Toward pilot (channel high) | Away from pilot (channel low) | Mix weight | Channel |
 |--------|--------------------|-----------------------|------------|---------|
-| SA (2-pos) | VTX off (low, ~1000 us) | VTX on (high, ~2000 us) | -100 | CH9 |
-| SB (3-pos) | ANGLE (low), HORIZON (mid) | ACRO (high) | -100 | CH6 |
-| SD (2-pos) | Airmode off / **Land** on **CH7** (low) | Airmode on / normal (high) | -100 | CH7 |
+| SA (2-pos) | VTX off | VTX on | 100 | CH9 |
+| SB (3-pos) | ANGLE; HORIZON in the middle | ACRO | 100 | CH6 |
+| SD (2-pos) | Airmode off / **Land** on **CH7** | Airmode on / normal | 100 | CH7 |
 | SE (2-pos shoulder) | Disarmed (used by arm gate) | Armed (used by arm gate) | -- | via L1-L3 |
 | SF (momentary shoulder) | Released | Held (gate + buzzer) | 100 | CH8 |
 | SC (3-pos) | EKF source-set select: SRC1=GPS / SRC2=VIO (ExtNav) / SRC3=GPS -- runtime GPS-vs-VIO toggle for the VIO flight test | -- | -- | CH10 (`RC10_OPTION=90`, EKF_SOURCE_SET) |
