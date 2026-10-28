@@ -17,8 +17,8 @@ the cameras are being timed.
 
 The waits that matter, and what each is for:
 
-  all three converges together -- a play runs in its own pod, so the fleet-wide cap on
-    playbook runs is gone and the deploy takes one converge's time rather than three
+  every converge together -- a play runs in its own pod, so the fleet-wide cap on
+    playbook runs is gone and the deploy takes one converge's time rather than one per node
   a reboot after converging -- a converge installs and pulls and starts nothing, so the
     reboot is the apply step
   uptime going backwards before trusting any pod state -- the bus documents are retained,
@@ -26,7 +26,8 @@ The waits that matter, and what each is for:
   every camera `ready`, not merely present -- warmup frames are not capture frames. On a
     campod that is warm AND `sync_ready`, because warmup finishing does not mean the pair
     is aligned and a window that opens early spends its head discarding frames; on the
-    coordinator it is the OAK warm on all three of its cameras
+    coordinator it is the OAK warm on all three of its cameras; on blackfly it is warm
+    and frames arriving, since the FLIR capture has no sync of its own
   only the FC talker stopped to arm -- it owns the arm file, so it has to stop or it
     overwrites what we write, but oak-capture reads that same file and has to keep running
     or the coordinator's session has nothing in it
@@ -54,10 +55,13 @@ import urllib.request
 
 FLEET_URL = os.environ.get("FLEET_URL", "https://fleet.tiles.symmatree.com")
 CAMPODS = ("campod-se", "campod-sw")
+# The FLIR Blackfly S pod (containers/flir-camera). Same bus, same file contract, so the
+# cycle treats it as a pod.
+RAMPODS = ("blackfly",)
 # Every box the cycle converges, reboots, waits on and collects from. The coordinator is a
 # capture node too since oak-capture (#609): its session holds the OAK's frames and IMU
 # beside the router's tlog and timesync.
-NODES = ("coordinator", *CAMPODS)
+NODES = ("coordinator", *CAMPODS, *RAMPODS)
 ARM_FILE = "/var/lib/coordinator/ipc/fc_armed"
 # The unit that owns the arm file. Stopped by name, not by the bus quiesce: that stops
 # every unit in the coordinator's POD_LINK_COLLECTION_UNITS, which since #609 is the
@@ -288,9 +292,9 @@ def stage_deploy() -> None:
     for node in NODES:
         api(f"/nodes/{node}/reboot", method="POST", timeout=180)
         log(f"{node}: rebooting")
-    wait_for("a fresh boot on all three",
+    wait_for("a fresh boot on every node",
              lambda: is_fresh(fleet_pods(), before) and fleet_pods(), 900)
-    wait_for("every camera ready (the campods synced, the OAK warm)",
+    wait_for("every camera ready (the campods synced, the OAK warm, the FLIR streaming)",
              lambda: cameras_ready(fleet_pods()), 900)
     for p in fleet_pods():
         cam = (p.get("raw") or {}).get("camera") or {}
@@ -323,9 +327,9 @@ def stage_collect(flight: str) -> None:
     before = oldest_boot()
     for node in NODES:
         api(f"/nodes/{node}/reboot", method="POST", timeout=180)
-    log("all three rebooting -- this is what makes the data durable, since the router's "
+    log("every node rebooting -- this is what makes the data durable, since the router's "
         "own disarm sync() cannot run with the router stopped")
-    wait_for("a fresh boot on all three",
+    wait_for("a fresh boot on every node",
              lambda: is_fresh(fleet_pods(), before) and fleet_pods(), 900)
     time.sleep(60)
     targets = []
