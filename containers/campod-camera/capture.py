@@ -41,6 +41,7 @@ import re
 import signal
 import socket
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -794,9 +795,13 @@ def _copy_manifests(session_dir: Path) -> None:
         if name is None:
             m = re.search(r'^FLEET_UNIT="([^"]*)"', body, re.M)
             name = m.group(1) if m else src.name
-        tmp = out / f".{name}.{os.getpid()}"
-        tmp.write_text(body)
-        tmp.replace(out / name)
+        # mkstemp, not the pid: the accel reader writes the same manifests from its own
+        # container, where both are pid 2, so a pid-named temp was one file.
+        fd, tmp = tempfile.mkstemp(dir=out, prefix=f".{name}.")
+        with os.fdopen(fd, "w") as f:
+            f.write(body)
+        os.chmod(tmp, 0o644)
+        Path(tmp).replace(out / name)
 
 
 def _boot_id() -> str:
