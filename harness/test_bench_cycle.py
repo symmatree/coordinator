@@ -89,8 +89,10 @@ def _cam(ready=True):
     return {"raw": {"camera": {"ready": ready}}}
 
 
-_ALL_BUT_ONE = [_cam() for _ in bc.NODES[1:]]
-check("every node ready is ready", bc.cameras_ready(_ALL_BUT_ONE + [_cam()]))
+check("the coordinator is not a camera gate: no OAK on this flight",
+      "coordinator" not in bc.CAMERA_NODES and set(bc.CAMERA_NODES) == set(bc.CAMPODS))
+_ALL_BUT_ONE = [_cam() for _ in bc.CAMERA_NODES[1:]]
+check("every campod ready is ready", bc.cameras_ready(_ALL_BUT_ONE + [_cam()]))
 check("one pod not ready is not ready",
       not bc.cameras_ready(_ALL_BUT_ONE + [_cam(ready=False)]))
 check("a camera with no document is not ready",
