@@ -8,6 +8,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 
 #include "conventions.hpp"
 #include "durable_writer.hpp"
@@ -92,6 +93,27 @@ int main() {
     CHECK(slurp(dir / "session" / "manifests" / "oak-capture") == slurp(dir / "container-image"));
     CHECK(fs::exists(dir / "session" / "manifests" / "fleet-image"));
     CHECK(!fs::exists(dir / "session" / "manifests" / "absent"));
+
+    // Two writers of the same manifests at once. On a campod the camera and the accel
+    // reader are each pid 2 in their own containers, so a pid-named temp was one shared
+    // file and one rename threw (campod-nw 2026-10-29). Two threads share a pid too.
+    {
+        bool threw = false;
+        auto race = [&] {
+            try {
+                for (int i = 0; i < 200; ++i)
+                    capture::copy_manifests(dir / "race", {{dir / "fleet-image", "fleet-image"}});
+            } catch (...) { threw = true; }
+        };
+        std::thread a(race), b(race);
+        a.join(); b.join();
+        CHECK(!threw);
+        CHECK(slurp(dir / "race" / "manifests" / "fleet-image") == "IMAGE=1\n");
+        int leftovers = 0;
+        for (const auto& e : fs::directory_iterator(dir / "race" / "manifests"))
+            if (e.path().filename().string().front() == '.') ++leftovers;
+        CHECK(leftovers == 0);
+    }
 
     // PGM: header, then each row's first `width` bytes, skipping the stride padding.
     const uint8_t img[] = {1, 2, 3, 99, 4, 5, 6, 99};

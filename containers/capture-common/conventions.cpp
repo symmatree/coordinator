@@ -1,5 +1,6 @@
 #include "conventions.hpp"
 
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <cstdio>
@@ -112,9 +113,27 @@ void copy_manifests(const fs::path& session_dir,
             std::smatch m;
             name = std::regex_search(*body, m, unit_re) ? m[1].str() : src.filename().string();
         }
-        const fs::path tmp = out / ("." + name + "." + std::to_string(getpid()));
-        std::ofstream(tmp, std::ios::binary) << *body;
-        fs::rename(tmp, out / name);
+        // The temp name comes from mkstemp, not the pid: the camera and the accel reader
+        // write the same manifests from separate containers, where both are pid 2, so a
+        // pid-named temp was one file. One renamed it away and the other's rename threw;
+        // campod-nw 2026-10-29, `cannot rename ... .fleet-image.2`.
+        std::string tmpl = (out / ("." + name + ".XXXXXX")).string();
+        const int fd = ::mkstemp(tmpl.data());
+        if (fd < 0) {
+            std::cout << "capture: cannot create a temp file for " << name << " in " << out.string()
+                      << "; this session is unattributed" << std::endl;
+            continue;
+        }
+        const bool wrote = ::write(fd, body->data(), body->size()) == static_cast<ssize_t>(body->size());
+        ::fchmod(fd, 0644);
+        ::close(fd);
+        std::error_code ec;
+        if (wrote) fs::rename(tmpl, out / name, ec);
+        if (!wrote || ec) {
+            std::cout << "capture: cannot place " << name << " in " << out.string()
+                      << (ec ? ": " + ec.message() : "") << "; this session is unattributed" << std::endl;
+            fs::remove(tmpl, ec);
+        }
     }
 }
 

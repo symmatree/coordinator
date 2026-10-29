@@ -179,9 +179,24 @@ func copyManifests(sessionDir string) {
 		if m := regexp.MustCompile(`(?m)^FLEET_UNIT="([^"]*)"`).FindSubmatch(body); m != nil {
 			name = string(m[1])
 		}
-		tmp := filepath.Join(out, fmt.Sprintf(".%s.%d", name, os.Getpid()))
-		if err := os.WriteFile(tmp, body, 0o644); err != nil {
-			fmt.Printf("accel: cannot write %s: %v\n", tmp, err)
+		// CreateTemp, not the pid: the camera writes the same manifests from its own
+		// container, where it is pid 2 as this is, so a pid-named temp was one file.
+		f, err := os.CreateTemp(out, "."+name+".*")
+		if err != nil {
+			fmt.Printf("accel: cannot create a temp file for %s: %v\n", name, err)
+			continue
+		}
+		tmp := f.Name()
+		_, werr := f.Write(body)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr == nil {
+			werr = os.Chmod(tmp, 0o644)
+		}
+		if werr != nil {
+			fmt.Printf("accel: cannot write %s: %v\n", tmp, werr)
+			os.Remove(tmp)
 			continue
 		}
 		if err := os.Rename(tmp, filepath.Join(out, name)); err != nil {
