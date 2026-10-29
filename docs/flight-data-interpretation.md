@@ -459,7 +459,7 @@ underlying quantities, different message set and different names.
 | `mono_rect_left` | the actual VIO input, global shutter and fixed focus | only 260814 has it; capture is off by default from #216 |
 | `GPS` / `GPA` | fix status, `NSats`, `HDop`, and the receiver's own accuracy estimates -- `HAcc`, `VAcc`, `SAcc`. On 260923: `NSats` 6-18 median 13, `HDop` 1.09-4.20, `HAcc` down to 0.01 m | -- |
 | `UBX1` / `UBX2` | the F9P's own view of its RF environment, and the only in-band interference measurement the vehicle carries. `jamInd` 6-48 and `noisePerMS` 66-91 on 260923, each with a position on it | `agcCnt`, constant at 4563 for all 75 records of that log. And it is sparse -- 75 samples against `GPS`'s 1879 |
-| `RAD` / `RSSI` | **`RAD.RemRSSI` only** -- 9-52, median 37 on 260923. That is the ground end's report of what it hears, and the one live RF number in the log | everything else in them. `RAD.RSSI` sits pinned at 254, `RSSI.RXRSSI` at 1.0 because it is normalised from that, and `RSSI.RXLQ` at -1. And **per-antenna**: see below |
+| `RAD` / `RSSI` | **the ELRS receiver hearing the ground**, as its firmware fills `RADIO_STATUS` (below): `RAD.RSSI` = uplink LQ x 2.55, `RAD.RemRSSI` = minus the uplink RSSI in dBm on radio 1 (9-52, median 37 on 260923; -62 to -35 dBm on 2026-10-27), `RAD.Noise` = uplink SNR in dB as a two's-complement byte, `RAD.TxBuf` = free space in the receiver's MAVLink input buffer, % | the ground end of the link or the second radio -- neither is in it. `RSSI.RXRSSI` is `RAD.RSSI` normalised, and `RSSI.RXLQ` is -1 |
 | `PARM` | **the parameter set the vehicle actually flew, as far as a param download can see it.** 1293 names on 260814, 1283 on 260923 -- both equal to the FC export of the day. The authoritative answer to how the vehicle was configured when this data was recorded | the vehicle's configuration *now* (it is a record of that boot); and **not quite complete** -- see the enable-gated note below |
 
 **Configuration changes between flights, so cross-flight comparisons need dating.** The clearest
@@ -482,10 +482,13 @@ diversity receiver and knows which of its two antennas it is using; the per-ante
 the CRSF LinkStatistics frame. This link runs in ELRS **Link Mode MAVLink** -- a deliberate choice,
 recorded in [`rekon10/ground-station.md`](rekon10/ground-station.md), which is what gives the FC a
 MAVLink GCS link and the RTCM injection path -- so `SERIAL6_PROTOCOL = 2`, the FC sees
-`RADIO_STATUS` rather than LinkStatistics, and `RSSI_TYPE = 5` reads from it. `RXLQ` is -1 because
-`RADIO_STATUS` carries no link quality, and `RAD.RSSI` sits pinned at 254 with `RSSI.RXRSSI`
-normalised from it to 1.0. `RAD.RemRSSI` is the live number. `RAD.RSSI`/`RemRSSI` are the two
-**ends** of the link, air and ground, not antenna 1 and antenna 2.
+`RADIO_STATUS` rather than LinkStatistics, and `RSSI_TYPE = 5` reads from it. What the receiver puts
+in `RADIO_STATUS` is in ExpressLRS `src/src/rx-serial/SerialMavlink.cpp` (`sendQueuedData`):
+`rssi = uplink_Link_quality * 2.55`, `remrssi = uplink_RSSI_1` (stored as minus the dBm,
+`rx_main.cpp`), `noise = uplink_SNR`, `txbuf` = its input buffer's free %, and zeros elsewhere. So
+`RAD.RSSI` is link quality, near 254 whenever LQ is near 100 %, and every field is the vehicle's
+receiver -- not the two ends of the link, as an earlier version of this paragraph said. Radio 2's RSSI,
+the active radio, the downlink and transmit power are in LinkStatistics only.
 
 **Every `.feat` recorded with the capture overlay running is missing 38-59% of the frames the camera
 produced** (E31, [#156](https://github.com/symmatree/coordinator/issues/156)). Sessions that wrote no
