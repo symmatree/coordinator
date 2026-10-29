@@ -9,7 +9,7 @@ import sys
 
 from PIL import Image, ImageDraw
 
-from display import (BANNER_H, CHARS_PER_ROW, FOOTER_Y, ROW_Y, STALE_AFTER_S,
+from display import (CAMPODS, CELL_FONT, CHARS_PER_ROW, COL_X, FOOTER_Y, ROW_Y, STALE_AFTER_S,
                      draw_status, pod_row, status_from_bus, subsystem_letters)
 
 W, H = 128, 64
@@ -81,43 +81,45 @@ check("a pod whose letters look good but says not-ready is not ready",
 
 # ---- the gate -------------------------------------------------------------------------
 NOW = 100.0
-FRESH = {"campod-se": NOW, "campod-sw": NOW, "coordinator": NOW}
-both = status_from_bus({"campod-se": pod(), "campod-sw": pod(), "coordinator": COORD},
-                       FRESH, now=NOW)
-check("both campods ready opens the gate", both["gate"] is True)
-check("and both rows are drawn", [r["name"] for r in both["rows"]] == ["SE", "SW"],
-      str(both["rows"]))
+FRESH = {**{c: NOW for c in CAMPODS}, "coordinator": NOW}
+ALL = ["SE", "SW", "NE", "NW"]
+every = status_from_bus({**{c: pod() for c in CAMPODS}, "coordinator": COORD},
+                        FRESH, now=NOW)
+check("every campod ready opens the gate", every["gate"] is True)
+check("and every campod is drawn", [r["name"] for r in every["rows"]] == ALL,
+      str(every["rows"]))
 
 one_waiting = status_from_bus(
-    {"campod-se": pod(), "campod-sw": pod(ready=False, sync=False), "coordinator": COORD},
+    {**{c: pod() for c in CAMPODS}, "campod-nw": pod(ready=False, sync=False),
+     "coordinator": COORD},
     FRESH, now=NOW)
 check("one campod not ready holds the gate", one_waiting["gate"] is False)
 
-# ABSENCE IS THE IMPORTANT ONE: a pod that is not on the bus has no row to be lower case
-# in, so counting rows is half the gate.
-missing = status_from_bus({"campod-se": pod(), "coordinator": COORD},
-                          {"campod-se": NOW, "coordinator": NOW}, now=NOW)
+# ABSENCE IS THE IMPORTANT ONE: a pod that is not on the bus has no cell to be lower case
+# in, so counting cells is half the gate.
+missing = status_from_bus({**{c: pod() for c in CAMPODS[:-1]}, "coordinator": COORD},
+                          {**{c: NOW for c in CAMPODS[:-1]}, "coordinator": NOW}, now=NOW)
 check("a campod that is not on the bus holds the gate", missing["gate"] is False)
-check("and it simply has no row", [r["name"] for r in missing["rows"]] == ["SE"],
+check("and it simply has no cell", [r["name"] for r in missing["rows"]] == ALL[:-1],
       str(missing["rows"]))
 check("an empty bus holds the gate rather than crashing",
       status_from_bus({}, {}, now=NOW)["gate"] is False)
 
 # The coordinator's own capture pod, when it exists, is shown and does not gate.
 oak = status_from_bus(
-    {"campod-se": pod(), "campod-sw": pod(),
+    {**{c: pod() for c in CAMPODS},
      "coordinator": dict(COORD, ready=False, camera={"warm": False, "ready": False})},
     FRESH, now=NOW)
-check("the oak row is drawn first", [r["name"] for r in oak["rows"]] == ["oak", "SE", "SW"],
+check("the oak cell is drawn first", [r["name"] for r in oak["rows"]] == ["oak"] + ALL,
       str([r["name"] for r in oak["rows"]]))
 check("a not-ready oak pod does not hold the campods' gate", oak["gate"] is True)
-check("no oak document means no oak row", [r["name"] for r in both["rows"]] == ["SE", "SW"])
+check("no oak document means no oak cell", [r["name"] for r in every["rows"]] == ALL)
 
 check("the intent topic decides armed, not the pod documents",
       status_from_bus({"coordinator": COORD}, {"coordinator": NOW}, now=NOW,
                       intent={"capture": True})["capture"] is True)
-check("free space is read from the coordinator's document", both["free_gb"] == 24.7,
-      str(both["free_gb"]))
+check("free space is read from the coordinator's document", every["free_gb"] == 24.7,
+      str(every["free_gb"]))
 check("the blink phase alternates with the second",
       status_from_bus({}, {}, now=10.0)["blink"] != status_from_bus({}, {}, now=11.0)["blink"])
 
@@ -132,17 +134,29 @@ check(f"a full row fits the width (ink to {_probe.textbbox((4, 0), 'C' * CHARS_P
       _probe.textbbox((4, 0), "C" * CHARS_PER_ROW)[2] <= W - 2)
 check("one more character would not",
       _probe.textbbox((4, 0), "C" * (CHARS_PER_ROW + 1))[2] > W - 2)
-check("the banner's text stays inside its bar", 2 + _ink[3] <= BANNER_H + 2)
-check("the first row clears the banner", ROW_Y[0] + _ink[1] > BANNER_H)
+check(f"the footer stays on the panel (ink to {FOOTER_Y + _row_h})",
+      FOOTER_Y + _row_h <= H)
+
+# The cells: the widest a cell gets is a campod with every letter and a wide name. The
+# left column must leave a gap before the right one starts, and the right must end on the
+# panel. Cell text has no descenders, so its height is the cap height.
+_widest = max((f"{n} C S Ac Aa" for n in ("NW", "SW", "NE", "SE")),
+              key=lambda t: _probe.textlength(t, font=CELL_FONT))
+_cell = _probe.textbbox((0, 0), _widest, font=CELL_FONT)
+check(f"the left column's widest cell stops short of the right column "
+      f"(ink to {COL_X[0] + _cell[2]}, right starts {COL_X[1]})",
+      COL_X[0] + _cell[2] < COL_X[1] - 1)
+check(f"the right column's widest cell ends on the panel (ink to {COL_X[1] + _cell[2]})",
+      COL_X[1] + _cell[2] <= W)
+check("every campod plus the oak has a cell", len(ROW_Y) * len(COL_X) >= len(CAMPODS) + 1)
 for _i in range(len(ROW_Y) - 1):
-    check(f"row {_i} does not overlap row {_i + 1}",
-          ROW_Y[_i] + _row_h <= ROW_Y[_i + 1] + _ink[1])
-check("the last row does not overlap the footer", ROW_Y[-1] + _row_h <= FOOTER_Y + _ink[1])
-check(f"the footer clears the bottom border (ink to {FOOTER_Y + _row_h})",
-      FOOTER_Y + _row_h <= H - 1)
+    check(f"cell row {_i} does not overlap cell row {_i + 1}",
+          ROW_Y[_i] + _cell[3] < ROW_Y[_i + 1] + _cell[1])
+check("the last cell row does not overlap the footer",
+      ROW_Y[-1] + _cell[3] < FOOTER_Y + _ink[1])
 
 # ---- and it actually draws ------------------------------------------------------------
-for _name, _status in (("all ready", both), ("one waiting", one_waiting),
+for _name, _status in (("all ready", every), ("one waiting", one_waiting),
                        ("with an oak pod", oak),
                        ("empty bus", status_from_bus({}, {}, now=NOW))):
     _img = _render(_status)
@@ -150,11 +164,11 @@ for _name, _status in (("all ready", both), ("one waiting", one_waiting),
     check(f"{_name} stays inside the panel",
           _img.getbbox()[2] <= W and _img.getbbox()[3] <= H, str(_img.getbbox()))
 
-# The gate is meant to be read across a field, so it is a filled bar rather than a word:
-# the ready screen is substantially brighter than the waiting one.
-_lit = sum(_render(both).point(lambda v: 1 if v else 0).getdata())
+# The gate is meant to be read across a field, so it is the whole screen inverting rather
+# than a word: the ready screen is most of the panel lit, the waiting one is text.
+_lit = sum(_render(every).point(lambda v: 1 if v else 0).getdata())
 _dim = sum(_render(one_waiting).point(lambda v: 1 if v else 0).getdata())
-check(f"READY lights up the banner ({_lit} px lit vs {_dim})", _lit > _dim + 500)
+check(f"READY inverts the screen ({_lit} px lit vs {_dim})", _lit > W * H // 2 > _dim)
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

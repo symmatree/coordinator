@@ -8,10 +8,10 @@ opinion about the fleet's state -- one that could disagree with the bus every ot
 component reads, and one that knew nothing about the campods at all.
 
 WHAT IS ON IT, AND WHY THAT. This is the field instrument: no network, no table, someone
-standing over the vehicle deciding whether to arm. So it answers that first, as an
-inverted READY bar, and then explains itself -- one row per pod, `SE  C S Ac Aa`, where
-the name's case is that pod's own verdict and each letter is one subsystem, upper case
-when it is there. The operator decides what is an acceptable defect and what is a reason
+standing over the vehicle deciding whether to arm. So it answers that first, by inverting
+the whole screen when every campod is ready, and then explains itself -- one cell per pod,
+two to a row, `SE C S Ac Aa`, where the name's case is that pod's own verdict and each
+letter is one subsystem, upper case when it is there. The operator decides what is an acceptable defect and what is a reason
 to wait, which needs the parts shown separately, not one bit.
 
   C   camera present and warm          S   camera sync achieved
@@ -45,6 +45,8 @@ import os
 import signal
 import time
 
+from PIL import ImageFont
+
 _stop = False
 
 
@@ -68,7 +70,7 @@ STALE_AFTER_S = 15.0
 # The pod's own arm answer, read and not re-derived. This panel deliberately does not
 # combine `warm` and `sync_ready` itself: the campod does that (#577), so the panel and
 # the bench cycle's arm gate cannot drift into meaning different things by "ready".
-CAMPODS = ("campod-se", "campod-sw")
+CAMPODS = ("campod-se", "campod-sw", "campod-ne", "campod-nw")
 
 
 def subsystem_letters(doc):
@@ -185,13 +187,16 @@ def status_from_bus(docs, received, now, intent=None):
     }
 
 
-# MEASURED, NOT ASSUMED. PIL's default font draws 8 px wide glyphs whose ink runs from
-# 2 px to 12 px below the given y -- so a 128 px panel holds 15 characters at x=4, and a
-# row costs 11 px of height. The first layout here was written for 6x8 and clipped its
-# own footer. `test_display.py` asserts the fit rather than trusting this comment.
+# MEASURED, NOT ASSUMED. PIL's default font is proportional; its ink runs from 2 px to
+# 12 px below the given y, and 15 characters fit the footer. The first layout here was
+# written for 6x8 and clipped its own footer. The pod cells use the same face one size
+# down: at the default size `NW C S Ac Aa` is 64 px, a whole half-panel, and at 9 it is
+# 61, which fits two columns. Pod names and subsystem letters have no descenders, so a
+# cell row costs 11 px. `test_display.py` asserts the fit rather than trusting this comment.
 CHARS_PER_ROW = 15
-BANNER_H = 15
-ROW_Y = (17, 28, 39)
+CELL_FONT = ImageFont.load_default(size=9)
+COL_X = (1, 66)
+ROW_Y = (0, 11, 22, 33)
 FOOTER_Y = 50
 
 
@@ -200,12 +205,13 @@ def draw_status(draw, width, height, status):
 
     FOUR THINGS, in the order someone standing over the vehicle asks them:
 
-      1. the banner   -- can I arm. INVERTED (black on white) when every campod is on the
-                         bus and ready, so the one-bit answer differs by half the screen's
-                         brightness rather than by one word. WAIT otherwise
-      2. a row per pod -- `SE  C S Ac Aa`. The name's case repeats that pod's own verdict,
-                         the letters say which subsystem is not there yet. A pod that is
-                         not publishing HAS NO ROW, so the rows are the inventory too
+      1. the screen   -- can I arm. The WHOLE SCREEN INVERTS (black on white) when every
+                         campod is on the bus and ready, so the one-bit answer is the
+                         screen's brightness and costs no line of its own
+      2. a cell per pod -- `SE C S Ac Aa`, two to a row. The name's case repeats that pod's
+                         own verdict, the letters say which subsystem is not there yet. A
+                         pod that is not publishing HAS NO CELL, so the cells are the
+                         inventory too
       3. the footer   -- ARMED or idle, and the card space: the other thing checked before
                          a flight
       4. the blink    -- a dot in the corner, on for one second and off the next. Liveness
@@ -214,17 +220,15 @@ def draw_status(draw, width, height, status):
                          room for a clock beside the footer at 15 characters a row, and the
                          dot answers the only question the clock was answering
     """
-    draw.rectangle((0, 0, width - 1, height - 1), outline="white")
-
+    ink = "white"
     if status["gate"]:
-        draw.rectangle((1, 1, width - 2, BANNER_H), fill="white")
-        draw.text((width // 2 - 20, 2), "READY", fill="black")
-    else:
-        draw.text((width // 2 - 16, 2), "WAIT", fill="white")
+        draw.rectangle((0, 0, width - 1, height - 1), fill="white")
+        ink = "black"
 
-    for y, row in zip(ROW_Y, status["rows"]):
-        line = f"{row['name']:<4}{' '.join(row['letters'])}"
-        draw.text((4, y), line[:CHARS_PER_ROW], fill="white")
+    cells = [(x, y) for y in ROW_Y for x in COL_X]
+    for (x, y), row in zip(cells, status["rows"]):
+        draw.text((x, y), f"{row['name']} {' '.join(row['letters'])}", fill=ink,
+                  font=CELL_FONT)
 
     if status["capture"] is True:
         cap = "ARMED"
@@ -233,10 +237,10 @@ def draw_status(draw, width, height, status):
     else:
         cap = "cap --"
     free = "" if status["free_gb"] is None else f" {status['free_gb']:.0f}G"
-    draw.text((4, FOOTER_Y), f"{cap[:CHARS_PER_ROW - len(free)]}{free}", fill="white")
+    draw.text((4, FOOTER_Y), f"{cap[:CHARS_PER_ROW - len(free)]}{free}", fill=ink)
 
     if status["blink"]:
-        draw.rectangle((width - 6, height - 6, width - 3, height - 3), fill="white")
+        draw.rectangle((width - 6, height - 6, width - 3, height - 3), fill=ink)
 
 
 def main():
