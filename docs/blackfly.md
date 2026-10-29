@@ -84,7 +84,8 @@ The role and stack were named `rampod`, with state at `/var/lib/campod`, until c
 On 2026-10-28 the device still ran that earlier build; the rename reaches it with a reflash
 from the new image, then provision and converge.
 
-The bench simulated-flight cycle includes blackfly from coordinator#650.
+The bench simulated-flight cycle included blackfly from coordinator#650 until it was taken
+out for the 2026-10-29 four-campod flight, which blackfly is not mounted for.
 
 ## Not working yet
 
