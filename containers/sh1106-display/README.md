@@ -10,22 +10,21 @@ An **echo of the pod bus**, and nothing else: `rekon/pod/+/status` and
 `rekon/capture/intent`.
 
 ```
-+--------------------+
-|       READY        |   inverted bar: every campod is on the bus and ready
-|SE   C S Ac Aa      |
-|sw   C s Ac aa      |   sync still counting, arm accel missing -> not ready
-|ARMED 24G         . |   . blinks once a second
-+--------------------+
+oak C Ac          SE C S Ac Aa
+SW C S Ac Aa      NE C S Ac Aa
+nw C s Ac aa                      sync still counting, arm accel missing -> not ready
+
+idle disarm 25G               .   . blinks once a second
 ```
 
 This is the **field instrument**: no network, no table, someone standing over the vehicle
 deciding whether to arm. So it answers that first and explains itself second.
 
-- **the banner** -- `READY`, drawn black-on-white across the top, when every campod is
-  publishing and reports itself ready. `WAIT` otherwise. Inverted rather than worded so
-  the one-bit answer differs by half the screen's brightness instead of by one letter.
-- **one row per pod** -- the name's case is that pod's own verdict (`SE` ready, `se` not),
-  and the letters say which subsystem is not there yet:
+- **the whole screen inverts** (black on white) when every campod is publishing and
+  reports itself ready. The one-bit answer is the screen's brightness and costs no line.
+- **one cell per pod, two to a row** -- the name's case is that pod's own verdict (`SE`
+  ready, `se` not), and the letters say which subsystem is not there yet. Cells are drawn
+  one size down from the footer so two fit across:
 
   | | |
   |---|---|
@@ -37,11 +36,11 @@ deciding whether to arm. So it answers that first and explains itself second.
   Upper case is good. **A letter appears only if that pod claims the subsystem**, so a
   capture pod that never joins the sync group shows no `S` rather than a permanent
   lower-case one -- a letter that is always bad teaches you to stop reading it.
-- **no row at all** when a pod is not publishing, or its last document has aged out
-  (`STALE_AFTER_S`, three missed heartbeats). The rows are the inventory as well as the
-  status: a row existing means that pod is up and on the bus. Documents are retained, so
+- **no cell at all** when a pod is not publishing, or its last document has aged out
+  (`STALE_AFTER_S`, three missed heartbeats). The cells are the inventory as well as the
+  status: a cell existing means that pod is up and on the bus. Documents are retained, so
   one that exists is not evidence of life.
-- **the coordinator's own capture pod** gets a row too, named `oak`, if it publishes a
+- **the coordinator's own capture pod** gets a cell too, named `oak`, if it publishes a
   camera document. It is shown and does not gate -- say the word and that is one line.
 - **the footer** -- `ARMED` or `idle <reason>` from the capture intent, and the card's
   free space.
