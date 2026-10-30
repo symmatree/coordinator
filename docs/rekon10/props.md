@@ -9,8 +9,8 @@ a flights-to-props mapping in this file is a losing battle and would go stale im
 
 ## Set C
 
-Labelled C1-4, designated 2026-10-30. Part number **MQ10X4.8X3B-GRN**: the same HQ MacroQuad
-10x4.8x3 glass-fibre reinforced nylon prop as set B, in green.
+Labelled C1-4, designated 2026-10-30. Part number **MQ10X4.8X3B-GRN**, the same HQ MacroQuad
+10x4.8x3 glass-fibre reinforced nylon prop as set B.
 
 ## Set B
 
