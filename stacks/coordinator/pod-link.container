@@ -39,6 +39,8 @@ Environment=POD_LINK_DATA_DIR=/captures
 # OAK's: warm on all three cameras. Absent while oak-capture is not running.
 Environment=POD_LINK_CAMERA_STATUS_FILE=/ipc/oak_capture_status
 Environment=POD_LINK_ACCEL_STATUS_FILE=
+# When the router last heard the FC (#669), published as `fc` for the front panel.
+Environment=POD_LINK_FC_LINK_FILE=/ipc/fc_link
 
 [Service]
 TimeoutStopSec=40
