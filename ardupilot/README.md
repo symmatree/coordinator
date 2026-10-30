@@ -56,6 +56,10 @@ means "not yet applied." Run it by hand while reconciling: `python3 ardupilot/ve
    and replace `rekon10-methodi.param` (LF).
 3. `python3 ardupilot/verify.py` -- a mismatch means the fragment and the FC still disagree.
 
+An export taken with the FC on USB power exports `COMPASS_DEV_ID` (and `COMPASS_DEV_ID2`..`8`)
+as 0 and `COMPASS_DEC` as 0; one taken on battery power does not. Neither is pinned, so
+verify.py does not flag it, and it is not a fault.
+
 On a firmware bump, diff the new export against the old to find new/changed/renamed params
 and fold the keepers into the fragments; `gen_defaults_sitl.py` dumps the new version's
 code-defaults so you can separate a changed default from a changed value.
