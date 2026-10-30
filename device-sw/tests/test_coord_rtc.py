@@ -227,6 +227,19 @@ sys.stderr = _stderr
 check("hctosys sets the clock from the chip", rc == 0 and len(moved) == 1, f"rc={rc}")
 check("to the chip's own time, read as UTC",
       moved and abs(moved[0] - 1791742065) < 1, str(moved))
+
+# A chip with no VCC does not drive MISO: every register, status included, reads 0x00,
+# so OSF reads clear and the time is month 0, day 0. hctosys refuses it and says why,
+# rather than raising ValueError out of strptime (2026-10-30, hub board dark).
+moved.clear()
+bus = FakeBus({cr.REG_STATUS: 0x00, **{i: 0 for i in range(7)}})
+err = io.StringIO()
+sys.stderr = err
+rc = cr.cmd_hctosys(cr.Ds3234(bus))
+sys.stderr = _stderr
+check("hctosys refuses an all-zero read", rc == 1 and not moved, f"rc={rc} moved={moved}")
+check("and says it is not a date", "not a date" in err.getvalue(), err.getvalue())
+check("chip_seconds is None for an all-zero read", cr.chip_seconds(bytes(7)) is None)
 cr.set_system = _real_set
 
 # 13. The SOCK sample chrony will read. Size and magic are the two things that make
