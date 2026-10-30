@@ -9,8 +9,9 @@ import sys
 
 from PIL import Image, ImageDraw
 
-from display import (CAMPODS, CELL_FONT, CHARS_PER_ROW, COL_X, FOOTER_Y, ROW_Y, STALE_AFTER_S,
-                     draw_status, pod_row, status_from_bus, subsystem_letters)
+from display import (CAMPODS, CELL_FONT, CHARS_PER_ROW, COL_X, FC_STALE_AFTER_S, FOOTER_Y,
+                     ROW_Y, STALE_AFTER_S, draw_status, fc_heard, pod_row, status_from_bus,
+                     subsystem_letters)
 
 W, H = 128, 64
 
@@ -23,8 +24,11 @@ def pod(ready=True, warm=True, sync=True, accels=(True, True)):
                                   {"label": "arm", "present": accels[1]}]}}
 
 
-COORD = {"node": "coordinator", "state": "ok", "capture": False,
-         "data_free_bytes": 24_707_977_216}
+# Hearing the FC: pod-link stamped this document at 500 s, half a second after the
+# router's last heartbeat (#669).
+FC_OK = {"boot_id": "b", "last_heartbeat_mono_s": 499.5, "heartbeats": 480}
+COORD = {"node": "coordinator", "state": "ok", "capture": False, "as_of_boot_s": 500.0,
+         "data_free_bytes": 24_707_977_216, "fc": FC_OK}
 
 failures = []
 
@@ -115,6 +119,27 @@ check("the oak cell is drawn first", [r["name"] for r in oak["rows"]] == ["oak"]
 check("a not-ready oak pod does not hold the campods' gate", oak["gate"] is True)
 check("no oak document means no oak cell", [r["name"] for r in every["rows"]] == ALL)
 
+# ---- the FC link, without which arming reaches nothing (#669) -------------------------
+check("a fresh heartbeat is heard", fc_heard(COORD, 1.0) is True)
+check("a heartbeat older than the limit is not",
+      fc_heard(dict(COORD, fc=dict(FC_OK, last_heartbeat_mono_s=500.0 - FC_STALE_AFTER_S - 1)),
+               1.0) is False)
+check("a router that has heard nothing yet is not",
+      fc_heard(dict(COORD, fc=dict(FC_OK, last_heartbeat_mono_s=None)), 1.0) is False)
+check("no fc document (router down, or last boot's file) is not",
+      fc_heard({k: v for k, v in COORD.items() if k != "fc"}, 1.0) is False)
+# The age inside the document is as of its publication, so a document that has itself
+# gone stale says nothing about now.
+check("a stale coordinator document is not", fc_heard(COORD, STALE_AFTER_S + 1) is False)
+check("no coordinator document is not", fc_heard({}, None) is False)
+
+silent = status_from_bus(
+    {**{c: pod() for c in CAMPODS}, "coordinator": {k: v for k, v in COORD.items() if k != "fc"}},
+    FRESH, now=NOW)
+check("every campod ready but the FC silent holds the gate", silent["gate"] is False)
+check("and the status says the FC is not heard", silent["fc"] is False)
+check("every campod ready and the FC heard opens it", every["fc"] is True and every["gate"])
+
 check("the intent topic decides armed, not the pod documents",
       status_from_bus({"coordinator": COORD}, {"coordinator": NOW}, now=NOW,
                       intent={"capture": True})["capture"] is True)
@@ -157,12 +182,21 @@ check("the last cell row does not overlap the footer",
 
 # ---- and it actually draws ------------------------------------------------------------
 for _name, _status in (("all ready", every), ("one waiting", one_waiting),
+                       ("FC silent", silent),
                        ("with an oak pod", oak),
                        ("empty bus", status_from_bus({}, {}, now=NOW))):
     _img = _render(_status)
     check(f"{_name} renders something", _img.getbbox() is not None)
     check(f"{_name} stays inside the panel",
           _img.getbbox()[2] <= W and _img.getbbox()[3] <= H, str(_img.getbbox()))
+
+# NO FC is in the footer, where ARMED/idle was: with the wire silent, idle is the
+# router's default rather than the FC's answer.
+_nofc = _render(silent).crop((0, FOOTER_Y, 100, H))
+_want = Image.new("1", (W, H), 0)
+ImageDraw.Draw(_want).text((4, FOOTER_Y), "NO FC 25G", fill="white")
+check("a silent FC draws NO FC in the footer",
+      list(_nofc.getdata()) == list(_want.crop((0, FOOTER_Y, 100, H)).getdata()))
 
 # The gate is meant to be read across a field, so it is the whole screen inverting rather
 # than a word: the ready screen is most of the panel lit, the waiting one is text.

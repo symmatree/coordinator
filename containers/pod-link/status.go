@@ -118,6 +118,11 @@ type podStatus struct {
 	Camera json.RawMessage `json:"camera,omitempty"`
 	Accel  json.RawMessage `json:"accel,omitempty"`
 
+	// The router's FC-link document (#669), coordinator only: when it last heard an FC
+	// heartbeat, in the same seconds-since-boot as AsOfBootS, so a reader differences
+	// the two. Absent when the file is missing or from an earlier boot -- see fcLink.
+	FC json.RawMessage `json:"fc,omitempty"`
+
 	// Why the pod is not in the state it was asked for. A refused polkit
 	// authorisation and an unmounted D-Bus socket both land here rather than in a
 	// log nobody can reach from the bus.
@@ -207,6 +212,34 @@ func passThrough(path string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("%s is not valid JSON (%d bytes)", path, len(body))
 	}
 	return json.RawMessage(body), nil
+}
+
+// fcLink reads the router's FC-link document (#669) and passes it through only if it
+// was written this boot.
+//
+// The file lives on the card and the heartbeat time in it is seconds since ITS boot, so
+// last boot's document read against this boot's uptime would put a heartbeat at a
+// plausible-looking age. The router rewrites it at startup; a router that never started
+// this boot leaves the old one, and that must read as no link, not as an old one.
+func fcLink(path string) (json.RawMessage, error) {
+	body, err := passThrough(path)
+	if body == nil || err != nil {
+		return nil, err
+	}
+	var doc struct {
+		BootID string `json:"boot_id"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	ours, err := os.ReadFile(filepath.Join(procRoot, "sys", "kernel", "random", "boot_id"))
+	if err != nil {
+		return nil, fmt.Errorf("reading boot id: %w", err)
+	}
+	if doc.BootID != strings.TrimSpace(string(ours)) {
+		return nil, nil
+	}
+	return body, nil
 }
 
 // podReady answers "will arming this pod work" from the two documents it publishes.

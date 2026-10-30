@@ -28,6 +28,9 @@ Environment=COORD_CAPTURES_DIR=/captures
 # the DS3234's epoch while disarmed; /tmp here is /var/lib/coordinator/ipc, the same
 # volume the arm file uses. NOT a chrony input -- chrony's reference is the chip.
 Environment=MAVLINK_FC_TIME_FILE=/tmp/fc_time
+# When the router last heard an FC heartbeat (#669). pod-link passes it to the bus and
+# the front panel shows it.
+Environment=MAVLINK_FC_LINK_FILE=/tmp/fc_link
 
 [Service]
 TimeoutStopSec=60
