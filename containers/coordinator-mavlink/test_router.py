@@ -69,13 +69,15 @@ def main():
     ts_log = os.path.join(session, "timesync.jsonl")
     tlog = os.path.join(session, "vehicle.tlog")
     fc_time = os.path.join(tmpdir, "fc_time")
+    fc_link = os.path.join(tmpdir, "fc_link")
 
     proc = subprocess.Popen(
         [sys.executable, ROUTER, "--device", slave_name, "--baud", "115200",
          "--socket", sockpath, "--source-system", "1", "--source-component", "197"],
         stderr=subprocess.PIPE, text=True,
         env={**os.environ, "COORD_CAPTURES_DIR": captures,
-             "MAVLINK_FC_TIME_FILE": fc_time, "MAVLINK_TIMESYNC_PERIOD_S": "0.3"},
+             "MAVLINK_FC_TIME_FILE": fc_time, "MAVLINK_FC_LINK_FILE": fc_link,
+             "MAVLINK_TIMESYNC_PERIOD_S": "0.3"},
     )
     try:
         for _ in range(100):
@@ -163,7 +165,10 @@ def main():
 
         tx = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
         os.write(master_fd, tx.timesync_encode(0, 12345).pack(tx))
-        reply = [m for m in decode(read_for(master_fd, 1.0)) if m.get_type() == "TIMESYNC"]
+        # Matched by ts1: the router sends its own TIMESYNC requests (tc1 == 0) every
+        # 0.3 s here, and one can arrive ahead of the reply.
+        reply = [m for m in decode(read_for(master_fd, 1.0))
+                 if m.get_type() == "TIMESYNC" and m.ts1 == 12345]
         if reply and reply[0].tc1 != 0 and reply[0].ts1 == 12345:
             print(f"  TIMESYNC reply ok: ts1={reply[0].ts1}")
         else:
@@ -236,6 +241,30 @@ def main():
             else:
                 print(f"  fc_time ok: utc_minus_raw off by {(got - want) / 1e3:.1f} ms, "
                       f"raw stamp {raw_age_s:.3f} s old, this boot")
+
+        # #669: the FC-link file. Written at startup with no heartbeat, and by the time we
+        # get here nothing above has sent one, so it must still say none; then one FC
+        # heartbeat must stamp it with this boot and a monotonic time of about now.
+        link = json.load(open(fc_link)) if os.path.exists(fc_link) else None
+        if not link or link.get("last_heartbeat_mono_s") is not None or link.get("boot_id") != boot:
+            print(f"  FAIL: fc_link before any heartbeat is not this boot with none: {link}")
+            ok = False
+        os.write(master_fd, tx.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_QUADROTOR, mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            0, 0, mavutil.mavlink.MAV_STATE_STANDBY).pack(tx))
+        link = None
+        for _ in range(20):
+            time.sleep(0.1)
+            link = json.load(open(fc_link))
+            if link.get("heartbeats"):
+                break
+        age = (time.monotonic() - link["last_heartbeat_mono_s"]
+               if link.get("last_heartbeat_mono_s") is not None else None)
+        if link.get("heartbeats") != 1 or age is None or not 0 <= age < 5:
+            print(f"  FAIL: fc_link after one FC heartbeat: {link}")
+            ok = False
+        else:
+            print(f"  fc_link ok: one heartbeat, {age:.3f} s old")
 
         print("RESULT:", "PASS" if ok else "FAIL")
         return 0 if ok else 1

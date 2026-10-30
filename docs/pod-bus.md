@@ -321,6 +321,14 @@ Its `capture` field reports the arm file it publishes from, which is what this b
 knows about capture. It has no `camera` or `accel` section: the tracker and the router
 write into the session rather than publishing status documents.
 
+Its `fc` section is the router's FC-link file (`/var/lib/coordinator/ipc/fc_link`,
+#669): `last_heartbeat_mono_s`, the time of the last FC heartbeat in the same
+seconds-since-boot as `as_of_boot_s` (`null` until the first one), a `heartbeats` count,
+and the `boot_id` it was written in. pod-link passes it through only when that boot id is
+this boot's, because the file is on the card and outlives the boot whose clock it is in.
+`as_of_boot_s - fc.last_heartbeat_mono_s` is how long the FC has been silent; the front
+panel shows `NO FC` past 3 s. Absent means the router has not run this boot.
+
 ### Going closed needs no gate here
 
 `coord radio closed` refuses unless it can first ping the coordinator over the gadget
