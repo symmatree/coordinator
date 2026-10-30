@@ -260,6 +260,19 @@ def decode_time(regs: bytes) -> str:
     )
 
 
+def chip_seconds(regs: bytes) -> "int | None":
+    """The chip's time as a Unix second, or None when the registers are not a date.
+
+    A chip with no VCC does not drive MISO, so every register reads 0x00 -- month 0,
+    day 0 -- and the status register with them, so OSF reads clear. That is the board
+    unpowered or SPI not reaching it, not a time (2026-10-30, with the hub board dark).
+    """
+    try:
+        return calendar.timegm(time.strptime(decode_time(regs), "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
 def cmd_status(rtc: Ds3234) -> int:
     cr = rtc.read(REG_CONTROL)[0]
     sr = rtc.read(REG_STATUS)[0]
@@ -442,9 +455,11 @@ def pulse_boundary(rtc: Ds3234, deadline_s: float = 2.0,
             # edge rather than send a label that could be a whole second wrong.
             first = latest
             continue
-        regs = rtc.read(REG_SECONDS, 7)
-        stamp = decode_time(regs)
-        return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S")), at
+        chip_s = chip_seconds(rtc.read(REG_SECONDS, 7))
+        if chip_s is None:
+            first = latest
+            continue
+        return chip_s, at
     return None
 
 
@@ -666,7 +681,11 @@ def cmd_hctosys(rtc: Ds3234) -> int:
         return 1
     regs = rtc.read(REG_SECONDS, 7)
     stamp = decode_time(regs)
-    ts = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S"))
+    ts = chip_seconds(regs)
+    if ts is None:
+        print(f"the chip reads {stamp}, which is not a date: no VCC on the hub board, or "
+              "SPI not reaching it. The system clock is left alone.", file=sys.stderr)
+        return 1
     before = time.time()
     try:
         set_system(float(ts))
