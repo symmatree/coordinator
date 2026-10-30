@@ -249,8 +249,11 @@ int main() {
             sleep_unless_stopped(std::chrono::seconds(30));
             if (g_stop) break;
             session.publish();
-            // A fresh manager, because cameras are enumerated when one starts.
+            // A fresh manager, because cameras are enumerated when one starts. The old one
+            // is destroyed first: libcamera aborts the process if two exist at once, which
+            // assigning make_unique over it would do.
             cm->stop();
+            cm.reset();
             cm = std::make_unique<lc::CameraManager>();
             if (cm->start() == 0 && !cm->cameras().empty()) {
                 std::cout << "capture: camera appeared after " << static_cast<int>(mono_s() - waited_from)
