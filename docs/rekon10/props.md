@@ -7,7 +7,14 @@ remounts. This file records **which sets exist and what they are**.
 set B" is one line in the flight README and it is written when the flight happens. Trying to maintain
 a flights-to-props mapping in this file is a losing battle and would go stale immediately.
 
+## Set C
+
+Labelled C1-4, designated 2026-10-30. Part number **MQ10X4.8X3B-GRN**: the same HQ MacroQuad
+10x4.8x3 glass-fibre reinforced nylon prop as set B, in green.
+
 ## Set B
+
+**B1 and B2 thrown out (2026-10-30).** B3 and B4 remain.
 
 Manufacturer designation **HQ MacroQuad 10x4.8x3**. By the usual convention that is diameter 10 in,
 pitch 4.8, 3 blades -- the pitch unit is not verified against HQProp's own specification and may not
@@ -34,7 +41,7 @@ back on.
 
 ## Blade count
 
-Set A and set B are both three-blade. **This is a fact about particular flights, not a standing
+Sets A, B and C are all three-blade. **This is a fact about particular flights, not a standing
 property of the airframe** -- there are two- and three-blade props on hand specifically to test which
 peaks move with blade count, because with everything having a fundamental somewhere between roughly
 100 and 250 Hz and harmonics above that, numerical coincidences are easy to come by.
