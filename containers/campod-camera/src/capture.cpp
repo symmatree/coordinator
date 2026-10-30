@@ -62,12 +62,6 @@ std::string env_str(const char* name, const char* fallback) {
 
 double mono_s() { return capture::clock_triple().mono_ns / 1e9; }
 
-// Sleep in slices so a stop signal is acted on promptly.
-void sleep_unless_stopped(std::chrono::milliseconds total) {
-    const auto until = std::chrono::steady_clock::now() + total;
-    while (!g_stop && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(250));
-}
-
 // A metadata value, or null where the camera did not report it -- which is worth seeing in
 // the data rather than papering over.
 template <typename T>
@@ -231,41 +225,21 @@ int main() {
     });
     session.publish();
 
-    // A campod with no camera waits for one rather than exiting: the unit does not restart,
-    // and a re-probe picks up a ribbon reseated on the bench. Every probe re-stamps the
-    // status, because a document that stops advancing reads as a dead process.
+    // No camera at start is final for this boot. The kernel's sensor probe runs once, and
+    // only -EPROBE_DEFER is retried; a sensor that did not answer it (imx708 "failed to read
+    // chip id", -EIO) has no device until a reboot, and a CSI ribbon has no hotplug to
+    // trigger another probe. So there is nothing to wait for: say so on the bus and exit.
     auto cm = std::make_unique<lc::CameraManager>();
     if (cm->start() != 0) {
         session.fail("libcamera's camera manager did not start");
         return 1;
     }
     if (cm->cameras().empty()) {
-        std::cout << "capture: libcamera reports NO cameras. Check the ribbon is seated (both ends, "
-                     "contacts toward the board) and that this is a campod image. Waiting for a camera, "
-                     "re-probing every 30s."
-                  << std::endl;
-        const double waited_from = mono_s();
-        for (int probes = 1; !g_stop; ++probes) {
-            sleep_unless_stopped(std::chrono::seconds(30));
-            if (g_stop) break;
-            session.publish();
-            // A fresh manager, because cameras are enumerated when one starts.
-            cm->stop();
-            cm = std::make_unique<lc::CameraManager>();
-            if (cm->start() == 0 && !cm->cameras().empty()) {
-                std::cout << "capture: camera appeared after " << static_cast<int>(mono_s() - waited_from)
-                          << "s of waiting" << std::endl;
-                break;
-            }
-            if (probes % 10 == 0)
-                std::cout << "capture: still no camera after " << static_cast<int>((mono_s() - waited_from) / 60)
-                          << " min" << std::endl;
-        }
-    }
-    if (g_stop) {
-        session.set_status("camera", "stopped-while-waiting");
-        session.publish();
-        return 0;
+        session.set_status("camera", "absent");
+        session.fail("libcamera reports NO cameras. Check the kernel log for the sensor probe "
+                     "(journalctl -k | grep imx708) and that the ribbon is seated, both ends, "
+                     "contacts toward the board. A reboot is needed to probe again.");
+        return 1;
     }
     session.set_status("camera", "present");
     session.publish();

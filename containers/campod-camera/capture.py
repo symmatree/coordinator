@@ -592,40 +592,16 @@ def _apply_sync(picam2, mode):
     return mode
 
 
-# A campod with no camera waits for one; it does not exit. Exiting means docker's
-# `restart: unless-stopped` brings us straight back, and every restart re-pays the
-# picamera2 import only to rediscover the same absent camera. Measured on campod-se
-# with no camera attached: 60 restarts in two hours -- one every ~2 min -- at a
-# sustained load average of ~8. The Zero 2 W is quad-core, so that is roughly 2x
-# oversubscribed rather than 8x, but it is 2x oversubscribed doing nothing.
-#
-# Worse, the entrypoint runs the accelerometer reader as a child and `exec`s us in
-# the foreground, so the container's life is our life. A missing camera was
-# therefore killing a working pair of ADXL345s every couple of minutes, chopping
-# their record into fragments (~70 s, on the one session captured off that node).
-# The entrypoint states the principle for the other half -- "a missing sensor must
-# never cost us the frames" -- and this is the converse it did not cover.
-#
-# Waiting also makes the camera hot-pluggable, which the accelerometer reader
-# already is: each probe is a fresh look, so a ribbon reseated on the bench is
-# picked up without a restart. The 30 s cadence is the accelerometer retry's, for
-# no stronger reason than that one operator-visible retry period beats two.
-CAMERA_PROBE_INTERVAL_S = 30.0
-# Log cadence while waiting, in probes. The first miss prints immediately; after
-# that a heartbeat every 10th probe (5 min) keeps the journal honest about a pod
-# that is up but blind, without spamming it.
-CAMERA_WAIT_HEARTBEAT_PROBES = 10
+# No camera at start is final for this boot. The kernel's sensor probe runs once and
+# only -EPROBE_DEFER is retried; a sensor that did not answer it (imx708 "failed to
+# read chip id", -EIO) has no device until a reboot, and a CSI ribbon has no hotplug
+# to trigger another probe. So there is nothing to wait for: say so and exit. The unit
+# is Restart=no and the accelerometer reader is its own container, so exiting neither
+# crash-loops nor takes the accelerometers with it (#278).
 
 
-def _wait_for_camera(heartbeat=None):
-    """Return libcamera's camera list, blocking until one appears.
-
-    Returns None if a stop signal arrives while waiting.
-
-    heartbeat is called once per probe. A pod with a half-seated ribbon is the
-    field fault these have, and it has to keep re-stamping its status while it
-    waits: a document that stops advancing reads as a dead process, which is a
-    different fault needing a different response.
+def _probe_camera():
+    """Return libcamera's camera list, or an empty list after saying why there is none.
 
     Probing BEFORE constructing Picamera2() is load-bearing: Picamera2() on a node
     with no camera raises picamera2's own `IndexError: list index out of range`
@@ -639,48 +615,14 @@ def _wait_for_camera(heartbeat=None):
     apart from the log alone.
     """
     cameras = Picamera2.global_camera_info()
-    if cameras:
-        return cameras
-
-    print(
-        "capture: libcamera reports NO cameras. Check the ribbon is seated "
-        "(both ends, contacts toward the board) and that this is a campod "
-        "image -- camera_auto_detect=1 comes from the vendor config. Waiting "
-        f"for a camera, re-probing every {CAMERA_PROBE_INTERVAL_S:.0f}s.",
-        flush=True,
-    )
-
-    probes = 0
-    waited_start = time.monotonic()
-    while not _stop:
-        # Sleep in slices so SIGTERM stops us promptly rather than up to a full
-        # probe interval later -- docker stop's grace period is 10 s.
-        deadline = time.monotonic() + CAMERA_PROBE_INTERVAL_S
-        while not _stop and time.monotonic() < deadline:
-            time.sleep(0.25)
-        if _stop:
-            break
-
-        if heartbeat is not None:
-            heartbeat()
-        cameras = Picamera2.global_camera_info()
-        probes += 1
-        if cameras:
-            print(
-                "capture: camera appeared after "
-                f"{time.monotonic() - waited_start:.0f}s of waiting",
-                flush=True,
-            )
-            return cameras
-        if probes % CAMERA_WAIT_HEARTBEAT_PROBES == 0:
-            print(
-                "capture: still no camera after "
-                f"{(time.monotonic() - waited_start) / 60:.0f} min",
-                flush=True,
-            )
-
-    print("capture: stop requested while waiting for a camera", flush=True)
-    return None
+    if not cameras:
+        print(
+            "capture: libcamera reports NO cameras. Check the kernel log for the "
+            "sensor probe (journalctl -k | grep imx708) and that the ribbon is seated "
+            "(both ends, contacts toward the board). A reboot is needed to probe again.",
+            flush=True,
+        )
+    return cameras
 
 
 # Where the stack file mounts the host's own /etc/hostname.
@@ -915,11 +857,13 @@ def main():
         _write_status(status_path, state)
 
     publish()
-    cameras = _wait_for_camera(heartbeat=publish)
-    if cameras is None:  # SIGTERM while waiting
-        state["camera"] = "stopped-while-waiting"
+    cameras = _probe_camera()
+    if not cameras:
+        state["camera"] = "absent"
+        state["phase"] = "failed"
+        state["error"] = "libcamera reports NO cameras"
         publish()
-        return 0
+        return 1
     state["camera"] = "present"
     publish()
     print(
