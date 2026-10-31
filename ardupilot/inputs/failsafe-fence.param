@@ -8,9 +8,9 @@ FS_THR_ENABLE,3
 FS_GCS_ENABLE,1
 #
 # --- Land ---
-# LAND descent above LAND_ALT_LOW_M, in m/s; 0 would use WP_SPD_DN (1.5). Set below
-#   1.5 after the 2026-10-30 blackfly-flight landing tipped over.
-LAND_SPD_HIGH_MS,1.2
+# LAND final descent (below LAND_ALT_LOW_M) to touchdown, in m/s. Lowered from 0.5
+#   after the 2026-10-30 blackfly-flight landing tipped over.
+LAND_SPD_MS,0.4
 #
 # --- Fence ---
 # Fence is off; the limits below are staged, not active.
