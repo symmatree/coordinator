@@ -1,11 +1,16 @@
 # Failsafe and fence
 #
-# Radio and GCS failsafe; geofence. Operating envelope: canopy-ops.md.
+# Radio and GCS failsafe; landing; geofence. Operating envelope: canopy-ops.md.
 #
 # --- Failsafe ---
 # Throttle/radio failsafe on (3 = enabled, continue mission in Auto/Guided).
 FS_THR_ENABLE,3
 FS_GCS_ENABLE,1
+#
+# --- Land ---
+# LAND descent above LAND_ALT_LOW_M, in m/s; 0 would use WP_SPD_DN (1.5). Set below
+#   1.5 after the 2026-10-30 blackfly-flight landing tipped over.
+LAND_SPD_HIGH_MS,1.2
 #
 # --- Fence ---
 # Fence is off; the limits below are staged, not active.
