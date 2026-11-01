@@ -19,7 +19,7 @@ RUN cmake -S oak-capture -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PRE
   && ./build/capture-common/test_session
 
 # The same Debian as coordinator-mavlink, so the base layer is already on the coordinator.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \

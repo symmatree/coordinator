@@ -8,12 +8,12 @@
 # where a resident process costs its RSS once and an invoked binary costs a
 # page-cache eviction every time.
 
-ARG BASE_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+ARG BASE_IMAGE=debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
 
 # --platform=$BUILDPLATFORM so the compile and the tests run natively on the
 # builder rather than under QEMU; only the output is arm64. Same shape as the
 # accel reader's stage in campod-camera.
-FROM --platform=$BUILDPLATFORM golang:1.26-trixie@sha256:771f3162219f7a66bb6be3fea1ba31f418932946a99ad9eac26ffd555dfcf393 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-trixie@sha256:a050dcceee6eb9bf110151662dfac7662f3bec40927c7dee48731e3d92083d42 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 # Pinned by go.sum, so a moved upstream fails the build rather than silently

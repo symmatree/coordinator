@@ -14,7 +14,7 @@
 
 # Declared before the first FROM so it is a GLOBAL arg: an ARG after a FROM
 # belongs to that stage only, and the final `FROM ${BASE_IMAGE}` could not see it.
-ARG BASE_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+ARG BASE_IMAGE=debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
 
 # The accelerometer reader is Go, not Python, because it needs to build a proper
 # multi-transfer SPI message with explicit inter-transfer delays -- which py-spidev
@@ -27,7 +27,7 @@ ARG BASE_IMAGE=debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01cc
 #
 # --platform=$BUILDPLATFORM so the compile and the tests run natively on the
 # builder instead of under QEMU; only the output is arm64.
-FROM --platform=$BUILDPLATFORM golang:1.26-trixie@sha256:771f3162219f7a66bb6be3fea1ba31f418932946a99ad9eac26ffd555dfcf393 AS accel-build
+FROM --platform=$BUILDPLATFORM golang:1.26-trixie@sha256:a050dcceee6eb9bf110151662dfac7662f3bec40927c7dee48731e3d92083d42 AS accel-build
 WORKDIR /src
 COPY campod-camera/accel/ ./
 # Hardware-free: a fake SPI part covers the register protocol, the signed decode

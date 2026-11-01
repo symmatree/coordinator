@@ -14,7 +14,7 @@
 #
 # Local build (arm64 box, or QEMU):
 #   docker build -t coordinator-vio-tracker-base:local containers/vio-tracker-base
-FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG DEPTHAI_CORE_TAG=v2.25.0

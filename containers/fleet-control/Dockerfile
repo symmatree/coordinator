@@ -9,7 +9,7 @@
 # Carries ansible-core because the workflow step runs in this image. It does not carry the
 # playbooks: the step fetches the published artifact at run time.
 
-FROM node:24-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS build
+FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS build
 WORKDIR /app
 COPY containers/fleet-control/package.json containers/fleet-control/package-lock.json ./
 RUN npm ci
@@ -17,7 +17,7 @@ COPY containers/fleet-control/tsconfig.json ./
 COPY containers/fleet-control/src ./src
 RUN npm run build && npm prune --omit=dev
 
-FROM node:24-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553
+FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
 ENV NODE_ENV=production
 WORKDIR /app
 
