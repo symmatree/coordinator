@@ -15,9 +15,10 @@ SERIAL7_BAUD,57
 # protocol 2 this link is MAV4 (SERIAL0 = MAV1, SERIAL4 = MAV2, SERIAL6 = MAV3); SERIAL9 (OTG)
 # moves from MAV4 to MAV5.
 #
-# Downlink at 1 Hz: the four groups the ELRS link carries (EXT_STAT = SYS_STATUS + GPS_RAW,
-# POSITION = global/local position, EXTRA1 = ATTITUDE, EXTRA2 = VFR_HUD) plus EXTRA3
-# (battery, EKF status, vibration and the rest of that group). The receiver's RADIO_STATUS
+# Downlink: the four groups the ELRS link carries at 2 Hz (EXT_STAT = SYS_STATUS + GPS_RAW,
+# POSITION = global/local position, EXTRA1 = ATTITUDE, EXTRA2 = VFR_HUD), EXTRA3 (battery, EKF
+# status, vibration and the rest of that group) and RC_CHAN (RC_CHANNELS + SERVO_OUTPUT_RAW,
+# so a radio switch can annotate the ground log) at 1 Hz. The receiver's RADIO_STATUS
 # ("Rx Snd RadioStat" = ardu_1) drives ArduPilot's flow control on this channel
 # (GCS_Common.cpp handle_radio_status: txbuf < 50 slows the streams), so an oversubscribed
 # link slows the streams rather than overflowing.
@@ -26,18 +27,18 @@ SERIAL7_BAUD,57
 # and 64 B up (mLRS frame_types.h, setup.h): 2560 B/s down, 2000 B/s up at full link quality.
 # Wire bytes per 1 Hz tick of each group, measured on the coordinator tlog of 2026-10-27
 # (all groups at 2 Hz there): EXT_STAT 202, POSITION 76, EXTRA1 131, EXTRA2 31,
-# EXTRA3 229, RC_CHAN 78; HEARTBEAT 21 B/s. The rates below come to ~690 B/s, 27% of the
+# EXTRA3 229, RC_CHAN 78; HEARTBEAT 21 B/s. The rates below come to ~1210 B/s, 47% of the
 # downlink.  provenance: 2026-11-01
-MAV4_EXT_STAT,1
-MAV4_POSITION,1
-MAV4_EXTRA1,1
-MAV4_EXTRA2,1
+MAV4_EXT_STAT,2
+MAV4_POSITION,2
+MAV4_EXTRA1,2
+MAV4_EXTRA2,2
 MAV4_EXTRA3,1
+MAV4_RC_CHAN,1
 MAV4_ADSB,0
 MAV4_PARAMS,0
 MAV4_RAW_CTRL,0
 MAV4_RAW_SENS,0
-MAV4_RC_CHAN,0
 #
 # 6 = bit 1 NO_FORWARD + bit 2 NOSTREAMOVERRIDE (GCS.h, enum class Option).
 #   NO_FORWARD: the same reason as MAV3_OPTIONS in rc-modes.param -- without it the FC relays
