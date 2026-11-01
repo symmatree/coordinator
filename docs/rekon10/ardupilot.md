@@ -27,11 +27,11 @@ Values: [`ardupilot/inputs/`](../../ardupilot/inputs) -- `SERIAL*` params sit wi
 | SERIAL3 | `PROTOCOL = 42`, `BAUD = 115` | Walksnail MSP (TX3/RX3 only; VTX power is other FC pads, not UART3) |
 | SERIAL4 | `PROTOCOL = 2`, `BAUD = 1500` | Coordinator (Pi 4B, VIO) -- MAVLink2 companion link, now cabled (1.5 Mbaud) |
 | SERIAL6 | `PROTOCOL = 2`, `BAUD = 460` | Matek ELRS R24-TD (see [ground-station.md](ground-station.md); `model01.yml` header `modelId` **10**) |
-| SERIAL7 | `PROTOCOL = -1` | Unused |
+| SERIAL7 | `PROTOCOL = 2`, `BAUD = 57` | RadioMaster RP4TD on mLRS -- corrections up, telemetry down, to the attic Ranger (`mlrs-link.param`) |
 | SERIAL8 | `PROTOCOL = 16` | ESC ribbon |
 | SERIAL9 | `PROTOCOL = 2`, `BAUD = 115` | Unused |
 
-*Wiring resolved 2026-07 from the recorded pigtail pads + the param export ([`ardupilot/`](../../ardupilot/README.md) in coordinator), which agree with the [flight-platform.md](flight-platform.md) table. An earlier plan to move the F9P to SERIAL7 was abandoned -- it stayed on SERIAL2 (the old M100 port), and SERIAL7 is unused.*
+*Wiring resolved 2026-07 from the recorded pigtail pads + the param export ([`ardupilot/`](../../ardupilot/README.md) in coordinator), which agree with the [flight-platform.md](flight-platform.md) table. An earlier plan to move the F9P to SERIAL7 was abandoned -- it stayed on SERIAL2 (the old M100 port). SERIAL7 became the mLRS link on 2026-11-01.*
 
 **SERIAL2 (F9P):** Sole GNSS on the mast -- Holybro F9P Rover Lite. `SERIAL2_BAUD = 115200` in the export; **460800** was the earlier SparkFun-breakout plan, not a promise for Rover Lite. `GPS1_COM_PORT` follows this UART.
 

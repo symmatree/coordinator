@@ -1,0 +1,43 @@
+# mLRS corrections and telemetry link (SERIAL7 -> RadioMaster RP4TD on mLRS)
+#   why the link exists      docs/rtk-corrections-path.md, "Direction (2026-10-27)"
+#   the pads                 docs/rekon10/flight-platform.md, "Serial ports"
+#
+# RP4TD flashed rx-radiomaster-rp4td-2400 (mLRS v1.4.04), its TX/RX pads on R7/T7. The ground
+# end is a RadioMaster Ranger on mLRS, USB-C into the attic host. RTCM comes up this link;
+# telemetry goes down it to the attic tlog.
+#
+# Proto 2 = MAVLink2. 57600 is the receiver's default "Rx Ser Baudrate"; it is ~5.8 kB/s on
+# the wire against ~2 kB/s over the air in 31 Hz mode.  provenance: 2026-11-01
+SERIAL7_PROTOCOL,2
+SERIAL7_BAUD,57
+#
+# MAVLink channels are numbered in SERIALn order over the MAVLink ports. With SERIAL7 on
+# protocol 2 this link is MAV4 (SERIAL0 = MAV1, SERIAL4 = MAV2, SERIAL6 = MAV3); SERIAL9 (OTG)
+# moves from MAV4 to MAV5.
+#
+# Downlink at 1 Hz: the four groups the ELRS link carries (EXT_STAT = SYS_STATUS + GPS_RAW,
+# POSITION = global/local position, EXTRA1 = ATTITUDE, EXTRA2 = VFR_HUD) plus EXTRA3
+# (battery, EKF status, vibration and the rest of that group). The receiver's RADIO_STATUS
+# ("Rx Snd RadioStat" = ardu_1) drives ArduPilot's flow control on this channel
+# (GCS_Common.cpp handle_radio_status: txbuf < 50 slows the streams), so an oversubscribed
+# link slows the streams rather than overflowing.  provenance: 2026-11-01
+MAV4_EXT_STAT,1
+MAV4_POSITION,1
+MAV4_EXTRA1,1
+MAV4_EXTRA2,1
+MAV4_EXTRA3,1
+MAV4_ADSB,0
+MAV4_PARAMS,0
+MAV4_RAW_CTRL,0
+MAV4_RAW_SENS,0
+MAV4_RC_CHAN,0
+#
+# 6 = bit 1 NO_FORWARD + bit 2 NOSTREAMOVERRIDE (GCS.h, enum class Option).
+#   NO_FORWARD: the same reason as MAV3_OPTIONS in rc-modes.param -- without it the FC relays
+#   the coordinator's broadcast VIO messages onto the radio, measured at 46% of the ELRS
+#   downlink on 260812 (coordinator #197), and relays the incoming RTCM onto the other links.
+#   A private channel still processes its own traffic locally, RTCM included.
+#   NOSTREAMOVERRIDE: ignore REQUEST_DATA_STREAM, so a GCS on this link cannot set and save
+#   the rates above (Mission Planner did that to MAV3 on 2026-10-24).
+#   provenance: 2026-11-01
+MAV4_OPTIONS,6

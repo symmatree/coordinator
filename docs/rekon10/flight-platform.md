@@ -142,7 +142,7 @@ flight. Voltage / capacity failsafes are active (`BATT_LOW_VOLT=18.6`, `BATT_CRT
 | 3 | SERIAL3 | Walksnail VTX | MSP DisplayPort (42) | 115200 | JST to **TX3/RX3** for data only; VTX power on other FC pads |
 | 4 | SERIAL4 | Coordinator (Pi 4B, VIO) | MAVLink2 (2) | 1500000 | Companion VIO link; cabled and active at 1.5 Mbaud (as-flown 2026-07-09) |
 | 6 | SERIAL6 | Matek ELRS R24-TD | MAVLink2 (2) | 460800 | Boxer MAVLink; [ground-station.md](ground-station.md) |
-| 7 | SERIAL7 |  -- | None | 115200 | Unused |
+| 7 | SERIAL7 | RadioMaster RP4TD (mLRS) | MAVLink2 (2) | 57600 | Corrections up, telemetry down, to the attic Ranger; pads R7/T7 |
 | 8 | SERIAL8 | ESC | ESC telemetry (16) | auto | FC ribbon |
 | OTG2 | SERIAL9 | -- | 115200 | -- |
 
