@@ -42,8 +42,8 @@ MAV1_EXTRA3,1
 #
 # --- Telemetry streams on MAV2 (SERIAL4, the coordinator) ---
 # MAVLink channels are assigned in SERIALn order over the MAVLink ports, so with SERIAL0
-# (USB), SERIAL4 (coordinator), SERIAL6 (ELRS) and SERIAL9 (OTG) all on protocol 2, the
-# coordinator is MAV2. Everything except RC_CHAN and RAW_SENS was already at 2 Hz; only
+# (USB), SERIAL4 (coordinator), SERIAL6 (ELRS), SERIAL7 (mLRS) and SERIAL9 (OTG) all on
+# protocol 2, the coordinator is MAV2. Everything except RC_CHAN and RAW_SENS was already at 2 Hz; only
 # RC_CHAN is pinned here, the rest stay as the FC has them.
 #
 # RC_CHAN turns on SERVO_OUTPUT_RAW and RC_CHANNELS to the coordinator, which the
@@ -59,9 +59,7 @@ MAV1_EXTRA3,1
 MAV2_RC_CHAN,2
 #
 # --- Unused serial ports ---
-# SERIAL7 disabled (the abandoned F9P-move port); SERIAL9 (OTG) unused.
-SERIAL7_PROTOCOL,-1
-SERIAL7_BAUD,115
+# SERIAL9 (OTG) unused. SERIAL7 is the mLRS link, in mlrs-link.param.
 SERIAL9_PROTOCOL,2
 SERIAL9_BAUD,460
 #
