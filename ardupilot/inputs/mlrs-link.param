@@ -20,7 +20,14 @@ SERIAL7_BAUD,57
 # (battery, EKF status, vibration and the rest of that group). The receiver's RADIO_STATUS
 # ("Rx Snd RadioStat" = ardu_1) drives ArduPilot's flow control on this channel
 # (GCS_Common.cpp handle_radio_status: txbuf < 50 slows the streams), so an oversubscribed
-# link slows the streams rather than overflowing.  provenance: 2026-11-01
+# link slows the streams rather than overflowing.
+#
+# Budget. mLRS 31 Hz mode is one frame each way every 32 ms with 82 B of serial payload down
+# and 64 B up (mLRS frame_types.h, setup.h): 2560 B/s down, 2000 B/s up at full link quality.
+# Wire bytes per 1 Hz tick of each group, measured on the coordinator tlog of 2026-10-27
+# (all groups at 2 Hz there): EXT_STAT 202, POSITION 76, EXTRA1 131, EXTRA2 31,
+# EXTRA3 229, RC_CHAN 78; HEARTBEAT 21 B/s. The rates below come to ~690 B/s, 27% of the
+# downlink.  provenance: 2026-11-01
 MAV4_EXT_STAT,1
 MAV4_POSITION,1
 MAV4_EXTRA1,1
