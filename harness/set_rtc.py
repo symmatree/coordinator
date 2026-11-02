@@ -139,15 +139,24 @@ def set_clock_and_chip(key: str) -> str:
     return out.strip()
 
 
-def wait_for_new_boot(key: str, old_boot: str, timeout_s: int = 600) -> None:
+def uptime_s() -> float | None:
+    """The coordinator's uptime from its bus document, the same field bench-cycle watches."""
+    pods = api("/pods", timeout=60).get("pods", [])
+    doc = next((p for p in pods if p.get("node") == NODE), None)
+    return ((doc or {}).get("raw") or {}).get("as_of_boot_s")
+
+
+def wait_for_new_boot(before: float, timeout_s: int = 600) -> None:
+    """Uptime going backwards, not the document existing: bus documents are retained."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         time.sleep(15)
         try:
-            if ssh(key, "cat /proc/sys/kernel/random/boot_id") != old_boot:
-                return
-        except SystemExit:
-            pass  # still rebooting
+            up = uptime_s()
+        except (SystemExit, OSError):
+            continue  # the broker runs on the coordinator, so this fails while it boots
+        if up is not None and up < before:
+            return
     raise SystemExit(f"[set-rtc] the coordinator did not come back within {timeout_s} s")
 
 
@@ -167,10 +176,12 @@ def main() -> int:
 
     log(f"systohc:\n{set_clock_and_chip(key)}")
 
-    boot = ssh(key, "cat /proc/sys/kernel/random/boot_id")
+    before = uptime_s()
+    if before is None:
+        raise SystemExit("[set-rtc] the coordinator has no uptime on the bus to watch")
     api(f"/nodes/{NODE}/reboot", method="POST", timeout=180)
     log("rebooting, so the system clock comes from the chip")
-    wait_for_new_boot(key, boot)
+    wait_for_new_boot(before)
 
     # Only the clock after the reboot: the stack is running again by now, and the chip is
     # coord-rtc-feed's to read.
