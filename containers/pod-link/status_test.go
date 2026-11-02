@@ -81,23 +81,23 @@ func TestFCLinkOnlyThisBoot(t *testing.T) {
 		}
 	}
 
-	if got, err := fcLink(""); got != nil || err != nil {
+	if got, err := thisBootDoc(""); got != nil || err != nil {
 		t.Errorf("no file configured: got %s, %v; want nothing", got, err)
 	}
-	if got, err := fcLink(file); got != nil || err != nil {
+	if got, err := thisBootDoc(file); got != nil || err != nil {
 		t.Errorf("file absent: got %s, %v; want nothing", got, err)
 	}
 	this := `{"boot_id":"this-boot","last_heartbeat_mono_s":12.5,"heartbeats":3}`
 	write(this)
-	if got, err := fcLink(file); err != nil || string(got) != this {
+	if got, err := thisBootDoc(file); err != nil || string(got) != this {
 		t.Errorf("this boot's document: got %s, %v; want it verbatim", got, err)
 	}
 	write(`{"boot_id":"last-boot","last_heartbeat_mono_s":12.5,"heartbeats":3}`)
-	if got, err := fcLink(file); got != nil || err != nil {
+	if got, err := thisBootDoc(file); got != nil || err != nil {
 		t.Errorf("last boot's document: got %s, %v; want nothing", got, err)
 	}
 	write(`{"boot_id":`)
-	if _, err := fcLink(file); err == nil {
+	if _, err := thisBootDoc(file); err == nil {
 		t.Error("a malformed document is a broken writer and should be reported")
 	}
 }

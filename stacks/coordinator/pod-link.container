@@ -41,6 +41,9 @@ Environment=POD_LINK_CAMERA_STATUS_FILE=/ipc/oak_capture_status
 Environment=POD_LINK_ACCEL_STATUS_FILE=
 # When the router last heard the FC (#669), published as `fc` for the front panel.
 Environment=POD_LINK_FC_LINK_FILE=/ipc/fc_link
+# What coord-rtc feed last read off the DS3234, published as `rtc`: no_response, reset or
+# ok, plus whether the 1 Hz arrived (docs/pod-bus.md).
+Environment=POD_LINK_RTC_STATUS_FILE=/ipc/rtc_status
 
 [Service]
 TimeoutStopSec=40
