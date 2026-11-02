@@ -74,6 +74,9 @@ COPY containers/fleet-control/step/run-playbook.sh /usr/local/bin/run-playbook.s
 # procedure it implements is declared as the `bench-simflight` WorkflowTemplate in tiles;
 # this is the code those steps run, so the two version together.
 COPY harness/bench_cycle.py /usr/local/bin/bench-cycle
+# Setting the coordinator's RTC from this pod's clock: the step of the `set-coordinator-rtc`
+# WorkflowTemplate in tiles. Same reasons as bench-cycle.
+COPY harness/set_rtc.py /usr/local/bin/set-rtc
 COPY containers/fleet-control/package.json ./
 
 USER node
