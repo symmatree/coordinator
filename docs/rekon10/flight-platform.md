@@ -133,6 +133,15 @@ the last round of flights looked unreliable, which is for flight analysis to che
 flight. Voltage / capacity failsafes are active (`BATT_LOW_VOLT=18.6`, `BATT_CRT_VOLT=18`,
 `BATT_CAPACITY=8000`).
 
+**On order (2026-11-02): Holybro PM02D** -- [product page](https://holybro.com/collections/power-modules-pdbs/products/pm02d-power-module),
+[PX4 page](https://docs.px4.io/main/en/power_module/holybro_pm02d). A digital power module that
+senses the pack inline between a pair of XT60s and reports over I2C, independent of the ESC's
+calibration and of PC1. Per the PX4 page and retailer listings: the current HV version (2S-12S)
+uses a TI INA228; an out-of-production 6S version with the same name used an INA226, which
+ArduPilot configures differently, so check which one arrives. FC connector is a 6-pin Molex
+CLIK-Mate, 2.00 mm pitch; 5.2 V / 3 A regulated output. The supplied XT60s and 14 AWG leads are
+rated 30 A continuous, 60 A for under a minute (retailer listing).
+
 ## Serial ports (as wired)
 
 | UART | SERIAL | Device | Protocol (ArduPilot) | Baud | Notes |
