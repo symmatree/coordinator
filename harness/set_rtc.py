@@ -3,7 +3,7 @@
 
 THE WAY TO RUN THIS IS THE WORKFLOW: the `set-coordinator-rtc` WorkflowTemplate in tiles
 (`tanka/environments/fleet-control/main.jsonnet`) runs it as its one step, in the
-fleet-control image, where the clock is the cluster's NTP-disciplined one.
+fleet-control image, so the time written is the cluster node's clock.
 
     set-rtc
 
