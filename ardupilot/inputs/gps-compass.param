@@ -38,6 +38,11 @@ GPS_RAW_DATA,5
 # Single external compass; 2nd/3rd instances disabled.
 COMPASS_EXTERNAL,1
 COMPASS_EXTERN2,1
+# Instance 1 is not used either. In flight it reads a field of about 400 mG that is fixed
+#   to the airframe and grows with throttle, and the EKF's climb-out yaw resets took a
+#   single sample of it (coordinator#674). Yaw comes from the EKF-GSF: EK3_SRCn_YAW in
+#   ekf-vio.param.
+COMPASS_USE,0
 COMPASS_USE2,0
 COMPASS_USE3,0
 # Orientation of the F9P mag as mounted (Yaw270).

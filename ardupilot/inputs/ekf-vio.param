@@ -23,12 +23,16 @@ MAV2_EXTRA2,2
 MAV2_EXTRA3,2
 #
 # --- EKF3 source sets ---
-# SRC1 = GPS -- the flown lane (POSXY/VELXY/VELZ=GPS, POSZ=Baro, YAW=compass).
+# SRC1 = GPS -- the flown lane (POSXY/VELXY/VELZ=GPS, POSZ=Baro, YAW=GSF).
+# YAW 8 = GSF: yaw from the EKF-GSF estimator (IMU + GPS velocity), not the compass
+#   (COMPASS_USE in gps-compass.param, coordinator#674). The EKF aligns yaw once the
+#   GSF has converged, which takes horizontal movement, and logs "EKF3 IMUn yaw aligned
+#   using GPS". All three source sets use it, so no set selects the compass.
 EK3_SRC1_POSXY,3
 EK3_SRC1_VELXY,3
 EK3_SRC1_POSZ,1
 EK3_SRC1_VELZ,3
-EK3_SRC1_YAW,1
+EK3_SRC1_YAW,8
 # SRC2 was VIO/ExtNav (POSXY=6). Set to the GPS lane: VIO is removed for now and a
 #   source set pointing at ExtNav with nothing publishing is worse than not having one
 #   (coordinator#313). Set explicitly rather than deleted -- a fragment is applied, not
@@ -37,12 +41,15 @@ EK3_SRC1_YAW,1
 EK3_SRC2_POSXY,3
 EK3_SRC2_VELXY,3
 EK3_SRC2_VELZ,3
-EK3_SRC2_YAW,1
+EK3_SRC2_YAW,8
 # SRC3 = the GPS lane. No switch selects a source set: SC/CH10 is AUTO (rc-modes.param).
 EK3_SRC3_POSXY,3
 EK3_SRC3_VELXY,3
 EK3_SRC3_VELZ,3
-EK3_SRC3_YAW,1
+EK3_SRC3_YAW,8
+# EKF-GSF yaw estimator on both cores (bit per core); YAW=GSF above reads it, and a core
+#   without one has no yaw source (AP_NavEKF3_core.cpp creates it only for set bits).
+EK3_GSF_RUN_MASK,3
 # SRC_PER_CORE (bit 3 = 8) ran core 1 on SRC2/VIO so the VIO lane was computed and
 #   logged beside the GPS lane. Off: there is no VIO lane to compute, and dedicating a
 #   core to a second GPS lane buys nothing.  provenance: coordinator#313 2026-09-17
