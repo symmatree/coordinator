@@ -40,12 +40,16 @@ MAV4_PARAMS,0
 MAV4_RAW_CTRL,0
 MAV4_RAW_SENS,0
 #
-# 6 = bit 1 NO_FORWARD + bit 2 NOSTREAMOVERRIDE (GCS.h, enum class Option).
-#   NO_FORWARD: the same reason as MAV3_OPTIONS in rc-modes.param -- without it the FC relays
-#   the coordinator's broadcast VIO messages onto the radio, measured at 46% of the ELRS
-#   downlink on 260812 (coordinator #197), and relays the incoming RTCM onto the other links.
-#   A private channel still processes its own traffic locally, RTCM included.
-#   NOSTREAMOVERRIDE: ignore REQUEST_DATA_STREAM, so a GCS on this link cannot set and save
-#   the rates above (Mission Planner did that to MAV3 on 2026-10-24).
-#   provenance: 2026-11-01
-MAV4_OPTIONS,6
+# 4 = bit 2 NOSTREAMOVERRIDE (GCS.h, enum class Option): ignore REQUEST_DATA_STREAM, so a
+#   GCS on this link cannot set and save the rates above (Mission Planner did that to MAV3 on
+#   2026-10-24).
+#   NOT bit 1 NO_FORWARD. A private channel gets no status text at all --
+#   GCS::statustext_send_channel_mask() removes private channels, and
+#   send_to_active_channels() skips them for NAMED_VALUE_* -- so with it set, PreArm and every
+#   other STATUSTEXT reached the ground over neither radio (coordinator#683). ELRS (MAV3) stays
+#   private, so this is the link that carries them. The cost: the FC forwards broadcast
+#   traffic from the coordinator link (MAV2) down here -- including, when VIO runs, the
+#   messages that took 46% of the ELRS downlink in coordinator#197 -- and RTCM
+#   arriving here is forwarded to MAV2 and USB, which is nothing at 1.5 Mbaud.
+#   provenance: 2026-11-03
+MAV4_OPTIONS,4
