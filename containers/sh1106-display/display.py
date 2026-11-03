@@ -216,6 +216,62 @@ def status_from_bus(docs, received, now, intent=None):
     }
 
 
+# THE GROUND'S COPY OF THE PANEL (coordinator#683), one STATUSTEXT the router sends to the
+# FC, which forwards it down mLRS. The FC's own display and Mission Planner show the latest
+# line, so it is short enough to read at a glance: an aggregate mark, then a token per pod
+# on the bus, `CO` the coordinator and `SE SW NE NW` the campods, upper case when that
+# pod's camera is warm and synced (C and S on the panel; the coordinator has no S). A pod
+# that is not publishing has no token, as it has no cell.
+#
+#   -  stopped     <  getting ready     =  ready     +  recording
+#
+# The mark is the least advanced state of any pod, followed by `*` when they are not all
+# in the same one, so `=*` is "some ready, the rest further back".
+STATE_MARKS = "-<=+"
+
+
+def pod_state(doc):
+    """One pod's state, as its index in STATE_MARKS."""
+    camera = doc.get("camera") or {}
+    if camera.get("capturing") is True:
+        return 3
+    if doc.get("ready") is True:
+        return 2
+    if not camera or camera.get("phase") in ("stopped", "failed"):
+        return 0
+    return 1
+
+
+def pod_token(name, doc):
+    camera = doc.get("camera") or {}
+    warm = camera.get("warm")
+    if warm is None:
+        warm = camera.get("ready")
+    good = warm is True and camera.get("sync_ready", True) is True
+    return name.upper() if good else name.lower()
+
+
+def panel_text(docs, received, now):
+    """The status line, from the same documents and the same staleness rule as the panel."""
+    pods = []
+    for node, name in (("coordinator", "co"),) + tuple((c, c.replace("campod-", ""))
+                                                       for c in CAMPODS):
+        doc, at = docs.get(node), received.get(node)
+        if doc is not None and at is not None and now - at <= STALE_AFTER_S:
+            pods.append((name, doc))
+    states = {pod_state(doc) for _, doc in pods} or {0}
+    mark = STATE_MARKS[min(states)] + ("*" if len(states) > 1 else "")
+    return mark + "".join(pod_token(name, doc) for name, doc in pods)
+
+
+def write_panel_text(path, text):
+    """Replace the file whole, so the router never reads half a line."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        f.write(text + "\n")
+    os.replace(tmp, path)
+
+
 # MEASURED, NOT ASSUMED. PIL's default font is proportional; its ink runs from 2 px to
 # 12 px below the given y, and 15 characters fit the footer. The first layout here was
 # written for 6x8 and clipped its own footer. The pod cells use the same face one size
@@ -320,16 +376,35 @@ def main():
     client.connect_async(hostname, int(portstr or "1883"), keepalive=30)
     client.loop_start()
 
-    device = sh1106(i2c(port=port, address=addr))
-    device.persist = True  # leave the last frame up on SIGTERM instead of blanking
-    print(f"sh1106-display: i2c={port}@{hex(addr)} bus={broker} refresh={refresh}s",
-          flush=True)
+    text_file = _env("SH1106_TEXT_FILE", "/ipc/panel_text")
+    print(f"sh1106-display: i2c={port}@{hex(addr)} bus={broker} refresh={refresh}s "
+          f"text={text_file}", flush=True)
 
+    # THE PANEL IS NOT REQUIRED FOR THE LINE. Without the OLED the ground copy still has to
+    # go out, so a panel that does not answer is retried rather than fatal.
+    device, tried, missing = None, -1e9, None
     while not _stop:
-        status = status_from_bus(docs, received, time.monotonic(),
-                                 intent if intent else None)
-        with canvas(device) as draw:
-            draw_status(draw, device.width, device.height, status)
+        now = time.monotonic()
+        if device is None and now - tried >= 10:
+            tried = now
+            try:
+                device = sh1106(i2c(port=port, address=addr))
+                device.persist = True  # leave the last frame up on SIGTERM instead of blanking
+                print("sh1106-display: panel found", flush=True)
+            except Exception as exc:  # luma raises its own DeviceNotFoundError, among others
+                if str(exc) != missing:
+                    print(f"sh1106-display: no panel ({exc}); retrying every 10 s",
+                          flush=True)
+                missing = str(exc)
+        write_panel_text(text_file, panel_text(docs, received, now))
+        status = status_from_bus(docs, received, now, intent if intent else None)
+        if device is not None:
+            try:
+                with canvas(device) as draw:
+                    draw_status(draw, device.width, device.height, status)
+            except OSError as exc:
+                print(f"sh1106-display: panel lost ({exc})", flush=True)
+                device = None
         end = time.monotonic() + refresh
         while not _stop and time.monotonic() < end:
             time.sleep(min(0.2, max(0.0, end - time.monotonic())))

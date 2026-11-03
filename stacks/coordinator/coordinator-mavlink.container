@@ -31,6 +31,9 @@ Environment=MAVLINK_FC_TIME_FILE=/tmp/fc_time
 # When the router last heard an FC heartbeat (#669). pod-link passes it to the bus and
 # the front panel shows it.
 Environment=MAVLINK_FC_LINK_FILE=/tmp/fc_link
+# The front panel's line (coordinator#683), written by sh1106-display and sent to the FC
+# as STATUSTEXT.
+Environment=MAVLINK_PANEL_TEXT_FILE=/tmp/panel_text
 
 [Service]
 TimeoutStopSec=60

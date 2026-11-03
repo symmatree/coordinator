@@ -58,6 +58,24 @@ deciding whether to arm. So it answers that first and explains itself second.
 documents and publishes the verdict; this panel and the fleet-control table read the same
 field, because two readers each assembling their own answer is the bug #577 fixed.
 
+### The line for the ground (coordinator#683)
+
+The same documents also make one line of text, written every second to
+`/var/lib/coordinator/ipc/panel_text`. The router sends it to the FC as STATUSTEXT, on change
+and every 30 s, and the FC forwards it to any non-private link. It is an aggregate mark and
+then a token per pod on the bus:
+
+    =COSESWNENW    <*COseSWNENW    -*coSESWNENW
+
+- the mark is `-` stopped, `<` getting ready, `=` ready, `+` recording: the least advanced
+  of any pod, with `*` after it when they are not all in the same state
+- `CO` is the coordinator, `SE SW NE NW` the campods; upper case when that pod's camera is
+  warm and synced (the coordinator's has no sync, so warm). No token when the pod is not
+  on the bus.
+
+The line does not need the OLED: a panel that does not answer is retried every 10 s, and the
+line is written in the meantime. The router sends nothing from a file more than 5 s old.
+
 ### Why an echo
 
 It used to walk the coordinator's own `captures/` tree and infer "recording" from file
