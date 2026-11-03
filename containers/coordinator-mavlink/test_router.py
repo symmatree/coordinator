@@ -70,6 +70,7 @@ def main():
     tlog = os.path.join(session, "vehicle.tlog")
     fc_time = os.path.join(tmpdir, "fc_time")
     fc_link = os.path.join(tmpdir, "fc_link")
+    panel_text = os.path.join(tmpdir, "panel_text")
 
     proc = subprocess.Popen(
         [sys.executable, ROUTER, "--device", slave_name, "--baud", "115200",
@@ -77,7 +78,7 @@ def main():
         stderr=subprocess.PIPE, text=True,
         env={**os.environ, "COORD_CAPTURES_DIR": captures,
              "MAVLINK_FC_TIME_FILE": fc_time, "MAVLINK_FC_LINK_FILE": fc_link,
-             "MAVLINK_TIMESYNC_PERIOD_S": "0.3"},
+             "MAVLINK_TIMESYNC_PERIOD_S": "0.3", "MAVLINK_PANEL_TEXT_FILE": panel_text},
     )
     try:
         for _ in range(100):
@@ -265,6 +266,34 @@ def main():
             ok = False
         else:
             print(f"  fc_link ok: one heartbeat, {age:.3f} s old")
+
+        # coordinator#683: the panel's line goes to the FC as STATUSTEXT, on change.
+        sent = []
+        for line in ("=COSESWNENW", "<*COseSWNENW"):
+            with open(panel_text, "w") as f:
+                f.write(line + "\n")
+            for _ in range(30):
+                sent += [m.text for m in decode(read_for(master_fd, 0.1))
+                         if m.get_type() == "STATUSTEXT"]
+                if sent and sent[-1] == line:
+                    break
+        if sent != ["=COSESWNENW", "<*COseSWNENW"]:
+            print(f"  FAIL: panel line not sent once per change: {sent}")
+            ok = False
+        else:
+            print(f"  STATUSTEXT ok: {sent}")
+        # A panel that stopped writing is not the fleet's state: a new line in an old file
+        # does not go out.
+        with open(panel_text + ".tmp", "w") as f:
+            f.write("-co\n")
+        old = time.time() - 60
+        os.utime(panel_text + ".tmp", (old, old))
+        os.replace(panel_text + ".tmp", panel_text)
+        stale = [m.text for m in decode(read_for(master_fd, 1.5))
+                 if m.get_type() == "STATUSTEXT"]
+        if stale:
+            print(f"  FAIL: a stale panel line was still sent: {stale}")
+            ok = False
 
         print("RESULT:", "PASS" if ok else "FAIL")
         return 0 if ok else 1

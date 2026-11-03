@@ -22,6 +22,10 @@ Network=host
 # The panel needs the broker's address and nothing else. The captures mount is gone with
 # the mtime-walking it was for.
 Environment=SH1106_MQTT_URL=mqtt://127.0.0.1:1883
+# The panel's line for the ground (coordinator#683): written here, sent to the FC as
+# STATUSTEXT by the router, which sees this directory as its /tmp.
+Volume=/var/lib/coordinator/ipc:/ipc
+Environment=SH1106_TEXT_FILE=/ipc/panel_text
 
 [Service]
 TimeoutStopSec=30

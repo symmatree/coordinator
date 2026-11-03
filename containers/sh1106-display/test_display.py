@@ -10,8 +10,8 @@ import sys
 from PIL import Image, ImageDraw
 
 from display import (CAMPODS, CELL_FONT, CHARS_PER_ROW, COL_X, FC_STALE_AFTER_S, FOOTER_Y,
-                     ROW_Y, STALE_AFTER_S, draw_status, fc_heard, pod_row, status_from_bus,
-                     subsystem_letters)
+                     ROW_Y, STALE_AFTER_S, draw_status, fc_heard, panel_text, pod_row,
+                     status_from_bus, subsystem_letters)
 
 W, H = 128, 64
 
@@ -147,6 +147,40 @@ check("free space is read from the coordinator's document", every["free_gb"] == 
       str(every["free_gb"]))
 check("the blink phase alternates with the second",
       status_from_bus({}, {}, now=10.0)["blink"] != status_from_bus({}, {}, now=11.0)["blink"])
+
+# ---- the ground's line (coordinator#683) ----------------------------------------------
+def campod(capturing=False, **kw):
+    doc = pod(**kw)
+    doc["camera"]["capturing"] = capturing
+    return doc
+
+
+OAK_IDLE = {"phase": "stopped", "camera": "stopped-while-waiting", "ready": False,
+            "warm": False, "capturing": False}
+OAK_WARM = {"phase": "capture", "ready": True, "warm": True, "capturing": False}
+line = panel_text({**{c: campod() for c in CAMPODS},
+                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM)}, FRESH, NOW)
+check("everything ready reads =COSESWNENW", line == "=COSESWNENW", line)
+line = panel_text({**{c: campod(capturing=True) for c in CAMPODS},
+                   "coordinator": dict(COORD, ready=True,
+                                       camera=dict(OAK_WARM, capturing=True))},
+                  FRESH, NOW)
+check("everything recording reads +", line == "+COSESWNENW", line)
+line = panel_text({**{c: campod() for c in CAMPODS},
+                   "campod-se": campod(ready=False, sync=False),
+                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM)}, FRESH, NOW)
+check("one campod syncing: the least advanced state, mixed, and its name lower case",
+      line == "<*COseSWNENW", line)
+line = panel_text({**{c: campod() for c in CAMPODS},
+                   "coordinator": dict(COORD, camera=OAK_IDLE)}, FRESH, NOW)
+check("a stopped coordinator camera reads - mixed, co lower case",
+      line == "-*coSESWNENW", line)
+line = panel_text({"coordinator": dict(COORD, ready=True, camera=OAK_WARM),
+                   "campod-sw": campod(), "campod-se": campod()},
+                  {"coordinator": NOW, "campod-sw": NOW, "campod-se": NOW - 60}, NOW)
+check("a pod not on the bus has no token", line == "=COSW", line)
+check("an empty bus reads -", panel_text({}, {}, NOW) == "-")
+check("the longest line fits a STATUSTEXT", len("<*COSESWNENW") <= 50)
 
 # ---- the layout fits, which is not something a comment can promise --------------------
 # The first version of this panel was written for a 6x8 font. PIL's default is 8 px wide

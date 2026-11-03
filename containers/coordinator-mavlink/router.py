@@ -353,6 +353,20 @@ def read_line(path):
         return ""
 
 
+def read_panel_text(path, max_age_s=5.0):
+    """The panel's current line, or "" if the panel has stopped writing it.
+
+    The panel rewrites the file every second, so an old one is a panel that is gone and
+    its last line is no longer the fleet's state.
+    """
+    try:
+        if time.time() - os.stat(path).st_mtime > max_age_s:
+            return ""
+    except OSError:
+        return ""
+    return read_line(path)
+
+
 def session_dir(root):
     """<root>/<node>/<boot-id>, created. The session this boot's data belongs to.
 
@@ -484,6 +498,12 @@ def main():
     fc_link_file = os.environ.get("MAVLINK_FC_LINK_FILE", "/tmp/fc_link")
     fc_heartbeats = 0
     write_fc_link(fc_link_file, boot_id, None, fc_heartbeats)
+    # coordinator#683: the front panel's line, sent to the FC as STATUSTEXT so it reaches
+    # the ground. On change and every 30 s, not faster: the FC's display and the GCS show
+    # only the latest line, and the FC logs each one it receives as a MSG.
+    panel_text_file = os.environ.get("MAVLINK_PANEL_TEXT_FILE", "/tmp/panel_text")
+    panel_text_period_s = float(os.environ.get("MAVLINK_PANEL_TEXT_PERIOD_S", "30"))
+    panel_text_sent, panel_text_at = None, -1e9
 
     # #167: FC-clock <-> our-clock pairs, for joining captures to the FC log.
     # Both logs land in THIS BOOT's session directory, so collecting the session
@@ -515,6 +535,13 @@ def main():
                 mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0,
                 mavutil.mavlink.MAV_STATE_ACTIVE)
             last_hb = now_mono
+
+        text = read_panel_text(panel_text_file)
+        if text and (text != panel_text_sent
+                     or now_mono - panel_text_at >= panel_text_period_s):
+            mav.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO,
+                                    text.encode("ascii", "replace")[:50])
+            panel_text_sent, panel_text_at = text, now_mono
 
         # Our own TIMESYNC request. The FC sends its own, but those only give a one-way
         # FC-to-us measurement; a request of ours comes back with both our send time and
