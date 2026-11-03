@@ -236,6 +236,27 @@ Also dropped:
 - **`rtkbase-settings.conf`** -- `tiles/tanka/environments/ntrip/settings.conf` is in git and seeded
   into the pod, so the base position already has a history mechanism.
 
+## What the FC is saying: "why won't it arm?"
+
+```sh
+curl -s https://fleet.tiles.symmatree.com/fc/status
+```
+
+The FC's status text (PreArm and Arm failures above all), arm and disarm from its HEARTBEAT, and
+the result of any arm command sent over mLRS, each with the time the ground received it, newest
+first. The page shows the same list under **Flight controller**, refreshed every few seconds.
+
+It is read from the open mLRS session tlog, `ground-tlogs/mlrs/<start>.tlog.part`, which
+tlog-split-mlrs writes from mavproxy-mlrs's stream and flushes once a second. That is the feed:
+no second output from mavproxy, and mavproxy's TCP port (one client) stays Mission Planner's.
+Each request reads only what was appended since the last one. When tlog-split rolls the file at
+disarm, the rest of the old file is read under its new name, so the messages around a disarm
+survive the cut. The list is held in memory, up to 200 events: after a restart it starts from
+the beginning of the open file.
+
+Status text reaches the ground only once the FC's mLRS MAVLink channel is not private
+(coordinator#683). Until then the list carries arm state and arm-command results.
+
 ## The pod bus: what the devices are doing, for free
 
 ```sh
@@ -430,6 +451,7 @@ curl -sN     "https://fleet.tiles.symmatree.com/workflows/<workflow>/log"
 | `POST /nodes/:name/reboot` | reboot it; does not wait, does not stop first, never refused -> `200 {via, note, wasRunning?}` |
 | `GET /nodes/:name/fc-logs` | what the FC holds -- `time_utc` is LAST-MODIFIED, not creation |
 | `GET /ground/tlogs` | what the ground-tlog share holds |
+| `GET /fc/status` | what the FC has said over mLRS, newest first: status text, arm/disarm, arm-command results, with ground receive times |
 | `POST /flights/:flight/ground[?tlog=&tlog=&start=&end=]` | collect the tlogs named, over the range given; synchronous -> `200 {collected,failed,range,notes}` |
 | `POST /flights/:flight/collect` | body `{targets:[{node,kind,id}]}`, kind `session` or `fc-log` -- submits the collect workflow -> `202 {workflow,url}` |
 | `GET /workflows` | every workflow in the namespace, newest first, with phase, labels and link |

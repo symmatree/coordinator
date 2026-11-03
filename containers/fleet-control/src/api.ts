@@ -1,6 +1,7 @@
 // The route surface. The UI is one client of it; anything the page can do, curl can do.
 
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Config } from './config.js';
@@ -12,6 +13,7 @@ import { listLogs } from './fclog.js';
 import { readNotes, validFlightName, writeNotes } from './offload.js';
 import { enrich, LookupCache, repoFromUrl } from './status.js';
 import { collectGround, listTlogs } from './cluster.js';
+import { FcStatusReader } from './fcstatus.js';
 import { configured as busConfigured, readPods, setDesired } from './bus.js';
 import {
   follow, listWorkflows, nodeBusyWith, readWorkflow, submitCollect, workflowUrl,
@@ -357,6 +359,15 @@ export function buildServer(cfg: Config): FastifyInstance {
       return reply.code(502).send({ error: (err as Error).message });
     }
   });
+
+  /**
+   * What the FC has said over mLRS, newest first: status text (PreArm and Arm above all), arm and
+   * disarm, and arm-command results, each with the time the ground received it. Read from the
+   * open mLRS session tlog on the share (src/fcstatus.ts). A missing directory or file is in
+   * `error`, not a failed request: the page shows it where the messages would be.
+   */
+  const fc = new FcStatusReader(join(cfg.cluster.groundTlogs, 'mlrs'));
+  app.get('/fc/status', async () => fc.status());
 
   /**
    * Collect the ground station's own record of a flight: the tlogs named, the base station's raw
