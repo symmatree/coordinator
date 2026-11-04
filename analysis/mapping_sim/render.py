@@ -13,12 +13,14 @@ Writes into `out_dir`:
   everything `score.py` needs to judge a reconstruction.
 
 `--scale` renders at a fraction of the sensor resolution (intrinsics scaled to match) for quick
-local checks; a real run uses 1.
+local checks; a real run uses 1. `--jobs` renders that many images at once, each in its own
+process at about 430 MB per full-resolution image.
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime as dt
 import json
 import pathlib
@@ -66,7 +68,12 @@ def _exif(cam: Camera, when: dt.datetime, pixel_um: float) -> Image.Exif:
     return ex
 
 
-def render(cfg: dict, out: pathlib.Path, scale: float = 1.0, limit: int | None = None) -> dict:
+def _render_one(scene: Scene, cam: Camera, pose: Pose, path: pathlib.Path, quality: int, exif: Image.Exif) -> None:
+    img = render_image(scene, cam, pose)
+    Image.fromarray(np.round(img * 255).astype(np.uint8), mode="L").convert("RGB").save(path, quality=quality, exif=exif)
+
+
+def render(cfg: dict, out: pathlib.Path, scale: float = 1.0, limit: int | None = None, jobs: int = 1) -> dict:
     scene = Scene.from_config(cfg["scene"])
     cams = rig_from_config(cfg["rig"])
     if scale != 1.0:
@@ -82,19 +89,21 @@ def render(cfg: dict, out: pathlib.Path, scale: float = 1.0, limit: int | None =
     (out / "images").mkdir(parents=True, exist_ok=True)
     geo = [f"EPSG:{UTM_EPSG}"]
     shots = {}
+    work = []
     for k, pose in enumerate(poses):
         when = EPOCH + dt.timedelta(seconds=pose.time_s)
         for cam in cams:
             name = f"{k:05d}_{cam.name}.jpg"
-            img = render_image(scene, cam, pose)
-            Image.fromarray(np.round(img * 255).astype(np.uint8), mode="L").convert("RGB").save(
-                out / "images" / name, quality=quality, exif=_exif(cam, when, pixel_um)
-            )
+            work.append((scene, cam, pose, out / "images" / name, quality, _exif(cam, when, pixel_um)))
             R_wc = pose.R_wb @ cam.R_bc
             C = pose.p_wb + pose.R_wb @ cam.t_bc
             e, n, u = C + UTM_ORIGIN
             geo.append(f"{name} {e:.4f} {n:.4f} {u:.4f} nan nan nan {acc_h} {acc_v}")
             shots[name] = {"camera": cam.name, "time_s": pose.time_s, "R_wc": R_wc.tolist(), "center": C.tolist()}
+
+    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
+        for f in [pool.submit(_render_one, *w) for w in work]:
+            f.result()
 
     (out / "geo.txt").write_text("\n".join(geo) + "\n")
     truth = {
@@ -116,9 +125,10 @@ def main() -> None:
     ap.add_argument("out", type=pathlib.Path)
     ap.add_argument("--scale", type=float, default=1.0)
     ap.add_argument("--limit", type=int, default=None, help="render only the first N captures")
+    ap.add_argument("--jobs", type=int, default=1, help="images rendered in parallel")
     a = ap.parse_args()
     cfg = yaml.safe_load(a.config.read_text())
-    truth = render(cfg, a.out, a.scale, a.limit)
+    truth = render(cfg, a.out, a.scale, a.limit, a.jobs)
     print(f"{len(truth['shots'])} images -> {a.out}")
 
 

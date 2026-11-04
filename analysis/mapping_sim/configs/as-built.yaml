@@ -24,11 +24,12 @@ rig:
     - {name: sw, lens: b0310, azimuth_deg: 225, depression_deg: 56.26, roll_deg: 0, position_m: [-0.100, 0.048, -0.03]}
     - {name: nw, lens: b0310, azimuth_deg: 315, depression_deg: 56.26, roll_deg: 0, position_m: [0.100, 0.048, -0.03]}
 
+# One 45 m pass north and one back south, 15 m apart, at 40 m: 16 captures per pass, 3 m apart.
 trajectory:
   kind: lawnmower
-  area_m: [-20, -20, 20, 20]
-  height_m: 15
-  line_spacing_m: 10
+  area_m: [-7.5, -22.5, 7.5, 22.5]
+  height_m: 40
+  line_spacing_m: 15
   speed_mps: 3
   capture_hz: 1          # campod-camera's capture rate at full resolution
   line_heading_deg: 0
