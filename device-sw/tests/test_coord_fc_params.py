@@ -76,6 +76,26 @@ class FakeFC:
         self.params[name] = self.clamp.get(name, fp.as_float32(value))
         self.queue.append(Msg("PARAM_VALUE", param_id=name, param_value=self.params[name]))
 
+    # The read-back. `withhold` indices are left out of the first listing only; `lost`
+    # ones never arrive at all.
+    withhold, lost = set(), set()
+
+    def _value(self, idx):
+        name = sorted(self.params)[idx]
+        return Msg("PARAM_VALUE", param_id=name, param_value=self.params[name],
+                   param_index=idx, param_count=len(self.params))
+
+    def param_request_list_send(self, ts, tc):
+        self.lists = getattr(self, "lists", 0) + 1
+        for idx in range(len(self.params)):
+            if idx not in self.lost and not (self.lists == 1 and idx in self.withhold):
+                self.queue.append(self._value(idx))
+
+    def param_request_read_send(self, ts, tc, pid, idx):
+        self.rereads = getattr(self, "rereads", 0) + 1
+        if idx not in self.lost:
+            self.queue.append(self._value(idx))
+
     def recv_match(self, type=None, blocking=False, timeout=None):
         return self.queue.pop(0) if self.queue else None
 
@@ -93,16 +113,19 @@ def tarball(files):
 
 
 def run(fc, rows):
-    real, sys.stdout = sys.stdout, io.StringIO()
+    """push(), returning (1 if it complained else 0, its stderr events)."""
+    real, sys.stderr = sys.stderr, io.StringIO()
     try:
-        rc = fp.push(fc, rows)
-        lines = [json.loads(ln) for ln in sys.stdout.getvalue().splitlines()]
+        n = fp.push(fc, rows)
+        lines = [json.loads(ln) for ln in sys.stderr.getvalue().splitlines()]
     finally:
-        sys.stdout = real
-    return rc, lines
+        sys.stderr = real
+    return (1 if n else 0), lines
 
 
-fp.REPLY_S = 0.01  # the retry loop, without paying real time for it
+# The retry and read-back loops, without paying real time for them.
+fp.REPLY_S = 0.01
+fp.QUIET_S = 0.02
 
 # 1. The tarball: *.param members in name order, comments dropped, other files ignored.
 rows = fp.read_tarball(tarball({
@@ -124,7 +147,7 @@ except ValueError as exc:
 fc = FakeFC({"A_ONE": 0.0, "B_TWO": 0.0, "B_THREE": 0.0})
 rc, lines = run(fc, rows)
 check("all taken exits 0", rc == 0, f"rc={rc}")
-check("with only the summary", lines == [{"event": "done", "params": 3, "complaints": 0}],
+check("with only the summary", lines == [{"event": "pushed", "params": 3, "complaints": 0}],
       str(lines))
 check("one PARAM_SET each", fc.sets == ["A_ONE", "B_TWO", "B_THREE"], str(fc.sets))
 check("and the FC holds them", fc.params == {"A_ONE": 1.0, "B_TWO": 2.0, "B_THREE": 3.5})
@@ -152,13 +175,51 @@ check("one pass: the rest were still applied", fc.params["A_ONE"] == 1.0
 check("and nothing was sent twice that was answered",
       [s for s in fc.sets if s != "DEAF"] == ["A_ONE", "MISSING", "RO", "CL", "B_TWO"],
       str(fc.sets))
-check("the summary counts them", lines[-1] == {"event": "done", "params": 6, "complaints": 4},
-      str(lines[-1]))
+check("the summary counts them",
+      lines[-1] == {"event": "pushed", "params": 6, "complaints": 4}, str(lines[-1]))
 
 # 4. A value that is not exact in float32 is not a mismatch: both ends carry float32.
 fc = FakeFC({"F": 0.0})
 rc, lines = run(fc, [("F", 0.1, "f:1")])
 check("0.1 round-trips as float32 without a complaint", rc == 0, str(lines))
+
+# 5. The export. Read back the last real export as the FC would serve it, and write it out:
+#    it must come back byte for byte, because a PR made from this output should show only
+#    what changed. That pins Mission Planner's order (`_` before digits and letters) and
+#    its number formatting (integers bare, the shortest float32 decimal, 6.181582E-05).
+_export = (Path(__file__).resolve().parents[2] / "ardupilot" / "rekon10-methodi.param").read_text()
+_params = {k: fp.as_float32(float(v)) for k, _, v in
+           (ln.partition(",") for ln in _export.splitlines())}
+fc = FakeFC(_params)
+got = fp.read_all(fc)
+check("the read-back gets every parameter", got is not None and len(got) == len(_params),
+      f"{None if got is None else len(got)} of {len(_params)}")
+check("and the export is the last export, byte for byte", fp.export(got) == _export)
+
+# Indices missing from the listing are asked for by index, and then it completes.
+fc = FakeFC(_params)
+fc.withhold = set(range(0, len(_params), 7))
+got = fp.read_all(fc)
+check("gaps in the listing are re-read and filled", got is not None
+      and len(got) == len(_params) and fc.rereads >= len(fc.withhold),
+      f"rereads={getattr(fc, 'rereads', 0)} withheld={len(fc.withhold)}")
+
+# The broadcast PARAM_VALUE after a set carries no listing index; it must not count.
+fc = FakeFC({"A": 1.0, "B": 2.0})
+fc.queue.append(Msg("PARAM_VALUE", param_id="A", param_value=9.0, param_index=65535,
+                    param_count=2))
+got = fp.read_all(fc)
+check("a value outside the listing is not part of it", got == {"A": 1.0, "B": 2.0}, str(got))
+
+# A parameter that never arrives: no export at all, since a partial one reads as removals.
+fc = FakeFC({"A": 1.0, "B": 2.0, "C": 3.0})
+fc.lost = {1}
+_err, sys.stderr = sys.stderr, io.StringIO()
+try:
+    got = fp.read_all(fc)
+finally:
+    sys.stderr = _err
+check("an incomplete read-back returns nothing", got is None, str(got))
 
 print("RESULT:", "PASS" if ok else "FAIL")
 sys.exit(0 if ok else 1)

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Push a set of .param files to the flight controller, over the link we already have.
 
-    tar -C ardupilot/inputs -c . | ssh pi@coordinator 'sudo coord fc-params push'
+    tar -C ardupilot/inputs -c . | ssh pi@coordinator 'sudo coord fc-params push' \
+        > ardupilot/rekon10-methodi.param
 
 The tarball comes in on stdin; every `*.param` member in it is read, in name order, and
 every KEY,VALUE line is sent to the FC once as PARAM_SET. ONE PASS, no ordering and no
@@ -10,13 +11,19 @@ reported as not existing, and whoever ran this decides whether to run it again.
 
 Each set waits for the FC's answer -- PARAM_VALUE with that name, or PARAM_ERROR -- with
 Mission Planner's retry (3 resends, 700 ms apart). What counts as a complaint, each one a
-JSON line on stdout:
+JSON line on stderr:
 
   error      the FC sent PARAM_ERROR (does not exist, permission denied, out of range)
   mismatch   it answered with a value other than the one sent
   no-reply   nothing came back for that name
 
-then a summary line. Exit 0 with no complaints, 1 with any, 2 when the input is unusable.
+THEN THE EXPORT, on stdout: every parameter the FC has, read back after the pass, in the
+format Mission Planner's Save to File writes -- its sort order and its number formatting --
+so it can replace rekon10-methodi.param and a diff of it shows only what changed.
+
+Exit 0 with no complaints, 1 with any (the export is still written), 2 when the input is
+unusable, 3 when the read-back did not get every parameter (nothing on stdout: a partial
+export would read as parameters removed).
 
 Values go as float, which is how PARAM_SET carries them and how every GCS has always
 sent them.
@@ -48,6 +55,11 @@ SRC_COMPONENT = 1
 # Mission Planner's setParam: resend after 700 ms, three times.
 REPLY_S = 0.7
 RESENDS = 3
+# The read-back: a listing that has gone this long without a new index is asked for its
+# missing ones, this many at a time, for this many rounds that recover nothing.
+QUIET_S = 1.0
+MAX_REREADS = 50
+MAX_DEAD_ROUNDS = 5
 
 
 def _fc_log():
@@ -85,9 +97,10 @@ except ImportError:
         reexec_in_container()
 
 
-def out(obj: dict) -> None:
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+def ev(obj: dict) -> None:
+    """One JSONL event on stderr. stdout belongs to the export."""
+    sys.stderr.write(json.dumps(obj) + "\n")
+    sys.stderr.flush()
 
 
 def parse_param_text(text: str, source: str) -> "list[tuple[str, float, str]]":
@@ -151,14 +164,73 @@ def set_one(m, key: str, value: float) -> "dict | None":
 
 
 def push(m, rows) -> int:
+    """The one pass. Returns the number of complaints."""
     complaints = 0
     for key, value, where in rows:
         got = set_one(m, key, value)
         if got is not None:
             complaints += 1
-            out({"param": key, "sent": value, "at": where, **got})
-    out({"event": "done", "params": len(rows), "complaints": complaints})
-    return 1 if complaints else 0
+            ev({"param": key, "sent": value, "at": where, **got})
+    ev({"event": "pushed", "params": len(rows), "complaints": complaints})
+    return complaints
+
+
+def read_all(m) -> "dict[str, float] | None":
+    """Every parameter the FC has, or None if some never arrived.
+
+    PARAM_REQUEST_LIST, then each index still missing once the stream goes quiet asked
+    for by PARAM_REQUEST_READ. A PARAM_VALUE is placed by its index against the count it
+    carries; anything without a valid index (the broadcast after a set) is not part of
+    the listing.
+    """
+    m.mav.param_request_list_send(m.target_system, m.target_component)
+    have: "dict[int, tuple[str, float]]" = {}
+    count = None
+    last_new = time.time()
+    dead = 0
+    while True:
+        msg = m.recv_match(type="PARAM_VALUE", blocking=True, timeout=QUIET_S / 4)
+        if msg is not None and 0 <= msg.param_index < msg.param_count:
+            count = msg.param_count
+            if msg.param_index not in have:
+                last_new = time.time()
+                dead = 0
+            have[msg.param_index] = (name_of(msg), msg.param_value)
+            continue
+        if time.time() - last_new < QUIET_S:
+            continue
+        missing = [] if count is None else sorted(set(range(count)) - set(have))
+        if count is not None and not missing:
+            return {name: value for name, value in have.values()}
+        dead += 1
+        if dead > MAX_DEAD_ROUNDS:
+            ev({"event": "error", "message": "the read-back did not complete",
+                "params_expected": count, "params_received": len(have)})
+            return None
+        if count is None:
+            m.mav.param_request_list_send(m.target_system, m.target_component)
+        for idx in missing[:MAX_REREADS]:
+            m.mav.param_request_read_send(m.target_system, m.target_component, b"", idx)
+        last_new = time.time()
+
+
+def export_value(v: float) -> str:
+    """A value as Mission Planner's Save to File writes it: integers bare, a float as the
+    shortest decimal that is the same float32, exponent as .NET writes it (6.181582E-05)."""
+    if v == int(v):
+        return str(int(v))
+    for digits in range(1, 10):
+        s = f"{v:.{digits}g}"
+        if as_float32(float(s)) == v:
+            break
+    return s.replace("e", "E")
+
+
+def export(params: "dict[str, float]") -> str:
+    """The whole set in Mission Planner's order. It sorts with the culture comparer, under
+    which `_` comes before digits and letters (ATC_ANG_YAW_P before ATC_ANGLE_BOOST)."""
+    return "".join(f"{k},{export_value(as_float32(params[k]))}\n"
+                   for k in sorted(params, key=lambda k: k.replace("_", " ")))
 
 
 def connect():
@@ -183,7 +255,16 @@ def main() -> int:
     if not rows:
         print("coord-fc-params: no KEY,VALUE lines in any *.param on stdin", file=sys.stderr)
         return 2
-    return push(connect(), rows)
+    m = connect()
+    complaints = push(m, rows)
+    params = read_all(m)
+    if params is None:
+        return 3
+    sys.stdout.write(export(params))
+    sys.stdout.flush()
+    ev({"event": "done", "params": len(rows), "complaints": complaints,
+        "exported": len(params)})
+    return 1 if complaints else 0
 
 
 if __name__ == "__main__":
