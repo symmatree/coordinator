@@ -46,9 +46,11 @@ Endpoints: caster `ntrip.tiles.symmatree.com:2101/ATTIC`; Mission Planner TCP
 one client each, Mission Planner as sysid 255; backpack `http://boxer-txbp.local.symmatree.com`
 (`10.0.6.120`). The tiles hostnames resolve to 10.x on the site LAN.
 
-**Not yet confirmed end to end.** mavproxy-mlrs started its NTRIP client at 2026-11-02
-12:47:54Z, when the FC first reported a 3D fix on the bench. The FC's fix stayed 3D on 4
-satellites, which cannot show whether corrections arrive.
+**Confirmed end to end on 2026-11-03/04**, bench, Boxer off: the FC's GPS_RAW_INT in the mLRS
+tlog (`ground-tlogs/mlrs/20261103T225140Z`) goes 3D at 23:57:15Z, DGPS at 00:00:21Z, then RTK
+float most of the time with brief DGPS dips, and RTK fixed at 00:45:38Z and 02:12:31-02:13:56Z
+(17-24 satellites). The first boot with corrections over mLRS (2026-11-02) had started NTRIP at
+12:47:54Z but only ever reached a 3D fix on 4 satellites.
 
 ## Rates and message set
 
