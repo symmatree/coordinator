@@ -105,11 +105,15 @@ def subsystem_letters(doc):
         if warm is None:
             warm = camera.get("ready")
         letters.append("C" if warm is True else "c")
-        # Only if this pod is IN the sync group. A capture pod that never syncs -- the
-        # coordinator's own, for one -- would otherwise carry a permanent lower-case `s`
-        # and teach the reader to ignore a letter, which is worse than not showing it.
+        # Only if this pod is IN the sync group. A capture pod that never syncs would
+        # otherwise carry a permanent lower-case `s` and teach the reader to ignore a
+        # letter, which is worse than not showing it.
         if "sync_ready" in camera:
             letters.append("S" if camera.get("sync_ready") is True else "s")
+    # The coordinator's `S` is the leader's side of the same thing: whether its own 1 Hz
+    # from the DS3234 is arriving (coord-rtc feed's `edge`, carried as `rtc`).
+    if "sync_ready" not in camera and "rtc" in doc:
+        letters.append("S" if (doc.get("rtc") or {}).get("edge") is True else "s")
     for device in (doc.get("accel") or {}).get("devices") or []:
         label = str(device.get("label") or "?")
         tag = f"A{label[:1].lower()}"
@@ -171,7 +175,8 @@ def status_from_bus(docs, received, now, intent=None):
     # like any other pod, so it needs no special reading; until something does, there is
     # no row and nothing to explain.
     oak_rows = []
-    if coord_age is not None and (coord.get("camera") or coord.get("accel")):
+    if coord_age is not None and (coord.get("camera") or coord.get("accel")
+                                  or coord.get("rtc")):
         row = pod_row("oak", coord, now - coord_age)
         if row is not None:
             oak_rows.append(row)
@@ -220,7 +225,8 @@ def status_from_bus(docs, received, now, intent=None):
 # FC, which forwards it down mLRS. The FC's own display and Mission Planner show the latest
 # line, so it is short enough to read at a glance: an aggregate mark, then a token per pod
 # on the bus, `CO` the coordinator and `SE SW NE NW` the campods, upper case when that
-# pod's camera is warm and synced (C and S on the panel; the coordinator has no S). A pod
+# pod's camera is warm and synced (C and S on the panel; the coordinator's S is its own 1 Hz
+# arriving). A pod
 # that is not publishing has no token, as it has no cell.
 #
 #   -  stopped     <  getting ready     =  ready     +  recording
@@ -243,11 +249,10 @@ def pod_state(doc):
 
 
 def pod_token(name, doc):
-    camera = doc.get("camera") or {}
-    warm = camera.get("warm")
-    if warm is None:
-        warm = camera.get("ready")
-    good = warm is True and camera.get("sync_ready", True) is True
+    """Upper case on the panel's C and S: camera warm, and synced -- for the coordinator,
+    its own 1 Hz arriving."""
+    letters = subsystem_letters(doc)
+    good = "C" in letters and "s" not in letters
     return name.upper() if good else name.lower()
 
 
