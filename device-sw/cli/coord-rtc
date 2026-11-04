@@ -23,6 +23,7 @@ import ctypes
 import os
 import socket
 import fcntl
+import json
 import math
 import struct
 import sys
@@ -104,6 +105,11 @@ FC_MAX_AGE_S = 300.0
 # write resets the countdown chain, which re-phases the 1 Hz and makes one second the
 # wrong length, and that is what the cameras are aligning against.
 ARM_FILE = os.environ.get("COORD_RTC_ARM_FILE", "/var/lib/coordinator/ipc/fc_armed")
+# Where the feed publishes what it last read off the chip, for pod-link to put on the
+# coordinator's bus status as `rtc` (docs/pod-bus.md). Rewritten every pass, edge or not,
+# so it is current while the 1 Hz is missing -- which is when it is wanted.
+RTC_STATUS_FILE = os.environ.get("COORD_RTC_STATUS_FILE",
+                                 "/var/lib/coordinator/ipc/rtc_status")
 # Correct the epoch when it is off by more than this. Debounce, not precision: each
 # correction re-phases the pulse, so it must not happen repeatedly. At the chip's
 # 2 ppm, 100 ms accumulates in about 14 hours -- so a bench session or a flying day
@@ -258,6 +264,74 @@ def decode_time(regs: bytes) -> str:
         f"{century + bcd(year):04d}-{bcd(month_r, 0x1F):02d}-{bcd(date):02d}"
         f"T{hour:02d}:{bcd(minute):02d}:{bcd(sec):02d}"
     )
+
+
+def chip_seconds(regs: bytes) -> "int | None":
+    """The chip's time as a Unix second, or None when the registers are not a date.
+
+    A chip with no VCC does not drive MISO, so every register reads 0x00 -- month 0,
+    day 0 -- and the status register with them, so OSF reads clear. That is the board
+    unpowered or SPI not reaching it, not a time (2026-10-30, with the hub board dark).
+    """
+    try:
+        return calendar.timegm(time.strptime(decode_time(regs), "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
+def chip_state(regs: bytes, control: int, status: int) -> str:
+    """One word for what a read of the chip says, for the bus status.
+
+    no_response  every byte the same 0x00 or 0xFF: nothing drove MISO, so the chip has
+                 no VCC or SPI is not reaching it. A powered chip cannot read this way --
+                 month 0 is not a date.
+    reset        the chip answers but its time is not to be trusted: OSF set (the
+                 oscillator stopped since the time was last written), or the registers
+                 are not a date.
+    ok           a date, and OSF clear.
+    """
+    raw = bytes(regs[:7]) + bytes([control, status])
+    if len(set(raw)) == 1 and raw[0] in (0x00, 0xFF):
+        return "no_response"
+    if status & SR_OSF or chip_seconds(regs) is None:
+        return "reset"
+    return "ok"
+
+
+_status_write_failed = False
+
+
+def publish_chip_state(rtc: Ds3234, edge: bool) -> None:
+    """Write RTC_STATUS_FILE: chip_state() plus what it was read from.
+
+    JSON, because pod-link embeds it verbatim; boot_id and the CLOCK_MONOTONIC stamp
+    because the file is on the card and outlives the boot, the same shape as the router's
+    fc_link. `edge` is whether this pass saw the 1 Hz, which with the chip's own state
+    tells a dark board (no_response, no edge) from a chip with no epoch (reset, edge)
+    from a broken PPS wire (ok, no edge). Never raises: a status file is not worth the
+    feed.
+    """
+    global _status_write_failed
+    doc = {"boot_id": boot_id(), "as_of_mono_s": round(time.monotonic(), 3), "edge": edge}
+    try:
+        regs = rtc.read(REG_SECONDS, 7)
+        control = rtc.read(REG_CONTROL)[0]
+        status = rtc.read(REG_STATUS)[0]
+    except OSError as exc:
+        doc.update(state="no_response", error=str(exc))
+    else:
+        doc.update(state=chip_state(regs, control, status), time=decode_time(regs),
+                   osf=bool(status & SR_OSF), control=f"0x{control:02x}",
+                   status=f"0x{status:02x}")
+    try:
+        tmp = RTC_STATUS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(doc, f)
+        os.replace(tmp, RTC_STATUS_FILE)
+    except OSError as exc:
+        if not _status_write_failed:
+            print(f"coord-rtc: cannot write {RTC_STATUS_FILE} ({exc})", file=sys.stderr)
+        _status_write_failed = True
 
 
 def cmd_status(rtc: Ds3234) -> int:
@@ -442,9 +516,11 @@ def pulse_boundary(rtc: Ds3234, deadline_s: float = 2.0,
             # edge rather than send a label that could be a whole second wrong.
             first = latest
             continue
-        regs = rtc.read(REG_SECONDS, 7)
-        stamp = decode_time(regs)
-        return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S")), at
+        chip_s = chip_seconds(rtc.read(REG_SECONDS, 7))
+        if chip_s is None:
+            first = latest
+            continue
+        return chip_s, at
     return None
 
 
@@ -500,6 +576,7 @@ def cmd_feed(rtc: Ds3234) -> int:
     no_edge = 0
     while True:
         edge = pulse_boundary(rtc)
+        publish_chip_state(rtc, edge is not None)
         if edge is None:
             # No edge means the signal this whole design rests on is not arriving. There
             # is nothing useful to send without it -- the chip's label on its own leaves
@@ -666,7 +743,11 @@ def cmd_hctosys(rtc: Ds3234) -> int:
         return 1
     regs = rtc.read(REG_SECONDS, 7)
     stamp = decode_time(regs)
-    ts = calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%S"))
+    ts = chip_seconds(regs)
+    if ts is None:
+        print(f"the chip reads {stamp}, which is not a date: no VCC on the hub board, or "
+              "SPI not reaching it. The system clock is left alone.", file=sys.stderr)
+        return 1
     before = time.time()
     try:
         set_system(float(ts))

@@ -259,6 +259,27 @@ def write_arm_file(path, armed):
     os.replace(tmp, path)
 
 
+def write_fc_link(path, boot_id, heartbeat_mono_s, heartbeats):
+    """#669: when this router last heard the FC, for the front panel.
+
+    The arm file cannot say this: it reads "0" both for a disarmed FC and for a wire
+    that carries nothing, and on 2026-10-30 two flights went by with the panel showing
+    the second as the first. pod-link passes this document through on the coordinator's
+    bus status and the panel draws it.
+
+    JSON, because pod-link embeds it verbatim. The heartbeat time is time.monotonic(),
+    the clock pod-link stamps `as_of_boot_s` with, so a reader differences the two. The
+    boot id goes with it because this file is on the card and outlives the boot whose
+    clock it is in. `null` until the first heartbeat: written at startup so a router
+    that is up and hearing nothing says so, rather than leaving last boot's file.
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"boot_id": boot_id, "last_heartbeat_mono_s": heartbeat_mono_s,
+                   "heartbeats": heartbeats}, f)
+    os.replace(tmp, path)
+
+
 def write_fc_time(path, utc_minus_raw_us, rtt_us, raw_us, boot_id):
     """Publish UTC against this box's CLOCK_MONOTONIC_RAW for coord-rtc to read (#11).
 
@@ -330,6 +351,20 @@ def read_line(path):
             return f.readline().strip()
     except OSError:
         return ""
+
+
+def read_panel_text(path, max_age_s=5.0):
+    """The panel's current line, or "" if the panel has stopped writing it.
+
+    The panel rewrites the file every second, so an old one is a panel that is gone and
+    its last line is no longer the fleet's state.
+    """
+    try:
+        if time.time() - os.stat(path).st_mtime > max_age_s:
+            return ""
+    except OSError:
+        return ""
+    return read_line(path)
 
 
 def session_dir(root):
@@ -459,6 +494,16 @@ def main():
     ts_req_period_s = float(os.environ.get("MAVLINK_TIMESYNC_PERIOD_S", "8"))
     armed = False
     write_arm_file(arm_file, armed)
+    # #669: whether the FC is talking at all, which the arm file cannot say.
+    fc_link_file = os.environ.get("MAVLINK_FC_LINK_FILE", "/tmp/fc_link")
+    fc_heartbeats = 0
+    write_fc_link(fc_link_file, boot_id, None, fc_heartbeats)
+    # coordinator#683: the front panel's line, sent to the FC as STATUSTEXT so it reaches
+    # the ground. On change and every 30 s, not faster: the FC's display and the GCS show
+    # only the latest line, and the FC logs each one it receives as a MSG.
+    panel_text_file = os.environ.get("MAVLINK_PANEL_TEXT_FILE", "/tmp/panel_text")
+    panel_text_period_s = float(os.environ.get("MAVLINK_PANEL_TEXT_PERIOD_S", "30"))
+    panel_text_sent, panel_text_at = None, -1e9
 
     # #167: FC-clock <-> our-clock pairs, for joining captures to the FC log.
     # Both logs land in THIS BOOT's session directory, so collecting the session
@@ -490,6 +535,13 @@ def main():
                 mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0,
                 mavutil.mavlink.MAV_STATE_ACTIVE)
             last_hb = now_mono
+
+        text = read_panel_text(panel_text_file)
+        if text and (text != panel_text_sent
+                     or now_mono - panel_text_at >= panel_text_period_s):
+            mav.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO,
+                                    text.encode("ascii", "replace")[:50])
+            panel_text_sent, panel_text_at = text, now_mono
 
         # Our own TIMESYNC request. The FC sends its own, but those only give a one-way
         # FC-to-us measurement; a request of ours comes back with both our send time and
@@ -621,6 +673,10 @@ def main():
                       and msg.type != mavutil.mavlink.MAV_TYPE_GCS):
                     # #88: FC arm/disarm -> shared file; sync() the FS at disarm so the
                     # flight's captures survive the power cut that usually follows.
+                    # #669: the same heartbeats the arm state comes from, so the panel's
+                    # "FC heard" means "an arm would get through".
+                    fc_heartbeats += 1
+                    write_fc_link(fc_link_file, boot_id, time.monotonic(), fc_heartbeats)
                     now_armed = bool(
                         msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
                     if now_armed != armed:

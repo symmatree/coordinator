@@ -167,8 +167,8 @@ directly; `BATT_AMP_PERVLT` and `AMP_OFFSET` are analog-only. The scaling consta
 `CURRENT_OFFSET`. It is not an ArduPilot parameter and cannot be set from Mission Planner.
 
 **TBS silkscreens `S5`-`S12` where ArduPilot says `M5`-`M12`**; there are no `M9`-`M13` pads.
-`S11` carries the PPS leg into the FC as `CAM1_FEEDBAK_PIN`. `SERIAL1`, `SERIAL7` and
-`SERIAL9` are unused; `SERIAL7` is spoken for by the corrections-link direction above.
+`S11` carries the PPS leg into the FC as `CAM1_FEEDBAK_PIN`. `SERIAL1` and `SERIAL9`
+are unused; `SERIAL7` is the mLRS receiver (`ardupilot/inputs/mlrs-link.param`).
 
 **The ELRS antenna is not "known" to be anchored anywhere but where he put it, and the
 handoff's 900 MHz line was wrong.** The previous version of this file said 900 MHz was "ruled

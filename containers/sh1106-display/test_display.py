@@ -9,8 +9,9 @@ import sys
 
 from PIL import Image, ImageDraw
 
-from display import (CAMPODS, CELL_FONT, CHARS_PER_ROW, COL_X, FOOTER_Y, ROW_Y, STALE_AFTER_S,
-                     draw_status, pod_row, status_from_bus, subsystem_letters)
+from display import (CAMPODS, CELL_FONT, CHARS_PER_ROW, COL_X, FC_STALE_AFTER_S, FOOTER_Y,
+                     ROW_Y, STALE_AFTER_S, draw_status, fc_heard, panel_text, pod_row,
+                     status_from_bus, subsystem_letters)
 
 W, H = 128, 64
 
@@ -23,8 +24,11 @@ def pod(ready=True, warm=True, sync=True, accels=(True, True)):
                                   {"label": "arm", "present": accels[1]}]}}
 
 
-COORD = {"node": "coordinator", "state": "ok", "capture": False,
-         "data_free_bytes": 24_707_977_216}
+# Hearing the FC: pod-link stamped this document at 500 s, half a second after the
+# router's last heartbeat (#669).
+FC_OK = {"boot_id": "b", "last_heartbeat_mono_s": 499.5, "heartbeats": 480}
+COORD = {"node": "coordinator", "state": "ok", "capture": False, "as_of_boot_s": 500.0,
+         "data_free_bytes": 24_707_977_216, "fc": FC_OK}
 
 failures = []
 
@@ -115,6 +119,27 @@ check("the oak cell is drawn first", [r["name"] for r in oak["rows"]] == ["oak"]
 check("a not-ready oak pod does not hold the campods' gate", oak["gate"] is True)
 check("no oak document means no oak cell", [r["name"] for r in every["rows"]] == ALL)
 
+# ---- the FC link, without which arming reaches nothing (#669) -------------------------
+check("a fresh heartbeat is heard", fc_heard(COORD, 1.0) is True)
+check("a heartbeat older than the limit is not",
+      fc_heard(dict(COORD, fc=dict(FC_OK, last_heartbeat_mono_s=500.0 - FC_STALE_AFTER_S - 1)),
+               1.0) is False)
+check("a router that has heard nothing yet is not",
+      fc_heard(dict(COORD, fc=dict(FC_OK, last_heartbeat_mono_s=None)), 1.0) is False)
+check("no fc document (router down, or last boot's file) is not",
+      fc_heard({k: v for k, v in COORD.items() if k != "fc"}, 1.0) is False)
+# The age inside the document is as of its publication, so a document that has itself
+# gone stale says nothing about now.
+check("a stale coordinator document is not", fc_heard(COORD, STALE_AFTER_S + 1) is False)
+check("no coordinator document is not", fc_heard({}, None) is False)
+
+silent = status_from_bus(
+    {**{c: pod() for c in CAMPODS}, "coordinator": {k: v for k, v in COORD.items() if k != "fc"}},
+    FRESH, now=NOW)
+check("every campod ready but the FC silent holds the gate", silent["gate"] is False)
+check("and the status says the FC is not heard", silent["fc"] is False)
+check("every campod ready and the FC heard opens it", every["fc"] is True and every["gate"])
+
 check("the intent topic decides armed, not the pod documents",
       status_from_bus({"coordinator": COORD}, {"coordinator": NOW}, now=NOW,
                       intent={"capture": True})["capture"] is True)
@@ -122,6 +147,40 @@ check("free space is read from the coordinator's document", every["free_gb"] == 
       str(every["free_gb"]))
 check("the blink phase alternates with the second",
       status_from_bus({}, {}, now=10.0)["blink"] != status_from_bus({}, {}, now=11.0)["blink"])
+
+# ---- the ground's line (coordinator#683) ----------------------------------------------
+def campod(capturing=False, **kw):
+    doc = pod(**kw)
+    doc["camera"]["capturing"] = capturing
+    return doc
+
+
+OAK_IDLE = {"phase": "stopped", "camera": "stopped-while-waiting", "ready": False,
+            "warm": False, "capturing": False}
+OAK_WARM = {"phase": "capture", "ready": True, "warm": True, "capturing": False}
+line = panel_text({**{c: campod() for c in CAMPODS},
+                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM)}, FRESH, NOW)
+check("everything ready reads =COSESWNENW", line == "=COSESWNENW", line)
+line = panel_text({**{c: campod(capturing=True) for c in CAMPODS},
+                   "coordinator": dict(COORD, ready=True,
+                                       camera=dict(OAK_WARM, capturing=True))},
+                  FRESH, NOW)
+check("everything recording reads +", line == "+COSESWNENW", line)
+line = panel_text({**{c: campod() for c in CAMPODS},
+                   "campod-se": campod(ready=False, sync=False),
+                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM)}, FRESH, NOW)
+check("one campod syncing: the least advanced state, mixed, and its name lower case",
+      line == "<*COseSWNENW", line)
+line = panel_text({**{c: campod() for c in CAMPODS},
+                   "coordinator": dict(COORD, camera=OAK_IDLE)}, FRESH, NOW)
+check("a stopped coordinator camera reads - mixed, co lower case",
+      line == "-*coSESWNENW", line)
+line = panel_text({"coordinator": dict(COORD, ready=True, camera=OAK_WARM),
+                   "campod-sw": campod(), "campod-se": campod()},
+                  {"coordinator": NOW, "campod-sw": NOW, "campod-se": NOW - 60}, NOW)
+check("a pod not on the bus has no token", line == "=COSW", line)
+check("an empty bus reads -", panel_text({}, {}, NOW) == "-")
+check("the longest line fits a STATUSTEXT", len("<*COSESWNENW") <= 50)
 
 # ---- the layout fits, which is not something a comment can promise --------------------
 # The first version of this panel was written for a 6x8 font. PIL's default is 8 px wide
@@ -157,12 +216,21 @@ check("the last cell row does not overlap the footer",
 
 # ---- and it actually draws ------------------------------------------------------------
 for _name, _status in (("all ready", every), ("one waiting", one_waiting),
+                       ("FC silent", silent),
                        ("with an oak pod", oak),
                        ("empty bus", status_from_bus({}, {}, now=NOW))):
     _img = _render(_status)
     check(f"{_name} renders something", _img.getbbox() is not None)
     check(f"{_name} stays inside the panel",
           _img.getbbox()[2] <= W and _img.getbbox()[3] <= H, str(_img.getbbox()))
+
+# NO FC is in the footer, where ARMED/idle was: with the wire silent, idle is the
+# router's default rather than the FC's answer.
+_nofc = _render(silent).crop((0, FOOTER_Y, 100, H))
+_want = Image.new("1", (W, H), 0)
+ImageDraw.Draw(_want).text((4, FOOTER_Y), "NO FC 25G", fill="white")
+check("a silent FC draws NO FC in the footer",
+      list(_nofc.getdata()) == list(_want.crop((0, FOOTER_Y, 100, H)).getdata()))
 
 # The gate is meant to be read across a field, so it is the whole screen inverting rather
 # than a word: the ready screen is most of the panel lit, the waiting one is text.

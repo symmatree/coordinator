@@ -21,7 +21,8 @@ This is the **field instrument**: no network, no table, someone standing over th
 deciding whether to arm. So it answers that first and explains itself second.
 
 - **the whole screen inverts** (black on white) when every campod is publishing and
-  reports itself ready. The one-bit answer is the screen's brightness and costs no line.
+  reports itself ready, and the coordinator is hearing the FC. The one-bit answer is the
+  screen's brightness and costs no line.
 - **one cell per pod, two to a row** -- the name's case is that pod's own verdict (`SE`
   ready, `se` not), and the letters say which subsystem is not there yet. Cells are drawn
   one size down from the footer so two fit across:
@@ -42,8 +43,13 @@ deciding whether to arm. So it answers that first and explains itself second.
   one that exists is not evidence of life.
 - **the coordinator's own capture pod** gets a cell too, named `oak`, if it publishes a
   camera document. It is shown and does not gate -- say the word and that is one line.
-- **the footer** -- `ARMED` or `idle <reason>` from the capture intent, and the card's
-  free space.
+- **the footer** -- `NO FC` when the coordinator has not heard an FC heartbeat in the
+  last `FC_STALE_AFTER_S` (3 s), otherwise `ARMED` or `idle <reason>` from the capture
+  intent; and the card's free space. Arming reaches the pods only through those
+  heartbeats, so with the wire silent `idle` is the router's default rather than the FC's
+  answer -- which is how two flights on 2026-10-30 recorded nothing (#669). The heartbeat
+  time comes from the router's `fc_link` file, which pod-link publishes as `fc` on the
+  coordinator's status.
 - **the dot** -- blinks once a second. Liveness for the panel itself: everything else here
   can legitimately sit still, so without it a frozen screen looks like a calm fleet. A
   clock would not fit beside the footer at 15 characters a row.
@@ -51,6 +57,24 @@ deciding whether to arm. So it answers that first and explains itself second.
 `ready` per pod is **not computed here**. pod-link holds both the camera and accel
 documents and publishes the verdict; this panel and the fleet-control table read the same
 field, because two readers each assembling their own answer is the bug #577 fixed.
+
+### The line for the ground (coordinator#683)
+
+The same documents also make one line of text, written every second to
+`/var/lib/coordinator/ipc/panel_text`. The router sends it to the FC as STATUSTEXT, on change
+and every 30 s, and the FC forwards it to any non-private link. It is an aggregate mark and
+then a token per pod on the bus:
+
+    =COSESWNENW    <*COseSWNENW    -*coSESWNENW
+
+- the mark is `-` stopped, `<` getting ready, `=` ready, `+` recording: the least advanced
+  of any pod, with `*` after it when they are not all in the same state
+- `CO` is the coordinator, `SE SW NE NW` the campods; upper case when that pod's camera is
+  warm and synced (the coordinator's has no sync, so warm). No token when the pod is not
+  on the bus.
+
+The line does not need the OLED: a panel that does not answer is retried every 10 s, and the
+line is written in the meantime. The router sends nothing from a file more than 5 s old.
 
 ### Why an echo
 

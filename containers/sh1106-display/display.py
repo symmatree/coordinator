@@ -67,6 +67,11 @@ def _env(name, default):
 # will start showing as absent between its own publications.
 STALE_AFTER_S = 15.0
 
+# The FC sends a heartbeat once a second and the router records each one; pod-link reads
+# that record when it builds the coordinator's document, so in a healthy link the age it
+# carries is under a second. Three missed heartbeats is a wire that has stopped.
+FC_STALE_AFTER_S = 3.0
+
 # The pod's own arm answer, read and not re-derived. This panel deliberately does not
 # combine `warm` and `sync_ready` itself: the campod does that (#577), so the panel and
 # the bench cycle's arm gate cannot drift into meaning different things by "ready".
@@ -134,6 +139,23 @@ def pod_row(node, doc, age):
     }
 
 
+def fc_heard(coord, coord_age):
+    """Whether the coordinator is hearing the FC, from its own bus document (#669).
+
+    The router records the time of the last FC heartbeat and pod-link carries it as `fc`,
+    in the seconds-since-boot `as_of_boot_s` is in, so the age is their difference.
+    No document, a stale one, no heartbeat yet, or an old one are all NO: every one of
+    them means an arm would not reach the pods, which is the question this answers.
+    """
+    if coord_age is None or coord_age > STALE_AFTER_S:
+        return False
+    hb = (coord.get("fc") or {}).get("last_heartbeat_mono_s")
+    as_of = coord.get("as_of_boot_s")
+    if not isinstance(hb, (int, float)) or not isinstance(as_of, (int, float)):
+        return False
+    return 0 <= as_of - hb <= FC_STALE_AFTER_S
+
+
 def status_from_bus(docs, received, now, intent=None):
     """The screen's state, from bus documents alone.
 
@@ -166,7 +188,13 @@ def status_from_bus(docs, received, now, intent=None):
     # of it -- a pod that is absent is the most important way of not being ready, and it
     # has no row to be lower case in. The oak pod is shown and does not gate; say so and
     # it becomes a one-line change.
-    gate = len(campod_rows) == len(CAMPODS) and all(r["ready"] for r in campod_rows)
+    #
+    # AND THE FC IS HEARD (#669). Arming reaches the pods only through the router's
+    # heartbeats; ready pods behind a silent wire record nothing, which is how two flights
+    # on 2026-10-30 went by with every pod ready and no frames.
+    fc = fc_heard(coord, None if coord_age is None else now - coord_age)
+    gate = (fc and len(campod_rows) == len(CAMPODS)
+            and all(r["ready"] for r in campod_rows))
 
     capture = None
     if intent is not None:
@@ -180,11 +208,68 @@ def status_from_bus(docs, received, now, intent=None):
         "blink": int(now) % 2 == 0,
         "rows": rows,
         "gate": gate,
+        "fc": fc,
         "capture": capture,
         "reason": (intent or {}).get("reason"),
         "free_gb": (round(coord["data_free_bytes"] / 1e9, 1)
                     if isinstance(coord.get("data_free_bytes"), (int, float)) else None),
     }
+
+
+# THE GROUND'S COPY OF THE PANEL (coordinator#683), one STATUSTEXT the router sends to the
+# FC, which forwards it down mLRS. The FC's own display and Mission Planner show the latest
+# line, so it is short enough to read at a glance: an aggregate mark, then a token per pod
+# on the bus, `CO` the coordinator and `SE SW NE NW` the campods, upper case when that
+# pod's camera is warm and synced (C and S on the panel; the coordinator has no S). A pod
+# that is not publishing has no token, as it has no cell.
+#
+#   -  stopped     <  getting ready     =  ready     +  recording
+#
+# The mark is the least advanced state of any pod, followed by `*` when they are not all
+# in the same one, so `=*` is "some ready, the rest further back".
+STATE_MARKS = "-<=+"
+
+
+def pod_state(doc):
+    """One pod's state, as its index in STATE_MARKS."""
+    camera = doc.get("camera") or {}
+    if camera.get("capturing") is True:
+        return 3
+    if doc.get("ready") is True:
+        return 2
+    if not camera or camera.get("phase") in ("stopped", "failed"):
+        return 0
+    return 1
+
+
+def pod_token(name, doc):
+    camera = doc.get("camera") or {}
+    warm = camera.get("warm")
+    if warm is None:
+        warm = camera.get("ready")
+    good = warm is True and camera.get("sync_ready", True) is True
+    return name.upper() if good else name.lower()
+
+
+def panel_text(docs, received, now):
+    """The status line, from the same documents and the same staleness rule as the panel."""
+    pods = []
+    for node, name in (("coordinator", "co"),) + tuple((c, c.replace("campod-", ""))
+                                                       for c in CAMPODS):
+        doc, at = docs.get(node), received.get(node)
+        if doc is not None and at is not None and now - at <= STALE_AFTER_S:
+            pods.append((name, doc))
+    states = {pod_state(doc) for _, doc in pods} or {0}
+    mark = STATE_MARKS[min(states)] + ("*" if len(states) > 1 else "")
+    return mark + "".join(pod_token(name, doc) for name, doc in pods)
+
+
+def write_panel_text(path, text):
+    """Replace the file whole, so the router never reads half a line."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        f.write(text + "\n")
+    os.replace(tmp, path)
 
 
 # MEASURED, NOT ASSUMED. PIL's default font is proportional; its ink runs from 2 px to
@@ -206,14 +291,16 @@ def draw_status(draw, width, height, status):
     FOUR THINGS, in the order someone standing over the vehicle asks them:
 
       1. the screen   -- can I arm. The WHOLE SCREEN INVERTS (black on white) when every
-                         campod is on the bus and ready, so the one-bit answer is the
-                         screen's brightness and costs no line of its own
+                         campod is on the bus and ready AND the FC is heard, so the
+                         one-bit answer is the screen's brightness and costs no line of
+                         its own
       2. a cell per pod -- `SE C S Ac Aa`, two to a row. The name's case repeats that pod's
                          own verdict, the letters say which subsystem is not there yet. A
                          pod that is not publishing HAS NO CELL, so the cells are the
                          inventory too
-      3. the footer   -- ARMED or idle, and the card space: the other thing checked before
-                         a flight
+      3. the footer   -- NO FC when the router has not heard an FC heartbeat lately,
+                         otherwise ARMED or idle; and the card space: the other thing
+                         checked before a flight
       4. the blink    -- a dot in the corner, on for one second and off the next. Liveness
                          for THIS PANEL: every other thing here can legitimately sit still,
                          so without it a frozen screen looks like a calm fleet. There is no
@@ -230,7 +317,11 @@ def draw_status(draw, width, height, status):
         draw.text((x, y), f"{row['name']} {' '.join(row['letters'])}", fill=ink,
                   font=CELL_FONT)
 
-    if status["capture"] is True:
+    # NO FC REPLACES THE ARM STATE rather than sitting beside it: with the wire silent,
+    # "idle" is not the FC's answer, it is the router's default.
+    if not status["fc"]:
+        cap = "NO FC"
+    elif status["capture"] is True:
         cap = "ARMED"
     elif status["capture"] is False:
         cap = f"idle {status['reason']}" if status.get("reason") else "idle"
@@ -285,16 +376,35 @@ def main():
     client.connect_async(hostname, int(portstr or "1883"), keepalive=30)
     client.loop_start()
 
-    device = sh1106(i2c(port=port, address=addr))
-    device.persist = True  # leave the last frame up on SIGTERM instead of blanking
-    print(f"sh1106-display: i2c={port}@{hex(addr)} bus={broker} refresh={refresh}s",
-          flush=True)
+    text_file = _env("SH1106_TEXT_FILE", "/ipc/panel_text")
+    print(f"sh1106-display: i2c={port}@{hex(addr)} bus={broker} refresh={refresh}s "
+          f"text={text_file}", flush=True)
 
+    # THE PANEL IS NOT REQUIRED FOR THE LINE. Without the OLED the ground copy still has to
+    # go out, so a panel that does not answer is retried rather than fatal.
+    device, tried, missing = None, -1e9, None
     while not _stop:
-        status = status_from_bus(docs, received, time.monotonic(),
-                                 intent if intent else None)
-        with canvas(device) as draw:
-            draw_status(draw, device.width, device.height, status)
+        now = time.monotonic()
+        if device is None and now - tried >= 10:
+            tried = now
+            try:
+                device = sh1106(i2c(port=port, address=addr))
+                device.persist = True  # leave the last frame up on SIGTERM instead of blanking
+                print("sh1106-display: panel found", flush=True)
+            except Exception as exc:  # luma raises its own DeviceNotFoundError, among others
+                if str(exc) != missing:
+                    print(f"sh1106-display: no panel ({exc}); retrying every 10 s",
+                          flush=True)
+                missing = str(exc)
+        write_panel_text(text_file, panel_text(docs, received, now))
+        status = status_from_bus(docs, received, now, intent if intent else None)
+        if device is not None:
+            try:
+                with canvas(device) as draw:
+                    draw_status(draw, device.width, device.height, status)
+            except OSError as exc:
+                print(f"sh1106-display: panel lost ({exc})", flush=True)
+                device = None
         end = time.monotonic() + refresh
         while not _stop and time.monotonic() < end:
             time.sleep(min(0.2, max(0.0, end - time.monotonic())))

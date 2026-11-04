@@ -1,0 +1,55 @@
+# mLRS corrections and telemetry link (SERIAL7 -> RadioMaster RP4TD on mLRS)
+#   why the link exists      docs/rtk-corrections-path.md, "Direction (2026-10-27)"
+#   the pads                 docs/rekon10/flight-platform.md, "Serial ports"
+#
+# RP4TD flashed rx-radiomaster-rp4td-2400 (mLRS v1.4.04), its TX/RX pads on R7/T7. The ground
+# end is a RadioMaster Ranger on mLRS, USB-C into the attic host. RTCM comes up this link;
+# telemetry goes down it to the attic tlog.
+#
+# Proto 2 = MAVLink2. 57600 is the receiver's default "Rx Ser Baudrate"; it is ~5.8 kB/s on
+# the wire against ~2 kB/s over the air in 31 Hz mode.  provenance: 2026-11-01
+SERIAL7_PROTOCOL,2
+SERIAL7_BAUD,57
+#
+# MAVLink channels are numbered in SERIALn order over the MAVLink ports. With SERIAL7 on
+# protocol 2 this link is MAV4 (SERIAL0 = MAV1, SERIAL4 = MAV2, SERIAL6 = MAV3); SERIAL9 (OTG)
+# moves from MAV4 to MAV5.
+#
+# Downlink: the four groups the ELRS link carries at 2 Hz (EXT_STAT = SYS_STATUS + GPS_RAW,
+# POSITION = global/local position, EXTRA1 = ATTITUDE, EXTRA2 = VFR_HUD), EXTRA3 (battery, EKF
+# status, vibration and the rest of that group) and RC_CHAN (RC_CHANNELS + SERVO_OUTPUT_RAW,
+# so a radio switch can annotate the ground log) at 1 Hz. The receiver's RADIO_STATUS
+# ("Rx Snd RadioStat" = ardu_1) drives ArduPilot's flow control on this channel
+# (GCS_Common.cpp handle_radio_status: txbuf < 50 slows the streams), so an oversubscribed
+# link slows the streams rather than overflowing.
+#
+# Budget. mLRS 31 Hz mode is one frame each way every 32 ms with 82 B of serial payload down
+# and 64 B up (mLRS frame_types.h, setup.h): 2560 B/s down, 2000 B/s up at full link quality.
+# Wire bytes per 1 Hz tick of each group, measured on the coordinator tlog of 2026-10-27
+# (all groups at 2 Hz there): EXT_STAT 202, POSITION 76, EXTRA1 131, EXTRA2 31,
+# EXTRA3 229, RC_CHAN 78; HEARTBEAT 21 B/s. The rates below come to ~1210 B/s, 47% of the
+# downlink.  provenance: 2026-11-01
+MAV4_EXT_STAT,2
+MAV4_POSITION,2
+MAV4_EXTRA1,2
+MAV4_EXTRA2,2
+MAV4_EXTRA3,1
+MAV4_RC_CHAN,1
+MAV4_ADSB,0
+MAV4_PARAMS,0
+MAV4_RAW_CTRL,0
+MAV4_RAW_SENS,0
+#
+# 4 = bit 2 NOSTREAMOVERRIDE (GCS.h, enum class Option): ignore REQUEST_DATA_STREAM, so a
+#   GCS on this link cannot set and save the rates above (Mission Planner did that to MAV3 on
+#   2026-10-24).
+#   NOT bit 1 NO_FORWARD. A private channel gets no status text at all --
+#   GCS::statustext_send_channel_mask() removes private channels, and
+#   send_to_active_channels() skips them for NAMED_VALUE_* -- so with it set, PreArm and every
+#   other STATUSTEXT reached the ground over neither radio (coordinator#683). ELRS (MAV3) stays
+#   private, so this is the link that carries them. The cost: the FC forwards broadcast
+#   traffic from the coordinator link (MAV2) down here -- including, when VIO runs, the
+#   messages that took 46% of the ELRS downlink in coordinator#197 -- and RTCM
+#   arriving here is forwarded to MAV2 and USB, which is nothing at 1.5 Mbaud.
+#   provenance: 2026-11-03
+MAV4_OPTIONS,4

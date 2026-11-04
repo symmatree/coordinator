@@ -227,6 +227,19 @@ sys.stderr = _stderr
 check("hctosys sets the clock from the chip", rc == 0 and len(moved) == 1, f"rc={rc}")
 check("to the chip's own time, read as UTC",
       moved and abs(moved[0] - 1791742065) < 1, str(moved))
+
+# A chip with no VCC does not drive MISO: every register, status included, reads 0x00,
+# so OSF reads clear and the time is month 0, day 0. hctosys refuses it and says why,
+# rather than raising ValueError out of strptime (2026-10-30, hub board dark).
+moved.clear()
+bus = FakeBus({cr.REG_STATUS: 0x00, **{i: 0 for i in range(7)}})
+err = io.StringIO()
+sys.stderr = err
+rc = cr.cmd_hctosys(cr.Ds3234(bus))
+sys.stderr = _stderr
+check("hctosys refuses an all-zero read", rc == 1 and not moved, f"rc={rc} moved={moved}")
+check("and says it is not a date", "not a date" in err.getvalue(), err.getvalue())
+check("chip_seconds is None for an all-zero read", cr.chip_seconds(bytes(7)) is None)
 cr.set_system = _real_set
 
 # 13. The SOCK sample chrony will read. Size and magic are the two things that make
@@ -491,7 +504,7 @@ class _OsfClearRtc:
     """Status register with OSF clear, which is all cmd_feed reads it for."""
 
     def read(self, reg, n=1):
-        return bytes([0x00])
+        return bytes(n)
 
 
 class _Stop(Exception):
@@ -513,6 +526,8 @@ def _four_edges(rtc, deadline_s=2.0, path=None):
 
 
 _slept = []
+_status_dir = tempfile.mkdtemp()
+cr.RTC_STATUS_FILE = str(Path(_status_dir) / "rtc_status")
 cr.pulse_boundary = _four_edges
 cr.fc_offset = lambda: None
 cr.armed = lambda path=None: True          # so no path here can write the chip
@@ -547,6 +562,60 @@ check("and the line carries the offset chrony will show",
 
 # cmd_feed's only boundary source is the pulse, and this section patched pulse_boundary --
 # so the four datagrams above are themselves the check that it still goes through it.
+
+import json as _json
+
+_doc = _json.loads(Path(cr.RTC_STATUS_FILE).read_text())
+check("every feed pass publishes the chip's state for the bus status",
+      _doc.get("edge") is True and _doc.get("state") == "no_response"
+      and _doc.get("boot_id") == cr.boot_id(), str(_doc))
+
+# ---- 19. the chip's state on the bus -------------------------------------------------
+#
+# Three answers, from the registers alone: nothing driving MISO, a chip that answers but
+# has no trustworthy time, and a chip with a date and OSF clear.
+
+check("all 0x00 is no chip: month 0 is not a date",
+      cr.chip_state(bytes(7), 0x00, 0x00) == "no_response")
+check("all 0xFF is no chip either",
+      cr.chip_state(b"\xff" * 7, 0xFF, 0xFF) == "no_response")
+_good = cr.time_regs(_time.gmtime(1791859443))
+check("a date with OSF clear is ok", cr.chip_state(_good, cr.CR_PPS, 0x00) == "ok")
+check("the same date with OSF set is reset",
+      cr.chip_state(_good, cr.CR_PPS, cr.SR_OSF) == "reset")
+check("OSF clear but not a date is reset, not ok",
+      cr.chip_state(bytes([0, 0, 0, 1, 0, 0, 0]), 0x1C, 0x00) == "reset")
+# The power-on chip: control 0x1C, OSF set, time registers zero. It answers, so it is not
+# no_response, and it has no epoch, so it is not ok.
+check("a chip just powered from cold reads reset",
+      cr.chip_state(bytes(7), 0x1C, cr.SR_OSF) == "reset")
+
+
+class _DeadSpi:
+    def read(self, reg, n=1):
+        raise OSError(5, "Input/output error")
+
+
+cr.publish_chip_state(_DeadSpi(), False)
+_doc = _json.loads(Path(cr.RTC_STATUS_FILE).read_text())
+check("an SPI error is published as no_response with the error, not raised",
+      _doc.get("state") == "no_response" and "Input/output" in _doc.get("error", "")
+      and _doc.get("edge") is False, str(_doc))
+
+cr.publish_chip_state(cr.Ds3234(FakeBus({0: 0x03, 4: 0x02, 5: 0x11, 6: 0x26})), True)
+_doc = _json.loads(Path(cr.RTC_STATUS_FILE).read_text())
+check("a chip from cold over the real register framing reads reset, with its time",
+      _doc.get("state") == "reset" and _doc.get("osf") is True
+      and _doc.get("time") == "2026-11-02T00:00:03", str(_doc))
+
+cr.RTC_STATUS_FILE = str(Path(_status_dir) / "missing" / "rtc_status")
+_err = io.StringIO()
+import contextlib as _contextlib
+with _contextlib.redirect_stderr(_err):
+    cr.publish_chip_state(cr.Ds3234(FakeBus()), True)
+    cr.publish_chip_state(cr.Ds3234(FakeBus()), True)
+check("a status file that cannot be written does not stop the feed, and says so once",
+      _err.getvalue().count("cannot write") == 1, repr(_err.getvalue()))
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

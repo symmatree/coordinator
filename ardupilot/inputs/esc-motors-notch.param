@@ -4,7 +4,9 @@
 # See flight-platform.md (ESC) and ardupilot.md (tuning log).
 #
 # --- ESC telemetry link (SERIAL8, FC-ESC ribbon) ---
-# Proto 16 = ESC telemetry: feeds motor RPM to the notch and volts/amps to BATT_MONITOR=9.
+# Proto 16 = ESC telemetry: volts/amps/temperature per ESC, and BATT_MONITOR=9. It also
+#   reports RPM, but only at SERVO_BLH_TRATE per ESC (default 10 Hz); the notch's RPM comes
+#   from bi-directional DShot below.
 SERIAL8_PROTOCOL,16
 SERIAL8_BAUD,115
 #
@@ -16,8 +18,14 @@ SERVO_BLH_AUTO,1
 # Motor pole count -- a physical property of the Helion 3110 motors. Pinned even though
 #   it matches the current default, so a default change can't silently mis-scale eRPM.
 SERVO_BLH_POLES,14
-# RPM comes from the SERIAL8 UART, not bi-directional DShot.
-SERVO_BLH_BDMASK,0
+# Bi-directional DShot on the four motor outputs (SERVO1..4 = mask 15): an eRPM reply on
+#   every DShot frame, at the loop rate, for the per-motor notch (INS_HNTCH_OPTS bit 1).
+#   The serial feed above samples each ESC at 10 Hz. Motors are outputs 1-4, on TIM3 and
+#   TIM2; the Lucid H7 hwdef marks one channel of each pair BIDIR (PWM(1), PWM(3)). AM32 v2.20 switches its telemetry on by itself when it sees the
+#   inverted signal while disarmed (Src/dshot.c). Serial RPM still lands in the same
+#   AP_ESC_Telem slot at 10 Hz (AP_BLHeli.cpp read_telemetry_packet -> update_rpm).
+#   provenance: 2026-11-02
+SERVO_BLH_BDMASK,15
 # Motor mapping SERVO1..4 -> Motor1/3/4/2. This remap also reorders which ESC the AM32
 #   configurator reaches through FC passthrough.
 SERVO1_FUNCTION,33

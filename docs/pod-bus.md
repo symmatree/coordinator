@@ -321,6 +321,30 @@ Its `capture` field reports the arm file it publishes from, which is what this b
 knows about capture. It has no `camera` or `accel` section: the tracker and the router
 write into the session rather than publishing status documents.
 
+Its `fc` section is the router's FC-link file (`/var/lib/coordinator/ipc/fc_link`,
+#669): `last_heartbeat_mono_s`, the time of the last FC heartbeat in the same
+seconds-since-boot as `as_of_boot_s` (`null` until the first one), a `heartbeats` count,
+and the `boot_id` it was written in. pod-link passes it through only when that boot id is
+this boot's, because the file is on the card and outlives the boot whose clock it is in.
+`as_of_boot_s - fc.last_heartbeat_mono_s` is how long the FC has been silent; the front
+panel shows `NO FC` past 3 s. Absent means the router has not run this boot.
+
+Its `rtc` section is what `coord-rtc feed` last read off the DS3234
+(`/var/lib/coordinator/ipc/rtc_status`), rewritten every feed pass whether or not the
+1 Hz arrived, and passed through on the same this-boot rule as `fc`:
+
+| field | |
+|---|---|
+| `state` | `no_response` -- every byte read the same 0x00 or 0xFF, so nothing drove MISO: the chip has no VCC or SPI is not reaching it. `reset` -- the chip answers but its time is not to be trusted: OSF set, or the registers are not a date. `ok` -- a date, OSF clear. |
+| `edge` | whether that pass saw the 1 Hz on `/sys/class/pps/pps0/assert` |
+| `time`, `osf`, `control`, `status` | the registers it was decided from; `error` instead when the SPI read itself failed |
+| `as_of_mono_s`, `boot_id` | when, in the same seconds-since-boot as `as_of_boot_s`, and which boot |
+
+Together they separate the cases the hub board's LED does: `no_response` with no edge is
+the board or the chip unpowered; `reset` with an edge is a chip that needs its time set;
+`ok` with no edge is the chip fine and the pulse not reaching the Pi. Absent means the feed
+has not run this boot.
+
 ### Going closed needs no gate here
 
 `coord radio closed` refuses unless it can first ping the coordinator over the gadget

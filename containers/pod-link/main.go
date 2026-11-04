@@ -119,6 +119,10 @@ type config struct {
 	// Where the two capture processes publish their own state, for pass-through.
 	cameraStatusFile string
 	accelStatusFile  string
+	// The router's FC-link document (#669). Empty on a campod, which has no FC.
+	fcLinkFile string
+	// coord-rtc feed's chip-state document. Empty on a campod, which has no RTC.
+	rtcStatusFile string
 	// Whose free space is reported. The captures mount, read-only.
 	dataDir string
 
@@ -148,6 +152,8 @@ func loadConfig() (config, error) {
 
 		cameraStatusFile: env("POD_LINK_CAMERA_STATUS_FILE", "/tmp/campod_camera_status"),
 		accelStatusFile:  env("POD_LINK_ACCEL_STATUS_FILE", "/tmp/campod_accel_status"),
+		fcLinkFile:       env("POD_LINK_FC_LINK_FILE", ""),
+		rtcStatusFile:    env("POD_LINK_RTC_STATUS_FILE", ""),
 		dataDir:          env("POD_LINK_DATA_DIR", "/captures"),
 	}
 	secs, err := strconv.Atoi(env("POD_LINK_PERIOD_S", "2"))
@@ -725,6 +731,16 @@ func reconcile(c config, h *host, want *wanted) *podStatus {
 	}
 	// After both documents, because it is one verdict over both. See podStatus.Ready.
 	doc.Ready = podReady(doc.Camera, doc.Accel)
+	if fc, err := thisBootDoc(c.fcLinkFile); err != nil {
+		fail("%v", err)
+	} else {
+		doc.FC = fc
+	}
+	if rtc, err := thisBootDoc(c.rtcStatusFile); err != nil {
+		fail("%v", err)
+	} else {
+		doc.RTC = rtc
+	}
 
 	doc.SelfRSSBytes, doc.SelfMajorFaults = selfCost()
 

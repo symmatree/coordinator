@@ -74,6 +74,11 @@
 </div>
 <div id="fleet">loading...</div>
 <div class="pf">
+  <h2>Flight controller</h2>
+  <div class="meta" id="fcHead">not loaded</div>
+  <div id="fcList"></div>
+</div>
+<div class="pf">
   <h2>Runs</h2>
   <div class="meta">What has run and what is running, read from the cluster. Tap one for its log.</div>
   <div id="wfList"></div>
@@ -1015,6 +1020,37 @@
       el.textContent = `build unknown: ${e.message}`;
     }
   }
+
+  /**
+   * What the FC has said over mLRS, from the open session tlog: status text with PreArm and Arm
+   * failures marked, arm and disarm, arm-command results. Polled while the page is visible,
+   * because "why won't it arm?" is asked standing at the vehicle, refreshing.
+   */
+  const fcHead = document.getElementById('fcHead');
+  const fcList = document.getElementById('fcList');
+  const FC_BAD = new Set(['emergency', 'alert', 'critical', 'error', 'failed', 'denied', 'temporarily rejected']);
+
+  async function refreshFc() {
+    let s;
+    try { s = await j('/fc/status'); } catch (e) { fcHead.textContent = `fc status: ${e.message}`; fcHead.className = 'meta err'; return; }
+    const heard = s.lastHeard ? `last heard ${clock(s.lastHeard)} (${since(s.lastHeard, new Date().toISOString())} ago)` : 'not heard';
+    const armed = s.armed === undefined ? 'arm state unknown' : s.armed ? 'ARMED' : 'disarmed';
+    fcHead.textContent = s.error ? s.error : `${armed} - ${heard} - ${s.file}`;
+    fcHead.className = s.error ? 'meta err' : 'meta';
+    fcList.textContent = '';
+    for (const e of s.events.slice(0, 40)) {
+      const row = $({ className: 'unit' });
+      const bad = FC_BAD.has(e.severity) || /^(PreArm|Arm):/.test(e.text);
+      row.append(
+        $({ className: 'sha', textContent: clock(e.t) }),
+        Object.assign($({ className: 'badge ' + (bad ? 'stale' : e.kind === 'text' ? 'unknown' : 'ok') }), { textContent: e.severity ?? e.kind }),
+        $({ className: bad ? 'id warn' : 'id', textContent: e.text }),
+      );
+      fcList.append(row);
+    }
+  }
+  setInterval(() => { if (document.visibilityState === 'visible') void refreshFc(); }, 3000);
+  void refreshFc();
 
   // Before anything else: say what the cluster is already doing, or just finished doing.
   // Before the roster renders, so the cards come up carrying live state. This is the cheap read;

@@ -27,11 +27,11 @@ Values: [`ardupilot/inputs/`](../../ardupilot/inputs) -- `SERIAL*` params sit wi
 | SERIAL3 | `PROTOCOL = 42`, `BAUD = 115` | Walksnail MSP (TX3/RX3 only; VTX power is other FC pads, not UART3) |
 | SERIAL4 | `PROTOCOL = 2`, `BAUD = 1500` | Coordinator (Pi 4B, VIO) -- MAVLink2 companion link, now cabled (1.5 Mbaud) |
 | SERIAL6 | `PROTOCOL = 2`, `BAUD = 460` | Matek ELRS R24-TD (see [ground-station.md](ground-station.md); `model01.yml` header `modelId` **10**) |
-| SERIAL7 | `PROTOCOL = -1` | Unused |
+| SERIAL7 | `PROTOCOL = 2`, `BAUD = 57` | RadioMaster RP4TD on mLRS -- corrections up, telemetry down, to the attic Ranger (`mlrs-link.param`) |
 | SERIAL8 | `PROTOCOL = 16` | ESC ribbon |
 | SERIAL9 | `PROTOCOL = 2`, `BAUD = 115` | Unused |
 
-*Wiring resolved 2026-07 from the recorded pigtail pads + the param export ([`ardupilot/`](../../ardupilot/README.md) in coordinator), which agree with the [flight-platform.md](flight-platform.md) table. An earlier plan to move the F9P to SERIAL7 was abandoned -- it stayed on SERIAL2 (the old M100 port), and SERIAL7 is unused.*
+*Wiring resolved 2026-07 from the recorded pigtail pads + the param export ([`ardupilot/`](../../ardupilot/README.md) in coordinator), which agree with the [flight-platform.md](flight-platform.md) table. An earlier plan to move the F9P to SERIAL7 was abandoned -- it stayed on SERIAL2 (the old M100 port). SERIAL7 became the mLRS link on 2026-11-01.*
 
 **SERIAL2 (F9P):** Sole GNSS on the mast -- Holybro F9P Rover Lite. `SERIAL2_BAUD = 115200` in the export; **460800** was the earlier SparkFun-breakout plan, not a promise for Rover Lite. `GPS1_COM_PORT` follows this UART.
 
@@ -62,9 +62,9 @@ NOTE: Once you remap the servo/motor mappings using SERVO1_FUNCTION - SERVO4_FUN
 | **`SERVO_BLH_AUTO`** | **1** while using the AM32 / BLHeli passthrough path; **0** for day-to-day flight once ESC settings are saved | **AUTO** gates **passthrough** to the PC; **DShot** itself comes from **`MOT_PWM_TYPE`**, not from this flag. |
 | Motor direction | **`SERVO_BLH_RVMASK`** in ArduPilot **or** direction in AM32 (not both fighting) | Same physics as BF: wrong direction means wrong torque in stabilize. Fix before props on. |
 | **Pole count** | **`SERVO_BLH_POLES`** = your **motor** pole count (export shows **14** -- confirm on the motor datasheet) | Wrong poles skew **eRPM** / telemetry and **harmonic notch** if fed from ESC RPM. |
-| RPM into ArduPilot | **UART only** -- **`SERIAL8`** ESC telemetry. Keep **`SERVO_BLH_BDMASK = 0`** | **Bi-directional DShot** is an **optional** alternate RPM path on the motor wires; you do **not** need it if UART telemetry works. Avoid turning on **both** without a reason. The [IMU harmonic notch](https://ardupilot.org/copter/docs/common-imu-notch-filtering.html) is now **on and tuned** off this ESC-RPM feed (**`INS_HNTCH_ENABLE = 1`**, `MODE = 3`, `FREQ = 58.8`, 1st harmonic; done post-hover over the May 31 - Jun 10 notch flights below). See [`inputs/esc-motors-notch.param`](../../ardupilot/inputs/esc-motors-notch.param). |
+| RPM into ArduPilot | **Bi-directional DShot** on the four motor outputs (**`SERVO_BLH_BDMASK = 15`**, 2026-11-02), plus **`SERIAL8`** ESC telemetry | The serial feed samples each ESC at `SERVO_BLH_TRATE` (10 Hz); bi-directional DShot returns eRPM on every DShot frame, which is what the per-motor notch needs. The serial feed still carries volts/amps/temperature. The [IMU harmonic notch](https://ardupilot.org/copter/docs/common-imu-notch-filtering.html) is now **on and tuned** off this ESC-RPM feed (**`INS_HNTCH_ENABLE = 1`**, `MODE = 3`, `FREQ = 58.8`, 1st harmonic; done post-hover over the May 31 - Jun 10 notch flights below). See [`inputs/esc-motors-notch.param`](../../ardupilot/inputs/esc-motors-notch.param). |
 
-**Design record:** **`MOT_PWM_TYPE`** = **DShot600** (baseline). RPM for logging / notch from **`SERIAL8`** unless you later prove UART is insufficient and switch deliberately.
+**Design record:** **`MOT_PWM_TYPE`** = **DShot600** (baseline). RPM for the notch from **bi-directional DShot** since 2026-11-02: the `SERIAL8` feed samples each ESC at 10 Hz (`SERVO_BLH_TRATE` default), too slow for a per-motor notch. `SERIAL8` stays for volts/amps/temperature.
 
 All **`MOT_PWM_*`**, **`SERVO_BLH_*`**, **`SERIAL8_*`**, motor **`SERVO*_FUNCTION`**, and the harmonic-notch set: **[`inputs/esc-motors-notch.param`](../../ardupilot/inputs/esc-motors-notch.param)** (motor endpoints in [`radio-cal.param`](../../ardupilot/inputs/radio-cal.param)).
 
