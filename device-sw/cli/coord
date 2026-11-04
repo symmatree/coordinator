@@ -65,6 +65,8 @@ Usage: coord <command>
   version           What this machine is running, as TOML
   radio [open|closed]       Report or set the WiFi radio
   fc-log list|pull          FC dataflash logs over ttyAMA0 (stack must be stopped)
+  fc-params push            Set FC params from a tar of .param files on stdin
+                            (stack must be stopped)
   sessions list|package|delete   Capture sessions on this device
 
 Environment:
@@ -128,6 +130,10 @@ fc-log)
 	# coordinator-mavlink holds /dev/ttyAMA0 while it runs, so that unit has to be
 	# stopped first (#77).
 	exec /usr/local/bin/coord-fc-log "$@"
+	;;
+fc-params)
+	# The same port, held the same way.
+	exec /usr/local/bin/coord-fc-params "$@"
 	;;
 -h | --help | help | "")
 	usage

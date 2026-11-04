@@ -52,8 +52,10 @@ means "not yet applied." Run it by hand while reconciling: `python3 ardupilot/ve
 
 1. Edit the value in the matching fragment, with a one-line rationale and
    `provenance: <sha> <date>`.
-2. Apply that fragment to the FC (Mission Planner / Methodic Configurator load), re-export,
-   and replace `rekon10-methodi.param` (LF).
+2. Apply that fragment to the FC, re-export, and replace `rekon10-methodi.param` (LF). Either
+   Mission Planner / Methodic Configurator (load, then Save to File), or from the coordinator
+   with its stack stopped, which does both and writes the export in Mission Planner's format:
+   `tar -C ardupilot/inputs -c . | ssh pi@coordinator 'sudo coord fc-params push' > ardupilot/rekon10-methodi.param`
 3. `python3 ardupilot/verify.py` -- a mismatch means the fragment and the FC still disagree.
 
 On a firmware bump, diff the new export against the old to find new/changed/renamed params
