@@ -134,9 +134,10 @@ rows = fp.read_tarball(tarball({
     "./README.md": "NOT,APARAM\n",
 }))
 check("reads every *.param member, in name order",
-      [(k, v) for k, v, _ in rows] == [("A_ONE", 1.0), ("B_TWO", 2.0), ("B_THREE", 3.5)],
+      [(k, v) for k, v, *_ in rows] == [("A_ONE", 1.0), ("B_TWO", 2.0), ("B_THREE", 3.5)],
       str(rows))
 check("and says where each came from", rows[2][2] == "b.param:4", rows[2][2])
+check("and to how many places", [r[3] for r in rows] == [0, 0, 1], str(rows))
 try:
     fp.read_tarball(tarball({"x.param": "NO_COMMA 1\n"}))
     check("a line that is not KEY,VALUE is refused", False)
@@ -155,8 +156,8 @@ check("and the FC holds them", fc.params == {"A_ONE": 1.0, "B_TWO": 2.0, "B_THRE
 # 3. One pass, every complaint reported, the rest still applied.
 fc = FakeFC({"A_ONE": 0.0, "B_TWO": 0.0, "RO": 7.0, "CL": 0.0, "DEAF": 0.0},
             deaf={"DEAF"}, readonly={"RO"}, clamp={"CL": 10.0})
-rows = [("A_ONE", 1.0, "a:1"), ("MISSING", 1.0, "a:2"), ("RO", 1.0, "a:3"),
-        ("CL", 99.0, "a:4"), ("DEAF", 1.0, "a:5"), ("B_TWO", 2.0, "a:6")]
+rows = [("A_ONE", 1.0, "a:1", 0), ("MISSING", 1.0, "a:2", 0), ("RO", 1.0, "a:3", 0),
+        ("CL", 99.0, "a:4", 0), ("DEAF", 1.0, "a:5", 0), ("B_TWO", 2.0, "a:6", 0)]
 rc, lines = run(fc, rows)
 by = {ln.get("param"): ln for ln in lines if "param" in ln}
 check("any complaint exits 1", rc == 1, f"rc={rc}")
@@ -180,8 +181,16 @@ check("the summary counts them",
 
 # 4. A value that is not exact in float32 is not a mismatch: both ends carry float32.
 fc = FakeFC({"F": 0.0})
-rc, lines = run(fc, [("F", 0.1, "f:1")])
+rc, lines = run(fc, [("F", 0.1, "f:1", 1)])
 check("0.1 round-trips as float32 without a complaint", rc == 0, str(lines))
+# What the FC answered on 2026-11-04 for COMPASS_OFS_Y, sent as 40.36612: equal to 5 places.
+fc = FakeFC({"F": 0.0}, clamp={"F": 40.36611557006836})
+rc, lines = run(fc, fp.parse_param_text("F,40.36612\n", "f"))
+check("an answer a few float32 steps off agrees to the places written", rc == 0, str(lines))
+fc = FakeFC({"F": 0.0}, clamp={"F": 40.36621})
+rc, lines = run(fc, fp.parse_param_text("F,40.36612\n", "f"))
+check("one off in the last place written is a mismatch", rc == 1, str(lines))
+check("6.181582E-05 is written to 11 places", fp.decimal_places("6.181582E-05") == 11)
 
 # 5. The export. Read back the last real export as the FC would serve it, and write it out:
 #    it must come back byte for byte, because a PR made from this output should show only
