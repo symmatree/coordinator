@@ -21,6 +21,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 TESTS=(
 	analysis/test_analysis_modules.py
+	analysis/mapping_sim/test_mapping_sim.py
 	device-sw/tests/test_coord_version.py
 	device-sw/tests/test_coord_rtc.py
 	device-sw/tests/test_coord_sessions.py
