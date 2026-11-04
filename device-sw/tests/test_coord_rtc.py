@@ -15,7 +15,7 @@ import calendar
 import io
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 CLI = Path(__file__).resolve().parent.parent / "cli"
@@ -569,6 +569,46 @@ _doc = _json.loads(Path(cr.RTC_STATUS_FILE).read_text())
 check("every feed pass publishes the chip's state for the bus status",
       _doc.get("edge") is True and _doc.get("state") == "no_response"
       and _doc.get("boot_id") == cr.boot_id(), str(_doc))
+
+
+# `edge` is whether the 1 Hz arrived, which is the kernel's sequence number moving -- not
+# whether a sample came out. On 2026-11-04 the coordinator had 2583 edges and a chip that
+# read all zeros, and the feed said "no edge" and published edge: false.
+def _feed_once(seqs):
+    """One feed pass with no sample out of pulse_boundary, the assert file reading `seqs`
+    in turn. Returns (published edge, the journal line)."""
+    reads = iter(seqs)
+    cr.pps_assert = lambda path=None: next(reads)
+
+    def _one(rtc, deadline_s=2.0, path=None):
+        if _edges["n"]:
+            raise _Stop
+        _edges["n"] = 1
+        return None
+
+    _edges["n"] = 0
+    cr.pulse_boundary = _one
+    _err = io.StringIO()
+    with redirect_stderr(_err):
+        try:
+            cr.cmd_feed(_OsfClearRtc())
+        except _Stop:
+            pass
+    return (_json.loads(Path(cr.RTC_STATUS_FILE).read_text()).get("edge"),
+            _err.getvalue().strip())
+
+
+_pps_real = cr.pps_assert
+_e, _line = _feed_once([(100.0, 7), (101.0, 8), (101.0, 8)])
+check("edges arriving with no sample is edge: true", _e is True, str(_e))
+check("and the journal says the chip's read failed, not the pulse",
+      "arriving" in _line and "no edge" not in _line, _line)
+_e, _line = _feed_once([(100.0, 7), (100.0, 7), (100.0, 7)])
+check("a sequence number that does not move is edge: false", _e is False, str(_e))
+check("and the journal says no edge", "no edge" in _line, _line)
+_e, _line = _feed_once([None, None, None])
+check("no assert file at all is edge: false", _e is False, str(_e))
+cr.pps_assert = _pps_real
 
 # ---- 19. the chip's state on the bus -------------------------------------------------
 #

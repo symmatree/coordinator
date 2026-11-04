@@ -182,6 +182,34 @@ check("a pod not on the bus has no token", line == "=COSW", line)
 check("an empty bus reads -", panel_text({}, {}, NOW) == "-")
 check("the longest line fits a STATUSTEXT", len("<*COSESWNENW") <= 50)
 
+# ---- the coordinator's S: its own 1 Hz arriving ----------------------------------------
+RTC_EDGE = {"state": "no_response", "edge": True}
+RTC_NONE = {"state": "no_response", "edge": False}
+check("the coordinator's S is upper when its 1 Hz is arriving",
+      subsystem_letters(dict(COORD, camera=OAK_WARM, rtc=RTC_EDGE)) == ["C", "S"])
+check("and lower when it is not",
+      subsystem_letters(dict(COORD, camera=OAK_WARM, rtc=RTC_NONE)) == ["C", "s"])
+check("whatever the chip's read says: S is the pulse, not the label",
+      subsystem_letters(dict(COORD, rtc=dict(RTC_EDGE, state="ok"))) == ["S"]
+      and subsystem_letters(dict(COORD, rtc=RTC_EDGE)) == ["S"])
+check("a coordinator with no rtc document has no S",
+      subsystem_letters(dict(COORD, camera=OAK_WARM)) == ["C"])
+check("a campod's S is still its camera's sync, not an rtc",
+      subsystem_letters(dict(pod(sync=False), rtc=RTC_EDGE))[:2] == ["C", "s"])
+_coord_only = status_from_bus({"coordinator": dict(COORD, rtc=RTC_NONE)},
+                              {"coordinator": NOW}, now=NOW)
+check("the rtc document alone gives the coordinator a cell",
+      [(r["name"], r["letters"]) for r in _coord_only["rows"]] == [("oak", ["s"])],
+      str(_coord_only["rows"]))
+line = panel_text({**{c: campod() for c in CAMPODS},
+                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM, rtc=RTC_NONE)},
+                  FRESH, NOW)
+check("no 1 Hz on the coordinator lowers co in the line", line == "=coSESWNENW", line)
+line = panel_text({**{c: campod() for c in CAMPODS},
+                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM, rtc=RTC_EDGE)},
+                  FRESH, NOW)
+check("and with it CO is upper", line == "=COSESWNENW", line)
+
 # ---- the layout fits, which is not something a comment can promise --------------------
 # The first version of this panel was written for a 6x8 font. PIL's default is 8 px wide
 # with ink from +2 to +12, so rows ran past the width and the footer was drawn through
