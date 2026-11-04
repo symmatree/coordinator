@@ -19,6 +19,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The notebook image does not fit on the runner's root disk as it comes: on
+      # 2026-11-03 a PR run died unpacking its layers ("no space left on device")
+      # while main passed the same minute. These are the runner's preinstalled
+      # SDKs, none of which this job uses; the df lines put the margin in the log.
+      - name: Free runner disk for the notebook image
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          docker image prune -af
+          df -h /
+
       # The JupyterHub notebook image, built by symmatree/tiles and public, so
       # no registry login. --user because its default is jovyan (uid 1000)
       # while the checkout belongs to the runner, and HOME with it since

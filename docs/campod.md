@@ -262,11 +262,11 @@ shell on a pod.
 10. **Wait about 2 minutes.**
 11. **`GET /status`.** This reports what every node is running and pays a quiesce per node to
     do it, so it collects the versions and stops collection everywhere in one call.
-12. **Collect.** `GET /nodes/<node>/sessions` to list, then
-    `POST /nodes/<node>/offload?session=<id>&flight=<name>` per session. One session per call
-    by design: each is minutes of zstd plus a transfer, and a failure should cost that session
-    rather than the whole selection. The session is deleted after a verified transfer unless
-    `keep=true`.
+12. **Collect.** `GET /nodes/<node>/sessions` to list, then one
+    `POST /flights/<name>/collect` with `{"targets": [{"node", "kind": "session", "id"}, ...]}`
+    naming every node's session. It submits a collect workflow with a step per node, so the
+    transfers run at once and each writes its own record into the flight's `collected/`.
+    The session is deleted from the device after a verified transfer.
 
 ### Running it: the chain, and what each wait is for
 
@@ -335,13 +335,15 @@ sleep 20
 #     -- so this reboot is what makes the data durable.
 
 # 11. GET /status: versions for every node, and it pays a quiesce per node to ask, which is
-#     what stops collection before the offloads. Right after a run, wrong during one.
+#     what stops collection before the collect. Right after a run, wrong during one.
 curl -sS "$FC/status"
 
-# 12. choose each node's session by last_activity_utc and offload it. NOT by file count and
-#     NOT by first/last_utc -- see below.
+# 12. choose each node's session by last_activity_utc, then collect them all in one call.
+#     NOT by file count and NOT by first/last_utc -- see below.
 curl -sS "$FC/nodes/<node>/sessions"
-curl -sS -X POST "$FC/nodes/<node>/offload?session=<id>&flight=<name>"
+curl -sS -X POST "$FC/flights/<name>/collect" -H 'Content-Type: application/json' \
+  -d '{"targets":[{"node":"<node>","kind":"session","id":"<id>"}, ...]}'
+curl -sS "$FC/workflows/<workflow>"   # follow it to Succeeded
 ```
 
 **Then read the bundle off the NAS** (`/mnt/flights` in-cluster, `~/datasets/flights` from a

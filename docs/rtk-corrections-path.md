@@ -1,9 +1,10 @@
-# RTK corrections delivery path (base station -> NTRIP -> ELRS -> F9P)
+# RTK corrections delivery path (base station -> NTRIP -> mLRS -> F9P)
 
-How RTCM3 corrections get from the ground base station to the rover's ZED-F9P, the
-rates involved, and what has actually been observed to break on the way: the ELRS TX
-backpack's WiFi association, and its coverage once the operator walks away from the
-house.
+How RTCM3 corrections get from the ground base station to the rover's ZED-F9P, and the
+rates involved. Since 2026-11-02 they go over a dedicated mLRS link from the attic. Before
+that they went over the Boxer's ELRS link through its WiFi backpack, and "What breaks, as
+observed" below is the record of that path: the backpack's WiFi association, and its
+coverage once the operator walks away from the house.
 
 The path, workloads, and rates below are documented state. The failure section
 distinguishes what was observed from what was read in firmware. This is the reference
@@ -21,11 +22,12 @@ ZED-F9P base (ttyACM0)                              [ tiles cluster, node acebas
    -> str2str  (serial -> tcp 127.0.0.1:5015)
    -> str2str  (tcp 5015 -> local NTRIP caster :2101/ATTIC)         rtkbase pod (ntrip ns)
    -> NTRIP caster  ntrip.tiles.symmatree.com:2101/ATTIC
-   -> mavproxy ntrip module  (NTRIP client, sendalllinks)           mavproxy pod (mavproxy ns)
-   -> mavproxy MAVLink link  (udpin 0.0.0.0:14550, GCS sysid 255/190)
-   === house WiFi ===
-   -> boxer-txbp ELRS backpack  (UDP; 10.0.6.120)
-   -> ELRS RF uplink  (2.4 GHz, 333 Hz Full, 1:2 telem)
+   -> mavproxy ntrip module  (NTRIP client)                         mavproxy-mlrs pod (mavproxy ns)
+   -> mavproxy serial master  (/dev/mlrs, 115200; sysid 254/190)
+   === USB-C ===
+   -> RadioMaster Ranger, mLRS Tx  (CP2102 10c4:ea60; attic, 12 V on XT30)
+   -> mLRS RF uplink  (2.4 GHz, 31 Hz mode)
+   -> RadioMaster RP4TD, mLRS Rx  (SERIAL7, R7/T7, 57600, MAVLink2 = MAV4)
    -> ArduPilot FC  (GPS_RTCM_DATA)
    -> ZED-F9P rover  (SERIAL2)  -> RTK Float/Fixed
 ```
@@ -35,12 +37,20 @@ Workloads that implement it (in **tiles**):
 | Hop | Repo path | Notes |
 |-----|-----------|-------|
 | Base station + local caster | `tanka/environments/ntrip/`, `containers/rtkbase/` | RTKBase; `str2str` chain off the ZED-F9P base on `acebase`. Serves `ATTIC`. |
-| Correction injector | `tanka/environments/mavproxy/`, `containers/mavproxy/` | MAVProxy on `acebase`, `hostNetwork`, `udpin:0.0.0.0:14550`; NTRIP client -> injects `GPS_RTCM_DATA` on all MAVLink links. |
-| Air link | ELRS TX backpack (`boxer-txbp`) | Bridges house WiFi UDP <-> ELRS RF. **Not a cluster workload** -- firmware on the radio; see the failure mode below. |
+| Correction injector | `tanka/environments/mavproxy/` (`mavproxy-mlrs`), `containers/mavproxy/` | MAVProxy on `acebase`, master `/dev/mlrs` (udev symlink from tiles `tf/nodes/patches/acebase-gnss.yaml`); NTRIP client -> `GPS_RTCM_DATA` on its one link. Starts the NTRIP client only once the FC reports a 3D fix (`mavproxy_ntrip.py` waits for a position). Logs to `ground-tlogs/mlrs/`. |
+| Air link | mLRS, Ranger -> RP4TD (`ardupilot/inputs/mlrs-link.param`) | **Not a cluster workload** -- firmware on the two radios, v1.4.04. Carries telemetry down as well. |
+| ELRS link (logging only) | `tanka/environments/mavproxy/` (`mavproxy`) | The backpack instance: `hostNetwork`, `udpin:0.0.0.0:14550`, no NTRIP since 2026-11-02. Logs to `ground-tlogs/`. |
 
-Endpoints: caster `ntrip.tiles.symmatree.com:2101/ATTIC`, Mission Planner TCP
-`mavproxy.tiles.symmatree.com:5760`, backpack `http://boxer-txbp.local.symmatree.com`
-(`10.0.6.120`). Both tiles hostnames resolve to 10.x on the site LAN.
+Endpoints: caster `ntrip.tiles.symmatree.com:2101/ATTIC`; Mission Planner TCP
+`mavproxy-mlrs.tiles.symmatree.com:5770` (mLRS) or `mavproxy.tiles.symmatree.com:5760` (ELRS),
+one client each, Mission Planner as sysid 255; backpack `http://boxer-txbp.local.symmatree.com`
+(`10.0.6.120`). The tiles hostnames resolve to 10.x on the site LAN.
+
+**Confirmed end to end on 2026-11-03/04**, bench, Boxer off: the FC's GPS_RAW_INT in the mLRS
+tlog (`ground-tlogs/mlrs/20261103T225140Z`) goes 3D at 23:57:15Z, DGPS at 00:00:21Z, then RTK
+float most of the time with brief DGPS dips, and RTK fixed at 00:45:38Z and 02:12:31-02:13:56Z
+(17-24 satellites). The first boot with corrections over mLRS (2026-11-02) had started NTRIP at
+12:47:54Z but only ever reached a 3D fix on 4 satellites.
 
 ## Rates and message set
 
@@ -55,7 +65,11 @@ Endpoints: caster `ntrip.tiles.symmatree.com:2101/ATTIC`, Mission Planner TCP
   77-86% utilised. Dropping the two takes it to ~333 B/s. **The revert is documented in that file**
   and should be taken if RTK Fixed does not improve: the constellations are worth more than the
   headroom if the uplink is not the constraint.
-- **ELRS telemetry budget** (Rekon10 profile): **333 Hz Full, 1:2 telemetry ratio,
+- **mLRS budget** (31 Hz mode): one frame each way every 32 ms, 64 B of serial payload up and 82
+  B down (mLRS `frame_types.h`, `setup.h`): **2000 B/s up, 2560 B/s down** at full link quality.
+  The current set is ~17% of that uplink, the six-message set ~32%; coordinator#676 is the
+  review of the constellations and messages now that this is the link.
+- **ELRS telemetry budget** (Rekon10 profile, the path until 2026-11-02): **333 Hz Full, 1:2 telemetry ratio,
   ~13211 baud** reported on the radio. The MAVLink uplink at that rate is **735 B/s with
   RC** (1470 B/s downlink) per the
   [ExpressLRS MAVLink page](https://www.expresslrs.org/software/mavlink/) -- the figure
@@ -155,18 +169,16 @@ Read `/mavlink` first, or the `job="backpack"` series in Mimir, before power-cyc
 The backpack's Telem mode must be **WiFi** for any of this to apply; a reflash resets it to
 Off, and "Enable Backpack WiFi" in the Lua is the config/update session, not the bridge.
 
-## Direction (2026-10-27): a dedicated corrections link
+## The move to mLRS (2026-10-27 direction, running 2026-11-02)
 
-The owner's current direction is to take the handheld radio out of this path: **mLRS at
-2.4 GHz** on a RadioMaster Ranger in the attic, fed MAVLink over serial from the attic host
-(acebase today; a PoE ESP32 doing UART-to-TCP is planned), to a second ELRS-hardware receiver
-flashed mLRS on the FC's unused **SERIAL7**, carrying RTCM only. The WiFi hop, the backpack
-firmware and the GCS latch above all leave the corrections path. 915 MHz stays open only if it
-measures better out of the attic; the Ranger is the one standalone-capable module on hand.
-It is gated on an attic-to-field RSSI survey with the Boxer. The case, the numbers (mLRS
-31 Hz mode = 2000 B/s uplink) and the option-1 steelman are in
+The direction set on 2026-10-27 was to take the handheld radio out of this path: mLRS at
+2.4 GHz on a RadioMaster Ranger in the attic to a second receiver on the FC's unused SERIAL7.
+The case and the numbers are in
 [coordinator#209](https://github.com/symmatree/coordinator/issues/209#issuecomment-6430447924).
-This addresses the 260814 coverage failure (coordinator#196, 2026-09-08 comment); it does not
+It is what runs now (FC side coordinator#672, ground side tiles#929). The WiFi hop, the
+backpack firmware and the GCS latch above are out of the corrections path. The attic host is
+acebase over the Ranger's USB-C; the planned PoE ESP32 would take the Ranger's bay pin 5,
+where current mLRS carries serial as CRSF frames (`Tx Ser Port` = `crsfbridge`). It does not
 address Float-not-Fixed, which stays with coordinator#195.
 
 ## Related

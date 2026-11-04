@@ -120,8 +120,13 @@ type podStatus struct {
 
 	// The router's FC-link document (#669), coordinator only: when it last heard an FC
 	// heartbeat, in the same seconds-since-boot as AsOfBootS, so a reader differences
-	// the two. Absent when the file is missing or from an earlier boot -- see fcLink.
+	// the two. Absent when the file is missing or from an earlier boot -- see thisBootDoc.
 	FC json.RawMessage `json:"fc,omitempty"`
+
+	// coord-rtc feed's document on the DS3234, coordinator only: `state` is no_response,
+	// reset or ok, read off the chip every feed pass whether or not the 1 Hz arrived.
+	// Absent when the file is missing or from an earlier boot, as for FC.
+	RTC json.RawMessage `json:"rtc,omitempty"`
 
 	// Why the pod is not in the state it was asked for. A refused polkit
 	// authorisation and an unmounted D-Bus socket both land here rather than in a
@@ -214,14 +219,15 @@ func passThrough(path string) (json.RawMessage, error) {
 	return json.RawMessage(body), nil
 }
 
-// fcLink reads the router's FC-link document (#669) and passes it through only if it
-// was written this boot.
+// thisBootDoc passes a document through only if its `boot_id` is this boot's. Used for
+// the router's FC-link document (#669) and coord-rtc's chip state.
 //
-// The file lives on the card and the heartbeat time in it is seconds since ITS boot, so
-// last boot's document read against this boot's uptime would put a heartbeat at a
-// plausible-looking age. The router rewrites it at startup; a router that never started
-// this boot leaves the old one, and that must read as no link, not as an old one.
-func fcLink(path string) (json.RawMessage, error) {
+// Both files live on the card and carry times in seconds since THEIR boot, so last
+// boot's document read against this boot's uptime would show a heartbeat, or a chip
+// reading, at a plausible-looking age. Their writers rewrite them at startup; a writer
+// that never started this boot leaves the old one, and that must read as nothing, not as
+// an old answer.
+func thisBootDoc(path string) (json.RawMessage, error) {
 	body, err := passThrough(path)
 	if body == nil || err != nil {
 		return nil, err
