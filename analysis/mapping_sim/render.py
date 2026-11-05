@@ -14,9 +14,14 @@ Writes into `out_dir`:
 - `manifest.json` and `README.md` -- the commit, command, config and file hashes that produced
   the directory (see `manifest.py`).
 
+The config's `renderer` picks how pixels are made: `trace` (the default) ray-casts the closed-form
+solids on the CPU, `raster` draws their triangles on the GPU (`raster.py`). Both evaluate the same
+texture and stars on the same geometry.
+
 `--scale` renders at a fraction of the sensor resolution (intrinsics scaled to match) for quick
-local checks; a real run uses 1. `--jobs` renders that many images at once, each in its own
-process at about 430 MB per full-resolution image.
+local checks; a real run uses 1. `--jobs` is how many images are worked on at once: with `trace`,
+each in its own process at about 430 MB per full-resolution image; with `raster`, the GPU draws
+one at a time and that many threads encode and write the JPEGs.
 """
 
 from __future__ import annotations
@@ -72,9 +77,37 @@ def _exif(cam: Camera, when: dt.datetime, pixel_um: float) -> Image.Exif:
     return ex
 
 
-def _render_one(scene: Scene, cam: Camera, pose: Pose, path: pathlib.Path, quality: int, exif: Image.Exif) -> None:
-    img = render_image(scene, cam, pose)
+def _save(img: np.ndarray, path: pathlib.Path, quality: int, exif: Image.Exif) -> None:
     Image.fromarray(np.round(img * 255).astype(np.uint8), mode="L").convert("RGB").save(path, quality=quality, exif=exif)
+
+
+def _render_one(scene: Scene, cam: Camera, pose: Pose, path: pathlib.Path, quality: int, exif: Image.Exif) -> None:
+    _save(render_image(scene, cam, pose), path, quality, exif)
+
+
+def _trace(work: list, jobs: int) -> None:
+    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
+        for f in [pool.submit(_render_one, *w) for w in work]:
+            f.result()
+
+
+def _raster(work: list, jobs: int) -> None:
+    from raster import Rasterizer  # needs a GL context, which only this renderer does
+
+    rasterizer = Rasterizer(work[0][0])
+    with concurrent.futures.ThreadPoolExecutor(jobs) as pool:
+        pending = []
+        for scene, cam, pose, path, quality, exif in work:
+            img = rasterizer.render(cam.lens, pose.R_wb @ cam.R_bc, pose.p_wb + pose.R_wb @ cam.t_bc)
+            pending.append(pool.submit(_save, img, path, quality, exif))
+            # Keep the queue of images waiting to be encoded, 48 MB each at full resolution, short.
+            while len(pending) > 2 * jobs:
+                pending.pop(0).result()
+        for f in pending:
+            f.result()
+
+
+RENDERERS = {"trace": _trace, "raster": _raster}
 
 
 def render(cfg: dict, out: pathlib.Path, scale: float = 1.0, limit: int | None = None, jobs: int = 1) -> dict:
@@ -105,9 +138,7 @@ def render(cfg: dict, out: pathlib.Path, scale: float = 1.0, limit: int | None =
             geo.append(f"{name} {e:.4f} {n:.4f} {u:.4f} nan nan nan {acc_h} {acc_v}")
             shots[name] = {"camera": cam.name, "time_s": pose.time_s, "R_wc": R_wc.tolist(), "center": C.tolist()}
 
-    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
-        for f in [pool.submit(_render_one, *w) for w in work]:
-            f.result()
+    RENDERERS[cfg.get("renderer", "trace")](work, jobs)
 
     (out / "geo.txt").write_text("\n".join(geo) + "\n")
     truth = {
