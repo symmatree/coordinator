@@ -10,7 +10,9 @@ Writes into `out_dir`:
   accuracy the config gives (ODM's per-image GPS prior). Orientation is left `nan`;
 - `truth.json` -- every image's true camera rotation and centre in the local scene frame, each
   lens's intrinsics in OpenSfM's convention, the UTM offset, and the config itself, which is
-  everything `score.py` needs to judge a reconstruction.
+  everything `score.py` needs to judge a reconstruction;
+- `manifest.json` and `README.md` -- the commit, command, config and file hashes that produced
+  the directory (see `manifest.py`).
 
 `--scale` renders at a fraction of the sensor resolution (intrinsics scaled to match) for quick
 local checks; a real run uses 1. `--jobs` renders that many images at once, each in its own
@@ -24,11 +26,13 @@ import concurrent.futures
 import datetime as dt
 import json
 import pathlib
+import sys
 
 import numpy as np
 import yaml
 from PIL import Image
 
+import manifest
 from rig import Camera, Pose, rig_from_config, trajectory_from_config
 from scene import Scene
 
@@ -128,7 +132,9 @@ def main() -> None:
     ap.add_argument("--jobs", type=int, default=1, help="images rendered in parallel")
     a = ap.parse_args()
     cfg = yaml.safe_load(a.config.read_text())
+    started = dt.datetime.now(dt.timezone.utc)
     truth = render(cfg, a.out, a.scale, a.limit, a.jobs)
+    manifest.write(a.out, a.config, cfg, truth, sys.argv, started, dt.datetime.now(dt.timezone.utc))
     print(f"{len(truth['shots'])} images -> {a.out}")
 
 
