@@ -51,9 +51,12 @@ POSITION and EXTRA1/2/3 all at 2 Hz -- about 41 messages/s measured on 260814. S
 SYSTEM_TIME (on EXTRA3), GPS_RTK, EKF_STATUS_REPORT, VIBRATION, ESC_TELEMETRY,
 ATTITUDE and the rest arrive without any parameter change.
 
-We log **everything that arrives**, in standard tlog format: an 8-byte big-endian
-microsecond timestamp followed by the raw MAVLink frame. Reasons to prefer that over a
-curated projection:
+We log **every frame that arrives**, in standard tlog format: an 8-byte big-endian
+microsecond timestamp followed by the raw MAVLink frame. Bytes that do not parse as a
+frame (pymavlink's BAD_DATA) are not frames and are left out, as pymavlink's own tlog
+writer leaves them out: a tlog has no framing but the frames, so one junk record
+misaligns a reader for the rest of the file (#430). They are counted in the FC-link file
+instead. Reasons to prefer every frame over a curated projection:
 
   * **It is small.** 41 msg/s is ~0.7 MB for a six-minute flight, against 192 MB of
     captures and an 83 MB dataflash log for 260814. Selectivity buys nothing here.
@@ -259,7 +262,7 @@ def write_arm_file(path, armed):
     os.replace(tmp, path)
 
 
-def write_fc_link(path, boot_id, heartbeat_mono_s, heartbeats):
+def write_fc_link(path, boot_id, link):
     """#669: when this router last heard the FC, for the front panel.
 
     The arm file cannot say this: it reads "0" both for a disarmed FC and for a wire
@@ -272,11 +275,14 @@ def write_fc_link(path, boot_id, heartbeat_mono_s, heartbeats):
     boot id goes with it because this file is on the card and outlives the boot whose
     clock it is in. `null` until the first heartbeat: written at startup so a router
     that is up and hearing nothing says so, rather than leaving last boot's file.
+
+    `link` is `last_heartbeat_mono_s` and `heartbeats`, and #430's `bad_data` and
+    `bad_bytes`: what arrived on the wire that did not parse as a frame, and so is not in
+    the tlog. A noisy link shows here as counts going up, while it is happening.
     """
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"boot_id": boot_id, "last_heartbeat_mono_s": heartbeat_mono_s,
-                   "heartbeats": heartbeats}, f)
+        json.dump({"boot_id": boot_id, **link}, f)
     os.replace(tmp, path)
 
 
@@ -496,8 +502,11 @@ def main():
     write_arm_file(arm_file, armed)
     # #669: whether the FC is talking at all, which the arm file cannot say.
     fc_link_file = os.environ.get("MAVLINK_FC_LINK_FILE", "/tmp/fc_link")
-    fc_heartbeats = 0
-    write_fc_link(fc_link_file, boot_id, None, fc_heartbeats)
+    fc_link = {"last_heartbeat_mono_s": None, "heartbeats": 0, "bad_data": 0, "bad_bytes": 0}
+    write_fc_link(fc_link_file, boot_id, fc_link)
+    # Junk can arrive in a flood, so its counts are written at most once a second; a
+    # heartbeat writes them as well.
+    fc_link_written = time.monotonic()
     # coordinator#683: the front panel's line, sent to the FC as STATUSTEXT so it reaches
     # the ground. On change and every 30 s, not faster: the FC's display and the GCS show
     # only the latest line, and the FC logs each one it receives as a MSG.
@@ -613,6 +622,14 @@ def main():
                 msg = mav.recv_match(blocking=False)
                 if msg is None:
                     break
+                if msg.get_type() == "BAD_DATA":
+                    # #430: not a frame, so not in the tlog -- counted instead.
+                    fc_link["bad_data"] += 1
+                    fc_link["bad_bytes"] += len(msg.get_msgbuf() or b"")
+                    if time.monotonic() - fc_link_written >= 1.0:
+                        fc_link_written = time.monotonic()
+                        write_fc_link(fc_link_file, boot_id, fc_link)
+                    continue
                 if tlog is not None:
                     log_frame(tlog, msg, time.time_ns() // 1000)
                 if msg.get_type() == "TIMESYNC" and msg.tc1 != 0:
@@ -675,8 +692,9 @@ def main():
                     # flight's captures survive the power cut that usually follows.
                     # #669: the same heartbeats the arm state comes from, so the panel's
                     # "FC heard" means "an arm would get through".
-                    fc_heartbeats += 1
-                    write_fc_link(fc_link_file, boot_id, time.monotonic(), fc_heartbeats)
+                    fc_link["heartbeats"] += 1
+                    fc_link["last_heartbeat_mono_s"] = fc_link_written = time.monotonic()
+                    write_fc_link(fc_link_file, boot_id, fc_link)
                     now_armed = bool(
                         msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
                     if now_armed != armed:
