@@ -38,16 +38,23 @@ priors:
 
 jpeg_quality: 95
 
+# A house in a yard in the woods, rough and ready, centred on the mission's area (30.4 E, 20.0 S
+# of home; the farthest waypoint is 93 m from there). The house is 12 x 9 m and 8 m tall with a
+# Siemens star on each wall and the roof. Ten metres of open yard round it, then rings of
+# 3 x 3 m, 15 m trees every 10 m out to 100 m, about 10 m apart round each ring, alternate rings
+# offset half a step.
 scene:
   sky: 0.85
   texture: {finest_m: 0.02, octaves: 9, slope: 0.0, contrast: 4.0, seed: 1}
   solids:
     - {kind: plane, height: 0.0}
-    - {kind: box, base: [-8, 6, 0], size: [6, 4, 3], yaw_deg: 20}
-    - {kind: box, base: [9, -7, 0], size: [3, 3, 5], yaw_deg: -35}
-    - {kind: box, base: [2, 12, 0], size: [8, 2, 1.5], yaw_deg: 0}
-    - {kind: box, base: [-12, -10, 0], size: [2, 5, 2], yaw_deg: 60}
-    - {kind: cylinder, x: 4, y: 0, radius: 0.4, z0: 0, z1: 6}
-    - {kind: cylinder, x: -3, y: -6, radius: 1.5, z0: 0, z1: 2}
-    - {kind: cylinder, x: 13, y: 9, radius: 0.25, z0: 0, z1: 8}
-    - {kind: cylinder, x: -15, y: 14, radius: 0.8, z0: 0, z1: 4}
+    - {kind: box, base: [30.4, -20.0, 0], size: [12, 9, 8], decals: true}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 20, spacing_m: 10, size: [3, 3, 15]}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 30, spacing_m: 10, size: [3, 3, 15], offset_steps: 0.5}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 40, spacing_m: 10, size: [3, 3, 15]}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 50, spacing_m: 10, size: [3, 3, 15], offset_steps: 0.5}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 60, spacing_m: 10, size: [3, 3, 15]}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 70, spacing_m: 10, size: [3, 3, 15], offset_steps: 0.5}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 80, spacing_m: 10, size: [3, 3, 15]}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 90, spacing_m: 10, size: [3, 3, 15], offset_steps: 0.5}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 100, spacing_m: 10, size: [3, 3, 15]}
