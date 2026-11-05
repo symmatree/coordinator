@@ -28,5 +28,7 @@ lens shading, lighting. Each is an addition to `render_image`, not a change to a
 
 Small checks run here (`--scale 0.125 --limit 4` takes seconds). A full-resolution render is
 about 19 s and 430 MB per image single-threaded, and ODM needs far more, so real runs are the
-`mapping-sim` WorkflowTemplate in `tiles` (`tanka/environments/mapping-sim/`): render, ODM to the
-end of OpenSfM, score, all in one run directory on the NAS `datasets` share under `mapping-sim/`.
+`mapping-sim` WorkflowTemplates in `tiles` (`tanka/environments/mapping-sim/`). On the NAS
+`datasets` share, a render is kept in `mapping-sim/renders/<render>/` with its manifest, and each
+processing of it (ODM to the end of OpenSfM, then score) is a separate `mapping-sim/runs/<run>/`
+that reads the render's images read-only.
