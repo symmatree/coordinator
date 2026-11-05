@@ -15,6 +15,7 @@ vectors to body-frame vectors.
 
 from __future__ import annotations
 
+import pathlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -98,7 +99,48 @@ def lawnmower(cfg: dict) -> list[Pose]:
     return poses
 
 
-TRAJECTORIES = {"lawnmower": lawnmower}
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+EARTH_RADIUS_M = 6378137.0
+MAV_CMD_NAV_WAYPOINT = 16
+MAV_FRAME_GLOBAL_RELATIVE_ALT = 3
+
+
+def mission_waypoints(path: pathlib.Path) -> np.ndarray:
+    """A QGC WPL 110 mission's NAV_WAYPOINT items as local ENU metres about its home (item 0),
+    height above home. Equirectangular, which is exact to millimetres over a few hundred metres."""
+    rows = [line.split("\t") for line in path.read_text().splitlines()[1:] if line.strip()]
+    lat0, lon0 = float(rows[0][8]), float(rows[0][9])
+    out = []
+    for r in rows[1:]:
+        if int(r[3]) != MAV_CMD_NAV_WAYPOINT:
+            continue
+        assert int(r[2]) == MAV_FRAME_GLOBAL_RELATIVE_ALT, f"waypoint {r[0]}: frame {r[2]}"
+        lat, lon, alt = float(r[8]), float(r[9]), float(r[10])
+        e = np.radians(lon - lon0) * EARTH_RADIUS_M * np.cos(np.radians(lat0))
+        n = np.radians(lat - lat0) * EARTH_RADIUS_M
+        out.append([e, n, alt])
+    return np.array(out)
+
+
+def mission(cfg: dict) -> list[Pose]:
+    """A mission's waypoints in order, from the first, flown at constant speed with the nose
+    along the current leg and captures at a fixed rate by distance travelled; corners take no
+    time. `mission` is a path in this repo."""
+    wps = mission_waypoints(REPO_ROOT / cfg["mission"])
+    step = float(cfg["speed_mps"]) / float(cfg["capture_hz"])
+    legs = np.diff(wps, axis=0)
+    lengths = np.linalg.norm(legs, axis=1)
+    ends = np.concatenate([[0.0], np.cumsum(lengths)])
+    poses = []
+    for i, s in enumerate(np.arange(0.0, ends[-1] + 1e-9, step)):
+        leg = min(np.searchsorted(ends, s, side="right") - 1, len(legs) - 1)
+        p = wps[leg] + legs[leg] * (s - ends[leg]) / lengths[leg]
+        yaw = np.arctan2(legs[leg][1], legs[leg][0])  # world yaw of body x, CCW from east
+        poses.append(Pose(i / float(cfg["capture_hz"]), rot_z(yaw), p))
+    return poses
+
+
+TRAJECTORIES = {"lawnmower": lawnmower, "mission": mission}
 
 
 def trajectory_from_config(cfg: dict) -> list[Pose]:

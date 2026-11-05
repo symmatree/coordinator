@@ -18,7 +18,7 @@ from scipy.ndimage import gaussian_filter
 
 from lens import KannalaBrandt
 from render import render, render_image
-from rig import Pose, mount_rotation, rig_from_config, rot_z
+from rig import Pose, mission, mount_rotation, rig_from_config, rot_z
 from score import rodrigues, score
 from scene import Scene
 
@@ -104,6 +104,30 @@ def _synthetic_reconstruction(truth: dict, s: float, R: np.ndarray, t: np.ndarra
     pts_true = np.array([[x, y, 0.0] for x in range(-10, 11, 4) for y in range(-10, 11, 4)])
     pts = (s * (R @ pts_true.T)).T + t
     return {"cameras": {}, "shots": shots, "points": {str(i): {"coordinates": p.tolist()} for i, p in enumerate(pts)}}
+
+
+def test_mission_follows_the_waypoints() -> None:
+    # Home, a speed change, then an L: 0.001 deg of latitude north, then east, at 30 m.
+    lines = [
+        "QGC WPL 110",
+        "0\t1\t0\t16\t0\t0\t0\t0\t40.0\t-80.0\t300.0\t1",
+        "1\t0\t3\t178\t0\t3\t0\t0\t0\t0\t0\t1",
+        "2\t0\t3\t16\t0\t0\t0\t0\t40.0\t-80.0\t30.0\t1",
+        "3\t0\t3\t16\t0\t0\t0\t0\t40.001\t-80.0\t30.0\t1",
+        "4\t0\t3\t16\t0\t0\t0\t0\t40.001\t-79.999\t30.0\t1",
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "m.waypoints"
+        path.write_text("\n".join(lines) + "\n")
+        poses = mission({"mission": str(path), "speed_mps": 3, "capture_hz": 1})
+    north = np.radians(0.001) * 6378137.0
+    east = north * np.cos(np.radians(40.0))
+    assert len(poses) == int((north + east) // 3) + 1
+    assert np.allclose(poses[0].p_wb, [0, 0, 30]) and np.allclose(poses[1].p_wb, [0, 3, 30])
+    assert np.allclose(poses[1].R_wb @ [1, 0, 0], [0, 1, 0])  # nose north on the first leg
+    last = poses[-1]
+    assert np.allclose(last.R_wb @ [1, 0, 0], [1, 0, 0]) and np.isclose(last.p_wb[1], north)
+    assert np.isclose(last.time_s, len(poses) - 1)
 
 
 def test_score_exact_reconstruction_is_zero_error() -> None:
