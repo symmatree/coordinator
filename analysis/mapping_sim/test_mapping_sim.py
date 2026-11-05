@@ -19,6 +19,7 @@ import yaml
 from scipy.ndimage import gaussian_filter
 
 import manifest
+import opensfm_data as od
 from lens import KannalaBrandt
 from render import render, render_image
 from rig import Pose, mission, mount_rotation, rig_from_config, rot_z
@@ -177,6 +178,33 @@ def test_manifest_records_the_config_and_every_file() -> None:
         assert m["config"]["path"] == "analysis/mapping_sim/configs/as-built.yaml" and m["config"]["contents"] == CONFIG
         assert len(m["software"]["commit"]) == 40 and m["images"]["count"] == 8
         assert m["software"]["commit"] in (out / "README.md").read_text()
+
+
+def test_solid_labels_follow_the_scene() -> None:
+    for path in (pathlib.Path(__file__).parent / "configs").glob("*.yaml"):
+        cfg = yaml.safe_load(path.read_text())["scene"]
+        assert len(od.solid_labels(cfg)) == len(Scene.from_config(cfg).solids), path.name
+
+
+def test_feature_truth_lands_where_the_pixel_projects_back() -> None:
+    cfg = yaml.safe_load((pathlib.Path(__file__).parent / "configs" / "map-test-mission.yaml").read_text())
+    scene = Scene.from_config(cfg["scene"])
+    cam = rig_from_config(cfg["rig"])[0]
+    pose = Pose(time_s=0.0, p_wb=np.array([30.4, -45.0, 30.0]), R_wb=rot_z(np.radians(90)))
+    R_wc = pose.R_wb @ cam.R_bc
+    C = pose.p_wb + pose.R_wb @ cam.t_bc
+    # OpenSfM's normalised coordinates of pixel centres across the frame.
+    size = max(cam.lens.width, cam.lens.height)
+    uv = np.stack(np.meshgrid(np.arange(8, cam.lens.width, 401) + 0.5, np.arange(8, cam.lens.height, 257) + 0.5), -1).reshape(-1, 2)
+    norm = np.stack([(uv[:, 0] - cam.lens.width / 2) / size, (uv[:, 1] - cam.lens.height / 2) / size], 1)
+    assert np.allclose(od.to_pixels(norm, cam.lens.width, cam.lens.height), uv)
+    ft = od.feature_truth(scene, cam.lens, R_wc, C, uv)
+    hit = ft["solid"] >= 0
+    assert hit.all()
+    assert np.allclose(scene.distance(ft["point"]), 0, atol=1e-6)
+    back, front = od.project(cam.lens, R_wc, C, ft["point"])
+    assert front.all() and np.allclose(back, uv, atol=1e-6)
+    assert np.allclose(np.linalg.norm(ft["point"] - C, axis=1), ft["range"])
 
 
 def test_score_exact_reconstruction_is_zero_error() -> None:
