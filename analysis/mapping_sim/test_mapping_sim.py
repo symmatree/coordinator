@@ -21,7 +21,7 @@ from scipy.ndimage import gaussian_filter
 import manifest
 from lens import KannalaBrandt
 from render import render, render_image
-from rig import Pose, mission, mount_rotation, rig_from_config, rot_z
+from rig import Pose, attitude_flu_enu, flown, mission, mount_rotation, rig_from_config, rot_z
 from score import rodrigues, score
 from scene import Box, Scene, box_ring
 
@@ -162,6 +162,25 @@ def test_mission_follows_the_waypoints() -> None:
     last = poses[-1]
     assert np.allclose(last.R_wb @ [1, 0, 0], [1, 0, 0]) and np.isclose(last.p_wb[1], north)
     assert np.isclose(last.time_s, len(poses) - 1)
+
+
+def test_ardupilot_attitude_becomes_flu_in_enu() -> None:
+    nose, left = [1, 0, 0], [0, 1, 0]
+    assert np.allclose(attitude_flu_enu(0, 0, 0) @ nose, [0, 1, 0])  # yaw 0: nose north
+    assert np.allclose(attitude_flu_enu(0, 0, 90) @ nose, [1, 0, 0])  # yaw 90: nose east (clockwise)
+    assert attitude_flu_enu(0, 10, 0)[2] @ nose > 0  # positive pitch: nose up
+    assert attitude_flu_enu(10, 0, 0)[2] @ left > 0  # positive roll: right wing down, left up
+    R = attitude_flu_enu(7, -4, 233)
+    assert np.allclose(R @ R.T, np.eye(3)) and np.isclose(np.linalg.det(R), 1)
+
+
+def test_flown_path_reads_the_committed_poses() -> None:
+    poses = flown({"poses": "analysis/mapping_sim/configs/flown/2026-10-30-auto.csv"})
+    assert len(poses) == 318 and poses[0].time_s == 0 and poses[-1].time_s == 317
+    up = np.array([p.p_wb[2] for p in poses])
+    assert 20 < up.min() and up.max() < 32
+    tilt = np.degrees(np.arccos([p.R_wb[2, 2] for p in poses]))
+    assert tilt.max() < 30  # the crash at the end of the log is cut off
 
 
 def test_manifest_records_the_config_and_every_file() -> None:
