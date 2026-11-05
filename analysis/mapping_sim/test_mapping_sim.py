@@ -9,6 +9,8 @@ error where there is none or misses it where there is.
 from __future__ import annotations
 
 import copy
+import datetime as dt
+import hashlib
 import pathlib
 import tempfile
 
@@ -16,6 +18,7 @@ import numpy as np
 import yaml
 from scipy.ndimage import gaussian_filter
 
+import manifest
 from lens import KannalaBrandt
 from render import render, render_image
 from rig import Pose, mission, mount_rotation, rig_from_config, rot_z
@@ -159,6 +162,21 @@ def test_mission_follows_the_waypoints() -> None:
     last = poses[-1]
     assert np.allclose(last.R_wb @ [1, 0, 0], [1, 0, 0]) and np.isclose(last.p_wb[1], north)
     assert np.isclose(last.time_s, len(poses) - 1)
+
+
+def test_manifest_records_the_config_and_every_file() -> None:
+    config_path = pathlib.Path(__file__).parent / "configs" / "as-built.yaml"
+    with tempfile.TemporaryDirectory() as d:
+        out = pathlib.Path(d)
+        started = dt.datetime.now(dt.timezone.utc)
+        truth = render(CONFIG, out, scale=1 / 64, limit=2)
+        m = manifest.write(out, config_path, CONFIG, truth, ["render.py"], started, dt.datetime.now(dt.timezone.utc))
+        on_disk = sorted(str(p.relative_to(out)) for p in out.rglob("*") if p.is_file())
+        assert on_disk == sorted([*m["files"], "manifest.json", "README.md"])
+        assert m["files"]["geo.txt"] == hashlib.sha256((out / "geo.txt").read_bytes()).hexdigest()
+        assert m["config"]["path"] == "analysis/mapping_sim/configs/as-built.yaml" and m["config"]["contents"] == CONFIG
+        assert len(m["software"]["commit"]) == 40 and m["images"]["count"] == 8
+        assert m["software"]["commit"] in (out / "README.md").read_text()
 
 
 def test_score_exact_reconstruction_is_zero_error() -> None:
