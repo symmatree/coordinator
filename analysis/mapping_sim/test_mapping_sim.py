@@ -20,7 +20,7 @@ from lens import KannalaBrandt
 from render import render, render_image
 from rig import Pose, mission, mount_rotation, rig_from_config, rot_z
 from score import rodrigues, score
-from scene import Scene
+from scene import Box, Scene, box_ring
 
 CONFIG = yaml.safe_load((pathlib.Path(__file__).parent / "configs" / "as-built.yaml").read_text())
 
@@ -69,6 +69,37 @@ def test_straight_down_hits_the_box_top() -> None:
     scene = Scene.from_config({"solids": [{"kind": "plane"}, {"kind": "box", "base": [0, 0, 0], "size": [2, 2, 3], "yaw_deg": 30}]})
     t, idx, n = scene.intersect(np.array([[0.0, 0, 10], [5, 5, 10]]), np.array([[0.0, 0, -1], [0, 0, -1]]))
     assert np.allclose(t, [7, 10]) and list(idx) == [1, 0] and np.allclose(n, [[0, 0, 1], [0, 0, 1]])
+
+
+def test_many_boxes_cull_to_the_same_answer() -> None:
+    # Culling by bounding sphere must not change any hit: compare one shared origin, which culls,
+    # against per-ray origins that differ by nothing, which take the general path.
+    cfg = {"solids": [{"kind": "plane"}, {"kind": "box_ring", "centre": [0, 0], "radius": 12, "spacing_m": 4, "size": [2, 2, 6]}]}
+    scene = Scene.from_config(cfg)
+    assert len(scene.solids) == 1 + len(box_ring((0, 0), 12, 4, (2, 2, 6)))
+    rng = np.random.default_rng(3)
+    d = rng.normal(size=(5000, 3))
+    d[:, 2] = -np.abs(d[:, 2])
+    o = np.tile([1.0, 2.0, 20.0], (len(d), 1))
+    t1, i1, n1 = scene.intersect(o, d)
+    o2 = o.copy()
+    o2[0, 0] = np.nextafter(o2[0, 0], 2)
+    t2, i2, n2 = scene.intersect(o2, d)
+    assert (i1 > 0).sum() > 100 and np.array_equal(i1[1:], i2[1:]) and np.allclose(t1[1:], t2[1:])
+
+
+def test_decal_is_a_star_on_walls_and_roof_only() -> None:
+    box = Box(base=(0, 0, 0), size=(10, 8, 6), decals=True)
+    fine = np.full(4, 1e-4)
+    # Near a wall's centre, either side of a sector edge, the star is black or white.
+    a = np.pi / Box.STAR_SECTOR_PAIRS  # one sector width in angle
+    wall = np.array([[5.0, 1.5 * np.cos(a * 0.5), 3 + 1.5 * np.sin(a * 0.5)], [5.0, 1.5 * np.cos(a * 1.5), 3 + 1.5 * np.sin(a * 1.5)]])
+    roof, bottom = [0.5, 0.5, 6.0], [0.5, 0.5, 0.0]
+    v = box.decal(np.vstack([wall, [roof, bottom]]), fine)
+    assert sorted(np.round(v[:2])) == [0, 1] and 0 <= v[2] <= 1 and np.isnan(v[3])
+    # Off the star (face corner) there is no decal, and too coarse a footprint fades to grey.
+    assert np.isnan(box.decal(np.array([[5.0, 3.9, 5.9]]), fine[:1]))[0]
+    assert np.isclose(box.decal(wall[:1], np.array([1.0]))[0], 0.5)
 
 
 def test_texture_does_not_repeat() -> None:

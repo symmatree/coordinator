@@ -12,12 +12,12 @@ second config, not a feature of the tool.
 | file | what |
 |---|---|
 | [`lens.py`](lens.py) | Kannala-Brandt fisheye, which is OpenCV's fisheye model and OpenSfM's `fisheye_opencv`, so recovered intrinsics compare directly with rendered ones. |
-| [`scene.py`](scene.py) | ground plane, yawed boxes, vertical cylinders, intersected in closed form; non-repeating 3-D value-noise texture, band-limited to each pixel's footprint so nothing aliases. Unlit: no shadows or shading, so a surface looks the same from every view. |
+| [`scene.py`](scene.py) | ground plane, yawed boxes (singly or as a `box_ring` round a circle), vertical cylinders, intersected in closed form; optional Siemens stars on a box's walls and roof; non-repeating 3-D value-noise texture, band-limited to each pixel's footprint so nothing aliases. Unlit: no shadows or shading, so a surface looks the same from every view. |
 | [`rig.py`](rig.py) | camera mounts as measured on the airframe (azimuth from forward, depression below horizontal, roll, position in FLU), and the vehicle path: an ideal lawnmower over a rectangle, or a mission file's waypoints flown at constant speed. |
 | [`render.py`](render.py) | config -> `images/`, `geo.txt`, `truth.json`. `--scale` renders at a fraction of sensor resolution for quick local checks. |
 | [`score.py`](score.py) | OpenSfM `reconstruction.json` + `truth.json` -> per-image position and rotation error, images not reconstructed, sparse-point distance to the true surfaces, recovered vs rendered intrinsics. Fits a similarity transform first and reports it. |
 | [`configs/as-built.yaml`](configs/as-built.yaml) | the four campods with B0310 lenses, ideal capture, one 45 m pass each way at 40 m (128 images). |
-| [`configs/map-test-mission.yaml`](configs/map-test-mission.yaml) | the same rig flying [`ardupilot/map-test.waypoints`](../../ardupilot/map-test.waypoints), the mission flown on 2026-10-30 (`flights/rekon10/2026-10-30-auto`): waypoints 2-13 at 30 m, 3 m/s, 1 Hz, nose along each leg (1104 images). |
+| [`configs/map-test-mission.yaml`](configs/map-test-mission.yaml) | the same rig flying [`ardupilot/map-test.waypoints`](../../ardupilot/map-test.waypoints), the mission flown on 2026-10-30 (`flights/rekon10/2026-10-30-auto`): waypoints 2-13 at 30 m, 3 m/s, 1 Hz, nose along each leg (1104 images), over a house in a yard ringed by trees: a 12 x 9 x 8 m box with a Siemens star on each wall and the roof, 10 m of open ground, then rings of 3 x 3 x 15 m boxes every 10 m out to 100 m. |
 | [`test_mapping_sim.py`](test_mapping_sim.py) | synthetic tests, run by `test.sh`. |
 
 What the render does not model: rolling shutter, motion blur, vibration, defocus, noise, exposure,

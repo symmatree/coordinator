@@ -9,6 +9,11 @@ randomly rotated lattice and every solid on its own seed. Nothing repeats, so ev
 surface is a unique feature and a match between two images can only be the right one. Octaves
 finer than the pixel's footprint on the surface are faded out rather than sampled, which keeps
 distant and grazing surfaces from aliasing into noise that no real camera would record.
+
+A box can carry a Siemens star on each face but the bottom: black and white sectors, sharp-edged
+to the pixel and faded to grey where the sectors are narrower than the footprint, so the radius at
+which a reconstruction loses them reads off its resolution. A `box_ring` in the config expands to
+equal boxes spaced around a circle, each face-on to the centre.
 """
 
 from __future__ import annotations
@@ -116,13 +121,21 @@ class Box:
     base: tuple[float, float, float]
     size: tuple[float, float, float]
     yaw_deg: float = 0.0
+    decals: bool = False
     kind = "box"
+
+    STAR_SECTOR_PAIRS = 36
+    STAR_FILL = 0.45  # star radius as a fraction of the face's shorter side
 
     def __post_init__(self) -> None:
         c, s = np.cos(np.radians(self.yaw_deg)), np.sin(np.radians(self.yaw_deg))
         self._R = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.0]])  # box -> world
         self._half = np.array(self.size, dtype=float) / 2
         self._centre = np.array(self.base, dtype=float) + [0, 0, self._half[2]]
+        self._radius = float(np.linalg.norm(self._half))
+
+    def bound(self) -> tuple[np.ndarray, float]:
+        return self._centre, self._radius
 
     def intersect(self, o: np.ndarray, d: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         ob = (o - self._centre) @ self._R
@@ -143,6 +156,30 @@ class Box:
         nb = np.zeros_like(ob)
         nb[np.arange(len(ob)), axis] = -np.sign(db[np.arange(len(ob)), axis])
         return t, nb @ self._R.T
+
+    def decal(self, p: np.ndarray, footprint: np.ndarray) -> np.ndarray:
+        """Siemens star value at surface points `p`, NaN off the star (bottom face included)."""
+        out = np.full(len(p), np.nan)
+        if not self.decals:
+            return out
+        q = (p - self._centre) @ self._R
+        axis = np.abs(q / self._half).argmax(axis=1)
+        for a in range(3):
+            m = (axis == a) & ~((a == 2) & (q[:, 2] < 0))
+            u_ax, v_ax = [k for k in range(3) if k != a]
+            u, v = q[m, u_ax], q[m, v_ax]
+            star_r = self.STAR_FILL * 2 * min(self._half[u_ax], self._half[v_ax])
+            r = np.hypot(u, v)
+            s = np.sin(self.STAR_SECTOR_PAIRS * np.arctan2(v, u))
+            fp = footprint[m]
+            # Signed distance to the nearest sector edge is about r s / N, so the edge is
+            # antialiased over one footprint; sectors narrower than two footprints fade to grey.
+            edge = np.clip(r * s / (self.STAR_SECTOR_PAIRS * fp), -1, 1)
+            period = 2 * np.pi * r / self.STAR_SECTOR_PAIRS
+            fade = np.clip(period / fp / 2 - 1, 0, 1)
+            val = np.where(r <= star_r, 0.5 + 0.5 * fade * edge, np.nan)
+            out[np.flatnonzero(m)] = val
+        return out
 
     def distance(self, p: np.ndarray) -> np.ndarray:
         q = np.abs((p - self._centre) @ self._R) - self._half
@@ -204,6 +241,17 @@ class Cylinder:
 _KINDS = {"plane": Plane, "box": Box, "cylinder": Cylinder}
 
 
+def box_ring(centre: tuple[float, float], radius: float, spacing_m: float, size: tuple[float, float, float], offset_steps: float = 0.0) -> list[Box]:
+    """Boxes of `size` evenly round a circle about `centre`, about `spacing_m` apart, each yawed
+    to face the centre; the first sits `offset_steps` of a spacing round from east."""
+    count = max(1, int(round(2 * np.pi * radius / spacing_m)))
+    angles = (offset_steps + np.arange(count)) * 360.0 / count
+    return [
+        Box(base=(centre[0] + radius * np.cos(np.radians(a)), centre[1] + radius * np.sin(np.radians(a)), 0.0), size=tuple(size), yaw_deg=float(a))
+        for a in angles
+    ]
+
+
 class Scene:
     def __init__(self, solids: list, texture: Texture, sky: float = 0.85):
         self.solids = solids
@@ -215,7 +263,11 @@ class Scene:
         solids = []
         for s in cfg["solids"]:
             s = dict(s)
-            solids.append(_KINDS[s.pop("kind")](**s))
+            kind = s.pop("kind")
+            if kind == "box_ring":
+                solids.extend(box_ring(**s))
+            else:
+                solids.append(_KINDS[kind](**s))
         return cls(solids, Texture(**cfg.get("texture", {})), float(cfg.get("sky", 0.85)))
 
     def intersect(self, o: np.ndarray, d: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -223,12 +275,32 @@ class Scene:
         t_best = np.full(len(o), np.inf)
         idx = np.full(len(o), -1)
         n_best = np.zeros_like(o)
+        # A render's rays share one origin, so a bounded solid costs one product to find the rays
+        # that pass within its bounding sphere, and only those are intersected.
+        o0 = o[0]
+        one_origin = bool(np.all(o == o0))
+        dd = np.einsum("ij,ij->i", d, d)
         for i, s in enumerate(self.solids):
-            t, n = s.intersect(o, d)
-            closer = t < t_best
-            t_best = np.where(closer, t, t_best)
-            idx = np.where(closer, i, idx)
-            n_best[closer] = n[closer]
+            if hasattr(s, "bound"):
+                c, r = s.bound()
+                if one_origin:
+                    w = c - o0
+                    b = d @ w
+                    near = np.flatnonzero(w @ w - b * b / dd <= r * r)
+                else:
+                    w = c - o
+                    b = np.einsum("ij,ij->i", d, w)
+                    near = np.flatnonzero(np.einsum("ij,ij->i", w, w) - b * b / dd <= r * r)
+            else:
+                near = np.arange(len(o))
+            if len(near) == 0:
+                continue
+            t, n = s.intersect(o[near], d[near])
+            closer = t < t_best[near]
+            sel = near[closer]
+            t_best[sel] = t[closer]
+            idx[sel] = i
+            n_best[sel] = n[closer]
         return t_best, idx, n_best
 
     def shade(self, o: np.ndarray, d: np.ndarray, pixel_angle: np.ndarray) -> np.ndarray:
@@ -244,6 +316,9 @@ class Scene:
             for i in np.unique(idx[hit]):
                 m = idx[hit] == i
                 vals[m] = self.texture.sample(p[m], footprint[m], solid_seed=int(i) + 1)
+                if getattr(self.solids[i], "decals", False):
+                    star = self.solids[i].decal(p[m], footprint[m])
+                    vals[m] = np.where(np.isnan(star), vals[m], star)
             out[hit] = vals
         return out
 
