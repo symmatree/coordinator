@@ -16,6 +16,7 @@ import tempfile
 
 import numpy as np
 import yaml
+from PIL import Image
 from scipy.ndimage import gaussian_filter
 
 import manifest
@@ -122,6 +123,34 @@ def test_texture_does_not_repeat() -> None:
     off = corr[~np.eye(len(z), dtype=bool)]
     assert all(p.std() > 0.02 for p in patches)
     assert np.abs(off).max() < 0.6, np.abs(off).max()
+
+
+def test_triangles_lie_on_their_solids() -> None:
+    cfg = {"solids": [{"kind": "plane"}, {"kind": "box", "base": [3, -2, 0], "size": [12, 9, 8], "yaw_deg": 25, "decals": True},
+                      {"kind": "cylinder", "x": -5, "y": 4, "radius": 1.5, "z0": 0, "z1": 6}]}
+    scene = Scene.from_config(cfg)
+    tris, solid = scene.triangles()
+    assert len(tris.position) % 3 == 0 and set(solid) == {0, 1, 2}
+    for i, s in enumerate(scene.solids):
+        assert s.distance(tris.position[solid == i]).max() < 1e-9
+    # Stars on the four walls and the roof, each face's radius from its shorter side.
+    stars = tris.star_r[solid == 1].reshape(-1, 6)[:, 0]
+    assert np.allclose(sorted(stars), [0, 3.6, 3.6, 3.6, 3.6, 4.05])
+
+
+def test_raster_draws_what_the_ray_tracer_does() -> None:
+    cfg = yaml.safe_load((pathlib.Path(__file__).parent / "configs" / "map-test-mission.yaml").read_text())
+    imgs = {}
+    for renderer in ("trace", "raster"):
+        with tempfile.TemporaryDirectory() as d:
+            render({**cfg, "renderer": renderer}, pathlib.Path(d), scale=1 / 16, limit=1)
+            imgs[renderer] = {p.name: np.asarray(Image.open(p).convert("L"), float) / 255 for p in (pathlib.Path(d) / "images").iterdir()}
+    assert imgs["trace"].keys() == imgs["raster"].keys() and len(imgs["trace"]) == 4
+    for name, a in imgs["raster"].items():
+        b = imgs["trace"][name]
+        # Same geometry and texture; the two filter the finest octaves differently off-axis.
+        assert np.corrcoef(a.ravel(), b.ravel())[0, 1] > 0.9, name
+        assert abs(a.mean() - b.mean()) < 0.01, name
 
 
 def _synthetic_reconstruction(truth: dict, s: float, R: np.ndarray, t: np.ndarray) -> dict:

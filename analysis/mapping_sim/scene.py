@@ -96,6 +96,24 @@ class Texture:
 
 
 @dataclass
+class Triangles:
+    """A triangle list for the rasteriser: three rows per triangle of world position, the face
+    coordinates a Siemens star is drawn in, and that star's radius (0 for none)."""
+
+    position: np.ndarray
+    face_uv: np.ndarray
+    star_r: np.ndarray
+
+    @classmethod
+    def plain(cls, position: np.ndarray) -> "Triangles":
+        return cls(position, np.zeros((len(position), 2)), np.zeros(len(position)))
+
+    @classmethod
+    def join(cls, parts: list["Triangles"]) -> "Triangles":
+        return cls(*(np.concatenate([getattr(t, k) for t in parts]) for k in ("position", "face_uv", "star_r")))
+
+
+@dataclass
 class Plane:
     """The ground, z = height, unbounded."""
 
@@ -112,6 +130,20 @@ class Plane:
 
     def distance(self, p: np.ndarray) -> np.ndarray:
         return np.abs(p[:, 2] - self.height)
+
+    # Far enough that the gap between its edge and the true horizon is a few pixels at 30 m.
+    EXTENT_M = 20000.0
+    TILE_M = 200.0
+
+    def triangles(self) -> Triangles:
+        """A grid of tiles out to EXTENT_M, small enough that interpolating world position across
+        each one stays exact in float32."""
+        g = np.arange(-self.EXTENT_M, self.EXTENT_M, self.TILE_M)
+        x0, y0 = (a.ravel() for a in np.meshgrid(g, g))
+        x1, y1 = x0 + self.TILE_M, y0 + self.TILE_M
+        quad = [(x0, y0), (x1, y0), (x1, y1), (x0, y0), (x1, y1), (x0, y1)]
+        p = np.stack([np.stack([x, y, np.full_like(x, self.height)], -1) for x, y in quad], 1)
+        return Triangles.plain(p.reshape(-1, 3))
 
 
 @dataclass
@@ -181,6 +213,24 @@ class Box:
             out[np.flatnonzero(m)] = val
         return out
 
+    def triangles(self) -> Triangles:
+        """Six faces; on each, the face coordinates `decal` uses and the star radius (0 where
+        there is no star)."""
+        out = []
+        for a in range(3):
+            u_ax, v_ax = [k for k in range(3) if k != a]
+            for sign in (-1.0, 1.0):
+                corners = []
+                for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, -1), (1, 1), (-1, 1)):
+                    q = np.zeros(3)
+                    q[a], q[u_ax], q[v_ax] = sign * self._half[a], su * self._half[u_ax], sv * self._half[v_ax]
+                    corners.append(q)
+                q = np.array(corners)
+                star = self.decals and not (a == 2 and sign < 0)
+                star_r = self.STAR_FILL * 2 * min(self._half[u_ax], self._half[v_ax]) if star else 0.0
+                out.append(Triangles(q @ self._R.T + self._centre, q[:, [u_ax, v_ax]], np.full(6, star_r)))
+        return Triangles.join(out)
+
     def distance(self, p: np.ndarray) -> np.ndarray:
         q = np.abs((p - self._centre) @ self._R) - self._half
         outside = np.linalg.norm(np.maximum(q, 0), axis=1)
@@ -229,6 +279,20 @@ class Cylinder:
         t = np.where(use_side, t_side, t_cap)
         n = np.where(use_side[:, None], n_side, n_cap)
         return t, n
+
+    SEGMENTS = 256  # the polygon departs from the circle by radius * 7.5e-5
+
+    def triangles(self) -> Triangles:
+        a = np.linspace(0, 2 * np.pi, self.SEGMENTS + 1)
+        ring = np.stack([self.x + self.radius * np.cos(a), self.y + self.radius * np.sin(a)], -1)
+        r0, r1 = ring[:-1], ring[1:]
+        lo, hi = np.full((self.SEGMENTS, 1), self.z0), np.full((self.SEGMENTS, 1), self.z1)
+        side = [np.hstack([r0, lo]), np.hstack([r1, lo]), np.hstack([r1, hi]), np.hstack([r0, lo]), np.hstack([r1, hi]), np.hstack([r0, hi])]
+        tris = [np.stack(side, 1).reshape(-1, 3)]
+        for z in (lo, hi):
+            centre = np.hstack([np.full((self.SEGMENTS, 2), [self.x, self.y]), z])
+            tris.append(np.stack([centre, np.hstack([r0, z]), np.hstack([r1, z])], 1).reshape(-1, 3))
+        return Triangles.plain(np.concatenate(tris))
 
     def distance(self, p: np.ndarray) -> np.ndarray:
         dr = np.hypot(p[:, 0] - self.x, p[:, 1] - self.y) - self.radius
@@ -321,6 +385,12 @@ class Scene:
                     vals[m] = np.where(np.isnan(star), vals[m], star)
             out[hit] = vals
         return out
+
+    def triangles(self) -> tuple[Triangles, np.ndarray]:
+        """Every solid's triangles, and the index into `solids` of each vertex's solid."""
+        parts = [s.triangles() for s in self.solids]
+        solid = np.concatenate([np.full(len(t.position), i) for i, t in enumerate(parts)])
+        return Triangles.join(parts), solid
 
     def distance(self, p: np.ndarray) -> np.ndarray:
         """Unsigned distance from each point to the nearest solid surface."""
