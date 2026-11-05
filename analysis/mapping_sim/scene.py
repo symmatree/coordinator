@@ -324,4 +324,8 @@ class Scene:
 
     def distance(self, p: np.ndarray) -> np.ndarray:
         """Unsigned distance from each point to the nearest solid surface."""
-        return np.min([s.distance(p) for s in self.solids], axis=0)
+        # A running minimum: a reconstruction's points times hundreds of solids does not fit at once.
+        out = np.full(len(p), np.inf)
+        for s in self.solids:
+            np.minimum(out, s.distance(p), out=out)
+        return out
