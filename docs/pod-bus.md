@@ -328,6 +328,8 @@ and the `boot_id` it was written in. pod-link passes it through only when that b
 this boot's, because the file is on the card and outlives the boot whose clock it is in.
 `as_of_boot_s - fc.last_heartbeat_mono_s` is how long the FC has been silent; the front
 panel shows `NO FC` past 3 s. Absent means the router has not run this boot.
+`bad_data` and `bad_bytes` count what arrived on the serial link that did not parse as a
+MAVLink frame, since the router started (#430); those bytes are not in `vehicle.tlog`.
 
 Its `rtc` section is what `coord-rtc feed` last read off the DS3234
 (`/var/lib/coordinator/ipc/rtc_status`), rewritten every feed pass whether or not the
