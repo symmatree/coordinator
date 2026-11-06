@@ -19,16 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # The notebook image does not fit on the runner's root disk as it comes: on
-      # 2026-11-03 a PR run died unpacking its layers ("no space left on device")
-      # while main passed the same minute. These are the runner's preinstalled
-      # SDKs, none of which this job uses; the df lines put the margin in the log.
+      # On 2026-11-03 a PR run died unpacking the notebook image ("no space left on
+      # device") on a runner of image 20261018.50.1, which logged no df. Runners of
+      # 20261025 and 20261101 start with 88G free on a 145G root, ample for an image
+      # of 4.8G compressed, and deleting the preinstalled SDKs (none of which this job
+      # uses) takes 1.5-3 minutes. So they go only when the root is short of 40G; the
+      # df lines put the margin in the log either way.
       - name: Free runner disk for the notebook image
         run: |
           df -h /
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
-          docker image prune -af
-          df -h /
+          avail_gb=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          if [ "$avail_gb" -lt 40 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+            docker image prune -af
+            df -h /
+          fi
 
       # The JupyterHub notebook image, built by symmatree/tiles and public, so
       # no registry login. --user because its default is jovyan (uid 1000)

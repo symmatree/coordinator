@@ -30,7 +30,7 @@ deciding whether to arm. So it answers that first and explains itself second.
   | | |
   |---|---|
   | `C` | camera present and warm |
-  | `S` | camera sync achieved |
+  | `S` | camera sync achieved; on the coordinator's cell, its own 1 Hz from the DS3234 arriving |
   | `Ac` | accelerometer on the camera mount |
   | `Aa` | accelerometer on the arm |
 
@@ -41,8 +41,10 @@ deciding whether to arm. So it answers that first and explains itself second.
   (`STALE_AFTER_S`, three missed heartbeats). The cells are the inventory as well as the
   status: a cell existing means that pod is up and on the bus. Documents are retained, so
   one that exists is not evidence of life.
-- **the coordinator's own capture pod** gets a cell too, named `oak`, if it publishes a
-  camera document. It is shown and does not gate -- say the word and that is one line.
+- **the coordinator** gets a cell too, named `oak`, if it publishes a camera document or
+  the DS3234's state (`rtc`). Its `S` is the leader's side of sync: the kernel is seeing
+  edges on its own 1 Hz input, whatever the chip's SPI read says. It is shown and does not
+  gate -- say the word and that is one line.
 - **the footer** -- `NO FC` when the coordinator has not heard an FC heartbeat in the
   last `FC_STALE_AFTER_S` (3 s), otherwise `ARMED` or `idle <reason>` from the capture
   intent; and the card's free space. Arming reaches the pods only through those
@@ -70,8 +72,8 @@ then a token per pod on the bus:
 - the mark is `-` stopped, `<` getting ready, `=` ready, `+` recording: the least advanced
   of any pod, with `*` after it when they are not all in the same state
 - `CO` is the coordinator, `SE SW NE NW` the campods; upper case when that pod's camera is
-  warm and synced (the coordinator's has no sync, so warm). No token when the pod is not
-  on the bus.
+  warm and synced (for the coordinator, its own 1 Hz arriving). No token when the pod is
+  not on the bus.
 
 The line does not need the OLED: a panel that does not answer is retried every 10 s, and the
 line is written in the meantime. The router sends nothing from a file more than 5 s old.

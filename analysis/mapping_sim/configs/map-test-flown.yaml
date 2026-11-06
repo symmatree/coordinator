@@ -1,0 +1,51 @@
+# As-built campod rig flying the map-test mission as the FC flew it on 2026-10-30, ideal capture:
+# global shutter, no blur, no noise, exact position priors. The same rig, priors and scene as
+# map-test-mission.yaml; only the path differs.
+
+rig:
+  pixel_um: 1.4
+  lenses:
+    b0310:
+      width: 4608
+      height: 2592
+      focal_px: 2200.0
+      k: [0.0, 0.0, 0.0, 0.0]
+  cameras:
+    - {name: ne, lens: b0310, azimuth_deg: 45, depression_deg: 56.26, roll_deg: 0, position_m: [0.100, -0.048, -0.03]}
+    - {name: se, lens: b0310, azimuth_deg: 135, depression_deg: 56.26, roll_deg: 0, position_m: [-0.100, -0.048, -0.03]}
+    - {name: sw, lens: b0310, azimuth_deg: 225, depression_deg: 56.26, roll_deg: 0, position_m: [-0.100, 0.048, -0.03]}
+    - {name: nw, lens: b0310, azimuth_deg: 315, depression_deg: 56.26, roll_deg: 0, position_m: [0.100, 0.048, -0.03]}
+
+# The FC's own estimate of where it was and how it was oriented, sampled each second of Auto from
+# the 2026-10-30 log (flights/rekon10/2026-10-30-auto) by flown_path.py, cut before the thrust loss
+# that ended the flight: 318 captures, 1272 images. The EKF is taken as exact. Heights start at
+# 22 m (Auto began from a Loiter hover) and climb to 30 m on the way to the first waypoint.
+trajectory:
+  kind: flown
+  poses: analysis/mapping_sim/configs/flown/2026-10-30-auto.csv
+
+priors:
+  accuracy_m: [0.01, 0.01]
+
+jpeg_quality: 95
+
+# A house in a yard in the woods, rough and ready, centred on the mission's area (30.4 E, 20.0 S
+# of home; the farthest waypoint is 93 m from there). The house is 12 x 9 m and 8 m tall with a
+# Siemens star on each wall and the roof. Ten metres of open yard round it, then rings of
+# 3 x 3 m, 15 m trees every 10 m out to 100 m, about 10 m apart round each ring, alternate rings
+# offset half a step.
+scene:
+  sky: 0.85
+  texture: {finest_m: 0.02, octaves: 9, slope: 0.0, contrast: 4.0, seed: 1}
+  solids:
+    - {kind: plane, height: 0.0}
+    - {kind: box, base: [30.4, -20.0, 0], size: [12, 9, 8], decals: true}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 20, spacing_m: 10, size: [3, 3, 15]}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 30, spacing_m: 10, size: [3, 3, 15], offset_steps: 0.5}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 40, spacing_m: 10, size: [3, 3, 15]}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 50, spacing_m: 10, size: [3, 3, 15], offset_steps: 0.5}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 60, spacing_m: 10, size: [3, 3, 15]}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 70, spacing_m: 10, size: [3, 3, 15], offset_steps: 0.5}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 80, spacing_m: 10, size: [3, 3, 15]}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 90, spacing_m: 10, size: [3, 3, 15], offset_steps: 0.5}
+    - {kind: box_ring, centre: [30.4, -20.0], radius: 100, spacing_m: 10, size: [3, 3, 15]}

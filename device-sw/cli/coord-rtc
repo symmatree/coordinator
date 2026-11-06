@@ -575,18 +575,28 @@ def cmd_feed(rtc: Ds3234) -> int:
     sent = 0
     no_edge = 0
     while True:
+        before = pps_assert()
         edge = pulse_boundary(rtc)
-        publish_chip_state(rtc, edge is not None)
+        # Whether the 1 Hz arrived is the kernel's sequence number moving, not whether a
+        # sample came out: pulse_boundary also gives up when edges arrive and the chip's
+        # read after them is not a date, and calling that "no edge" sent a dead SPI bus
+        # hunting for a broken pulse wire (2026-11-04, 2583 edges this boot).
+        after = pps_assert()
+        pulsing = edge is not None or (
+            after is not None and (before is None or after[1] != before[1]))
+        publish_chip_state(rtc, pulsing)
         if edge is None:
-            # No edge means the signal this whole design rests on is not arriving. There
-            # is nothing useful to send without it -- the chip's label on its own leaves
-            # a second of ambiguity, which is the error size chrony cannot absorb. Said
-            # on the same schedule as a refused socket, because at this period saying it
-            # every pass would be the only thing in the journal.
+            # Nothing useful to send without both: the chip's label on its own leaves a
+            # second of ambiguity, which is the error size chrony cannot absorb, and an
+            # edge without a label is not a time. Said on the same schedule as a refused
+            # socket, because at this period saying it every pass would be the only
+            # thing in the journal.
             no_edge += 1
             if no_edge in (1, 10) or no_edge % 100 == 0:
-                print(f"no edge on the 1 Hz at {PPS_ASSERT_FILE}, so there is nothing to "
-                      f"tell chrony ({no_edge} so far)", file=sys.stderr)
+                why = ("the 1 Hz is arriving but the chip's read after it is not a date"
+                       if pulsing else f"no edge on the 1 Hz at {PPS_ASSERT_FILE}")
+                print(f"{why}, so there is nothing to tell chrony ({no_edge} so far)",
+                      file=sys.stderr)
             time.sleep(RETRY_PERIOD_S)
             continue
 

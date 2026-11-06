@@ -295,6 +295,37 @@ def main():
             print(f"  FAIL: a stale panel line was still sent: {stale}")
             ok = False
 
+        # #430: junk on the wire is counted in fc_link and kept out of the tlog, and the
+        # frames after it still read back.
+        os.write(master_fd, bytes(range(1, 0xFD)) * 2)
+        time.sleep(1.2)
+        os.write(master_fd, tx.heartbeat_encode(
+            mavutil.mavlink.MAV_TYPE_QUADROTOR, mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            0, 0, mavutil.mavlink.MAV_STATE_STANDBY).pack(tx))
+        for _ in range(20):
+            time.sleep(0.1)
+            link = json.load(open(fc_link))
+            if link.get("heartbeats") == 2:
+                break
+        if not link.get("bad_data") or link.get("bad_bytes", 0) < 0xFC:
+            print(f"  FAIL: junk on the wire not counted in fc_link: {link}")
+            ok = False
+        else:
+            print(f"  fc_link counts junk: {link['bad_data']} records, {link['bad_bytes']} bytes")
+        reader = mavutil.mavlink_connection(tlog, dialect="ardupilotmega")
+        kinds = []
+        while True:
+            m = reader.recv_match()
+            if m is None:
+                break
+            kinds.append(m.get_type())
+        if "BAD_DATA" in kinds or kinds.count("HEARTBEAT") != 2:
+            print(f"  FAIL: tlog does not read back clean with both heartbeats: "
+                  f"{kinds.count('BAD_DATA')} BAD_DATA, {kinds.count('HEARTBEAT')} HEARTBEAT")
+            ok = False
+        else:
+            print(f"  tlog reads back clean: {len(kinds)} frames, both heartbeats")
+
         print("RESULT:", "PASS" if ok else "FAIL")
         return 0 if ok else 1
     finally:

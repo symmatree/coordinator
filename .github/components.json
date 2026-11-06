@@ -44,7 +44,8 @@
       "fleet-control": {
         "paths": [
           "containers/fleet-control/**",
-          "harness/bench_cycle.py"
+          "harness/bench_cycle.py",
+          "harness/set_rtc.py"
         ],
         "image": "ghcr.io/symmatree/coordinator-fleet-control",
         "context": ".",

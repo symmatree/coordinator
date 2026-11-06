@@ -21,10 +21,12 @@ export PYTHONDONTWRITEBYTECODE=1
 
 TESTS=(
 	analysis/test_analysis_modules.py
+	analysis/mapping_sim/test_mapping_sim.py
 	device-sw/tests/test_coord_version.py
 	device-sw/tests/test_coord_rtc.py
 	device-sw/tests/test_coord_sessions.py
 	device-sw/tests/test_coord_fc_log.py
+	device-sw/tests/test_coord_fc_params.py
 	device-sw/tests/test_quadlet_units.py
 	host/ansible/test_notifies.py
 	packaging/test_build_ansible.py
