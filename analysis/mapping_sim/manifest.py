@@ -112,8 +112,8 @@ To reproduce: check out `{sw['commit']}` and run the command above from the repo
 
 - `images/` -- one JPEG per camera per capture, `<capture>_<camera>.jpg`, with EXIF make, model,
   focal length and capture time;
-- `geo.txt` -- ODM's per-image position priors, UTM with a fixed false origin;
-- `truth.json` -- true camera poses, intrinsics in OpenSfM's convention, the UTM offset and the
+- `geo.txt` -- ODM's per-image position priors, WGS84 longitude, latitude and height;
+- `truth.json` -- true camera poses, intrinsics in OpenSfM's convention, the scene's origin and the
   config: what `score.py` scores against;
 - `manifest.json` -- the record above, machine-readable.
 """

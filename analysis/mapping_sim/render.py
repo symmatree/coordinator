@@ -7,10 +7,11 @@ Writes into `out_dir`:
 - `images/<capture>_<camera>.jpg` -- one still per camera per capture, with EXIF make, model,
   focal length and capture time so ODM groups and orders them. The model is the camera's name,
   so OpenSfM fits each camera's intrinsics separately, as for four physical lenses;
-- `geo.txt` -- each image's true optical-centre position, in UTM with a fixed false origin, at the
-  accuracy the config gives (ODM's per-image GPS prior). Orientation is left `nan`;
-- `truth.json` -- every image's true camera rotation and centre in the local scene frame, each
-  lens's intrinsics in OpenSfM's convention, the UTM offset, and the config itself, which is
+- `geo.txt` -- each image's true optical-centre position as WGS84 longitude, latitude and height,
+  at the accuracy the config gives (ODM's per-image GPS prior). Orientation is left `nan`;
+- `truth.json` -- every image's true camera rotation and centre in the local scene frame (east,
+  north, up about `ORIGIN_LLA`), each lens's intrinsics in OpenSfM's convention, the origin, and
+  the config itself, which is
   everything `score.py` needs to judge a reconstruction;
 - `manifest.json` and `README.md` -- the commit, command, config and file hashes that produced
   the directory (see `manifest.py`).
@@ -41,10 +42,42 @@ from rig import Camera, rig_from_config, trajectory_from_config
 from raster import Rasterizer
 from scene import Scene
 
-# A false origin in UTM zone 17N, roughly where the house is, so ODM sees plausible coordinates.
-UTM_EPSG = 32617
-UTM_ORIGIN = (585000.0, 4487000.0, 300.0)
+# The scene's origin on WGS84: the map-test mission's home (ardupilot/map-test.waypoints), with its
+# altitude taken as ellipsoidal height. The scene frame is the local tangent plane there: x east,
+# y north, z up.
+ORIGIN_LLA = (40.5325098, -80.0420550, 357.2)
+WGS84_A, WGS84_F = 6378137.0, 1 / 298.257223563
 EPOCH = dt.datetime(2026, 1, 1, 12, 0, 0)
+
+
+def _ecef(lat_deg: float, lon_deg: float, h: float) -> np.ndarray:
+    lat, lon = np.radians(lat_deg), np.radians(lon_deg)
+    e2 = WGS84_F * (2 - WGS84_F)
+    n = WGS84_A / np.sqrt(1 - e2 * np.sin(lat) ** 2)
+    return np.array([(n + h) * np.cos(lat) * np.cos(lon), (n + h) * np.cos(lat) * np.sin(lon), (n * (1 - e2) + h) * np.sin(lat)])
+
+
+def local_to_lla(p: np.ndarray) -> tuple[float, float, float]:
+    """A scene point (east, north, up metres about ORIGIN_LLA) -> latitude, longitude (degrees) and
+    ellipsoidal height (m), exactly: through ECEF, not a flat-earth approximation."""
+    lat0, lon0 = np.radians(ORIGIN_LLA[0]), np.radians(ORIGIN_LLA[1])
+    R_ecef_enu = np.array(
+        [
+            [-np.sin(lon0), -np.sin(lat0) * np.cos(lon0), np.cos(lat0) * np.cos(lon0)],
+            [np.cos(lon0), -np.sin(lat0) * np.sin(lon0), np.cos(lat0) * np.sin(lon0)],
+            [0.0, np.cos(lat0), np.sin(lat0)],
+        ]
+    )
+    x, y, z = _ecef(*ORIGIN_LLA) + R_ecef_enu @ p
+    e2 = WGS84_F * (2 - WGS84_F)
+    lon = np.arctan2(y, x)
+    r = np.hypot(x, y)
+    lat = np.arctan2(z, r * (1 - e2))
+    for _ in range(10):  # converges to well under a micrometre in a few rounds
+        n = WGS84_A / np.sqrt(1 - e2 * np.sin(lat) ** 2)
+        h = r / np.cos(lat) - n
+        lat = np.arctan2(z, r * (1 - e2 * n / (n + h)))
+    return float(np.degrees(lat)), float(np.degrees(lon)), float(h)
 
 
 def _exif(cam: Camera, when: dt.datetime, pixel_um: float) -> Image.Exif:
@@ -93,7 +126,7 @@ def render(cfg: dict, out: pathlib.Path, scale: float = 1.0, limit: int | None =
     quality = int(cfg.get("jpeg_quality", 95))
 
     (out / "images").mkdir(parents=True, exist_ok=True)
-    geo = [f"EPSG:{UTM_EPSG}"]
+    geo = ["EPSG:4326"]
     shots = {}
     work = []
     for k, pose in enumerate(poses):
@@ -103,17 +136,17 @@ def render(cfg: dict, out: pathlib.Path, scale: float = 1.0, limit: int | None =
             work.append((cam, pose, out / "images" / name, quality, _exif(cam, when, pixel_um)))
             R_wc = pose.R_wb @ cam.R_bc
             C = pose.p_wb + pose.R_wb @ cam.t_bc
-            e, n, u = C + UTM_ORIGIN
-            geo.append(f"{name} {e:.4f} {n:.4f} {u:.4f} nan nan nan {acc_h} {acc_v}")
+            lat, lon, h = local_to_lla(C)
+            # EPSG:4326 in geo.txt is longitude, latitude, height. 1e-9 degrees is under 0.1 mm.
+            geo.append(f"{name} {lon:.10f} {lat:.10f} {h:.4f} nan nan nan {acc_h} {acc_v}")
             shots[name] = {"camera": cam.name, "time_s": pose.time_s, "R_wc": R_wc.tolist(), "center": C.tolist()}
 
     _draw(scene, work, jobs)
 
     (out / "geo.txt").write_text("\n".join(geo) + "\n")
     truth = {
-        "frame": "local ENU metres; UTM = local + utm_origin",
-        "utm_epsg": UTM_EPSG,
-        "utm_origin": list(UTM_ORIGIN),
+        "frame": "local ENU metres, the tangent plane at origin_lla",
+        "origin_lla": list(ORIGIN_LLA),
         "scale": scale,
         "cameras": {c.name: c.lens.opensfm() for c in cams},
         "shots": shots,
