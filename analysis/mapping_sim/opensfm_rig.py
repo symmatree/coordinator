@@ -7,9 +7,11 @@ manifest) and `rig_assignments.json` (one rig instance per capture, its images f
 into an OpenSfM project before it reconstructs. With them, OpenSfM solves one pose per capture
 rather than one per image, and the mounts are shared by every capture.
 
-The rig frame is the body frame (FLU). A rig camera's pose maps rig-frame points into the camera
-frame, as an OpenSfM shot pose maps world points: rotation `R_bc^T` as a rotation vector,
-translation `-R_bc^T t_bc`. OpenSfM holds the mounts at these values while a reconstruction has 10
+The rig frame is the body frame (FLU) moved to the mean of the camera centres: OpenSfM's GPS prior
+on a rig instance is the mean of its images' positions, applied to the instance's origin, so the
+origin is put where that prior says it is. A rig camera's pose maps rig-frame points into the
+camera frame, as an OpenSfM shot pose maps world points: rotation `R_bc^T` as a rotation vector,
+translation `-R_bc^T (t_bc - mean t_bc)`. OpenSfM holds the mounts at these values while a reconstruction has 10
 captures or fewer, and past that adjusts them in bundle adjustment against them as priors
 (`rig_translation_sd`, `rig_rotation_sd`); `reconstruction.json` records what it ended with.
 """
@@ -21,6 +23,7 @@ import json
 import pathlib
 from collections import defaultdict
 
+import numpy as np
 from PIL import Image
 from scipy.spatial.transform import Rotation
 
@@ -52,12 +55,14 @@ def rig_files(render: pathlib.Path) -> tuple[dict, dict]:
     # camera named anything else (rig_statistics tests a stale loop variable), and ODM with it.
     ids = {c: opensfm_camera_id(render / "images" / shots[0][1]) for c, shots in by_camera.items()}
     assert len(set(ids.values())) == len(ids), f"cameras share an OpenSfM camera model: {ids}"
+    cams = rig_from_config(cfg["rig"])
+    centroid = np.mean([cam.t_bc for cam in cams], axis=0)
     cameras = {}
-    for cam in rig_from_config(cfg["rig"]):
+    for cam in cams:
         R_cb = cam.R_bc.T
         cameras[ids[cam.name]] = {
             "rotation": Rotation.from_matrix(R_cb).as_rotvec().tolist(),
-            "translation": (-R_cb @ cam.t_bc).tolist(),
+            "translation": (-R_cb @ (cam.t_bc - centroid)).tolist(),
         }
     assignments = defaultdict(list)
     for camera, shots in by_camera.items():
