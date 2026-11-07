@@ -37,6 +37,22 @@ int main() {
     CHECK(throws([] { campod::focus_dioptres("0.8m"); }));
     CHECK(throws([] { campod::focus_dioptres("-1"); }));
 
+    // Settled is five frames in a row within libcamera's 50 us floor of the pinned
+    // duration. 999978 is what a quiet imx708 reports against a 1000000 pin.
+    {
+        campod::SyncSettle s;
+        const std::optional<int64_t> pin = 1'000'000;
+        for (int i = 0; i < 4; ++i) CHECK(!s.frame(999'978, pin));
+        CHECK(s.frame(999'978, pin));
+        // ne's corrections on 2026-11-07 went down to +57 us.
+        CHECK(!s.frame(1'000'057, pin));
+        for (int i = 0; i < 4; ++i) CHECK(!s.frame(1'000'000, pin));
+        CHECK(s.frame(1'000'050, pin));
+        CHECK(!s.frame(std::nullopt, pin));
+        for (int i = 0; i < 6; ++i) s.frame(1'000'000, std::nullopt);
+        CHECK(!s.settled());
+    }
+
     CHECK(campod::second_offset_ns(5'250'000'000) == 250'000'000);
     CHECK(campod::second_offset_ns(5'000'000'000) == 0);
     CHECK(campod::second_offset_ns(-250'000'000) == 750'000'000);

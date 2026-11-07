@@ -37,7 +37,9 @@ struct SessionConfig {
     std::string log_name;  // prefix for log lines, e.g. "oak-capture"
     // Camera sync is part of `ready`, and nothing is kept until it is reached: a campod's
     // frames are only usable with its partner's. The backend reports it with
-    // set_sync_ready(). Without this, ready is warm.
+    // set_sync_ready(), and whether the sync has stopped correcting with
+    // set_sync_settled(), which is part of `ready` but not of what is kept. Without this,
+    // ready is warm.
     bool sync = false;
     // The ledger's file name in `dir`. Empty means <prefix>_<session>.frames.jsonl; the
     // campods' is frames.jsonl.
@@ -95,6 +97,10 @@ class Session {
     // Camera sync as the backend last saw it. Published, and part of `ready` and of
     // capturing(), when the session was configured with `sync`.
     void set_sync_ready(bool ready);
+    // Whether the sync has stopped correcting the frame timing, as the backend judges it.
+    // Published, and part of `ready` -- not of capturing(): a correction mid-flight is a
+    // pod still aligning, not a reason to drop its frames.
+    void set_sync_settled(bool settled);
 
     // Warm, armed and (if configured) synced: whether anything is being written, for
     // streams the backend writes itself (the OAK's IMU).
@@ -126,6 +132,7 @@ class Session {
     bool warm_ = false;
     bool armed_ = false;
     bool sync_ready_ = false;
+    bool sync_settled_ = false;
     bool stopped_ = false;
     bool failed_ = false;
     double last_gate_ = -1e9;

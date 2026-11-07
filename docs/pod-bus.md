@@ -180,8 +180,11 @@ subscriber -- a front panel that just booted, a ground screen on reconnect -- ge
 whole current picture in one subscribe with nothing to assemble.
 
 `ready` is the pod's own answer to **will arming this pod work**: the camera's `ready`
-(warm and synced, which the camera decides) AND every accelerometer the reader lists as
-present. It is combined by pod-link, which is the process holding both documents, so that
+(warm, synced and settled, which the camera decides) AND every accelerometer the reader
+lists as present AND chrony on the 1 Hz (`rtc.pps_selected`). The clock is in it because
+libcamera's sync aligns wall clocks, so a camera on a pod whose chrony is on NTP alone
+reports synced while off its neighbours by as much as NTP is. It is combined by pod-link,
+which is the process holding the documents, so that
 the coordinator's front panel and the fleet-control table read one field rather than each
 assembling their own -- which is how they came to disagree before #577. Absent on a pod
 with no payload subsystem at all, because a bare `true` there would assert something
@@ -204,7 +207,7 @@ nobody measured.
   "camera": {
     "node": "campod-sw", "session": "<boot-id>", "camera": "present",
     "phase": "capture", "ready": true, "ready_at_mono_s": 128.4,
-    "warm": true, "warm_at_mono_s": 95.2, "sync_ready": true,
+    "warm": true, "warm_at_mono_s": 95.2, "sync_ready": true, "sync_settled": true,
     "capturing": true, "frames": 412, "last_frame_mono_s": 1831.9,
     "as_of_mono_s": 1832.1
   },
@@ -217,7 +220,8 @@ nobody measured.
        "last_sample_boot_ns": 1832098000000},
       {"label": "arm", "present": false, "detail": "arm (/dev/spidev0.1): DEVID 0x00, expected 0xE5"}
     ]
-  }
+  },
+  "rtc": {"boot_id": "<boot-id>", "as_of_mono_s": 1831.2, "edge": true, "pps_selected": true}
 }
 ```
 
@@ -333,12 +337,15 @@ MAVLink frame, since the router started (#430); those bytes are not in `vehicle.
 
 Its `rtc` section is what `coord-rtc feed` last read off the DS3234
 (`/var/lib/coordinator/ipc/rtc_status`), rewritten every feed pass whether or not the
-1 Hz arrived, and passed through on the same this-boot rule as `fc`:
+1 Hz arrived, and passed through on the same this-boot rule as `fc`. A campod's `rtc` is
+the same document without the chip, from `coord-rtc watch` (`/tmp/campod_clock_status`,
+every 2 s): `edge`, `pps_selected`, `as_of_mono_s` and `boot_id`.
 
 | field | |
 |---|---|
+| `edge` | whether the 1 Hz arrived: the kernel's sequence number on `/sys/class/pps/pps0/assert` moving |
+| `pps_selected` | whether chrony has selected the PPS refclock (`chronyc -c tracking`); `null` when chronyc could not be asked. Part of `ready` on a pod with a payload |
 | `state` | `no_response` -- every byte read the same 0x00 or 0xFF, so nothing drove MISO: the chip has no VCC or SPI is not reaching it. `reset` -- the chip answers but its time is not to be trusted: OSF set, or the registers are not a date. `ok` -- a date, OSF clear. |
-| `edge` | whether that pass saw the 1 Hz on `/sys/class/pps/pps0/assert` |
 | `time`, `osf`, `control`, `status` | the registers it was decided from; `error` instead when the SPI read itself failed |
 | `as_of_mono_s`, `boot_id` | when, in the same seconds-since-boot as `as_of_boot_s`, and which boot |
 

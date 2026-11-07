@@ -14,16 +14,19 @@ two to a row, `SE C S Ac Aa`, where the name's case is that pod's own verdict an
 letter is one subsystem, upper case when it is there. The operator decides what is an acceptable defect and what is a reason
 to wait, which needs the parts shown separately, not one bit.
 
-  C   camera present and warm          S   camera sync achieved
+  C   camera synced and settled        S   chrony on the 1 Hz
+  c   camera warm, still aligning      s   the 1 Hz arriving, chrony not on it
   Ac  accelerometer on the camera      Aa  accelerometer on the arm
+
+No C is a camera not warm or not there, and no S is no pulse.
 
 A POD THAT IS NOT PUBLISHING HAS NO ROW. The rows are the inventory as well as the
 status: a row existing means that pod is up and on the bus, which is the first thing
 worth knowing and the thing a `--` token muddled. The documents are RETAINED, so one
 that exists is not evidence of life -- age decides.
 
-NOT RE-DERIVED HERE. `ready` per pod comes from pod-link, which holds both the camera and
-accel documents; the letters explain that verdict rather than computing a second one. The
+NOT RE-DERIVED HERE. `ready` per pod comes from pod-link, which holds the camera, accel and
+clock documents; the letters explain that verdict rather than computing a second one. The
 panel and the fleet-control table disagreeing about "ready" is the bug #577 fixed.
 
 THE LAG IS THE HEARTBEAT. pod-link publishes status every POD_LINK_STATUS_PERIOD_S,
@@ -73,20 +76,29 @@ STALE_AFTER_S = 15.0
 FC_STALE_AFTER_S = 3.0
 
 # The pod's own arm answer, read and not re-derived. This panel deliberately does not
-# combine `warm` and `sync_ready` itself: the campod does that (#577), so the panel and
-# the bench cycle's arm gate cannot drift into meaning different things by "ready".
+# combine the camera, the accels and the clock itself: pod-link does that (#577), so the
+# panel and the bench cycle's arm gate cannot drift into meaning different things by
+# "ready".
 CAMPODS = ("campod-se", "campod-sw", "campod-ne", "campod-nw")
 
 
 def subsystem_letters(doc):
     """The per-subsystem letters for one pod, in a fixed order.
 
-    `C` camera present and warm, `S` camera sync achieved, `Ac` and `Aa` the accelerometer
-    on the camera mount and the one on the arm. UPPER CASE is that subsystem good, lower
-    case is not -- so the shape of the row is constant and only its case moves, which is
-    what makes it readable at arm's length without reading it word by word.
+    `C` the camera, `S` the clock, `Ac` and `Aa` the accelerometer on the camera mount and
+    the one on the arm. UPPER CASE is that subsystem good, lower case is not.
 
-    A LETTER IS ONLY PRESENT IF ITS SUBSYSTEM IS CLAIMED. A pod publishing no accel
+    C AND S HAVE THREE STATES, because each has a stage before "not yet good":
+      C  camera `ready`: warm, synced, and its sync no longer correcting (`sync_settled`)
+      c  warm and not ready
+         no letter: not warm, or no camera document
+      S  chrony has selected the PPS (`rtc.pps_selected`)
+      s  the 1 Hz arriving (`rtc.edge`) and chrony not on it
+         no letter: no pulse, or no clock document
+    The clock is its own letter because libcamera's sync aligns WALL CLOCKS: a pod whose
+    chrony is on NTP alone reports its camera synced while far off its neighbours.
+
+    AN ACCEL LETTER IS ONLY PRESENT IF ITS SUBSYSTEM IS CLAIMED. A pod publishing no accel
     document gets no A letters rather than lower-case ones: absent hardware that nobody
     expects is not a fault, and a row of failures for a pod that is fine is how a panel
     stops being read. What makes a MISSING accel visible is the reader listing the device
@@ -98,22 +110,12 @@ def subsystem_letters(doc):
     """
     letters = []
     camera = doc.get("camera") or {}
-    if camera:
-        warm = camera.get("warm")
-        # A pod on an image from before #577 has no `warm`; its `ready` meant warm, which
-        # is what C is. Read that rather than showing a camera-shaped hole.
-        if warm is None:
-            warm = camera.get("ready")
-        letters.append("C" if warm is True else "c")
-        # Only if this pod is IN the sync group. A capture pod that never syncs would
-        # otherwise carry a permanent lower-case `s` and teach the reader to ignore a
-        # letter, which is worse than not showing it.
-        if "sync_ready" in camera:
-            letters.append("S" if camera.get("sync_ready") is True else "s")
-    # The coordinator's `S` is the leader's side of the same thing: whether its own 1 Hz
-    # from the DS3234 is arriving (coord-rtc feed's `edge`, carried as `rtc`).
-    if "sync_ready" not in camera and "rtc" in doc:
-        letters.append("S" if (doc.get("rtc") or {}).get("edge") is True else "s")
+    if camera.get("warm") is True:
+        letters.append("C" if camera.get("ready") is True else "c")
+    # coord-rtc's document on every role: `feed` on the coordinator, `watch` on a campod.
+    rtc = doc.get("rtc") or {}
+    if rtc.get("edge") is True:
+        letters.append("S" if rtc.get("pps_selected") is True else "s")
     for device in (doc.get("accel") or {}).get("devices") or []:
         label = str(device.get("label") or "?")
         tag = f"A{label[:1].lower()}"
@@ -225,9 +227,8 @@ def status_from_bus(docs, received, now, intent=None):
 # FC, which forwards it down mLRS. The FC's own display and Mission Planner show the latest
 # line, so it is short enough to read at a glance: an aggregate mark, then a token per pod
 # on the bus, `CO` the coordinator and `SE SW NE NW` the campods, upper case when that
-# pod's camera is warm and synced (C and S on the panel; the coordinator's S is its own 1 Hz
-# arriving). A pod
-# that is not publishing has no token, as it has no cell.
+# pod has both C and S upper on the panel: camera synced and settled, chrony on the 1 Hz.
+# A pod that is not publishing has no token, as it has no cell.
 #
 #   -  stopped     <  getting ready     =  ready     +  recording
 #
@@ -249,10 +250,10 @@ def pod_state(doc):
 
 
 def pod_token(name, doc):
-    """Upper case on the panel's C and S: camera warm, and synced -- for the coordinator,
-    its own 1 Hz arriving."""
+    """Upper case on the panel's C and S both: camera synced and settled, chrony on the
+    1 Hz."""
     letters = subsystem_letters(doc)
-    good = "C" in letters and "s" not in letters
+    good = "C" in letters and "S" in letters
     return name.upper() if good else name.lower()
 
 

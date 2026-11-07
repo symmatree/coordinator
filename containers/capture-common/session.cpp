@@ -32,8 +32,11 @@ Session::Session(SessionConfig cfg) : cfg_(std::move(cfg)), writer_(cfg_.dir.str
         {"last_frame_mono_s", nullptr},
     };
     // Null until the backend has looked, so "not evaluated yet" never reads as an answer.
-    // Present only on a synced session: the panel shows an S letter for a pod that has it.
-    if (cfg_.sync) state_["sync_ready"] = nullptr;
+    // Present only on a synced session, where the panel's upper-case C needs both.
+    if (cfg_.sync) {
+        state_["sync_ready"] = nullptr;
+        state_["sync_settled"] = nullptr;
+    }
 }
 
 Session::~Session() { stop(); }
@@ -48,10 +51,17 @@ void Session::set_sync_ready(bool ready) {
     publish();
 }
 
+void Session::set_sync_settled(bool settled) {
+    if (state_["sync_settled"] == settled) return;
+    sync_settled_ = settled;
+    state_["sync_settled"] = settled;
+    publish();
+}
+
 void Session::publish() {
     // Will arming now produce usable frames: every stream has delivered its warmup, and
-    // the camera is synced if this session needs it. capture.py _is_ready.
-    state_["ready"] = warm_ && (!cfg_.sync || sync_ready_);
+    // the camera is synced and settled if this session needs it.
+    state_["ready"] = warm_ && (!cfg_.sync || (sync_ready_ && sync_settled_));
     if (state_["ready"] == true && state_["ready_at_mono_s"].is_null()) state_["ready_at_mono_s"] = round3(mono_s());
     last_publish_ = mono_s();
     state_["as_of_mono_s"] = round3(last_publish_);

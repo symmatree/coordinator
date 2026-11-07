@@ -387,6 +387,7 @@ int main() {
         Jpeg jpeg(quality);
         bool probed = false;
         bool sync_seen = false;
+        campod::SyncSettle settle;
         int64_t sync_waits = 0, unstamped = 0;
         int exit_code = 0;
 
@@ -419,6 +420,9 @@ int main() {
                                   << " frames so far, SyncTimer " << opt(sync_timer).dump() << " us" << std::endl;
                     session.set_sync_ready(false);
                 }
+                // Counted from SyncReady: before it the client is converging by design.
+                if (sync_seen)
+                    session.set_sync_settled(settle.frame(md.get(lc::controls::FrameDuration), pinned_us));
 
                 if (!ts) {
                     // No timestamp, nothing to pair with the other pod's frame.

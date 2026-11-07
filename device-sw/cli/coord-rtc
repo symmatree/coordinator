@@ -6,6 +6,8 @@
     coord-rtc systohc       set the chip's time -- RE-PHASES PPS, see below
     coord-rtc hctosys       set the system clock from the chip
     coord-rtc feed          serve the chip to chrony as a SOCK refclock, forever
+    coord-rtc watch         publish the 1 Hz and chrony's lock to it, forever -- a campod's
+                            half of the feed, with no chip and no SPI
 
 The chip is on /dev/spidev0.0 because the kernel driver is deliberately not bound
 to it: rtc-ds3232 sets INTCN on every probe, which switches INT/SQW from square
@@ -22,6 +24,7 @@ import calendar
 import ctypes
 import os
 import socket
+import subprocess
 import fcntl
 import json
 import math
@@ -107,9 +110,17 @@ FC_MAX_AGE_S = 300.0
 ARM_FILE = os.environ.get("COORD_RTC_ARM_FILE", "/var/lib/coordinator/ipc/fc_armed")
 # Where the feed publishes what it last read off the chip, for pod-link to put on the
 # coordinator's bus status as `rtc` (docs/pod-bus.md). Rewritten every pass, edge or not,
-# so it is current while the 1 Hz is missing -- which is when it is wanted.
+# so it is current while the 1 Hz is missing -- which is when it is wanted. A campod's
+# unit points `watch` at its own tmpfs file instead.
 RTC_STATUS_FILE = os.environ.get("COORD_RTC_STATUS_FILE",
                                  "/var/lib/coordinator/ipc/rtc_status")
+# The refid both roles' chrony.conf give the PPS refclock. chrony on it is the clock
+# phased to the edge; on any other source a campod's phase is NTP's over the gadget link,
+# tens to hundreds of milliseconds off its neighbours while its camera reports synced.
+CHRONY_PPS_REFID = "PPS"
+# How often `watch` looks. Over 1 s so every look spans at least one edge of a working
+# 1 Hz; pod-link reads the file every 5 s, so faster would be wake-ups nobody sees.
+WATCH_PERIOD_S = 2.0
 # Correct the epoch when it is off by more than this. Debounce, not precision: each
 # correction re-phases the pulse, so it must not happen repeatedly. At the chip's
 # 2 ppm, 100 ms accumulates in about 14 hours -- so a bench session or a flying day
@@ -311,8 +322,7 @@ def publish_chip_state(rtc: Ds3234, edge: bool) -> None:
     from a broken PPS wire (ok, no edge). Never raises: a status file is not worth the
     feed.
     """
-    global _status_write_failed
-    doc = {"boot_id": boot_id(), "as_of_mono_s": round(time.monotonic(), 3), "edge": edge}
+    doc = pulse_doc(edge)
     try:
         regs = rtc.read(REG_SECONDS, 7)
         control = rtc.read(REG_CONTROL)[0]
@@ -323,6 +333,37 @@ def publish_chip_state(rtc: Ds3234, edge: bool) -> None:
         doc.update(state=chip_state(regs, control, status), time=decode_time(regs),
                    osf=bool(status & SR_OSF), control=f"0x{control:02x}",
                    status=f"0x{status:02x}")
+    write_status(doc)
+
+
+def chrony_on_pps() -> "bool | None":
+    """Whether chrony has selected the PPS refclock as its source.
+
+    `chronyc -c tracking` leads with the selected source's refid in hex and then its name,
+    which for a refclock is the refid itself. -n because the name of an NTP source would
+    otherwise be a reverse lookup, and a campod has no DNS. None when chrony cannot be
+    asked, which is not the same answer as "on something else".
+    """
+    try:
+        out = subprocess.run(["chronyc", "-n", "-c", "tracking"], capture_output=True,
+                             text=True, timeout=2, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    fields = out.strip().split(",")
+    if len(fields) < 2:
+        return None
+    return fields[1] == CHRONY_PPS_REFID
+
+
+def pulse_doc(edge: bool) -> dict:
+    """The part of the status both roles publish: whether the 1 Hz arrived, and whether
+    chrony is on it. The panel's S is these two -- absent, `s` arriving, `S` selected."""
+    return {"boot_id": boot_id(), "as_of_mono_s": round(time.monotonic(), 3), "edge": edge,
+            "pps_selected": chrony_on_pps()}
+
+
+def write_status(doc: dict) -> None:
+    global _status_write_failed
     try:
         tmp = RTC_STATUS_FILE + ".tmp"
         with open(tmp, "w") as f:
@@ -658,6 +699,23 @@ def cmd_feed(rtc: Ds3234) -> int:
         # period -- which is half the samples chrony needs per poll.
 
 
+def cmd_watch() -> int:
+    """Publish the 1 Hz and chrony's lock to it, until killed: a campod's half of `feed`.
+
+    A pod has its own leg of the same edge on /dev/pps0 and no chip. Its /dev/spidev0.0 is
+    the camera ADXL345, so this never opens SPI, and it has nothing to tell chrony, whose
+    second comes from the coordinator over NTP. What is left is the status: whether the
+    pulse is arriving -- the kernel's sequence number moving between looks, as in `feed`
+    -- and whether chrony has selected it.
+    """
+    last = pps_assert()
+    while True:
+        time.sleep(WATCH_PERIOD_S)
+        now = pps_assert()
+        write_status(pulse_doc(now is not None and (last is None or now[1] != last[1])))
+        last = now
+
+
 def set_system(ts: float) -> None:
     """The seam the tests replace, so no test can move this machine's clock."""
     time.clock_settime(time.CLOCK_REALTIME, ts)
@@ -776,12 +834,19 @@ COMMANDS = {
     "hctosys": cmd_hctosys,
     "feed": cmd_feed,
 }
+# The verbs that do not touch the chip, and so never open the bus: on a campod, SPI0 CE0
+# is an accelerometer.
+CHIPLESS = {
+    "watch": cmd_watch,
+}
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2 or argv[1] not in COMMANDS:
-        print(f"usage: {argv[0]} {{{' | '.join(COMMANDS)}}}", file=sys.stderr)
+    if len(argv) != 2 or argv[1] not in {**COMMANDS, **CHIPLESS}:
+        print(f"usage: {argv[0]} {{{' | '.join([*COMMANDS, *CHIPLESS])}}}", file=sys.stderr)
         return 2
+    if argv[1] in CHIPLESS:
+        return CHIPLESS[argv[1]]()
     try:
         bus = SpidevBus()
     except FileNotFoundError:

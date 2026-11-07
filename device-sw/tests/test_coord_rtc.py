@@ -656,6 +656,97 @@ with _contextlib.redirect_stderr(_err):
     cr.publish_chip_state(cr.Ds3234(FakeBus()), True)
 check("a status file that cannot be written does not stop the feed, and says so once",
       _err.getvalue().count("cannot write") == 1, repr(_err.getvalue()))
+cr.RTC_STATUS_FILE = str(Path(_status_dir) / "rtc_status")
+
+# ---- 20. chrony on the PPS: the upper-case S -------------------------------------------
+#
+# `chronyc -c tracking` leads with the selected source's refid in hex, then its name,
+# which for a refclock is the refid. A campod still on its NTP server shows that server's
+# address; an unsynchronised chrony shows no name at all.
+import subprocess as _subprocess
+
+_run_real = cr.subprocess.run
+_asked = []
+
+
+def _chronyc(stdout=None, raises=None):
+    def run(argv, **kw):
+        _asked.append(argv)
+        if raises:
+            raise raises
+        return _subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+    cr.subprocess.run = run
+
+
+_chronyc("50505300,PPS,1,1793995200.000123,-0.000000012,0.000000034\n")
+check("chrony on the PPS refclock is selected", cr.chrony_on_pps() is True)
+check("and chronyc is asked not to resolve names, since a campod has no DNS",
+      bool(_asked) and "-n" in _asked[-1], str(_asked))
+_chronyc("0A370001,10.55.0.1,11,1793995200.000123,0.004\n")
+check("chrony on the coordinator's NTP is not", cr.chrony_on_pps() is False)
+_chronyc("44533332,DS32,1,1793995200.0\n")
+check("chrony on the chip's seconds alone is not", cr.chrony_on_pps() is False)
+_chronyc("00000000,,0,0.0\n")
+check("chrony with no source is not", cr.chrony_on_pps() is False)
+_chronyc("")
+check("chronyc saying nothing is unknown, not false", cr.chrony_on_pps() is None)
+_chronyc(raises=FileNotFoundError("chronyc"))
+check("no chronyc is unknown", cr.chrony_on_pps() is None)
+_chronyc(raises=_subprocess.TimeoutExpired("chronyc", 2))
+check("a chronyc that hangs is unknown", cr.chrony_on_pps() is None)
+
+_chronyc("50505300,PPS,1\n")
+cr.publish_chip_state(cr.Ds3234(FakeBus()), True)
+_doc = _json.loads(Path(cr.RTC_STATUS_FILE).read_text())
+check("the feed's document carries it beside the chip's state",
+      _doc.get("pps_selected") is True and "state" in _doc, str(_doc))
+
+# ---- 21. watch: a campod's half, with no chip -------------------------------------------
+#
+# NEVER THE BUS. A campod's /dev/spidev0.0 is the camera ADXL345, which the accel reader
+# holds; a DS3234 read there would be register traffic on someone else's part.
+_opened = []
+_spidev_real = cr.SpidevBus
+
+
+def _no_spi(*a, **kw):
+    _opened.append(a)
+    raise AssertionError("watch opened SPI")
+
+
+cr.SpidevBus = _no_spi
+_looks = iter([(100.0, 7), (101.0, 8), (101.0, 8), None])
+cr.pps_assert = lambda path=None: next(_looks)
+_slept.clear()
+_docs = []
+_write_real = cr.write_status
+
+
+def _write(doc):
+    _docs.append(doc)
+    if len(_docs) == 3:
+        raise _Stop
+
+
+cr.write_status = _write
+try:
+    cr.main(["coord-rtc", "watch"])
+except _Stop:
+    pass
+cr.write_status, cr.SpidevBus, cr.pps_assert = _write_real, _spidev_real, _pps_real
+check("watch never opens SPI", _opened == [], str(_opened))
+check("watch is not one of the chip's verbs",
+      "watch" in cr.CHIPLESS and "watch" not in cr.COMMANDS)
+check("a sequence number that moved between looks is edge: true, one that did not and a"
+      " missing assert file are false",
+      [d["edge"] for d in _docs] == [True, False, False], str(_docs))
+check("each look carries chrony's selection and the boot",
+      all(d["pps_selected"] is True and d["boot_id"] == cr.boot_id() for d in _docs), str(_docs))
+check("no chip fields: a pod has no chip to report",
+      all("state" not in d for d in _docs), str(_docs))
+check("it looks every WATCH_PERIOD_S, over a second so a look always spans an edge",
+      _slept == [cr.WATCH_PERIOD_S] * 3 and cr.WATCH_PERIOD_S > 1, str(_slept))
+cr.subprocess.run = _run_real
 
 if failures:
     print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

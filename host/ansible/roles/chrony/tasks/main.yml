@@ -86,6 +86,13 @@
     mode: "0644"
   when: device_role == 'coordinator'
 
+- name: Install the campod clock watch unit
+  ansible.builtin.template:
+    src: coord-rtc-watch.service.j2
+    dest: /etc/systemd/system/coord-rtc-watch.service
+    mode: "0644"
+  when: device_role == 'campod'
+
 - name: Enable chronyd
   ansible.builtin.systemd:
     name: chronyd.service
@@ -98,3 +105,10 @@
     enabled: true
     daemon_reload: true
   when: device_role == 'coordinator'
+
+- name: Enable the campod clock watch
+  ansible.builtin.systemd:
+    name: coord-rtc-watch.service
+    enabled: true
+    daemon_reload: true
+  when: device_role == 'campod'

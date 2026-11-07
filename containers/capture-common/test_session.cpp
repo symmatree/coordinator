@@ -173,8 +173,18 @@ int main() {
         s.frame(frame("still", 1), ".jpg", encode);
         s.set_sync_ready(true);
         st = json::parse(slurp(status));
-        CHECK(st["ready"] == true);
+        // Synced and still correcting: kept, but not ready.
+        CHECK(st["sync_settled"].is_null());
+        CHECK(st["ready"] == false);
         CHECK(st["capturing"] == true);
+        s.set_sync_settled(true);
+        st = json::parse(slurp(status));
+        CHECK(st["sync_settled"] == true);
+        CHECK(st["ready"] == true);
+        s.set_sync_settled(false);
+        CHECK(json::parse(slurp(status))["ready"] == false);
+        CHECK(s.capturing());
+        s.set_sync_settled(true);
         s.frame(frame("still", 2), ".jpg", encode);
         s.stop();
         auto sled = lines(sdir / "frames.jsonl");

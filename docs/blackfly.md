@@ -93,4 +93,4 @@ out for the 2026-10-29 four-campod flight, which blackfly is not mounted for.
 - **Frame time is host receipt, not exposure.** No trigger or `ExposureActive` line is wired;
   the sidecar fields are in the capture README.
 - **No `sync_ready`.** blackfly's `camera.ready` is warm and frames arriving; a campod's is
-  warm and synced.
+  warm, synced and settled.

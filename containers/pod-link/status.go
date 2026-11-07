@@ -100,8 +100,9 @@ type podStatus struct {
 	SelfMajorFaults int64 `json:"self_major_faults,omitempty"`
 
 	// WILL ARMING THIS POD WORK: every payload subsystem it has is ready. Today that is
-	// the camera's own `ready` -- warm and synced, which the camera decides -- AND every
-	// accelerometer the reader reports as present.
+	// the camera's own `ready` -- warm, synced and settled, which the camera decides --
+	// AND every accelerometer the reader reports as present AND chrony on the 1 Hz
+	// (`rtc.pps_selected`), without which a synced camera is synced to its own clock.
 	//
 	// COMBINED HERE because this is the process holding both documents. The readers are
 	// the coordinator's front panel (128 px, someone in a field with no network deciding
@@ -123,8 +124,10 @@ type podStatus struct {
 	// the two. Absent when the file is missing or from an earlier boot -- see thisBootDoc.
 	FC json.RawMessage `json:"fc,omitempty"`
 
-	// coord-rtc feed's document on the DS3234, coordinator only: `state` is no_response,
-	// reset or ok, read off the chip every feed pass whether or not the 1 Hz arrived.
+	// coord-rtc's clock document: `edge`, whether the 1 Hz is arriving, and
+	// `pps_selected`, whether chrony is on it, from `feed` on the coordinator and `watch`
+	// on a campod. The coordinator's also carries the DS3234's `state` -- no_response,
+	// reset or ok -- read off the chip every feed pass whether or not the 1 Hz arrived.
 	// Absent when the file is missing or from an earlier boot, as for FC.
 	RTC json.RawMessage `json:"rtc,omitempty"`
 
@@ -248,23 +251,30 @@ func thisBootDoc(path string) (json.RawMessage, error) {
 	return body, nil
 }
 
-// podReady answers "will arming this pod work" from the two documents it publishes.
+// podReady answers "will arming this pod work" from the documents it publishes.
 //
-// Ready when every payload subsystem the pod HAS is ready: the camera's own `ready`,
-// and every accelerometer the reader lists as present. A pod with neither document has
-// no payload and gets no answer -- see podStatus.Ready.
+// Ready when every payload subsystem the pod HAS is ready -- the camera's own `ready`,
+// and every accelerometer the reader lists as present -- and chrony is on the 1 Hz. A pod
+// with neither payload document has no payload and gets no answer -- see podStatus.Ready.
 //
-// READ, NOT RE-DERIVED, for the camera: `camera.ready` is warm AND synced and the camera
-// decides it (#577). This adds the accelerometers, which the camera knows nothing about.
+// READ, NOT RE-DERIVED, for the camera: `camera.ready` is warm AND synced AND settled and
+// the camera decides it (#577). This adds the accelerometers, which the camera knows
+// nothing about, and the clock, which it cannot see: libcamera's sync aligns wall clocks,
+// so a pod whose chrony is on NTP alone reports synced while hundreds of milliseconds off.
 //
-// A document that will not parse, or an accel reader that lists no devices, is NOT ready.
-// Both are "nobody has confirmed this hardware", and on a pod whose accels are expected
-// that is the answer -- a slipped cable reads the same as a reader that never started.
-func podReady(camera, accel json.RawMessage) *bool {
+// A document that will not parse, an accel reader that lists no devices, or no clock
+// document, is NOT ready. All are "nobody has confirmed this", and on a pod whose
+// hardware is expected that is the answer -- a slipped cable reads the same as a reader
+// that never started.
+func podReady(camera, accel, rtc json.RawMessage) *bool {
 	if camera == nil && accel == nil {
 		return nil
 	}
-	ready := true
+	var clock struct {
+		PPSSelected *bool `json:"pps_selected"`
+	}
+	ready := rtc != nil && json.Unmarshal(rtc, &clock) == nil &&
+		clock.PPSSelected != nil && *clock.PPSSelected
 	if camera != nil {
 		var cam struct {
 			Ready bool `json:"ready"`
