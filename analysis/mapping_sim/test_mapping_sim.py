@@ -16,13 +16,13 @@ import tempfile
 
 import numpy as np
 import yaml
-from PIL import Image
 from scipy.ndimage import gaussian_filter
 
 import manifest
 import opensfm_data as od
 from lens import KannalaBrandt
-from render import render, render_image
+from raster import Rasterizer
+from render import render
 from rig import Pose, attitude_flu_enu, flown, mission, mount_rotation, rig_from_config, rot_z
 from score import rodrigues, score
 from scene import Box, Scene, box_ring
@@ -113,8 +113,8 @@ def test_texture_does_not_repeat() -> None:
     cams = rig_from_config({"lenses": {"l": {"width": 64, "height": 64, "focal_px": 2000.0}},
                             "cameras": [{"name": "d", "lens": "l", "azimuth_deg": 0, "depression_deg": 90}]})
     cams[0].lens = lens
-    patches = [render_image(scene, cams[0], Pose(0, rot_z(0), np.array([x, 0, 10.0])))
-               for x in np.arange(-20, 20, 2.0)]
+    rasterizer = Rasterizer(scene)
+    patches = [rasterizer.render(lens, cams[0].R_bc, np.array([x, 0, 10.0])) for x in np.arange(-20, 20, 2.0)]
     # A 0.3 m patch mostly sees a smooth swell of the metre-scale octaves, and any two swells
     # correlate; high-pass first so what is compared is the detail a feature detector would use.
     detail = [(p - gaussian_filter(p, 4.0)).ravel() for p in patches]
@@ -136,21 +136,6 @@ def test_triangles_lie_on_their_solids() -> None:
     # Stars on the four walls and the roof, each face's radius from its shorter side.
     stars = tris.star_r[solid == 1].reshape(-1, 6)[:, 0]
     assert np.allclose(sorted(stars), [0, 3.6, 3.6, 3.6, 3.6, 4.05])
-
-
-def test_raster_draws_what_the_ray_tracer_does() -> None:
-    cfg = yaml.safe_load((pathlib.Path(__file__).parent / "configs" / "map-test-mission.yaml").read_text())
-    imgs = {}
-    for renderer in ("trace", "raster"):
-        with tempfile.TemporaryDirectory() as d:
-            render({**cfg, "renderer": renderer}, pathlib.Path(d), scale=1 / 16, limit=1)
-            imgs[renderer] = {p.name: np.asarray(Image.open(p).convert("L"), float) / 255 for p in (pathlib.Path(d) / "images").iterdir()}
-    assert imgs["trace"].keys() == imgs["raster"].keys() and len(imgs["trace"]) == 4
-    for name, a in imgs["raster"].items():
-        b = imgs["trace"][name]
-        # Same geometry and texture; the two filter the finest octaves differently off-axis.
-        assert np.corrcoef(a.ravel(), b.ravel())[0, 1] > 0.9, name
-        assert abs(a.mean() - b.mean()) < 0.01, name
 
 
 def _synthetic_reconstruction(truth: dict, s: float, R: np.ndarray, t: np.ndarray) -> dict:

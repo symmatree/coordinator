@@ -22,43 +22,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-_U32 = np.uint32
-
 
 def _rot(rng: np.random.Generator) -> np.ndarray:
     q, r = np.linalg.qr(rng.normal(size=(3, 3)))
     return q * np.sign(np.diag(r))
-
-
-def _hash(ix: np.ndarray, iy: np.ndarray, iz: np.ndarray, seed: int) -> np.ndarray:
-    """Integer lattice point -> float in [-1, 1). A multiply-xorshift mix on uint32, which wraps."""
-    h = (ix.astype(np.int64) & 0xFFFFFFFF).astype(_U32) * _U32(0x8DA6B343)
-    h ^= (iy.astype(np.int64) & 0xFFFFFFFF).astype(_U32) * _U32(0xD8163841)
-    h ^= (iz.astype(np.int64) & 0xFFFFFFFF).astype(_U32) * _U32(0xCB1AB31F)
-    h ^= _U32((seed * 0x9E3779B9) & 0xFFFFFFFF)
-    h ^= h >> _U32(15)
-    h *= _U32(0x2C1B3C6D)
-    h ^= h >> _U32(12)
-    h *= _U32(0x297A2D39)
-    h ^= h >> _U32(15)
-    return h.astype(np.float64) / 2147483648.0 - 1.0
-
-
-def value_noise(p: np.ndarray, seed: int) -> np.ndarray:
-    """(N, 3) points on a unit lattice -> (N,) smoothly interpolated noise in [-1, 1]."""
-    i = np.floor(p)
-    f = p - i
-    i = i.astype(np.int64)
-    s = f * f * (3 - 2 * f)
-    out = np.zeros(len(p))
-    for dx in (0, 1):
-        wx = s[:, 0] if dx else 1 - s[:, 0]
-        for dy in (0, 1):
-            wy = s[:, 1] if dy else 1 - s[:, 1]
-            for dz in (0, 1):
-                wz = s[:, 2] if dz else 1 - s[:, 2]
-                out += wx * wy * wz * _hash(i[:, 0] + dx, i[:, 1] + dy, i[:, 2] + dz, seed)
-    return out
 
 
 @dataclass
@@ -78,21 +45,6 @@ class Texture:
         self.amplitudes /= self.amplitudes.sum()
         self.rotations = [_rot(rng) for _ in range(self.octaves)]
         self.offsets = rng.uniform(0, 1000, size=(self.octaves, 3))
-
-    def sample(self, p: np.ndarray, footprint: np.ndarray, solid_seed: int) -> np.ndarray:
-        """(N, 3) world points and (N,) footprint in metres -> (N,) intensity in [0, 1]."""
-        v = np.zeros(len(p))
-        for o, (lam, amp) in enumerate(zip(self.wavelengths, self.amplitudes)):
-            # Full weight at >= 4 pixels per wavelength, none at <= 2 (the sampling limit).
-            w = np.clip(lam / np.maximum(footprint, 1e-9) / 2.0 - 1.0, 0.0, 1.0)
-            live = w > 0
-            if not live.any():
-                continue
-            q = (p[live] @ self.rotations[o].T) / lam + self.offsets[o]
-            v[live] += amp * w[live] * value_noise(q, solid_seed * 1000003 + o)
-        # tanh rather than a clip: it steepens mid-grey transitions into edges without leaving
-        # flat saturated patches, which would be featureless.
-        return 0.5 + 0.5 * np.tanh(self.contrast * v)
 
 
 @dataclass
@@ -366,25 +318,6 @@ class Scene:
             idx[sel] = i
             n_best[sel] = n[closer]
         return t_best, idx, n_best
-
-    def shade(self, o: np.ndarray, d: np.ndarray, pixel_angle: np.ndarray) -> np.ndarray:
-        """Unlit albedo along each ray: no shadows, no shading, so nothing changes with view."""
-        t, idx, n = self.intersect(o, d)
-        out = np.full(len(o), self.sky)
-        hit = idx >= 0
-        if hit.any():
-            p = o[hit] + t[hit, None] * d[hit]
-            cos_inc = np.abs(np.einsum("ij,ij->i", n[hit], d[hit]))
-            footprint = t[hit] * pixel_angle[hit] / np.maximum(cos_inc, 0.05)
-            vals = np.empty(hit.sum())
-            for i in np.unique(idx[hit]):
-                m = idx[hit] == i
-                vals[m] = self.texture.sample(p[m], footprint[m], solid_seed=int(i) + 1)
-                if getattr(self.solids[i], "decals", False):
-                    star = self.solids[i].decal(p[m], footprint[m])
-                    vals[m] = np.where(np.isnan(star), vals[m], star)
-            out[hit] = vals
-        return out
 
     def triangles(self) -> tuple[Triangles, np.ndarray]:
         """Every solid's triangles, and the index into `solids` of each vertex's solid."""
