@@ -18,7 +18,8 @@ THEN THE READ-BACK, on stdout: the mission the FC now holds, in the same format,
 against the input shows what the FC did not keep. Item 0 is home. ArduPilot does not store
 it -- read_cmd_from_storage(0) answers with the AHRS home (AP_Mission.cpp) -- so it is
 written out as the FC gave it and is not compared. Every other item is compared field for
-field, and each difference is a JSON line on stderr:
+field -- the frame only for a command with a location, the only ones ArduPilot keeps a
+frame for -- and each difference is a JSON line on stderr:
 
   rejected   the FC's MISSION_ACK was not MAV_MISSION_ACCEPTED, with its result
   no-reply   the FC stopped asking for items, or never answered the count
@@ -64,6 +65,14 @@ RESENDS = 3
 
 FIELDS = ("frame", "command", "autocontinue", "param1", "param2", "param3", "param4",
           "x", "y", "z")
+# The commands ArduPilot keeps a location for, AP_Mission::stored_in_location (Copter-4.7.2).
+# Only these come back with the frame they were sent with; every other command comes back
+# with frame 0 (MAV_FRAME_GLOBAL), whatever was sent, so its frame is not compared.
+STORED_IN_LOCATION = frozenset({
+    16, 17, 18, 19, 21, 22, 30, 31, 36, 82, 84, 85, 92, 94,  # NAV_*
+    179, 188, 189, 191, 195, 201,  # DO_SET_HOME .. DO_SET_ROI
+    5000, 5001, 5002, 5003, 5004, 5100,  # fence and rally
+})
 
 
 def _fc_log():
@@ -258,7 +267,8 @@ def compare(sent: "list[dict]", held: "list[dict]") -> int:
         ev({"complaint": "count", "sent": len(sent), "fc": len(held)})
         complaints += 1
     for a, b in zip(sent[1:], held[1:]):
-        diff = {k: {"sent": a[k], "fc": b[k]} for k in FIELDS if a[k] != b[k]}
+        fields = FIELDS if a["command"] in STORED_IN_LOCATION else FIELDS[1:]
+        diff = {k: {"sent": a[k], "fc": b[k]} for k in fields if a[k] != b[k]}
         if diff:
             ev({"complaint": "mismatch", "seq": a["seq"], "fields": diff})
             complaints += 1
