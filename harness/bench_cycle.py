@@ -23,10 +23,11 @@ The waits that matter, and what each is for:
     reboot is the apply step
   uptime going backwards before trusting any pod state -- the bus documents are retained,
     so a pod that is down still publishes its last reading
-  every campod camera `ready`, not merely present -- warmup frames are not capture frames.
-    That is warm AND `sync_ready`, because warmup finishing does not mean the pair is
-    aligned and a window that opens early spends its head discarding frames. The
-    coordinator is not waited on: no OAK is attached for this flight (CAMERA_NODES)
+  every campod `ready`, not merely present -- warmup frames are not capture frames. That
+    is pod-link's verdict: every sensor the pod detected ready, the camera warm, synced and
+    settled, and chrony on the 1 Hz, because a window that opens early spends its head
+    discarding or misaligning frames. The coordinator is not waited on: no OAK is attached
+    for this flight (READY_NODES)
   only the FC talker stopped to arm -- it owns the arm file, so it has to stop or it
     overwrites what we write, but oak-capture reads that same file and has to keep running
     or the coordinator's session has nothing in it
@@ -58,10 +59,10 @@ CAMPODS = ("campod-se", "campod-sw", "campod-ne", "campod-nw")
 # capture node too since oak-capture (#609): its session holds the OAK's frames and IMU
 # beside the router's tlog and timesync. blackfly is not on the vehicle for this flight.
 NODES = ("coordinator", *CAMPODS)
-# The nodes whose camera has to be ready before the window opens. Not the coordinator: no
-# OAK is attached for this flight, so its camera never reports ready, but its session (the
-# tlog, timesync) is still converged, rebooted and collected with the rest.
-CAMERA_NODES = CAMPODS
+# The nodes that have to be ready before the window opens. Not the coordinator: no OAK is
+# attached for this flight, so it has nothing to be ready, but its session (the tlog,
+# timesync) is still converged, rebooted and collected with the rest.
+READY_NODES = CAMPODS
 ARM_FILE = "/var/lib/coordinator/ipc/fc_armed"
 # The unit that owns the arm file. Stopped by name, not by the bus quiesce: that stops
 # every unit in the coordinator's POD_LINK_COLLECTION_UNITS, which since #609 is the
@@ -132,7 +133,7 @@ def is_fresh(pods: list[dict], uptime_before: float, expected: int = len(NODES))
     too, the broker runs there, and the retained documents are gone until each pod
     republishes -- so campod-se came back and published while campod-sw, whose reboot had
     actually failed, was simply absent. `all()` over one pod is true, and the stage reported
-    "a fresh boot on both campods: ok" while meaning one. cameras_ready counts; this did not.
+    "a fresh boot on both campods: ok" while meaning one. pods_ready counts; this did not.
     """
     if len(pods) != expected:
         return False
@@ -140,24 +141,20 @@ def is_fresh(pods: list[dict], uptime_before: float, expected: int = len(NODES))
     return bool(ups) and all(u is not None and u < uptime_before for u in ups)
 
 
-def cameras_ready(pods: list[dict], expected: int = len(CAMERA_NODES)) -> bool:
-    """Every camera ready, which is the pod's own word for "arming now works".
+def pods_ready(pods: list[dict], expected: int = len(READY_NODES)) -> bool:
+    """Every pod ready, which is the pod's own word for "arming now works".
 
-    ONE FIELD, AND NOT ASSEMBLED HERE. `camera.ready` is warm AND synced, combined by the
-    campod that knows both (#577); on the coordinator it is the OAK warm on all three of
-    its cameras, and that document has the same shape. This gate used to read `ready` --
-    which then meant warm only -- and separately reason about three-valued `sync_ready`,
-    and arming is not the only reader: the front panel has to answer the same question for
-    someone standing in front of it with no network. Two readers deciding what readiness
-    means is how they disagree, which they did: this gate was fixed on 2026-10-19 and the
-    panel was not.
+    ONE FIELD, AND NOT ASSEMBLED HERE. The pod's `ready` is pod-link's verdict over every
+    sensor the pod detected and its clock (containers/pod-link, podReady), and the front
+    panel names the pod in upper case on the same field, so the two cannot come to mean
+    different things by it.
 
     Why it matters that the wait is real: the window of 2026-10-18T22:40 opened 18.5 s
     early, 38 frames on each pod recorded `sync_wait` and were discarded, and that run kept
     232 frames where its neighbours kept 248 and 250.
     """
-    cams = [(p.get("raw") or {}).get("camera") or {} for p in pods]
-    return len(cams) == expected and all(c.get("ready") is True for c in cams)
+    return len(pods) == expected and all((p.get("raw") or {}).get("ready") is True
+                                         for p in pods)
 
 
 # ---- fleet interaction -----------------------------------------------------------------
@@ -294,12 +291,12 @@ def stage_deploy() -> None:
         log(f"{node}: rebooting")
     wait_for("a fresh boot on every node",
              lambda: is_fresh(fleet_pods(), before) and fleet_pods(), 900)
-    wait_for("every campod camera ready (warm and synced)",
-             lambda: cameras_ready([p for p in fleet_pods() if p["node"] in CAMERA_NODES]),
+    wait_for("every campod ready (detected sensors ready, chrony on the 1 Hz)",
+             lambda: pods_ready([p for p in fleet_pods() if p["node"] in READY_NODES]),
              900)
     for p in fleet_pods():
         cam = (p.get("raw") or {}).get("camera") or {}
-        log(f"  {p['node']}: ready at mono {cam.get('ready_at_mono_s')}s")
+        log(f"  {p['node']}: camera ready at mono {cam.get('ready_at_mono_s')}s")
 
 
 def stage_arm(key: str) -> None:
