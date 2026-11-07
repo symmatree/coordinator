@@ -72,6 +72,9 @@ the same vibration writes **2.4x more bands** here. Binning is a lever if it eve
 | `CAMPOD_JPEG_QUALITY` | `90` | JPEG quality 1-100 |
 | `CAMPOD_STILL_MAX_EXPOSURE_US` | `1000` | caps the shutter; `0` = uncapped AE |
 | `CAMPOD_STILL_FOCUS` | `infinity` | `infinity` \| lens position in **dioptres** |
+| `CAMPOD_CAMERA_MAKE` | required | EXIF Make of every still; Model is the pod's name |
+| `CAMPOD_LENS_FOCAL_MM` | required | EXIF FocalLength, mm |
+| `CAMPOD_LENS_FOCAL_35MM` | required | EXIF FocalLengthIn35mmFilm, width-based (focal x 36 / sensor width) |
 | `CAMPOD_SYNC_MODE` | `off` | `off` \| `server` \| `client` (Phase 3) |
 
 ## ADXL345 vibration logging (#211)

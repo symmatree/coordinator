@@ -61,6 +61,12 @@ Environment=CAMPOD_JPEG_QUALITY=90
 Environment=CAMPOD_STILL_MAX_EXPOSURE_US=1000
 # Lens position in dioptres, 1/metres. Mapping subjects are at infinity.
 Environment=CAMPOD_STILL_FOCUS=infinity
+# Written into every still's EXIF. Arducam B0310: 2.87 mm f/2.8 M12 lens on the IMX708,
+# 4608 x 1.4 um = 6.45 mm wide, so 2.87 x 36 / 6.45 = 16 mm equivalent across the width
+# (OpenSfM's starting focal is this over 36). Vendor figures, not a calibration.
+Environment=CAMPOD_CAMERA_MAKE=Arducam
+Environment=CAMPOD_LENS_FOCAL_MM=2.87
+Environment=CAMPOD_LENS_FOCAL_35MM=16
 # off | server | client. Multi-campod sync is #24.
 # libcamera software sync: one pod paces, the rest follow. ON, with campod-sw named as
 # the pacesetter -- it is the pod with the accelerometers, so its frames are the ones worth

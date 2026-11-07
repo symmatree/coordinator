@@ -203,6 +203,18 @@ int main() {
     }
     const std::string sync_mode = campod::sync_mode_for(sync_leader, node);
     const float dioptres = campod::focus_dioptres(focus);
+    // The camera, for each still's EXIF. Required for the same reason: a still without its
+    // focal length is one a mapping tool starts from a guess on.
+    const std::string camera_make = env_str("CAMPOD_CAMERA_MAKE", "");
+    const std::string focal_mm = env_str("CAMPOD_LENS_FOCAL_MM", "");
+    const int focal_35mm = static_cast<int>(env_int("CAMPOD_LENS_FOCAL_35MM", 0));
+    if (camera_make.empty() || focal_mm.empty() || focal_35mm <= 0) {
+        std::cerr << "capture: CAMPOD_CAMERA_MAKE, CAMPOD_LENS_FOCAL_MM and CAMPOD_LENS_FOCAL_35MM are required "
+                     "-- they go in every still's EXIF"
+                  << std::endl;
+        return 2;
+    }
+    const double focal_length_mm = std::stod(focal_mm);
 
     // The session is the boot id, which the accel reader also uses, so both write into one
     // directory without anything handing the path between them (#211).
@@ -449,7 +461,11 @@ int main() {
                         {"size", {w, h}},
                     };
                     const Planes& planes = mappings.at(buf);
-                    auto encode = [&] { return jpeg.encode(planes, w, h); };
+                    auto encode = [&] {
+                        return campod::with_app1(jpeg.encode(planes, w, h),
+                                                 campod::exif_app1({camera_make, node, exposure_wall_ns,
+                                                                    focal_length_mm, focal_35mm}));
+                    };
 
                     // The first frame exercises the encode and a card write into the
                     // session directory before anyone can arm, so the first armed frame
