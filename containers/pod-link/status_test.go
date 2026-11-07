@@ -11,7 +11,8 @@ import (
 
 // podReady is the pod's own answer to "will arming work", and the front panel and the
 // fleet-control table both read it rather than assembling their own (#577). What it adds
-// to the camera's `ready` is the accelerometers, which the camera knows nothing about.
+// to the camera's `ready` is the accelerometers, which the camera knows nothing about, and
+// chrony on the 1 Hz, which it cannot see.
 func TestPodReady(t *testing.T) {
 	cam := func(ready bool) json.RawMessage {
 		return json.RawMessage(fmt.Sprintf(`{"warm":true,"sync_ready":true,"ready":%t}`, ready))
@@ -23,8 +24,9 @@ func TestPodReady(t *testing.T) {
 		}
 		return json.RawMessage(`{"devices":[` + strings.Join(parts, ",") + `]}`)
 	}
-	got := func(c, a json.RawMessage) string {
-		r := podReady(c, a)
+	onPPS := json.RawMessage(`{"boot_id":"b","edge":true,"pps_selected":true}`)
+	got := func(c, a, clock json.RawMessage) string {
+		r := podReady(c, a, clock)
 		if r == nil {
 			return "absent"
 		}
@@ -35,26 +37,38 @@ func TestPodReady(t *testing.T) {
 		name   string
 		camera json.RawMessage
 		accel  json.RawMessage
+		clock  json.RawMessage
 		want   string
 	}{
-		{"camera ready and both accels found", cam(true), accel(true, true), "true"},
-		{"camera not ready", cam(false), accel(true, true), "false"},
+		{"camera ready and both accels found", cam(true), accel(true, true), onPPS, "true"},
+		{"camera not ready", cam(false), accel(true, true), onPPS, "false"},
 		// The campod-se case on 2026-10-19: camera fine, one accel on a miswired CE1.
-		{"one accel missing", cam(true), accel(true, false), "false"},
-		{"no accels found at all", cam(true), accel(false, false), "false"},
+		{"one accel missing", cam(true), accel(true, false), onPPS, "false"},
+		{"no accels found at all", cam(true), accel(false, false), onPPS, "false"},
 		// An accel reader that started but listed nothing is not evidence of hardware.
-		{"an empty device list", cam(true), json.RawMessage(`{"devices":[]}`), "false"},
+		{"an empty device list", cam(true), json.RawMessage(`{"devices":[]}`), onPPS, "false"},
 		// A broken writer is not a ready pod. It is also already reported as an error.
-		{"a camera document that will not parse", json.RawMessage(`{`), accel(true), "false"},
+		{"a camera document that will not parse", json.RawMessage(`{`), accel(true), onPPS, "false"},
 		// A pod with no payload subsystem -- the coordinator today -- asserts nothing.
-		{"neither document", nil, nil, "absent"},
+		{"neither document", nil, nil, onPPS, "absent"},
 		// Camera-only and accel-only pods are each answered on what they have.
-		{"camera only, ready", cam(true), nil, "true"},
-		{"accel only, found", nil, accel(true), "true"},
-		{"accel only, missing", nil, accel(false), "false"},
+		{"camera only, ready", cam(true), nil, onPPS, "true"},
+		{"accel only, found", nil, accel(true), onPPS, "true"},
+		{"accel only, missing", nil, accel(false), onPPS, "false"},
+		// The clock: arriving is not enough, and chrony on NTP alone is the camera synced
+		// to its own wall clock -- nw and ne on 2026-11-07, 191 and 197 ms off sw.
+		{"chrony not yet on the 1 Hz", cam(true), accel(true, true),
+			json.RawMessage(`{"edge":true,"pps_selected":false}`), "false"},
+		{"chrony could not be asked", cam(true), accel(true, true),
+			json.RawMessage(`{"edge":true,"pps_selected":null}`), "false"},
+		{"no clock document", cam(true), accel(true, true), nil, "false"},
+		{"a clock document that will not parse", cam(true), accel(true, true),
+			json.RawMessage(`{`), "false"},
+		// The coordinator: a clock document and no payload still asserts nothing.
+		{"a clock and no payload", nil, nil, onPPS, "absent"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if g := got(tc.camera, tc.accel); g != tc.want {
+			if g := got(tc.camera, tc.accel, tc.clock); g != tc.want {
 				t.Fatalf("podReady = %s, want %s", g, tc.want)
 			}
 		})

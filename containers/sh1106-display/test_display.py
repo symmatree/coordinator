@@ -16,12 +16,21 @@ from display import (CAMPODS, CELL_FONT, CHARS_PER_ROW, COL_X, FC_STALE_AFTER_S,
 W, H = 128, 64
 
 
-def pod(ready=True, warm=True, sync=True, accels=(True, True)):
-    return {"node": "campod-se", "state": "ok", "ready": ready,
-            "camera": {"phase": "capture", "warm": warm, "sync_ready": sync,
-                       "ready": warm and sync, "frames": 12},
-            "accel": {"devices": [{"label": "camera", "present": accels[0]},
-                                  {"label": "arm", "present": accels[1]}]}}
+# coord-rtc's clock document: chrony on the 1 Hz, the 1 Hz arriving alone, and no pulse.
+RTC_ON = {"boot_id": "b", "edge": True, "pps_selected": True}
+RTC_EDGE = {"boot_id": "b", "edge": True, "pps_selected": False}
+RTC_NONE = {"boot_id": "b", "edge": False, "pps_selected": False}
+
+
+def pod(ready=True, warm=True, settled=True, rtc=RTC_ON, accels=(True, True)):
+    doc = {"node": "campod-se", "state": "ok", "ready": ready,
+           "camera": {"phase": "capture", "warm": warm, "sync_ready": True,
+                      "sync_settled": settled, "ready": warm and settled, "frames": 12},
+           "accel": {"devices": [{"label": "camera", "present": accels[0]},
+                                 {"label": "arm", "present": accels[1]}]}}
+    if rtc is not None:
+        doc["rtc"] = rtc
+    return doc
 
 
 # Hearing the FC: pod-link stamped this document at 500 s, half a second after the
@@ -29,6 +38,9 @@ def pod(ready=True, warm=True, sync=True, accels=(True, True)):
 FC_OK = {"boot_id": "b", "last_heartbeat_mono_s": 499.5, "heartbeats": 480}
 COORD = {"node": "coordinator", "state": "ok", "capture": False, "as_of_boot_s": 500.0,
          "data_free_bytes": 24_707_977_216, "fc": FC_OK}
+# The coordinator as it publishes in the field, with coord-rtc feed's document -- which
+# also gives it a cell of its own.
+COORD_ON = dict(COORD, rtc=RTC_ON)
 
 failures = []
 
@@ -48,25 +60,31 @@ def _render(status):
 # ---- the letters, which are what the panel says beyond yes/no -------------------------
 check("everything present reads C S Ac Aa",
       subsystem_letters(pod()) == ["C", "S", "Ac", "Aa"], str(subsystem_letters(pod())))
-check("sync still counting lowers S only",
-      subsystem_letters(pod(sync=False)) == ["C", "s", "Ac", "Aa"])
 check("a missing arm accel lowers its letter only",
       subsystem_letters(pod(accels=(True, False))) == ["C", "S", "Ac", "aa"])
-check("a camera not yet warm lowers C",
-      subsystem_letters(pod(warm=False)) == ["c", "S", "Ac", "Aa"])
 
-# A SUBSYSTEM NOT CLAIMED GETS NO LETTER. A capture pod that never joins the sync group
-# would otherwise carry a permanent lower-case `s`, which teaches the reader to ignore a
-# letter -- worse than showing nothing.
-check("a pod with no sync field gets no S",
-      subsystem_letters({"camera": {"warm": True, "ready": True}}) == ["C"])
-check("a pod with no accel document gets no A letters",
-      subsystem_letters({"camera": {"warm": True, "sync_ready": True}}) == ["C", "S"])
-check("a pod with no camera document gets no C or S",
+# C: the camera ready -- warm, synced and settled -- upper; warm and still aligning, lower;
+# not warm, nothing.
+check("a camera whose sync is still correcting lowers C only",
+      subsystem_letters(pod(settled=False)) == ["c", "S", "Ac", "Aa"])
+check("a camera not yet warm has no C",
+      subsystem_letters(pod(warm=False)) == ["S", "Ac", "Aa"])
+check("a pod with no camera document has no C",
       subsystem_letters({"accel": {"devices": [{"label": "arm", "present": True}]}}) == ["Aa"])
-# An image from before #577 publishes `ready` meaning warm, with no `warm` field at all.
-check("an older image's ready is read as warm",
-      subsystem_letters({"camera": {"ready": True, "sync_ready": True}}) == ["C", "S"])
+
+# S: chrony on the 1 Hz upper; the 1 Hz arriving and chrony not on it, lower; no pulse,
+# nothing. nw and ne on 2026-11-07 were the lower case: pulse arriving, cameras synced to
+# NTP time, 191 and 197 ms off sw.
+check("the 1 Hz arriving with chrony not on it lowers S only",
+      subsystem_letters(pod(rtc=RTC_EDGE)) == ["C", "s", "Ac", "Aa"])
+check("chrony that could not be asked is lower case too",
+      subsystem_letters(pod(rtc=dict(RTC_EDGE, pps_selected=None)))[1] == "s")
+check("no pulse has no S", subsystem_letters(pod(rtc=RTC_NONE)) == ["C", "Ac", "Aa"])
+check("no clock document has no S", subsystem_letters(pod(rtc=None)) == ["C", "Ac", "Aa"])
+
+# AN ACCEL NOT CLAIMED GETS NO LETTER.
+check("a pod with no accel document gets no A letters",
+      subsystem_letters({"camera": {"warm": True, "ready": True}, "rtc": RTC_ON}) == ["C", "S"])
 
 # ---- the row, and the rule that absence has no row ------------------------------------
 check("a ready pod's name is upper case", pod_row("campod-se", pod(), 1.0)["name"] == "SE")
@@ -94,7 +112,7 @@ check("and every campod is drawn", [r["name"] for r in every["rows"]] == ALL,
       str(every["rows"]))
 
 one_waiting = status_from_bus(
-    {**{c: pod() for c in CAMPODS}, "campod-nw": pod(ready=False, sync=False),
+    {**{c: pod() for c in CAMPODS}, "campod-nw": pod(ready=False, settled=False),
      "coordinator": COORD},
     FRESH, now=NOW)
 check("one campod not ready holds the gate", one_waiting["gate"] is False)
@@ -159,56 +177,51 @@ OAK_IDLE = {"phase": "stopped", "camera": "stopped-while-waiting", "ready": Fals
             "warm": False, "capturing": False}
 OAK_WARM = {"phase": "capture", "ready": True, "warm": True, "capturing": False}
 line = panel_text({**{c: campod() for c in CAMPODS},
-                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM)}, FRESH, NOW)
+                   "coordinator": dict(COORD_ON, ready=True, camera=OAK_WARM)}, FRESH, NOW)
 check("everything ready reads =COSESWNENW", line == "=COSESWNENW", line)
 line = panel_text({**{c: campod(capturing=True) for c in CAMPODS},
-                   "coordinator": dict(COORD, ready=True,
+                   "coordinator": dict(COORD_ON, ready=True,
                                        camera=dict(OAK_WARM, capturing=True))},
                   FRESH, NOW)
 check("everything recording reads +", line == "+COSESWNENW", line)
 line = panel_text({**{c: campod() for c in CAMPODS},
-                   "campod-se": campod(ready=False, sync=False),
-                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM)}, FRESH, NOW)
+                   "campod-se": campod(ready=False, settled=False),
+                   "coordinator": dict(COORD_ON, ready=True, camera=OAK_WARM)}, FRESH, NOW)
 check("one campod syncing: the least advanced state, mixed, and its name lower case",
       line == "<*COseSWNENW", line)
 line = panel_text({**{c: campod() for c in CAMPODS},
-                   "coordinator": dict(COORD, camera=OAK_IDLE)}, FRESH, NOW)
+                   "coordinator": dict(COORD_ON, camera=OAK_IDLE)}, FRESH, NOW)
 check("a stopped coordinator camera reads - mixed, co lower case",
       line == "-*coSESWNENW", line)
-line = panel_text({"coordinator": dict(COORD, ready=True, camera=OAK_WARM),
+line = panel_text({"coordinator": dict(COORD_ON, ready=True, camera=OAK_WARM),
                    "campod-sw": campod(), "campod-se": campod()},
                   {"coordinator": NOW, "campod-sw": NOW, "campod-se": NOW - 60}, NOW)
 check("a pod not on the bus has no token", line == "=COSW", line)
 check("an empty bus reads -", panel_text({}, {}, NOW) == "-")
 check("the longest line fits a STATUSTEXT", len("<*COSESWNENW") <= 50)
 
-# ---- the coordinator's S: its own 1 Hz arriving ----------------------------------------
-RTC_EDGE = {"state": "no_response", "edge": True}
-RTC_NONE = {"state": "no_response", "edge": False}
-check("the coordinator's S is upper when its 1 Hz is arriving",
-      subsystem_letters(dict(COORD, camera=OAK_WARM, rtc=RTC_EDGE)) == ["C", "S"])
-check("and lower when it is not",
-      subsystem_letters(dict(COORD, camera=OAK_WARM, rtc=RTC_NONE)) == ["C", "s"])
-check("whatever the chip's read says: S is the pulse, not the label",
-      subsystem_letters(dict(COORD, rtc=dict(RTC_EDGE, state="ok"))) == ["S"]
-      and subsystem_letters(dict(COORD, rtc=RTC_EDGE)) == ["S"])
-check("a coordinator with no rtc document has no S",
-      subsystem_letters(dict(COORD, camera=OAK_WARM)) == ["C"])
-check("a campod's S is still its camera's sync, not an rtc",
-      subsystem_letters(dict(pod(sync=False), rtc=RTC_EDGE))[:2] == ["C", "s"])
-_coord_only = status_from_bus({"coordinator": dict(COORD, rtc=RTC_NONE)},
+# ---- the coordinator's S: the same document, from coord-rtc feed --------------------
+check("the coordinator's S is upper with chrony on its 1 Hz",
+      subsystem_letters(dict(COORD_ON, camera=OAK_WARM)) == ["C", "S"])
+check("lower with the 1 Hz arriving and chrony not on it",
+      subsystem_letters(dict(COORD, camera=OAK_WARM, rtc=RTC_EDGE)) == ["C", "s"])
+check("and absent with no 1 Hz",
+      subsystem_letters(dict(COORD, camera=OAK_WARM, rtc=RTC_NONE)) == ["C"])
+check("whatever the chip's read says: S is the pulse and chrony, not the label",
+      subsystem_letters(dict(COORD, rtc=dict(RTC_ON, state="no_response"))) == ["S"])
+_coord_only = status_from_bus({"coordinator": dict(COORD, rtc=RTC_EDGE)},
                               {"coordinator": NOW}, now=NOW)
 check("the rtc document alone gives the coordinator a cell",
       [(r["name"], r["letters"]) for r in _coord_only["rows"]] == [("oak", ["s"])],
       str(_coord_only["rows"]))
 line = panel_text({**{c: campod() for c in CAMPODS},
-                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM, rtc=RTC_NONE)},
+                   "coordinator": dict(COORD_ON, ready=True, camera=OAK_WARM, rtc=RTC_EDGE)},
                   FRESH, NOW)
-check("no 1 Hz on the coordinator lowers co in the line", line == "=coSESWNENW", line)
+check("chrony off the coordinator's 1 Hz lowers co in the line", line == "=coSESWNENW", line)
 line = panel_text({**{c: campod() for c in CAMPODS},
-                   "coordinator": dict(COORD, ready=True, camera=OAK_WARM, rtc=RTC_EDGE)},
-                  FRESH, NOW)
-check("and with it CO is upper", line == "=COSESWNENW", line)
+                   "campod-ne": campod(rtc=RTC_EDGE),
+                   "coordinator": dict(COORD_ON, ready=True, camera=OAK_WARM)}, FRESH, NOW)
+check("and a campod's lowers its own", line == "=COSESWneNW", line)
 
 # ---- the layout fits, which is not something a comment can promise --------------------
 # The first version of this panel was written for a 6x8 font. PIL's default is 8 px wide

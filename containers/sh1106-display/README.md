@@ -10,9 +10,9 @@ An **echo of the pod bus**, and nothing else: `rekon/pod/+/status` and
 `rekon/capture/intent`.
 
 ```
-oak C Ac          SE C S Ac Aa
-SW C S Ac Aa      NE C S Ac Aa
-nw C s Ac aa                      sync still counting, arm accel missing -> not ready
+oak C S           SE C S Ac Aa
+SW C S Ac Aa      NE C s Ac Aa    1 Hz arriving, chrony not on it yet -> not ready
+nw c S Ac aa                      sync still correcting, arm accel missing -> not ready
 
 idle disarm 25G               .   . blinks once a second
 ```
@@ -29,22 +29,25 @@ deciding whether to arm. So it answers that first and explains itself second.
 
   | | |
   |---|---|
-  | `C` | camera present and warm |
-  | `S` | camera sync achieved; on the coordinator's cell, its own 1 Hz from the DS3234 arriving |
+  | `C` | camera `ready`: warm, synced, and its sync no longer correcting (five frames without a frame-duration correction) |
+  | `c` | camera warm and not ready yet; no letter when it is not warm |
+  | `S` | chrony has selected the PPS: the clock is phased to the 1 Hz (`rtc.pps_selected`) |
+  | `s` | the 1 Hz arriving and chrony not on it; no letter when there is no pulse |
   | `Ac` | accelerometer on the camera mount |
   | `Aa` | accelerometer on the arm |
 
-  Upper case is good. **A letter appears only if that pod claims the subsystem**, so a
-  capture pod that never joins the sync group shows no `S` rather than a permanent
-  lower-case one -- a letter that is always bad teaches you to stop reading it.
+  Upper case is good. The clock is its own letter because libcamera's sync aligns wall
+  clocks: a pod on NTP alone reports its camera synced while off its neighbours. **An
+  accel letter appears only if that pod's reader lists the device**, so a pod with no
+  accel reader shows no `A` rather than a permanent lower-case one.
 - **no cell at all** when a pod is not publishing, or its last document has aged out
   (`STALE_AFTER_S`, three missed heartbeats). The cells are the inventory as well as the
   status: a cell existing means that pod is up and on the bus. Documents are retained, so
   one that exists is not evidence of life.
 - **the coordinator** gets a cell too, named `oak`, if it publishes a camera document or
-  the DS3234's state (`rtc`). Its `S` is the leader's side of sync: the kernel is seeing
-  edges on its own 1 Hz input, whatever the chip's SPI read says. It is shown and does not
-  gate -- say the word and that is one line.
+  the DS3234's state (`rtc`). Its `S` reads the same way as a campod's, from its own 1 Hz
+  input and chrony, whatever the chip's SPI read says. It is shown and does not gate --
+  say the word and that is one line.
 - **the footer** -- `NO FC` when the coordinator has not heard an FC heartbeat in the
   last `FC_STALE_AFTER_S` (3 s), otherwise `ARMED` or `idle <reason>` from the capture
   intent; and the card's free space. Arming reaches the pods only through those
@@ -71,9 +74,8 @@ then a token per pod on the bus:
 
 - the mark is `-` stopped, `<` getting ready, `=` ready, `+` recording: the least advanced
   of any pod, with `*` after it when they are not all in the same state
-- `CO` is the coordinator, `SE SW NE NW` the campods; upper case when that pod's camera is
-  warm and synced (for the coordinator, its own 1 Hz arriving). No token when the pod is
-  not on the bus.
+- `CO` is the coordinator, `SE SW NE NW` the campods; upper case when that pod has both
+  `C` and `S` upper on the panel. No token when the pod is not on the bus.
 
 The line does not need the OLED: a panel that does not answer is retried every 10 s, and the
 line is written in the meantime. The router sends nothing from a file more than 5 s old.

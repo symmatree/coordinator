@@ -3,7 +3,9 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -31,6 +33,36 @@ inline float focus_dioptres(const std::string& focus) {
     if (used != focus.size() || d < 0) throw std::invalid_argument("CAMPOD_STILL_FOCUS=" + focus);
     return d;
 }
+
+// Whether the sync has stopped correcting: the panel's upper-case C, and part of `ready`.
+//
+// SyncReady is a countdown, not a measurement: libcamera's client goes ready at the frame
+// the server announced, having seen one packet, and latches. Its corrections go on after
+// that, each one a single frame stretched or shortened by the error (sync.cpp,
+// `status.frameDurationOffset`), so a frame whose duration is off the pinned value by more
+// than the algorithm's own floor is a correction. Settled is kFrames in a row without one,
+// and any correction un-settles it. A frame with no duration, or a camera with nothing
+// pinned, is not evidence of quiet.
+class SyncSettle {
+   public:
+    // libcamera's kDefaultMinAdjustment: the algorithm skips smaller corrections, so a
+    // frame within this of the pinned duration is uncorrected. The stock imx708 tuning
+    // leaves it at the default (sync_tuning.py sets only ready_frame and sync_period).
+    static constexpr int64_t kMinAdjustmentUs = 50;
+    // One sync_period (sync_tuning.py): a server packet arrives at least once in it.
+    static constexpr int kFrames = 5;
+
+    // One synced frame; returns whether the sync is settled as of it.
+    bool frame(std::optional<int64_t> duration_us, std::optional<int64_t> pinned_us) {
+        const bool quiet = duration_us && pinned_us && std::llabs(*duration_us - *pinned_us) <= kMinAdjustmentUs;
+        quiet_ = quiet ? quiet_ + 1 : 0;
+        return settled();
+    }
+    bool settled() const { return quiet_ >= kFrames; }
+
+   private:
+    int quiet_ = 0;
+};
 
 // How far into its wall-clock second an exposure fell, flooring, so every exposure belongs
 // to the second it happened in. A field, not a decision: capture.py _boundary_offset_ns.

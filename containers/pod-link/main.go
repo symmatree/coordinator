@@ -121,7 +121,7 @@ type config struct {
 	accelStatusFile  string
 	// The router's FC-link document (#669). Empty on a campod, which has no FC.
 	fcLinkFile string
-	// coord-rtc feed's chip-state document. Empty on a campod, which has no RTC.
+	// coord-rtc's clock document: `feed`'s on the coordinator, `watch`'s on a campod.
 	rtcStatusFile string
 	// Whose free space is reported. The captures mount, read-only.
 	dataDir string
@@ -729,8 +729,6 @@ func reconcile(c config, h *host, want *wanted) *podStatus {
 	} else {
 		doc.Accel = acc
 	}
-	// After both documents, because it is one verdict over both. See podStatus.Ready.
-	doc.Ready = podReady(doc.Camera, doc.Accel)
 	if fc, err := thisBootDoc(c.fcLinkFile); err != nil {
 		fail("%v", err)
 	} else {
@@ -741,6 +739,9 @@ func reconcile(c config, h *host, want *wanted) *podStatus {
 	} else {
 		doc.RTC = rtc
 	}
+	// After every document it reads, because it is one verdict over them. See
+	// podStatus.Ready.
+	doc.Ready = podReady(doc.Camera, doc.Accel, doc.RTC)
 
 	doc.SelfRSSBytes, doc.SelfMajorFaults = selfCost()
 

@@ -26,7 +26,9 @@ thread-safe.
 
 A session configured with `sync` (the campods) adds camera sync to `ready` and to what is
 kept: the backend reports it with `set_sync_ready()`, the status carries `sync_ready`, and
-frames before it are ledgered as `sync_wait`.
+frames before it are ledgered as `sync_wait`. `set_sync_settled()` reports whether the sync
+has stopped correcting; the status carries `sync_settled`, and it is part of `ready` but not
+of what is kept.
 
 Every frame retrieved gets one ledger line with its `decision`: `warmup`, `paused`,
 `sync_wait`, `kept`, `dropped` (the writer's queue was full) or `encode_failed`. Files are

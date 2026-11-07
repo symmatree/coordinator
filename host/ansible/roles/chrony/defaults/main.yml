@@ -2,3 +2,6 @@
 # Where coord-rtc-feed sends samples and where chrony listens for them. One
 # definition, read by the drop-in; the unit takes the same default from the CLI.
 coord_rtc_chrony_sock: /run/chrony.ds3234.sock
+# Where a campod's coord-rtc watch writes the clock document, and where its pod-link
+# reads it (stacks/campod/pod-link.container mounts /tmp).
+coord_rtc_campod_status_file: /tmp/campod_clock_status
