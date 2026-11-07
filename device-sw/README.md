@@ -11,6 +11,7 @@ drives them over plain ssh.
 | `coord-sessions` | list capture sessions, package one into a verified bundle, delete (#302) |
 | `coord-throttle-log` | record the Pi's power/throttle state to the journal |
 | `coord-radio`, `coord-fc-log` | ELRS radio state; FC log listing and download |
+| `coord-fc-params`, `coord-fc-mission` | FC params and missions in from stdin, the FC's copy back out on stdout |
 | `vio-pose-tap`, `vio-ipc-record` | bench taps on the VIO IPC sockets |
 
 ## cli/ is the install set

@@ -27,6 +27,7 @@ TESTS=(
 	device-sw/tests/test_coord_sessions.py
 	device-sw/tests/test_coord_fc_log.py
 	device-sw/tests/test_coord_fc_params.py
+	device-sw/tests/test_coord_fc_mission.py
 	device-sw/tests/test_quadlet_units.py
 	host/ansible/test_notifies.py
 	packaging/test_build_ansible.py
