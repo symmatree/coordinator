@@ -90,6 +90,10 @@ class FakeFC:
         it = dict(self.mission[seq])
         if seq == 0:
             it.update(HOME, current=0, frame=0, command=16)
+        # What the FC did on 2026-11-07 with map-test-1: DO_CHANGE_SPEED and RTL, sent in
+        # frame 3, came back in frame 0 (AP_Mission::mission_cmd_to_mavlink_int).
+        elif it["command"] not in fm.STORED_IN_LOCATION:
+            it["frame"] = 0
         return it
 
     def mission_request_list_send(self, ts, tc, mtype):
@@ -193,6 +197,14 @@ check("an item kept differently exits 1", rc == 1, f"rc={rc}")
 check("and names the item and field",
       mism == [{"complaint": "mismatch", "seq": 4,
                 "fields": {"z": {"sent": 40.0, "fc": 30.0}}}], str(mism))
+
+# 6b. A frame is compared where the FC keeps one, and only there.
+check("DO_CHANGE_SPEED and RTL came back in frame 0, and that is not a complaint",
+      held[1]["frame"] == 0 and held[8]["frame"] == 0 and len(mism) == 1)
+fc = FakeFC(alter={3: {"frame": 0}})
+rc, held, lines = run(fc, items)
+check("a waypoint's frame kept differently is a mismatch",
+      [ln.get("seq") for ln in lines if ln.get("complaint") == "mismatch"] == [3], str(lines))
 
 # 7. A read-back item that never arrives: exit 3, nothing to write.
 fc = FakeFC(lost={5})
