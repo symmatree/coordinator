@@ -19,7 +19,8 @@ vibration, defocus, noise, exposure, lens shading and lighting. A result about, 
 transfers to real flights only if none of those change the answer, and that is checked by
 comparing against a real flight once one exists, not assumed.
 
-**Nothing here is marked confirmed.** Four runs have completed, each once; none has been repeated.
+**Nothing here is marked confirmed.** Six runs have reached a reconstruction, each once; none has
+been repeated.
 
 ## Method
 
@@ -44,10 +45,13 @@ comparing against a real flight once one exists, not assumed.
 | `map-test-flown-rig-20261107` | ODM again on the render above, with OpenSfM's rig model | 1272 | (reused) | 58 min, ended in ODM's statistics step | topic 4 |
 | `map-test-flown-rig-20261107b` | `map-test-flown.yaml`, a camera model per mount | -- | stopped | -- | not a result: the render was ray-traced and was stopped to use the rasteriser |
 | `map-test-flown-rig-20261107c` | the same | -- | failed | -- | not a result: lancer ran a cached notebook image from before moderngl |
-| `map-test-flown-20261107d` | the same, rasterised, WGS84 priors | 1272 | running | -- | topic 4: then ODM with (`-rig`) and without (`-free`) the rig model |
+| `map-test-flown-20261107d` | the same, rasterised, WGS84 priors | 1272 | 14 min, llvmpipe on lancer | -- | the render for the two runs below |
+| `map-test-flown-20261107d-rig` | ODM on that render with the rig model | 1272 | (reused) | 56 min to `reconstruction.json`; ODM then failed in `export_geocoords` | topic 4 |
+| `map-test-flown-20261107d-free` | ODM on that render without it | 1272 | (reused) | 88 min, ODM completed | topic 4 |
 
 OpenSfM times are the sum of its stages in `opensfm/profile.log`. The renders before 2026-11-07
-were ray-traced; the rasteriser is now the only renderer.
+were ray-traced; the rasteriser is now the only renderer. For the `20261107d` runs, stage times
+are from the modification times of each stage's output in `opensfm/`.
 
 ### `as-built-20261104-2240`
 
@@ -169,20 +173,74 @@ scene's north was UTM grid north. At this site (1.004 deg east of zone 17's cent
 The rig run followed its priors to millimetres and so came out rotated against the truth by
 exactly that. Since coordinator#716, `geo.txt` is WGS84 converted from the scene's tangent plane.
 
-**Not yet known:**
+The first rig run's ODM ended in `compute_statistics` (`KeyError` in OpenSfM's
+`stats.rig_statistics`, which tests a stale loop variable and fails on a rig camera not named after
+a camera model), so ODM skipped its exports and the workflow skipped scoring; it was scored by
+hand. Since coordinator#714 each rig camera is named after its camera model, which that function
+skips.
 
-- Why the free run sits 0.6-1.1 m from its own 1 cm priors while its shape matches the truth. Both
-  runs had the same priors at the same accuracy; the free run applies one per image, the rig run
-  one per capture. `map-test-flown-20261107d-free` is the first free run with priors in the right
-  frame.
-- Whether the rig and free runs agree with each other and with the truth once the priors are in
-  the right frame: `map-test-flown-20261107d-rig` and `-free`, on one render, run one after the
-  other on lancer.
-- The rig run's ODM ended in `compute_statistics` (`KeyError` in OpenSfM's `stats.rig_statistics`,
-  which tests a stale loop variable and fails on a rig camera not named after a camera model), so
-  ODM skipped its exports and the workflow skipped scoring; it was scored by hand. Since
-  coordinator#714 each rig camera is named after its camera model, which that function skips.
-  `-rig` is the first run with that.
+**Observed on `map-test-flown-20261107d-rig` and `-free`**, ODM run one after the other on lancer
+on one render (`renders/map-test-flown-20261107d`, coordinator `bfe8e04`, rasterised, priors in
+WGS84 since coordinator#716). The rig files are from coordinator#719, with the origin at the mean
+of the camera centres; the mean of the four camera centres in the rig frame of
+`-rig/opensfm/rig_cameras.json` is zero to 1e-16 m.
+
+| | free | rig |
+|---|---|---|
+| images reconstructed | 1272 / 1272 | 1272 / 1272 |
+| similarity fit: scale, rotation | 1 - 3.0e-9, 0.00034 deg | 1 + 8.1e-9, 0.00034 deg |
+| camera position error after the fit, median / p90 / max | 0.65 / 1.06 / 2.20 mm | 0.58 / 0.93 / 1.96 mm |
+| camera rotation error, median / p90 / max | 0.0015 / 0.0024 / 0.0040 deg | 0.0010 / 0.0018 / 0.0027 deg |
+| camera centres against the truth with no fit, in OpenSfM's topocentric frame: mean (E, N, U); median / max distance | 0 to 0.01 mm; 0.65 / 2.20 mm | 0 to 0.01 mm; 0.58 / 1.96 mm |
+| sparse points; distance to true surface, median / p90 | 928,505; 2.9 / 23 cm | 928,182; 2.9 / 23 cm |
+| detect, match, tracks (from the first `features/` write) | 15:42 to 16:02, 20 min | 14:33 to 14:53, 20 min |
+| reconstruct (`tracks.csv` to `reconstruction.json`) | 50 min | 28 min |
+| ODM pod wall | 88 min, to the end of the ODM CLI | 61 min, to the failure |
+| ODM pod peak / mean memory, mean / peak cores, core-hours | 21.3 / 11.4 GiB, 3.2 / 13.1, 3.9 | not recorded |
+
+The scores are `score.py` on each run's `opensfm/reconstruction.topocentric.json` (`-free`) or
+`opensfm/reconstruction.json` (`-rig`), saved as `score-topocentric.json` in each run's directory.
+The free run's resources are `-free/resources/mapping-sim-process-pqkpq.md`; it gives the ODM step
+75 min of memory samples against the pod's 88 min, so Mimir has gaps over this run. The rig run's
+resources step got HTTP 500 from the Prometheus query and wrote nothing. The ODM container logs
+are saved as `odm-pod.log` in each run's directory.
+
+- With the priors in the right frame, the free run's cameras are within 2.2 mm of the truth with no
+  fit; the 0.6-1.1 m from its own priors on `map-test-flown-20261105-2105` does not recur. That
+  run's priors were in the UTM grid frame (above); no run separates that from any other cause.
+- The mounts the rig run ended with (`rig_cameras` in its `reconstruction.json`) equal the given
+  ones to under 0.01 mm and 1e-5 deg. With 318 captures OpenSfM adjusts them against the given
+  values as priors, and the given values are the true ones, so this run does not distinguish
+  "held" from "adjusted and found nothing to move".
+- Reconstruct took 28 min with the rig and 50 min without, the same ratio as on the earlier render
+  (1797 s against 3366 s). The rest of the ODM run took the same time in both.
+
+**The rig run cannot finish ODM.** With GPS priors ODM converts the topocentric reconstruction to
+UTM after the statistics step: ODM 3.6.2
+[`stages/run_opensfm.py` lines 72-75](https://github.com/OpenDroneMap/ODM/blob/v3.6.2/stages/run_opensfm.py#L72-L75)
+runs `opensfm export_geocoords --reconstruction`, then moves `reconstruction.json` to
+`reconstruction.topocentric.json` and the converted copy into its place. In ODM's OpenSfM
+(`c5328439`),
+[`opensfm/actions/export_geocoords.py` `_transform_reconstruction`, lines 130-142](https://github.com/OpenDroneMap/OpenSfM/blob/c5328439/opensfm/actions/export_geocoords.py#L130-L142)
+sets each shot's pose directly (`shot.pose.set_rotation_matrix`, line 139). A shot in a rig
+instance takes its pose from the instance and its rig camera, and setting it raises
+`RuntimeError: Cannot set an immutable pose` (`-rig/odm-pod.log`, line 31196). So any rig run with
+GPS priors stops there, before densification. The first rig run stopped earlier, in statistics,
+and did not reach it. A step between reconstruct and the export that writes the rig's solved poses
+out as plain shots would get past it; it is not built.
+
+**Decision (2026-11-07): carry on without the rig.** A free run is needed in any case to check the
+rig's assumptions on real data: that the calibration and the mounts are right, and that the
+cameras do not move against each other in flight. The rig saves 22 of the free run's 88 min of
+ODM. The step past `export_geocoords` is not being built for now.
+
+**The workflow's `score.json` for `-free` scores the UTM copy.** The `tiles` workflow's score step
+reads `opensfm/reconstruction.json`, which after a completed ODM run is the converted one. Scored
+that way, `-free/score.json` gives a fit rotation of 0.619 deg (UTM grid convergence at the
+reference point) and a 6.6 mm median position error. `score-topocentric.json` beside it scores
+`reconstruction.topocentric.json`. The earlier free runs' `score.json` (topic 2 and the table
+above) were scored the same way, so their position errors include the projection; their
+topocentric reconstructions have not been rescored.
 
 ### 5. Anchoring forward and backward in time
 
@@ -223,16 +281,17 @@ The sim's lens has no distortion, so it tests less than a real lens would.
 
 ## Open
 
-- `map-test-flown-20261107d`: the render is running; ODM with the rig model, then without, follow
-  on the same render (topic 4).
-- coordinator#719, the rig origin at the mean camera centre: on auto-merge. The `-rig` run waits
-  for it.
+- The `tiles` workflow's score step scores the UTM copy of the reconstruction after a completed
+  ODM run (topic 4); `reconstruction.topocentric.json` is the one in the truth's frame.
+- Rig runs stop in ODM's `export_geocoords` (topic 4); not being worked on, by the decision there.
 - The `tiles` `mapping-sim` WorkflowTemplates on the cluster have no `imagePullPolicy`, though
   tiles#953 sets `Always` and Argo CD reports the app Synced at that commit. The `20261107d` runs
   set it per workflow with a `podSpecPatch`.
-- The render step requests no GPU, so on lancer the rasteriser runs on Mesa's llvmpipe. Its full
-  resolution speed there is unmeasured; on the Radeon it was about 0.3 s per image.
-- OpenSfM's `stats.rig_statistics` bug (topic 4) is not reported upstream.
+- The render step requests no GPU, so on lancer the rasteriser runs on Mesa's llvmpipe: 1272
+  full-resolution images in 818 s, 0.64 s each (`renders/map-test-flown-20261107d/manifest.json`,
+  `render_s`). On the Radeon it was about 0.3 s per image.
+- OpenSfM's `stats.rig_statistics` and `export_geocoords` failures with a rig (topic 4) are not
+  reported upstream.
 - The match-depth section of `mapping-sim-features.ipynb` is on a local branch,
   `mapping-sim-match-depth`, not yet a PR.
 - EKF-covariance noise on the reported poses (topic 6) is not started.
