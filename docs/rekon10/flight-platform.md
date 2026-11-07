@@ -44,7 +44,7 @@ All eight are exposed with nothing soldered to them; this is a quad using `S1`-`
 `S11`/`S12` are the TIM15 `NODMA` pair, which matters for PWM output and not for a GPIO
 input, so of the eight they are the least likely to be wanted for something else later.
 
-**`S11` is in use:** the PPS leg from the hub board's buffer tree, as a camera feedback
+**`S12` is in use:** the PPS leg from the hub board's buffer tree, as a camera feedback
 input -- [time-base.md](../time-base.md) for what it is for, [ardupilot.md](ardupilot.md)
 for the parameters. The leg's 1k series resistor is on the hub board, not at this end; the FC end of
 the cable is bare wire to the pad.
@@ -54,11 +54,15 @@ the cable is bare wire to the pad.
 "all eight" was not safe to assume. Moot for a 3.3 V buffer; it matters if a signal
 generator or a 5 V-powered source ever reaches a pad.
 
+It is on `S12`, not `S11`: until 2026-11-07 the configuration said `S11`, so the FC watched
+an empty pad.
+
 **Interrupt capacity for them.** `_attach_interruptI` refuses a pad whose EXTI line event
 is already claimed, and on STM32 those are shared by pin *number* across every port. For
-pin 5 the users here are `PA5` (SPI1_SCK), `PB5` (SPI3_MOSI), `PC5` (RSSI_ADC) and `PD5`
+pin 6 the users here are `PA6` (SPI1_MISO), `PB6` (I2C1_SCL), `PC6` (USART6_TX) and `PD6`
+(USART2_RX); for pin 5, `PA5` (SPI1_SCK), `PB5` (SPI3_MOSI), `PC5` (RSSI_ADC) and `PD5`
 (USART2_TX) -- all peripherals, none on EXTI -- and `hwdef` declares no interrupt pins, so
-`PE5` gets a real hardware-timestamped interrupt. Visible on first use: ISR timestamps are
+`PE6` (and `PE5`) gets a real hardware-timestamped interrupt. Visible on first use: ISR timestamps are
 microsecond-grained where the polling fallback lands on 1 ms boundaries.
 
 FC Connections:

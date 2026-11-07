@@ -105,8 +105,8 @@ Telemetry keys and screens live in **`model01.yml`** (e.g. **RSNR**, **FM**, RSS
 [time-base.md](../time-base.md).
 
 ```
-SERVO11_FUNCTION  -1   frees S11 as a GPIO
-CAM1_FEEDBAK_PIN  60
+SERVO12_FUNCTION  -1   frees S12 as a GPIO
+CAM1_FEEDBAK_PIN  61
 CAM1_FEEDBAK_POL  0
 CAM1_TYPE         5
 ```
