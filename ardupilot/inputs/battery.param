@@ -3,13 +3,10 @@
 # 6S Li-ion pack. Most thresholds came from Mission Planner "Initial Tune" (6S
 # Li-ion selected). See ardupilot.md "Battery monitoring" and flight-platform.md.
 #
-# Monitor via ESC telemetry (9), NOT the FC analog input -- the FC current sense is
-#   reads a fixed over-range voltage, cause unknown (#117). Volts/current arrive on
-#   SERIAL8 (see 20-serial) from a custom-calibrated AM32 build: voltage ~1%,
-#   current scale generic and unverified.  provenance: 954150979 2026-07-27;
-#   [flight-platform.md; #117]
-BATT_MONITOR,9
-BATT_ESC_MASK,0
+# 21 = INA2XX: the Holybro PM02D (INA228), inline on the pack lead, read over I2C. It is
+#   the source for pack voltage, current and consumed mAh, and so for every battery
+#   failsafe below.  provenance: 2026-11-07
+BATT_MONITOR,21
 BATT_CAPACITY,8000
 #
 # Voltage thresholds (~3.20 / 3.10 / 3.00 V per cell on 6S). BATT_CRT_VOLT=18 is

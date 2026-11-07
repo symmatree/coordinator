@@ -119,29 +119,27 @@ FC Connections:
 | 9V (VTX) | ~9 V on / 0.4 V off | RELAY4-switched |
 | PC1 (current sense) | 9.92 V, fixed | unresolved -- see below |
 
-**Battery monitor: ESC telemetry (`BATT_MONITOR=9`).** The FC's analog current input
-(PC1 / `BATT_CURR_PIN=11`) reads a fixed ~9.9 V, above the ADC's ~3.6 V range, and so reports a
-constant false current. **What happened to it is not known**, nor which board is at fault --
-the FC input or the ESC's current-sense output feeding it. `Cur2` (PA7) measures a stable
-0.667 MOhm to GND while PC1 climbs.
+**Battery monitor: Holybro PM02D (`BATT_MONITOR=21`).**
+[Product page](https://holybro.com/collections/power-modules-pdbs/products/pm02d-power-module),
+[PX4 page](https://docs.px4.io/main/en/power_module/holybro_pm02d). A digital power module
+inline on the pack lead between a pair of XT60s, read over I2C: a TI INA228 in the current HV
+version (2S-12S). ArduPilot's INA2XX driver (type 21) handles the INA226, INA228 and INA238 and
+probes I2C addresses 0x41, 0x44 and 0x45. FC connector is a 6-pin Molex CLIK-Mate, 2.00 mm
+pitch; 5.2 V / 3 A regulated output. The supplied XT60s and 14 AWG leads are rated 30 A
+continuous, 60 A for under a minute (retailer listing). It is the source for pack voltage,
+current and consumed mAh, and so for the battery failsafes (`BATT_LOW_VOLT=18.6`,
+`BATT_CRT_VOLT=18`, `BATT_CAPACITY=8000`).
 
-Battery **voltage and current come from ESC serial telemetry** (SERIAL8) instead, using a
-**custom-calibrated AM32 build** (see [ESC / Firmware](#firmware) and
-[`firmware/esc/` (coordinator)](../../firmware/esc/README.md)). On the bench, disarmed, the ESC
-readout tracked a meter within ~1 % on voltage and read ~0 A at rest. The current **scale** is
-left at the AM32 generic value and has not been checked against a known load; the current from
-the last round of flights looked unreliable, which is for flight analysis to check on the next
-flight. Voltage / capacity failsafes are active (`BATT_LOW_VOLT=18.6`, `BATT_CRT_VOLT=18`,
-`BATT_CAPACITY=8000`).
+**The FC's own analog inputs are not used.** Its current input (PC1 / `BATT_CURR_PIN=11`)
+reads a fixed ~9.9 V, above the ADC's ~3.6 V range, so it reports a constant false current;
+which board is at fault, the FC input or the ESC's current-sense output feeding it, is not
+known. `Cur2` (PA7) measures a stable 0.667 MOhm to GND while PC1 climbs.
 
-**On order (2026-11-02): Holybro PM02D** -- [product page](https://holybro.com/collections/power-modules-pdbs/products/pm02d-power-module),
-[PX4 page](https://docs.px4.io/main/en/power_module/holybro_pm02d). A digital power module that
-senses the pack inline between a pair of XT60s and reports over I2C, independent of the ESC's
-calibration and of PC1. Per the PX4 page and retailer listings: the current HV version (2S-12S)
-uses a TI INA228; an out-of-production 6S version with the same name used an INA226, which
-ArduPilot configures differently, so check which one arrives. FC connector is a 6-pin Molex
-CLIK-Mate, 2.00 mm pitch; 5.2 V / 3 A regulated output. The supplied XT60s and 14 AWG leads are
-rated 30 A continuous, 60 A for under a minute (retailer listing).
+**ESC serial telemetry** (SERIAL8) still reports per-motor voltage, current, RPM and
+temperature, from a **custom-calibrated AM32 build** (see [ESC / Firmware](#firmware) and
+[`firmware/esc/` (coordinator)](../../firmware/esc/README.md)). Its voltage tracked a meter
+within ~1 % on the bench, disarmed, but does not follow the pack in flight (coordinator#675),
+and its current scale is the AM32 generic value.
 
 ## Serial ports (as wired)
 
