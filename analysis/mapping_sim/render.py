@@ -15,9 +15,9 @@ Writes into `out_dir`:
 - `manifest.json` and `README.md` -- the commit, command, config and file hashes that produced
   the directory (see `manifest.py`).
 
-The config's `renderer` picks how pixels are made: `trace` (the default) ray-casts the closed-form
-solids on the CPU, `raster` draws their triangles on the GPU (`raster.py`). Both evaluate the same
-texture and stars on the same geometry.
+The config's `renderer` picks how pixels are made: `raster` (the default) draws the solids'
+triangles on the GPU (`raster.py`), `trace` ray-casts the closed-form solids on the CPU. Both
+evaluate the same texture and stars on the same geometry.
 
 `--scale` renders at a fraction of the sensor resolution (intrinsics scaled to match) for quick
 local checks; a real run uses 1. `--jobs` is how many images are worked on at once: with `trace`,
@@ -139,7 +139,7 @@ def render(cfg: dict, out: pathlib.Path, scale: float = 1.0, limit: int | None =
             geo.append(f"{name} {e:.4f} {n:.4f} {u:.4f} nan nan nan {acc_h} {acc_v}")
             shots[name] = {"camera": cam.name, "time_s": pose.time_s, "R_wc": R_wc.tolist(), "center": C.tolist()}
 
-    RENDERERS[cfg.get("renderer", "trace")](work, jobs)
+    RENDERERS[cfg.get("renderer", "raster")](work, jobs)
 
     (out / "geo.txt").write_text("\n".join(geo) + "\n")
     truth = {
