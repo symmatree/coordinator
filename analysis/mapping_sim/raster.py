@@ -7,10 +7,10 @@ Two passes per image:
    90 degrees right, left, down and up of it -- the faces of a cube with the back one left out,
    which no lens under 180 degrees reaches. Each is an ordinary vertex and fragment shader pass
    over the scene's triangles (`Scene.triangles`) with a depth buffer. The fragment shader
-   evaluates the same texture `Texture.sample` does at the interpolated world position: the same
-   hash, lattice rotations, offsets and per-solid seeds, octaves finer than the face pixel's
-   footprint on the surface (from the screen-space derivatives of world position) faded out, and
-   the same Siemens stars. Faces are rendered at the lens centre's pixel density, so a face pixel
+   evaluates the scene's texture (`Texture`'s octaves, lattice rotations and offsets, a seed per
+   solid) at the interpolated world position, with octaves finer than the face pixel's footprint
+   on the surface (from the screen-space derivatives of world position) faded out, and the
+   Siemens stars `Box.decal` describes. Faces are rendered at the lens centre's pixel density, so a face pixel
    is never larger than the image pixel it ends up in, and they are mipmapped.
 2. **Lens.** A full-screen pass at the sensor's size: each pixel's ray from
    `KannalaBrandt.unproject` (here in GLSL), the face it leaves through, and a trilinear,
@@ -98,7 +98,7 @@ out float value;
 
 const int STAR_SECTOR_PAIRS = %(sectors)d;
 
-// scene._hash, on the same uint32 arithmetic.
+// Integer lattice point -> float in [-1, 1): a multiply-xorshift mix on uint32, which wraps.
 float lattice(ivec3 i, uint seedmix) {
     uint h = uint(i.x) * 0x8DA6B343u;
     h ^= uint(i.y) * 0xD8163841u;
@@ -112,7 +112,7 @@ float lattice(ivec3 i, uint seedmix) {
     return float(h) / 2147483648.0 - 1.0;
 }
 
-// scene.value_noise.
+// Unit-lattice point -> smoothly interpolated noise in [-1, 1].
 float value_noise(vec3 p, uint seedmix) {
     vec3 fl = floor(p);
     vec3 f = p - fl;
@@ -130,7 +130,7 @@ float value_noise(vec3 p, uint seedmix) {
 
 void main() {
     float fp = max(max(length(dFdx(v_world)), length(dFdy(v_world))), 1e-9);
-    // Texture.sample, with solid_seed = solid index + 1 as Scene.shade passes it.
+    // Full weight at >= 4 pixels per wavelength, none at <= 2; each solid seeded by its index + 1.
     float v = 0.0;
     for (int o = 0; o < n_oct; o++) {
         float w = clamp(lam[o] / fp / 2.0 - 1.0, 0.0, 1.0);
