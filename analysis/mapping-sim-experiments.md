@@ -95,12 +95,20 @@ with real heading, roll and pitch.
 | | mission as planned | as flown |
 |---|---|---|
 | images reconstructed | 1104 / 1104 | 1272 / 1272 |
-| similarity fit: scale, rotation | 0.99964, 0.0044 deg | 0.99964, 0.0032 deg |
-| camera position error, median / p90 / max | 7.2 / 10.8 / 15.8 mm | 6.6 / 12.1 / 33.2 mm |
-| camera rotation error, median / p90 / max | 0.0079 / 0.0092 / 0.0120 deg | 0.0080 / 0.0112 / 0.0216 deg |
-| sparse points; distance to true surface, median / p90 | 840,671; 3.2 / 23 cm | 926,434; 3.2 / 24 cm |
+| similarity fit: scale, rotation | 0.99964, 0.652 deg | 0.99964, 0.652 deg |
+| camera position error, median / p90 / max | 0.66 / 1.11 / 2.95 mm | 0.72 / 1.15 / 1.79 mm |
+| camera rotation error, median / p90 / max | 0.0015 / 0.0025 / 0.0043 deg | 0.0019 / 0.0030 / 0.0053 deg |
+| sparse points; distance to true surface, median / p90 | 840,671; 3.1 / 23 cm | 926,434; 3.0 / 24 cm |
 | OpenSfM reconstruct stage | 2382 s | 3366 s |
 | ODM pod: wall, peak / mean memory, core-hours | 72 min, 17.8 / 9.1 GiB, 5.9 | 93 min, 21.2 / 11.4 GiB, 6.9 |
+
+The scores are of each run's `opensfm/reconstruction.topocentric.json`, in
+`score-topocentric.json` in its run directory. The workflow's `score.json` beside it scored ODM's
+UTM copy (topic 4) and gave 7.2 and 6.6 mm median position error, a 0.0044 and 0.0032 deg fit
+rotation. The 0.652 deg is the frame of these runs' priors (topic 4). So is the 0.99964 scale, as
+far as it is accounted for: the priors were scene metres laid out as UTM grid metres, and the UTM
+point scale factor at the site is 0.99968; the remaining 4e-5 is not accounted for. Since
+coordinator#716 the fit scale is 1 to 1e-8 (topic 4).
 
 The recovered focal length was 0.47744-0.47745 in both, against 0.47743 true, from a starting
 value of 0.4722 (the EXIF 35 mm equivalent is an integer, 17 / 36): the 1.1% starting error did
@@ -153,10 +161,10 @@ render:
 
 | | free | rig |
 |---|---|---|
-| camera position error after the similarity fit, median / p90 / max | 6.6 / 12 / 33 mm | 0.84 / 1.3 / 2.0 mm |
-| camera rotation error, median / max | 0.008 / 0.022 deg | 0.0019 / 0.0049 deg |
-| point distance to true surface, median / p90 | 3.2 / 24 cm | 3.1 / 24 cm |
-| similarity fit rotation | 0.0032 deg | 0.652 deg, about vertical |
+| camera position error after the similarity fit, median / p90 / max | 0.72 / 1.15 / 1.79 mm | 0.84 / 1.3 / 2.0 mm |
+| camera rotation error, median / max | 0.0019 / 0.0053 deg | 0.0019 / 0.0049 deg |
+| point distance to true surface, median / p90 | 3.0 / 24 cm | 3.1 / 24 cm |
+| similarity fit rotation | 0.652 deg | 0.652 deg, about vertical |
 | camera centres against OpenSfM's own GPS priors, horizontal, median / max | 0.62 / 1.08 m | 1 / 2 mm |
 | OpenSfM reconstruct stage | 3366 s | 1797 s |
 | ODM pod: peak / mean memory, core-hours | 21.2 / 11.4 GiB, 6.9 | 21.2 / 9.4 GiB, 6.2 |
@@ -234,13 +242,30 @@ rig's assumptions on real data: that the calibration and the mounts are right, a
 cameras do not move against each other in flight. The rig saves 22 of the free run's 88 min of
 ODM. The step past `export_geocoords` is not being built for now.
 
-**The workflow's `score.json` for `-free` scores the UTM copy.** The `tiles` workflow's score step
-reads `opensfm/reconstruction.json`, which after a completed ODM run is the converted one. Scored
-that way, `-free/score.json` gives a fit rotation of 0.619 deg (UTM grid convergence at the
-reference point) and a 6.6 mm median position error. `score-topocentric.json` beside it scores
-`reconstruction.topocentric.json`. The earlier free runs' `score.json` (topic 2 and the table
-above) were scored the same way, so their position errors include the projection; their
-topocentric reconstructions have not been rescored.
+**Camera-to-camera poses in the free run, capture by capture.** Each camera's pose in the ne
+camera's frame, at each of the 318 captures of `-free`, against the same from the truth:
+
+| | offset, median / p90 / max | rotation, median / p90 / max |
+|---|---|---|
+| nw against ne | 0.70 / 1.20 / 1.80 mm | 0.0013 / 0.0022 / 0.0037 deg |
+| se against ne | 0.67 / 1.18 / 1.85 mm | 0.0014 / 0.0025 / 0.0038 deg |
+| sw against ne | 0.76 / 1.30 / 1.98 mm | 0.0016 / 0.0028 / 0.0040 deg |
+
+This is the free solve's spread with rigid mounts and perfect images: the floor that a mount
+moving between captures has to exceed to show in a free run. In the free solve a moving camera's
+own pose follows it, so it does not raise the reprojection error. A mount that is wrong but steady
+shows as a constant offset from the given mounts, not as spread. On the vehicle each camera's
+prior comes from one RTK antenna and that camera's nominal mount, so a camera that has moved by
+1-2 cm is off its own prior by about the prior's accuracy, and by much less for millimetres. In a
+rig solve the camera cannot follow, and the motion goes into the residuals. OpenSfM's
+`stats/stats.json` gives mean reprojection error 0.719 px for `-free` and 0.728 px for `-rig`, with
+the true mounts. The sim does not render motion within an exposure.
+
+**Scoring.** Until tiles#959 the workflow's score step read `opensfm/reconstruction.json`, which
+after a completed ODM run is ODM's UTM copy: `-free/score.json` gives a fit rotation of 0.619 deg
+(UTM grid convergence at the reference point) and a 6.6 mm median position error. Since tiles#959 it
+scores `reconstruction.topocentric.json`. The earlier free runs are rescored from theirs, in
+`score-topocentric.json` in each run directory; the tables above and in topic 2 are those.
 
 ### 5. Anchoring forward and backward in time
 
@@ -281,8 +306,6 @@ The sim's lens has no distortion, so it tests less than a real lens would.
 
 ## Open
 
-- The `tiles` workflow's score step scores the UTM copy of the reconstruction after a completed
-  ODM run (topic 4); `reconstruction.topocentric.json` is the one in the truth's frame.
 - Rig runs stop in ODM's `export_geocoords` (topic 4); not being worked on, by the decision there.
 - The `tiles` `mapping-sim` WorkflowTemplates on the cluster have no `imagePullPolicy`, though
   tiles#953 sets `Always` and Argo CD reports the app Synced at that commit. The `20261107d` runs
