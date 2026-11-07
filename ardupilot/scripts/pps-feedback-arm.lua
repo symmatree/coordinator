@@ -2,7 +2,7 @@
 --
 -- ArduCopter 4.7.2 installs the CAM1_FEEDBAK_PIN interrupt inside
 -- AP_Camera_Backend::take_picture() (libraries/AP_Camera/AP_Camera_Backend.cpp:141)
--- and nowhere else. Until something takes a picture the PPS edges on S11 are not
+-- and nowhere else. Until something takes a picture the PPS edges on S12 are not
 -- sampled and no CAM rows are logged. This script takes one picture a few seconds
 -- after boot. With CAM1_TYPE=5 (MAVLink) that sends one DIGICAM_CONTROL to the GCS
 -- and writes one TRIG row; every PPS edge after that logs as a CAM row.

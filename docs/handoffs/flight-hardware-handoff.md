@@ -53,7 +53,8 @@ about the built board -- ask.
 
 **The PPS chain works, and coordinator#11 is closed as completed.** Board built, powered from
 the Coordinator, chrony holding `Reference ID: PPS` at stratum 1, both campods synced over the
-gadget link, the FC timing the same edge on `S11`. All five pigtail legs pass the signal: the
+gadget link. The FC leg is soldered to `S12`; until 2026-11-07 the configuration said `S11`,
+so no FC log has a `CAM` row yet. All five pigtail legs pass the signal: the
 two that did not were a free-floating input jumper on U2's `T2_FRONT` net, since reconnected.
 
 **The FC reboot-looped on 2026-10-27 and a reflash cleared it.** Hard fault 1.7 s into every
@@ -167,7 +168,7 @@ directly; `BATT_AMP_PERVLT` and `AMP_OFFSET` are analog-only. The scaling consta
 `CURRENT_OFFSET`. It is not an ArduPilot parameter and cannot be set from Mission Planner.
 
 **TBS silkscreens `S5`-`S12` where ArduPilot says `M5`-`M12`**; there are no `M9`-`M13` pads.
-`S11` carries the PPS leg into the FC as `CAM1_FEEDBAK_PIN`. `SERIAL1` and `SERIAL9`
+`S12` carries the PPS leg into the FC as `CAM1_FEEDBAK_PIN` (61). `SERIAL1` and `SERIAL9`
 are unused; `SERIAL7` is the mLRS receiver (`ardupilot/inputs/mlrs-link.param`).
 
 **The ELRS antenna is not "known" to be anchored anywhere but where he put it, and the

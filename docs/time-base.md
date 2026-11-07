@@ -245,7 +245,7 @@ UTC.
 ## Recording the edges, at both ends
 
 The FC's clock is free-running, so its edges must be logged -- `CAM1_FEEDBAK_PIN` on pad
-S11, with a hardware-captured timestamp. The parameters are below. The coordinator and the pods record theirs
+S12, with a hardware-captured timestamp. The parameters are below. The coordinator and the pods record theirs
 too, with `ppstest` into a dedicated journal namespace.
 
 Recording arrivals that chrony's discipline already implies looks redundant, and is not:
@@ -276,15 +276,20 @@ from NTP, and it starts working when a wire goes on.
 
 ## The FC leg
 
-The FC takes a buffered copy on servo pad **S11**, bound as a camera feedback input, so
+The FC takes a buffered copy on servo pad **S12**, bound as a camera feedback input, so
 every edge lands in the dataflash with a hardware-captured timestamp beside the EKF state
 at that instant. That is what ties a capture to a pose, and it does not go through UTC.
 
 **Status, 2026-10-28:** no flight log to date has a `CAM` row. The firmware arms the
 feedback pin only inside `take_picture()`, and nothing had ever called it; the fix is a
 one-shot Lua script on the FC card, `ardupilot/scripts/pps-feedback-arm.lua`, and the
-first log after it is deployed is the first test of the S11 wire itself. Mechanism in
+first log after it is deployed is the first test of the wire itself. Mechanism in
 [rekon10/ardupilot.md](rekon10/ardupilot.md), "Camera feedback pin".
+
+**Status, 2026-11-07:** the leg is soldered to S12, and the configuration had pointed at S11
+(an empty pad). With the script deployed, the 2026-10-30 logs and the mLRS telemetry since
+2026-11-02 show the handler armed (TRIG) and no edges, except one CAMERA_FEEDBACK at
+2026-11-03 01:48:13Z. `pps-feedback.param` now names S12 (`CAM1_FEEDBAK_PIN` 61).
 
 Which pad, why it is free and what else could take it:
 [rekon10/flight-platform.md](rekon10/flight-platform.md). The parameters and what each
