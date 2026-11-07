@@ -22,11 +22,11 @@ BATT_LOW_MAH,0
 BATT_CRT_MAH,250
 BATT_LOW_TIMER,0
 #
-# Failsafe ACTIONS: Land on BOTH low and critical (1). Land is the correct action
-#   under canopy (RTL's climb-then-home is not). ardupilot.md prose still describes
-#   LOW as warn-only (=0); that is older -- the export is current.
-BATT_FS_LOW_ACT,1
-BATT_FS_CRT_ACT,1
+# Failsafe ACTIONS: RTL on both low and critical (2). Was Land (1), chosen for flight
+#   under canopy, where RTL's climb-then-home is the wrong move. For overhead work RTL is
+#   the safe action: Seth, 2026-11-07.  provenance: 2026-11-07
+BATT_FS_LOW_ACT,2
+BATT_FS_CRT_ACT,2
 #
 # Sag compensation: scale thrust between these pack voltages.  provenance: ac57658 2026-04-25
 MOT_BAT_VOLT_MAX,24.6
