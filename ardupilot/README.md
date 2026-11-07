@@ -17,6 +17,7 @@ ground truth `verify.py` checks the fragments against. Hardware/build narrative 
 | `inputs/*.param` | **The maintained config** -- one commented `.param` per device/subsystem, named for what it holds, applied to the FC. Inspired by the ArduPilot Methodic Configurator. |
 | `verify.py` | Round-trip check: every fragment value matches the export (see [Verifying](#verifying)). |
 | `gen_defaults_sitl.py` | Dumps a firmware version's code-defaults from SITL -- used on a firmware bump to tell "the default changed" from "our value changed." |
+| `*.waypoints` | Missions, QGC WPL 110 as Mission Planner saves them. Loaded with `coord fc-mission push` (see [Loading a mission](#loading-a-mission)). |
 | `scripts/*.lua` | Lua that runs on the FC. Deployed by copying to `APM/scripts/` on the FC's SD card (`SCR_ENABLE` is 1); the firmware loads the directory at boot. One file today, `pps-feedback-arm.lua`, which arms the PPS feedback pin each boot -- see `docs/rekon10/ardupilot.md`, "Camera feedback pin". |
 
 The fragments are hand-curated: they carry the rationale and provenance behind the
@@ -57,6 +58,17 @@ means "not yet applied." Run it by hand while reconciling: `python3 ardupilot/ve
    with its stack stopped, which does both and writes the export in Mission Planner's format:
    `tar -C ardupilot/inputs -c . | ssh pi@coordinator 'sudo coord fc-params push' > ardupilot/rekon10-methodi.param`
 3. `python3 ardupilot/verify.py` -- a mismatch means the fragment and the FC still disagree.
+
+## Loading a mission
+
+From the coordinator with its stack stopped, by the MAVLink mission protocol. The FC's copy
+comes back on stdout in the same format:
+
+    ssh pi@coordinator 'sudo coord fc-mission push' < ardupilot/map-test-1.waypoints > readback.waypoints
+    diff ardupilot/map-test-1.waypoints readback.waypoints
+
+Item 0 is home, which the FC answers with its own, so that line differs. Every other item
+is compared by the tool, and any difference is a JSON line on stderr and exit 1.
 
 On a firmware bump, diff the new export against the old to find new/changed/renamed params
 and fold the keepers into the fragments; `gen_defaults_sitl.py` dumps the new version's

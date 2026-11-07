@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Load a mission onto the flight controller, over the link we already have.
+
+    ssh pi@coordinator 'sudo coord fc-mission push' \
+        < ardupilot/map-test-1.waypoints > readback.waypoints
+
+The mission comes in on stdin as a QGC WPL 110 file, the format Mission Planner saves and
+the files in ardupilot/ are written in. It goes to the FC by the MAVLink mission protocol,
+which is what Mission Planner uses unless its "use MAVFTP" box is ticked: MISSION_COUNT,
+then a MISSION_ITEM_INT for each item the FC asks for, until its MISSION_ACK. The FC
+re-asks for an item itself after a second without it (MissionItemProtocol::update), so
+the only thing resent from here is the count, when nothing answers it.
+
+Latitude and longitude go as degrees * 1e7, parsed from the file's text: through a float32,
+as MISSION_ITEM and pymavlink's mavwp carry them, a latitude is only good to a few metres.
+
+THEN THE READ-BACK, on stdout: the mission the FC now holds, in the same format, so a diff
+against the input shows what the FC did not keep. Item 0 is home. ArduPilot does not store
+it -- read_cmd_from_storage(0) answers with the AHRS home (AP_Mission.cpp) -- so it is
+written out as the FC gave it and is not compared. Every other item is compared field for
+field, and each difference is a JSON line on stderr:
+
+  rejected   the FC's MISSION_ACK was not MAV_MISSION_ACCEPTED, with its result
+  no-reply   the FC stopped asking for items, or never answered the count
+  count      the FC holds a different number of items than was sent
+  mismatch   an item came back different, with the fields that differ
+
+Exit 0 when the FC took the mission and gives it back unchanged, 1 with any of the above
+(the read-back is still written), 2 when the input is unusable, 3 when the read-back did
+not get every item (nothing on stdout).
+
+THE PORT MUST BE FREE. coordinator-mavlink holds /dev/ttyAMA0 while the stack is up --
+stop the stack first, as for `coord fc-log` and `coord fc-params`.
+
+WHY THIS RUNS IN A CONTAINER, and the image it borrows, are coord-fc-log's: pymavlink is
+in the coordinator-mavlink image and not on the host.
+"""
+
+from __future__ import annotations
+
+import decimal
+import importlib.machinery
+import importlib.util
+import json
+import os
+import shutil
+import struct
+import sys
+import time
+
+DEVICE = os.environ.get("COORD_FC_DEVICE", "/dev/ttyAMA0")
+BAUD = int(os.environ.get("COORD_FC_BAUD", "1500000"))
+# coord-fc-log's identity, for the same reason: not the FC, not a GCS.
+SRC_SYSTEM = 250
+SRC_COMPONENT = 1
+MISSION = 0  # MAV_MISSION_TYPE_MISSION
+# The upload: silence this long means the FC has given up (its own upload timeout is
+# longer, and it re-asks every second), and the count is sent this many times.
+QUIET_S = 5.0
+COUNT_SENDS = 3
+# The read-back: each item asked for this many times, this long apart.
+REPLY_S = 0.7
+RESENDS = 3
+
+FIELDS = ("frame", "command", "autocontinue", "param1", "param2", "param3", "param4",
+          "x", "y", "z")
+
+
+def _fc_log():
+    """coord-fc-log, for the image lookup. It sits beside this script on the host."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coord-fc-log")
+    spec = importlib.util.spec_from_loader(
+        "coord_fc_log", importlib.machinery.SourceFileLoader("coord_fc_log", path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def reexec_in_container() -> "None":
+    """Re-run inside the mavlink image, as coord-fc-log does, with stdin passed through."""
+    if shutil.which("podman") is None:
+        sys.exit("coord-fc-mission: no pymavlink and no podman; cannot reach the FC")
+    me = os.path.abspath(__file__)
+    cmd = [
+        "podman", "run", "--rm", "-i", "--pull", "never", "--entrypoint", "python3",
+        "--device", f"{DEVICE}:{DEVICE}",
+        "-v", f"{me}:{me}:ro",
+        _fc_log().resolve_image(), me,
+    ] + sys.argv[1:]
+    os.execvp("podman", cmd)
+
+
+try:
+    from pymavlink import mavutil  # noqa: E402
+except ImportError:
+    mavutil = None
+    if __name__ == "__main__":
+        reexec_in_container()
+
+
+def ev(obj: dict) -> None:
+    """One JSONL event on stderr. stdout belongs to the read-back."""
+    sys.stderr.write(json.dumps(obj) + "\n")
+    sys.stderr.flush()
+
+
+def as_float32(v: float) -> float:
+    """What survives the trip: MISSION_ITEM_INT carries params and z as float32."""
+    return struct.unpack("<f", struct.pack("<f", v))[0]
+
+
+def degrees_e7(text: str) -> int:
+    """A latitude or longitude as MISSION_ITEM_INT carries it, from the file's text."""
+    return int((decimal.Decimal(text) * 10_000_000).to_integral_value(decimal.ROUND_HALF_EVEN))
+
+
+def parse_waypoints(text: str) -> "list[dict]":
+    """QGC WPL 110: a header line, then one tab-separated item per line --
+    seq current frame command p1 p2 p3 p4 lat lon alt autocontinue."""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines or lines[0].strip() != "QGC WPL 110":
+        raise ValueError("not a QGC WPL 110 file: the first line is not `QGC WPL 110`")
+    items = []
+    for n, raw in enumerate(lines[1:], 2):
+        f = raw.split("\t")
+        if len(f) != 12:
+            raise ValueError(f"line {n}: {len(f)} fields, not 12: {raw!r}")
+        try:
+            item = {"seq": int(f[0]), "current": int(f[1]), "frame": int(f[2]),
+                    "command": int(f[3]),
+                    **{f"param{i}": as_float32(float(f[3 + i])) for i in range(1, 5)},
+                    "x": degrees_e7(f[8]), "y": degrees_e7(f[9]),
+                    "z": as_float32(float(f[10])), "autocontinue": int(f[11])}
+        except (ValueError, decimal.InvalidOperation) as exc:
+            raise ValueError(f"line {n}: {exc}: {raw!r}") from None
+        if item["seq"] != len(items):
+            raise ValueError(f"line {n}: seq {item['seq']} where {len(items)} comes next")
+        items.append(item)
+    if not items:
+        raise ValueError("no items")
+    return items
+
+
+def _num(v: float, places: int) -> str:
+    """`v` to `places`, from the shortest decimal that is the same float32: 357.2 comes
+    back from the FC as 357.20001220703125, which Mission Planner saved as 357.200000."""
+    for digits in range(1, 10):
+        s = f"{v:.{digits}g}"
+        if as_float32(float(s)) == as_float32(v):
+            break
+    return f"{float(s):.{places}f}"
+
+
+def write_waypoints(items: "list[dict]") -> str:
+    """Back to QGC WPL 110, with Mission Planner's formatting, so a diff against a file it
+    saved shows only what changed: home's params bare and its position to 7 places, every
+    other item's params and position to 8, altitudes to 6."""
+    out = ["QGC WPL 110"]
+    for it in items:
+        home = it["seq"] == 0
+        params = [(str(int(p)) if home and p == int(p) else _num(p, 8))
+                  for p in (it[f"param{i}"] for i in range(1, 5))]
+        pos = [f"{decimal.Decimal(it[k]).scaleb(-7):.{7 if home else 8}f}"
+               for k in ("x", "y")]
+        out.append("\t".join([str(it["seq"]), str(it["current"]), str(it["frame"]),
+                              str(it["command"]), *params, *pos, _num(it["z"], 6),
+                              str(it["autocontinue"])]))
+    return "\n".join(out) + "\n"
+
+
+def item_of(msg) -> dict:
+    return {"seq": msg.seq, "current": msg.current, "frame": msg.frame,
+            "command": msg.command, "param1": msg.param1, "param2": msg.param2,
+            "param3": msg.param3, "param4": msg.param4, "x": msg.x, "y": msg.y,
+            "z": msg.z, "autocontinue": msg.autocontinue}
+
+
+def send_item(m, it: dict) -> None:
+    m.mav.mission_item_int_send(
+        m.target_system, m.target_component, it["seq"], it["frame"], it["command"],
+        it["current"], it["autocontinue"], it["param1"], it["param2"], it["param3"],
+        it["param4"], it["x"], it["y"], it["z"], MISSION)
+
+
+def upload(m, items: "list[dict]") -> int:
+    """The mission protocol, the GCS side. Returns the number of complaints (0 or 1)."""
+    counts = 0
+    asked = False
+    last_heard = 0.0
+    while True:
+        if not asked and time.time() - last_heard >= QUIET_S / COUNT_SENDS:
+            if counts == COUNT_SENDS:
+                ev({"complaint": "no-reply", "at": "MISSION_COUNT", "sent": counts})
+                return 1
+            m.mav.mission_count_send(m.target_system, m.target_component, len(items),
+                                     MISSION)
+            counts += 1
+            last_heard = time.time()
+        msg = m.recv_match(type=["MISSION_REQUEST", "MISSION_REQUEST_INT", "MISSION_ACK"],
+                           blocking=True, timeout=0.25)
+        if msg is None or getattr(msg, "mission_type", MISSION) != MISSION:
+            if asked and time.time() - last_heard > QUIET_S:
+                ev({"complaint": "no-reply", "at": "items", "quiet_s": QUIET_S})
+                return 1
+            continue
+        last_heard = time.time()
+        if msg.get_type() == "MISSION_ACK":
+            if msg.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
+                ev({"event": "uploaded", "items": len(items)})
+                return 0
+            ev({"complaint": "rejected",
+                "result": mavutil.mavlink.enums["MAV_MISSION_RESULT"][msg.type].name})
+            return 1
+        asked = True
+        if 0 <= msg.seq < len(items):
+            send_item(m, items[msg.seq])
+
+
+def request(m, send, want: str, match) -> "object | None":
+    """Send, wait for a `want` that `match` accepts, resend; None after the resends."""
+    for _ in range(1 + RESENDS):
+        send()
+        deadline = time.time() + REPLY_S
+        while time.time() < deadline:
+            msg = m.recv_match(type=want, blocking=True,
+                               timeout=max(0.0, deadline - time.time()))
+            if msg is not None and getattr(msg, "mission_type", MISSION) == MISSION \
+                    and match(msg):
+                return msg
+    return None
+
+
+def download(m) -> "list[dict] | None":
+    """The mission the FC holds, item by item, or None if some never arrived."""
+    ts, tc = m.target_system, m.target_component
+    cnt = request(m, lambda: m.mav.mission_request_list_send(ts, tc, MISSION),
+                  "MISSION_COUNT", lambda _: True)
+    if cnt is None:
+        ev({"event": "error", "message": "no MISSION_COUNT for the read-back"})
+        return None
+    items = []
+    for seq in range(cnt.count):
+        msg = request(m, lambda: m.mav.mission_request_int_send(ts, tc, seq, MISSION),
+                      "MISSION_ITEM_INT", lambda msg: msg.seq == seq)
+        if msg is None:
+            ev({"event": "error", "message": "the read-back did not complete",
+                "items_expected": cnt.count, "items_received": len(items)})
+            return None
+        items.append(item_of(msg))
+    m.mav.mission_ack_send(ts, tc, mavutil.mavlink.MAV_MISSION_ACCEPTED, MISSION)
+    return items
+
+
+def compare(sent: "list[dict]", held: "list[dict]") -> int:
+    """Every item after home, field for field. Returns the number of complaints."""
+    complaints = 0
+    if len(held) != len(sent):
+        ev({"complaint": "count", "sent": len(sent), "fc": len(held)})
+        complaints += 1
+    for a, b in zip(sent[1:], held[1:]):
+        diff = {k: {"sent": a[k], "fc": b[k]} for k in FIELDS if a[k] != b[k]}
+        if diff:
+            ev({"complaint": "mismatch", "seq": a["seq"], "fields": diff})
+            complaints += 1
+    return complaints
+
+
+def connect():
+    os.environ["MAVLINK20"] = "1"
+    m = mavutil.mavlink_connection(
+        DEVICE, baud=BAUD, source_system=SRC_SYSTEM,
+        source_component=SRC_COMPONENT, dialect="ardupilotmega")
+    if m.wait_heartbeat(timeout=20) is None:
+        sys.exit(f"coord-fc-mission: no heartbeat from the FC on {DEVICE}")
+    return m
+
+
+def main() -> int:
+    if sys.argv[1:] != ["push"]:
+        print("usage: coord fc-mission push < mission.waypoints", file=sys.stderr)
+        return 2
+    try:
+        items = parse_waypoints(sys.stdin.read())
+    except ValueError as exc:
+        print(f"coord-fc-mission: {exc}", file=sys.stderr)
+        return 2
+    m = connect()
+    complaints = upload(m, items)
+    held = download(m)
+    if held is None:
+        return 3
+    complaints += compare(items, held)
+    sys.stdout.write(write_waypoints(held))
+    sys.stdout.flush()
+    ev({"event": "done", "items": len(items), "complaints": complaints,
+        "home": {"x": held[0]["x"], "y": held[0]["y"], "z": held[0]["z"]} if held else None})
+    return 1 if complaints else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

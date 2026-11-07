@@ -67,6 +67,8 @@ Usage: coord <command>
   fc-log list|pull          FC dataflash logs over ttyAMA0 (stack must be stopped)
   fc-params push            Set FC params from a tar of .param files on stdin
                             (stack must be stopped)
+  fc-mission push           Load a .waypoints mission from stdin onto the FC
+                            (stack must be stopped)
   sessions list|package|delete   Capture sessions on this device
 
 Environment:
@@ -134,6 +136,10 @@ fc-log)
 fc-params)
 	# The same port, held the same way.
 	exec /usr/local/bin/coord-fc-params "$@"
+	;;
+fc-mission)
+	# And again.
+	exec /usr/local/bin/coord-fc-mission "$@"
 	;;
 -h | --help | help | "")
 	usage
