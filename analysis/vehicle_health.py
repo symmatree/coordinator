@@ -47,6 +47,9 @@ def collectd_series(node_dir):
             continue
         if "epoch" not in df.columns or df.empty:
             continue
+        # collectd sometimes writes a row with an empty epoch (`,0`), and after the boot
+        # clock step it can write a day file's first row twice.
+        df = df.dropna(subset=["epoch"]).drop_duplicates("epoch")
         for col in df.columns:
             if col == "epoch":
                 continue
