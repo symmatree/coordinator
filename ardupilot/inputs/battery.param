@@ -22,9 +22,7 @@ BATT_LOW_MAH,0
 BATT_CRT_MAH,250
 BATT_LOW_TIMER,0
 #
-# Failsafe ACTIONS: RTL on both low and critical (2). Was Land (1), chosen for flight
-#   under canopy, where RTL's climb-then-home is the wrong move. For overhead work RTL is
-#   the safe action: Seth, 2026-11-07.  provenance: 2026-11-07
+# Failsafe ACTIONS: 2 = RTL on both low and critical.  provenance: 2026-11-07
 BATT_FS_LOW_ACT,2
 BATT_FS_CRT_ACT,2
 #

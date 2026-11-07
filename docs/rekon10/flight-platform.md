@@ -54,9 +54,6 @@ the cable is bare wire to the pad.
 "all eight" was not safe to assume. Moot for a 3.3 V buffer; it matters if a signal
 generator or a 5 V-powered source ever reaches a pad.
 
-It is on `S12`, not `S11`: until 2026-11-07 the configuration said `S11`, so the FC watched
-an empty pad.
-
 **Interrupt capacity for them.** `_attach_interruptI` refuses a pad whose EXTI line event
 is already claimed, and on STM32 those are shared by pin *number* across every port. For
 pin 6 the users here are `PA6` (SPI1_MISO), `PB6` (I2C1_SCL), `PC6` (USART6_TX) and `PD6`

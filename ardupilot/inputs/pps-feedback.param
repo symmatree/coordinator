@@ -3,10 +3,9 @@
 #   the pad, and what is free  docs/rekon10/flight-platform.md, "Flight controller"
 #   what the signal is for     docs/time-base.md
 #
-# Pad S12 = PE6 = GPIO(61): where the leg is soldered (seen 2026-11-07). The config had
-#   said S11 (PE5, GPIO 60), so the handler watched an empty pad and no CAM row was ever
-#   logged. EXTI line 6 is free here: PA6, PB6, PC6, PD6 are SPI1/I2C1/USART6/USART2
-#   peripherals and the hwdef declares no interrupt pins.  provenance: 2026-11-07
+# Pad S12 = PE6 = GPIO(61), where the leg is soldered. EXTI line 6 is free here: PA6, PB6,
+#   PC6, PD6 are SPI1/I2C1/USART6/USART2 peripherals and the hwdef declares no interrupt
+#   pins.  provenance: 2026-11-07
 SERVO12_FUNCTION,-1
 CAM1_FEEDBAK_PIN,61
 # S11 back to its default (disabled): nothing is on it.

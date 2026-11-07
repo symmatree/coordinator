@@ -53,8 +53,8 @@ about the built board -- ask.
 
 **The PPS chain works, and coordinator#11 is closed as completed.** Board built, powered from
 the Coordinator, chrony holding `Reference ID: PPS` at stratum 1, both campods synced over the
-gadget link. The FC leg is soldered to `S12`; until 2026-11-07 the configuration said `S11`,
-so no FC log has a `CAM` row yet. All five pigtail legs pass the signal: the
+gadget link. The FC leg is soldered to `S12`, and no FC log has a `CAM` row yet. All five
+pigtail legs pass the signal: the
 two that did not were a free-floating input jumper on U2's `T2_FRONT` net, since reconnected.
 
 **The FC reboot-looped on 2026-10-27 and a reflash cleared it.** Hard fault 1.7 s into every
