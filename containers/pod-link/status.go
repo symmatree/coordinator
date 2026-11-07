@@ -99,10 +99,10 @@ type podStatus struct {
 	SelfRSSBytes    int64 `json:"self_rss_bytes,omitempty"`
 	SelfMajorFaults int64 `json:"self_major_faults,omitempty"`
 
-	// WILL ARMING THIS POD WORK: every payload subsystem it has is ready. Today that is
-	// the camera's own `ready` -- warm, synced and settled, which the camera decides --
-	// AND every accelerometer the reader reports as present AND chrony on the 1 Hz
-	// (`rtc.pps_selected`), without which a synced camera is synced to its own clock.
+	// WILL ARMING THIS POD WORK: every sensor it detected is ready -- the camera's own
+	// `ready`, warm, synced and settled, which the camera decides -- AND chrony on the
+	// 1 Hz (`rtc.pps_selected`), without which a synced camera is synced to its own clock.
+	// A sensor that was not detected is left out. See podReady.
 	//
 	// COMBINED HERE because this is the process holding both documents. The readers are
 	// the coordinator's front panel (128 px, someone in a field with no network deciding
@@ -111,8 +111,8 @@ type podStatus struct {
 	// #577. The panel's per-subsystem letters come from the documents below; this is the
 	// verdict those letters explain.
 	//
-	// Absent on a pod with no payload subsystem at all: the coordinator publishes
-	// neither document, and a bare `true` there would assert something nobody measured.
+	// Absent on a pod with no detected sensor: the coordinator publishes neither document,
+	// and a bare `true` there would assert something nobody measured.
 	Ready *bool `json:"ready,omitempty"`
 
 	// The capture processes' own documents, passed through untouched.
@@ -253,34 +253,32 @@ func thisBootDoc(path string) (json.RawMessage, error) {
 
 // podReady answers "will arming this pod work" from the documents it publishes.
 //
-// Ready when every payload subsystem the pod HAS is ready -- the camera's own `ready`,
-// and every accelerometer the reader lists as present -- and chrony is on the 1 Hz. A pod
-// with neither payload document has no payload and gets no answer -- see podStatus.Ready.
+// Ready when every sensor the pod DETECTED is ready -- the camera's own `ready`, and the
+// accelerometers, which are ready by being detected -- and chrony is on the 1 Hz. A sensor
+// that was not detected is left out rather than holding the pod back: a camera reporting
+// `camera: absent`, an accelerometer listed `present: false`. The panel still shows those
+// as missing letters; this is only the verdict. A pod with no detected sensor has nothing
+// to arm and gets no answer -- see podStatus.Ready.
 //
 // READ, NOT RE-DERIVED, for the camera: `camera.ready` is warm AND synced AND settled and
-// the camera decides it (#577). This adds the accelerometers, which the camera knows
-// nothing about, and the clock, which it cannot see: libcamera's sync aligns wall clocks,
-// so a pod whose chrony is on NTP alone reports synced while hundreds of milliseconds off.
+// the camera decides it (#577). This adds the clock, which the camera cannot see:
+// libcamera's sync aligns wall clocks, so a pod whose chrony is on NTP alone reports synced
+// while hundreds of milliseconds off.
 //
-// A document that will not parse, an accel reader that lists no devices, or no clock
-// document, is NOT ready. All are "nobody has confirmed this", and on a pod whose
-// hardware is expected that is the answer -- a slipped cable reads the same as a reader
-// that never started.
+// A document that will not parse, or no clock document, is NOT ready: that is a writer
+// that is broken, not a sensor that is not fitted.
 func podReady(camera, accel, rtc json.RawMessage) *bool {
-	if camera == nil && accel == nil {
-		return nil
-	}
-	var clock struct {
-		PPSSelected *bool `json:"pps_selected"`
-	}
-	ready := rtc != nil && json.Unmarshal(rtc, &clock) == nil &&
-		clock.PPSSelected != nil && *clock.PPSSelected
+	ready, detected := true, false
 	if camera != nil {
 		var cam struct {
-			Ready bool `json:"ready"`
+			Camera string `json:"camera"`
+			Ready  bool   `json:"ready"`
 		}
-		if err := json.Unmarshal(camera, &cam); err != nil || !cam.Ready {
-			ready = false
+		if err := json.Unmarshal(camera, &cam); err != nil {
+			ready, detected = false, true
+		} else if cam.Camera != "absent" {
+			detected = true
+			ready = ready && cam.Ready
 		}
 	}
 	if accel != nil {
@@ -289,15 +287,22 @@ func podReady(camera, accel, rtc json.RawMessage) *bool {
 				Present bool `json:"present"`
 			} `json:"devices"`
 		}
-		if err := json.Unmarshal(accel, &acc); err != nil || len(acc.Devices) == 0 {
-			ready = false
+		if err := json.Unmarshal(accel, &acc); err != nil {
+			ready, detected = false, true
 		} else {
 			for _, d := range acc.Devices {
-				if !d.Present {
-					ready = false
-				}
+				detected = detected || d.Present
 			}
 		}
+	}
+	if !detected {
+		return nil
+	}
+	var clock struct {
+		PPSSelected *bool `json:"pps_selected"`
+	}
+	if rtc == nil || json.Unmarshal(rtc, &clock) != nil || clock.PPSSelected == nil || !*clock.PPSSelected {
+		ready = false
 	}
 	return &ready
 }

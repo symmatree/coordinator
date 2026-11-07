@@ -179,16 +179,19 @@ Retained, republished every `POD_LINK_STATUS_PERIOD_S` (default 5 s), so a late
 subscriber -- a front panel that just booted, a ground screen on reconnect -- gets the
 whole current picture in one subscribe with nothing to assemble.
 
-`ready` is the pod's own answer to **will arming this pod work**: the camera's `ready`
-(warm, synced and settled, which the camera decides) AND every accelerometer the reader
-lists as present AND chrony on the 1 Hz (`rtc.pps_selected`). The clock is in it because
-libcamera's sync aligns wall clocks, so a camera on a pod whose chrony is on NTP alone
-reports synced while off its neighbours by as much as NTP is. It is combined by pod-link,
-which is the process holding the documents, so that
-the coordinator's front panel and the fleet-control table read one field rather than each
-assembling their own -- which is how they came to disagree before #577. Absent on a pod
-with no payload subsystem at all, because a bare `true` there would assert something
-nobody measured.
+`ready` is the pod's own answer to **will arming this pod work**: every sensor the pod
+detected is ready -- the camera's `ready` (warm, synced and settled, which the camera
+decides), and the accelerometers by being detected -- AND chrony on the 1 Hz
+(`rtc.pps_selected`). A sensor that was not detected is left out: a camera reporting
+`camera: absent`, an accelerometer listed `present: false`. The panel still shows it as a
+missing or lower-case letter. The clock is in it because libcamera's sync aligns wall
+clocks, so a camera on a pod whose chrony is on NTP alone reports synced while off its
+neighbours by as much as NTP is. It is combined by pod-link, which is the process holding
+the documents, so that the coordinator's front panel, the fleet-control table and the
+bench cycle read one field rather than each assembling their own -- which is how they came
+to disagree before #577. A document that will not parse, or no clock document, is not
+ready. Absent on a pod with no detected sensor, because a bare `true` there would assert
+something nobody measured.
 
 ```json
 {

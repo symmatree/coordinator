@@ -75,38 +75,35 @@ check("the count is every node in the cycle, the coordinator included",
       len(bc.NODES) == 5 and "coordinator" in bc.NODES
       and all(f"campod-{p}" in bc.NODES for p in ("se", "sw", "ne", "nw")))
 
-# ---- camera readiness -----------------------------------------------------------------
-# ONE FIELD, DECIDED ON THE POD. `camera.ready` is warm AND synced, combined by the campod
-# (#577); this gate reads it and combines nothing. It used to assemble readiness here from
-# `ready` (which then meant warm only) plus three-valued `sync_ready` -- and the front
-# panel assembled it differently, which is how the panel came to show a ready pod for the
-# ~80 s between warmup ending and the pair aligning.
+# ---- pod readiness --------------------------------------------------------------------
+# ONE FIELD, DECIDED ON THE POD. The pod's `ready` is pod-link's verdict over its detected
+# sensors and its clock; this wait reads it and combines nothing. The halves -- the camera's
+# own `ready`, the accels -- are detail, and a wait that read them would be a second
+# definition beside the panel's.
 #
 # Why the wait has to be real: the window of 2026-10-18T22:40 opened 18.5 s before the
 # pair was aligned, 38 frames on each pod recorded `sync_wait` and were thrown away, and
 # that run kept 232 frames where its neighbours kept 248 and 250.
-def _cam(ready=True):
-    return {"raw": {"camera": {"ready": ready}}}
+def _pod(ready=True, camera_ready=True):
+    return {"raw": {"ready": ready, "camera": {"ready": camera_ready}}}
 
 
-check("the coordinator is not a camera gate: no OAK on this flight",
-      "coordinator" not in bc.CAMERA_NODES and set(bc.CAMERA_NODES) == set(bc.CAMPODS))
-_ALL_BUT_ONE = [_cam() for _ in bc.CAMERA_NODES[1:]]
-check("every campod ready is ready", bc.cameras_ready(_ALL_BUT_ONE + [_cam()]))
+check("the coordinator is not waited on: no OAK on this flight",
+      "coordinator" not in bc.READY_NODES and set(bc.READY_NODES) == set(bc.CAMPODS))
+_ALL_BUT_ONE = [_pod() for _ in bc.READY_NODES[1:]]
+check("every campod ready is ready", bc.pods_ready(_ALL_BUT_ONE + [_pod()]))
 check("one pod not ready is not ready",
-      not bc.cameras_ready(_ALL_BUT_ONE + [_cam(ready=False)]))
-check("a camera with no document is not ready",
-      not bc.cameras_ready(_ALL_BUT_ONE + [{"raw": {}}]))
-check("one pod short is not all of them", not bc.cameras_ready(_ALL_BUT_ONE))
-# Absent, not false: a pod running an image from before #577 publishes no `ready` at all,
-# and "the field is missing" must not read as ready.
+      not bc.pods_ready(_ALL_BUT_ONE + [_pod(ready=False)]))
+check("a pod with no document is not ready",
+      not bc.pods_ready(_ALL_BUT_ONE + [{"raw": {}}]))
+check("one pod short is not all of them", not bc.pods_ready(_ALL_BUT_ONE))
+# Absent, not false: pod-link leaves `ready` out on a pod with no detected sensor.
 check("a missing ready field is not ready",
-      not bc.cameras_ready(_ALL_BUT_ONE + [{"raw": {"camera": {"warm": True}}}]))
-# The halves are detail now. A gate that still looked at them would be the second
-# definition this change exists to delete.
-check("warm and sync_ready cannot make a pod ready on their own",
-      not bc.cameras_ready(_ALL_BUT_ONE +
-                           [{"raw": {"camera": {"warm": True, "sync_ready": True}}}]))
+      not bc.pods_ready(_ALL_BUT_ONE + [{"raw": {"camera": {"ready": True}}}]))
+# A ready camera on a pod whose chrony is off the 1 Hz is the case this wait is on the
+# pod's verdict for.
+check("a ready camera on a pod that is not ready is not ready",
+      not bc.pods_ready(_ALL_BUT_ONE + [_pod(ready=False, camera_ready=True)]))
 
 # ---- every stage actually runs ---------------------------------------------------------
 # The first real workflow submission died on `NameError: name 'stage_deploy' is not defined`.
@@ -154,6 +151,7 @@ class _FakeFleet:
         if path == "/pods":
             self._boot -= 5000.0
             return {"pods": [{"node": n, "raw": {"as_of_boot_s": max(self._boot, 20.0),
+                                                 "ready": True,
                                                  "camera": {"ready": True,
                                                             "ready_at_mono_s": 126.9}}}
                              for n in bc.NODES]}
