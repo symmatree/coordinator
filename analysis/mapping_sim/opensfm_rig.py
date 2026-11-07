@@ -21,27 +21,48 @@ import json
 import pathlib
 from collections import defaultdict
 
+from PIL import Image
 from scipy.spatial.transform import Rotation
 
 from rig import rig_from_config
 
 
+def opensfm_camera_id(image: pathlib.Path) -> str:
+    """The camera model id OpenSfM gives an image (`exif.camera_id_` at ODM 3.6.2's OpenSfM), from
+    its EXIF make, model, size and 35 mm focal length, as ODM is run with `--camera-lens
+    fisheye_opencv`."""
+    with Image.open(image) as im:
+        ex = im.getexif()
+        f35 = ex.get_ifd(0x8769)[0xA405]
+        width, height = im.size
+    make, model = ex[0x010F], ex[0x0110].replace(ex[0x010F], "")
+    parts = ["v2", make.strip(), model.strip(), str(width), str(height), "fisheye_opencv", str(float(f35 / 36))[:6]]
+    return " ".join(parts).lower()
+
+
 def rig_files(render: pathlib.Path) -> tuple[dict, dict]:
     cfg = json.loads((render / "manifest.json").read_text())["config"]["contents"]
-    cameras = {}
-    for cam in rig_from_config(cfg["rig"]):
-        R_cb = cam.R_bc.T
-        cameras[cam.name] = {
-            "rotation": Rotation.from_matrix(R_cb).as_rotvec().tolist(),
-            "translation": (-R_cb @ cam.t_bc).tolist(),
-        }
     # Images are <capture>_<camera>.jpg, the capture zero-padded (render.py).
-    assignments = defaultdict(list)
+    by_camera = defaultdict(list)
     for line in (render / "geo.txt").read_text().splitlines()[1:]:
         name = line.split()[0]
         capture, camera = pathlib.Path(name).stem.split("_", 1)
-        assert camera in cameras, f"{name}: no camera {camera!r} in the render's rig"
-        assignments[capture].append([name, camera])
+        by_camera[camera].append((capture, name))
+    # Each rig camera is named after its camera model. OpenSfM's compute_statistics fails on a rig
+    # camera named anything else (rig_statistics tests a stale loop variable), and ODM with it.
+    ids = {c: opensfm_camera_id(render / "images" / shots[0][1]) for c, shots in by_camera.items()}
+    assert len(set(ids.values())) == len(ids), f"cameras share an OpenSfM camera model: {ids}"
+    cameras = {}
+    for cam in rig_from_config(cfg["rig"]):
+        R_cb = cam.R_bc.T
+        cameras[ids[cam.name]] = {
+            "rotation": Rotation.from_matrix(R_cb).as_rotvec().tolist(),
+            "translation": (-R_cb @ cam.t_bc).tolist(),
+        }
+    assignments = defaultdict(list)
+    for camera, shots in by_camera.items():
+        for capture, name in shots:
+            assignments[capture].append([name, ids[camera]])
     return cameras, dict(assignments)
 
 

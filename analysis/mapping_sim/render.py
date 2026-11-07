@@ -5,7 +5,8 @@
 Writes into `out_dir`:
 
 - `images/<capture>_<camera>.jpg` -- one still per camera per capture, with EXIF make, model,
-  focal length and capture time so ODM groups and orders them;
+  focal length and capture time so ODM groups and orders them. The model is the camera's name,
+  so OpenSfM fits each camera's intrinsics separately, as for four physical lenses;
 - `geo.txt` -- each image's true optical-centre position, in UTM with a fixed false origin, at the
   accuracy the config gives (ODM's per-image GPS prior). Orientation is left `nan`;
 - `truth.json` -- every image's true camera rotation and centre in the local scene frame, each
@@ -66,7 +67,7 @@ def render_image(scene: Scene, cam: Camera, pose: Pose, rows_per_chunk: int = 12
 def _exif(cam: Camera, when: dt.datetime, pixel_um: float) -> Image.Exif:
     ex = Image.Exif()
     ex[0x010F] = "SimArducam"  # Make
-    ex[0x0110] = f"B0310-sim-{cam.lens.width}x{cam.lens.height}"  # Model
+    ex[0x0110] = cam.name  # Model
     ifd = ex.get_ifd(0x8769)
     ifd[0x9003] = when.strftime("%Y:%m:%d %H:%M:%S")  # DateTimeOriginal
     ifd[0x9291] = f"{when.microsecond // 1000:03d}"  # SubSecTimeOriginal
