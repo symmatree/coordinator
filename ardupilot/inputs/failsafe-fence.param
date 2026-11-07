@@ -3,17 +3,19 @@
 # Radio and GCS failsafe; landing; geofence. Operating envelope: canopy-ops.md.
 #
 # --- Failsafe ---
-# Radio failsafe: 1 = always RTL. Was 3, which in 4.7.2 is "always Land" (the comment here
-#   used to say "continue mission", which is not what 3 does). RTL for overhead work: Seth,
-#   2026-11-07 -- which is safer depends on the situation, and over open ground it is RTL.
-#   provenance: 2026-11-07
+# Radio failsafe: 1 = always RTL. Over the woods a landing is a loss; RTL for any failsafe
+#   that offers it.  provenance: 2026-11-07
 FS_THR_ENABLE,1
 # GCS failsafe: 1 = RTL.
 FS_GCS_ENABLE,1
+# EKF failsafe: 2 = switch to AltHold when the mode needs position. Its options are report,
+#   Land, or AltHold; RTL needs the position estimate this failsafe has stopped trusting, so
+#   AltHold, which holds altitude under the pilot, rather than Land.  provenance: 2026-11-07
+FS_EKF_ACTION,2
 #
 # --- RTL ---
-# Climb to at least 40 m above home before returning (was 15). For overhead work: clear of
-#   trees on the way back.  provenance: 2026-11-07
+# Climb to at least 40 m above home before returning, clear of the canopy.
+#   provenance: 2026-11-07
 RTL_ALT_M,40
 #
 # --- Land ---
