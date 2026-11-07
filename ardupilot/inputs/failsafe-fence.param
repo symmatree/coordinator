@@ -3,9 +3,18 @@
 # Radio and GCS failsafe; landing; geofence. Operating envelope: canopy-ops.md.
 #
 # --- Failsafe ---
-# Throttle/radio failsafe on (3 = enabled, continue mission in Auto/Guided).
-FS_THR_ENABLE,3
+# Radio failsafe: 1 = always RTL. Was 3, which in 4.7.2 is "always Land" (the comment here
+#   used to say "continue mission", which is not what 3 does). RTL for overhead work: Seth,
+#   2026-11-07 -- which is safer depends on the situation, and over open ground it is RTL.
+#   provenance: 2026-11-07
+FS_THR_ENABLE,1
+# GCS failsafe: 1 = RTL.
 FS_GCS_ENABLE,1
+#
+# --- RTL ---
+# Climb to at least 40 m above home before returning (was 15). For overhead work: clear of
+#   trees on the way back.  provenance: 2026-11-07
+RTL_ALT_M,40
 #
 # --- Land ---
 # LAND final descent (below LAND_ALT_LOW_M) to touchdown, in m/s. Lowered from 0.5
