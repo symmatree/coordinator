@@ -64,7 +64,8 @@ def build_revision(path: str = CONTAINER_IMAGE) -> str | None:
 
 
 def api(path: str, method: str = "GET", timeout: int = 300):
-    req = urllib.request.Request(f"{FLEET_URL}{path}", method=method)
+    # Named, so fleet-control's request log can tell this script from the page and from curl.
+    req = urllib.request.Request(f"{FLEET_URL}{path}", method=method, headers={"User-Agent": "set_rtc"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as fh:
             return json.loads(fh.read() or b"null")

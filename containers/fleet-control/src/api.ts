@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import type { Config } from './config.js';
 import { findNode } from './inventory.js';
 import { converge, reboot, stop, type ConvergeKind } from './actions.js';
@@ -22,8 +22,40 @@ import {
 import { build } from './build.js';
 import { commitTitle, refHead, registryImage } from './github.js';
 
-export function buildServer(cfg: Config): FastifyInstance {
-  const app = Fastify({ logger: true });
+/** A body small enough to read in a log line is logged whole; a bigger one, by its size. */
+const BODY_LOG_MAX = 2000;
+
+function bodyForLog(body: unknown): unknown {
+  if (body === undefined || body === null) return undefined;
+  const text = typeof body === 'string' ? body : JSON.stringify(body);
+  return typeof body !== 'string' && text.length <= BODY_LOG_MAX ? body : { bytes: Buffer.byteLength(text) };
+}
+
+export function buildServer(cfg: Config, logger: FastifyServerOptions['logger'] = true): FastifyInstance {
+  const app = Fastify({ logger, disableRequestLogging: true });
+
+  // ONE LINE PER REQUEST, written when it ends, carrying everything "which endpoints are called,
+  // how often, with what arguments, by whom" needs: the route template to count by, the params,
+  // query and body that were its arguments, the user agent and forwarded-for that say who asked,
+  // and how it came out. Fastify's own pair of lines put the url on one and the status on the
+  // other, joined only by a request id, and logged no body and no caller.
+  //
+  // Not /healthz: it is the kubelet, every ten seconds.
+  app.addHook('onResponse', async (req, reply) => {
+    if (req.url === '/healthz') return;
+    req.log.info({
+      route: req.routeOptions.url ?? null,
+      method: req.method,
+      url: req.url,
+      params: req.params,
+      query: req.query,
+      body: bodyForLog(req.body),
+      ua: req.headers['user-agent'],
+      forwardedFor: req.headers['x-forwarded-for'],
+      status: reply.statusCode,
+      ms: Math.round(reply.elapsedTime),
+    }, 'request');
+  });
 
   app.get('/healthz', async () => ({ ok: true }));
 
