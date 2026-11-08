@@ -95,7 +95,10 @@ def build_revision(path: str = CONTAINER_IMAGE) -> str | None:
 
 def api(path: str, method: str = "GET", timeout: int = 300, body: dict | None = None):
     data = None if body is None else json.dumps(body).encode()
-    headers = {} if data is None else {"Content-Type": "application/json"}
+    # Named, so fleet-control's request log can tell this script from the page and from curl.
+    headers = {"User-Agent": "bench_cycle"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
     req = urllib.request.Request(f"{FLEET_URL}{path}", method=method, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as fh:
