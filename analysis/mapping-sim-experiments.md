@@ -48,7 +48,7 @@ been repeated.
 | `map-test-flown-20261107d` | the same, rasterised, WGS84 priors | 1272 | 14 min, llvmpipe on lancer | -- | the render for the two runs below |
 | `map-test-flown-20261107d-rig` | ODM on that render with the rig model | 1272 | (reused) | 56 min to `reconstruction.json`; ODM then failed in `export_geocoords` | topic 4 |
 | `map-test-flown-20261107d-free` | ODM on that render without it | 1272 | (reused) | 88 min, ODM completed | topic 4 |
-| `map-test-flown-20261107d-dense` | ODM past OpenSfM on that render, seeded with `-free`'s OpenSfM | 1272 | (reused) | (reused) | topic 3; four attempts, none has finished |
+| `map-test-flown-20261107d-dense` | ODM past OpenSfM on that render, seeded with `-free`'s OpenSfM | 1272 | (reused) | (reused) | topic 3; four attempts, none finished: the last two OOM-killed fusing |
 
 OpenSfM times are the sum of its stages in `opensfm/profile.log`. The renders before 2026-11-07
 were ray-traced; the rasteriser is now the only renderer. For the `20261107d` runs, stage times
@@ -208,14 +208,36 @@ ODM's tiled fusion is not the single pass split up. It cuts the scene with `--su
 Filter = 1`, `--postprocess-dmaps 0` and `--geometric-iters 0`. Then it concatenates the pieces'
 point clouds (`stages/openmvs.py` L127-200). How that changes the cloud is not measured.
 
-**Fourth attempt (`mapping-sim-process-ft8v4`), running.** It has a 56 GiB limit, set in the
-workflow's `podSpecPatch`, and `--rerun-from odm_filterpoints`, so the openmvs stage keeps
-`depthmaps/`. OpenMVS did not re-estimate: it has no estimation lines and went straight to the
-geometric-consistency passes, writing `.geo.dmap` files beside the kept `.dmap` ones. The kept
-files were written at 23:25-23:28, during the third attempt's filtering. So this attempt may be
-applying consistency and filtering a second time to maps that already had them. I have not read
-OpenMVS's source on what a `.dmap` holds after each phase. The third attempt's 1272 depth maps,
-its `scene.mvs` and its `Densify.ini` are copied to `runs/map-test-flown-20261107d-dense-depthmaps/`.
+**Fourth attempt (`mapping-sim-process-ft8v4`).** It had a 56 GiB limit, set in the workflow's
+`podSpecPatch`, and `--rerun-from odm_filterpoints`, so the openmvs stage kept `depthmaps/`.
+OpenMVS loaded the kept `.dmap` files and skipped estimation, then ran both geometric-consistency
+passes and filtering on them again. From the OpenMVS source (ODM's fork, tag 355, which ODM 3.6.2
+builds): an existing `.dmap` stands in for estimation only (`libs/MVS/SceneDensify.cpp` L1961).
+Each geometric pass is recomputed and renamed over the `.dmap` (L1899-1900). So the kept files
+were already the twice-refined and filtered maps, and this attempt refined and filtered them a
+second time. Fusion reached 883 of 1272 depth maps (69%) in 92 s, and the container was
+OOM-killed at its 56 GiB limit. The last sample before the kill was 54.3 GiB
+(`resources/mapping-sim-process-ft8v4.md`). The third attempt's 1272 depth maps, its `scene.mvs`
+and its `Densify.ini` were copied beforehand to `runs/map-test-flown-20261107d-dense-depthmaps/`.
+To fuse those maps without reprocessing them, run `DensifyPointCloud` with `--geometric-iters 0
+--postprocess-dmaps 0` (L1836, L1970-1978). ODM passes those flags only in its tiled path.
+
+**What fusion holds in memory, from the source.** In tag 355, `FuseDepthMaps` (L1372-1597) loads
+every depth map before it fuses any (L1395-1400). One map is depth, normal and confidence as
+floats: 20 bytes a pixel, 14.9 MB at 1152 x 648, the size of each `.dmap`. 1272 of them are
+19 GB. Each image also gets a 4-byte-per-pixel point index as fusion reaches it, up to 3.8 GB.
+Each fused point has a position, colour and normal and three small heap lists (views, weights,
+pixel coordinates), roughly 170 bytes by my count of the types. The code estimates the point count
+at 15% of all depth pixels (L1405), 142 M here, about 24 GB. The fusion loop is single-threaded
+(L1431-1559), so `--max-threads` does not change its memory. Estimation, which is threaded, ran
+near 10 GB at 16 threads in the third attempt. Two attempts were killed, at 33% fused within
+48 GiB and at 69% within 56 GiB. Neither gives the total a full fusion of these 1272 maps needs.
+
+Upstream OpenMVS (cdcseacave/openMVS `develop`, 2026-11-06, 157 commits past tag 355) fuses
+through a depth-map cache sized to free memory (`DMapCache`), not with every map resident. It
+also has `--sub-scene-memory`, which splits the scene into sub-scenes that each fit a memory
+budget. Whether its `.mvs` and `.dmap` formats read ODM's files is not checked. Neither is what
+it changes in per-point storage. ODM's latest release is 3.6.2, and ODM master still builds tag 355.
 
 ### 4. Rigid rig against free alignment
 
@@ -390,7 +412,7 @@ The sim's lens has no distortion, so it tests less than a real lens would.
   `20261107d` runs set it per workflow with a `podSpecPatch`. They also score
   `opensfm/reconstruction.json`, ODM's UTM copy (tiles#959), so the dense run's `score.json`
   is of that copy.
-- Fusion of the dense run's 1272 depth maps at 1152 px has not finished inside 48 GiB (topic 3).
+- Fusion of the dense run's 1272 depth maps at 1152 px has not finished inside 48 or 56 GiB (topic 3).
 - No scorer yet for the dense cloud against the true surfaces, or for the stars' resolved radius
   in the textured model (topic 3).
 - The render step requests no GPU, so on lancer the rasteriser runs on Mesa's llvmpipe: 1272
