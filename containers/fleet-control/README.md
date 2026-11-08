@@ -428,6 +428,21 @@ quoted table the devices carry, read with the same parser. `GIT_SHA` and `GIT_RE
 `.github/actions/build-container`; both are empty for a local build, which is reported as
 `no build manifest` rather than invented.
 
+## Who calls what
+
+Every request but `/healthz` is one log line, `msg: "request"`, written when it ends: `route`
+(the template, `null` for a url no route matched), `params`, `query`, `body` (whole up to 2000
+characters of JSON, otherwise `{bytes}`), `ua`, `forwardedFor`, `status` and `ms`. Alloy ships it
+to Loki like the rest of the pod's output. The harness scripts send `bench_cycle` and `set_rtc` as
+their user agent, so they are told apart from the page and from curl.
+
+Calls per route and caller over the last week:
+
+```logql
+sum by (route, method, ua) (count_over_time(
+  {namespace="fleet-control", container="fleet-control"} |= `"msg":"request"` | json [7d]))
+```
+
 ## curl, not just the browser
 
 The UI is one client of the routes; it has no private endpoints.
