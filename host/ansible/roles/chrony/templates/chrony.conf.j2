@@ -82,9 +82,13 @@ local stratum 10
 # --- campod: the second over the network, the phase off the wire ----------------------
 #
 # NTP from the coordinator supplies the integer second. Being right to within half a
-# second is enough for that, which the gadget link clears by orders of magnitude -- its
-# asymmetry and jitter are the reason it cannot supply the phase.
-server {{ campod_gadget_coordinator_ip }} iburst
+# second is enough for that; the gadget link's asymmetry and jitter are the reason it
+# cannot supply the phase.
+#
+# minpoll 0 maxpoll 2 = a request every 1-4 s. The PPS below is ignored while root
+# distance is 0.5 s or more, and root distance only falls when one of these samples
+# lands; it grows in between. At the default 64 s poll that is one chance a minute.
+server {{ campod_gadget_coordinator_ip }} minpoll 0 maxpoll 2
 
 # The pod's own buffered leg of the same edge, which is what actually aligns capture.
 # No lock option: a PPS refclock with no lock is used once chrony is already synchronised to
