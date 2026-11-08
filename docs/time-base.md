@@ -120,10 +120,19 @@ for all of them is worth more than no answer, since what they need from it is wh
 it is and their phase comes off the wire.
 
 **The pods take the second from the coordinator and the phase off their own leg** --
-`server <coordinator> iburst` plus an unlocked `refclock PPS /dev/pps0`. Unlocked because
-there is nothing to lock to: a pod has no SPI connection to the chip. A PPS refclock with
-no lock is used once chrony is synchronised to within half a second, which the server
-clears by orders of magnitude.
+`server <coordinator> minpoll 0 maxpoll 2` plus an unlocked `refclock PPS /dev/pps0`.
+Unlocked because there is nothing to lock to: a pod has no SPI connection to the chip. A
+PPS refclock with no lock is used once chrony is synchronised with root distance under
+0.5 s, and root distance only falls when an NTP sample lands, so the poll is 1-4 s rather
+than chrony's default 64 s.
+
+**Measured, 2026-11-07 flight boot, at the default 64 s poll.** All five devices powered
+on together. The coordinator selected its PPS at 20:49:27, 14 s after its first sample,
+correcting a 0.855 s offset. The pods' first NTP samples landed at 20:49:29-31; after the
+startup burst their root distance grew between polls to 3.1-14.2 s. se and sw fell under
+0.5 s at the 20:50:47 poll and selected PPS at 20:51:09 and 20:51:15. ne and nw stayed at
+0.69-2.2 s and had not selected PPS when capture ended at 20:54. On the 19:20 bench boot,
+with the coordinator already up, all four pods had PPS 7 s after their first NTP sample.
 
 **Reporting UTC there instead breaks it, and silently.** The reference would be a
 different clock from the pulse, and their difference -- the chip's arbitrary phase against
