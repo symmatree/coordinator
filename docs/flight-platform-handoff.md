@@ -156,10 +156,13 @@ notebook: submit a `Workflow` with a `workflowTemplateRef` via `kubectl create`.
 knowledge, not the script's. Bundles land in
 `/home/jovyan/datasets/flights/rekon10/<flight>/` with a record per node in `collected/`.
 
-**`ready` means warm AND synced, decided on the pod.** #578 and #579 landed: a campod
-publishes `warm` and `sync_ready` as detail and `ready` as the verdict, pod-link combines it
-with the accelerometers, and the panel and fleet-control read that one field. The C++
-capture computes it the same way (`SessionConfig::sync`).
+**`ready` is decided on the pod, over the sensors it detected.** A campod's camera
+`ready` is warm, `sync_ready`, and settled: five frames in a row within 50 us of the pinned
+frame duration (coordinator#725). pod-link's pod `ready` needs a detected camera's `ready` and
+chrony selected on the PPS (`coord-rtc watch` writes `pps_selected`); a camera reporting
+`absent` and accels with `present: false` are left out, and a pod with nothing detected has
+no `ready` (coordinator#726). `harness/bench_cycle.py` waits on pod `ready`. The panel shows
+`C`/`c` (ready/warm) and `S`/`s` (chrony on the PPS / pulse arriving).
 
 **Sync is no longer optional.** `CAMPOD_SYNC_LEADER` is required and an unset one exits at
 start; applying the control is fatal rather than best-effort. Seth's call, and the trivial
