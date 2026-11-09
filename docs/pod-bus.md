@@ -340,22 +340,22 @@ MAVLink frame, since the router started (#430); those bytes are not in `vehicle.
 
 Its `rtc` section is what `coord-rtc feed` last read off the DS3234
 (`/var/lib/coordinator/ipc/rtc_status`), rewritten every feed pass whether or not the
-1 Hz arrived, and passed through on the same this-boot rule as `fc`. A campod's `rtc` is
-the same document without the chip, from `coord-rtc watch` (`/tmp/campod_clock_status`,
-every 2 s): `edge`, `pps_selected`, `as_of_mono_s` and `boot_id`.
+1 Hz arrived, and passed through on the same this-boot rule as `fc`, with `pps_selected`
+added by pod-link. A campod has no chip, so its `rtc` is the two clock fields alone, both
+read by pod-link on each status pass: `edge` and `pps_selected`.
 
 | field | |
 |---|---|
-| `edge` | whether the 1 Hz arrived: the kernel's sequence number on `/sys/class/pps/pps0/assert` moving |
-| `pps_selected` | whether chrony has selected the PPS refclock (`chronyc -c tracking`); `null` when chronyc could not be asked. Part of `ready` on a pod with a payload |
+| `edge` | whether the 1 Hz arrived. The coordinator's feed: the kernel's sequence number on `/sys/class/pps/pps0/assert` moving during its pass. A campod's pod-link: that file's timestamp under 2 s old |
+| `pps_selected` | whether chrony has selected the PPS refclock: pod-link's TRACKING request to chronyd on 127.0.0.1:323, the one `chronyc tracking` sends. `null` when chronyd did not answer, with the reason in `errors`. Part of `ready` on a pod with a payload |
 | `state` | `no_response` -- every byte read the same 0x00 or 0xFF, so nothing drove MISO: the chip has no VCC or SPI is not reaching it. `reset` -- the chip answers but its time is not to be trusted: OSF set, or the registers are not a date. `ok` -- a date, OSF clear. |
 | `time`, `osf`, `control`, `status` | the registers it was decided from; `error` instead when the SPI read itself failed |
-| `as_of_mono_s`, `boot_id` | when, in the same seconds-since-boot as `as_of_boot_s`, and which boot |
+| `as_of_mono_s`, `boot_id` | coordinator: when the feed wrote it, in the same seconds-since-boot as `as_of_boot_s`, and which boot |
 
 Together they separate the cases the hub board's LED does: `no_response` with no edge is
 the board or the chip unpowered; `reset` with an edge is a chip that needs its time set;
-`ok` with no edge is the chip fine and the pulse not reaching the Pi. Absent means the feed
-has not run this boot.
+`ok` with no edge is the chip fine and the pulse not reaching the Pi. On the coordinator,
+an `rtc` with no `state` means the feed has not run this boot.
 
 ### Going closed needs no gate here
 

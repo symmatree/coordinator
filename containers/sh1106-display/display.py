@@ -112,7 +112,8 @@ def subsystem_letters(doc):
     camera = doc.get("camera") or {}
     if camera.get("warm") is True:
         letters.append("C" if camera.get("ready") is True else "c")
-    # coord-rtc's document on every role: `feed` on the coordinator, `watch` on a campod.
+    # pod-link's clock fields on every role, beside coord-rtc feed's chip state on the
+    # coordinator.
     rtc = doc.get("rtc") or {}
     if rtc.get("edge") is True:
         letters.append("S" if rtc.get("pps_selected") is True else "s")

@@ -124,11 +124,12 @@ type podStatus struct {
 	// the two. Absent when the file is missing or from an earlier boot -- see thisBootDoc.
 	FC json.RawMessage `json:"fc,omitempty"`
 
-	// coord-rtc's clock document: `edge`, whether the 1 Hz is arriving, and
-	// `pps_selected`, whether chrony is on it, from `feed` on the coordinator and `watch`
-	// on a campod. The coordinator's also carries the DS3234's `state` -- no_response,
-	// reset or ok -- read off the chip every feed pass whether or not the 1 Hz arrived.
-	// Absent when the file is missing or from an earlier boot, as for FC.
+	// The clock: `edge`, whether the 1 Hz is arriving, and `pps_selected`, whether chrony
+	// is on it, which this process asks chronyd (clockDoc). On the coordinator they sit in
+	// coord-rtc feed's document, which sets `edge` and carries the DS3234's `state` --
+	// no_response, reset or ok -- read off the chip every feed pass whether or not the
+	// 1 Hz arrived; a feed document from an earlier boot is dropped, as for FC. On a
+	// campod `edge` is read here as well.
 	RTC json.RawMessage `json:"rtc,omitempty"`
 
 	// Why the pod is not in the state it was asked for. A refused polkit

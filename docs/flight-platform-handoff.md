@@ -159,7 +159,7 @@ knowledge, not the script's. Bundles land in
 **`ready` is decided on the pod, over the sensors it detected.** A campod's camera
 `ready` is warm, `sync_ready`, and settled: five frames in a row within 50 us of the pinned
 frame duration (coordinator#725). pod-link's pod `ready` needs a detected camera's `ready` and
-chrony selected on the PPS (`coord-rtc watch` writes `pps_selected`); a camera reporting
+chrony selected on the PPS (`pps_selected`, which pod-link asks chronyd); a camera reporting
 `absent` and accels with `present: false` are left out, and a pod with nothing detected has
 no `ready` (coordinator#726). `harness/bench_cycle.py` waits on pod `ready`. The panel shows
 `C`/`c` (ready/warm) and `S`/`s` (chrony on the PPS / pulse arriving).
