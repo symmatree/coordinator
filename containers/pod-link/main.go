@@ -121,8 +121,14 @@ type config struct {
 	accelStatusFile  string
 	// The router's FC-link document (#669). Empty on a campod, which has no FC.
 	fcLinkFile string
-	// coord-rtc's clock document: `feed`'s on the coordinator, `watch`'s on a campod.
+	// coord-rtc feed's chip document, coordinator only. Empty on a campod, which has no
+	// chip.
 	rtcStatusFile string
+	// The 1 Hz's kernel timestamp, read here for `rtc.edge` where nothing else watches
+	// the pulse: a campod. Empty on the coordinator, whose feed reports `edge`.
+	ppsAssertFile string
+	// chronyd's command port, asked for `rtc.pps_selected` on both roles.
+	chronyAddr string
 	// Whose free space is reported. The captures mount, read-only.
 	dataDir string
 
@@ -154,6 +160,8 @@ func loadConfig() (config, error) {
 		accelStatusFile:  env("POD_LINK_ACCEL_STATUS_FILE", "/tmp/campod_accel_status"),
 		fcLinkFile:       env("POD_LINK_FC_LINK_FILE", ""),
 		rtcStatusFile:    env("POD_LINK_RTC_STATUS_FILE", ""),
+		ppsAssertFile:    env("POD_LINK_PPS_ASSERT_FILE", ""),
+		chronyAddr:       env("POD_LINK_CHRONY_ADDR", "127.0.0.1:323"),
 		dataDir:          env("POD_LINK_DATA_DIR", "/captures"),
 	}
 	secs, err := strconv.Atoi(env("POD_LINK_PERIOD_S", "2"))
@@ -734,11 +742,11 @@ func reconcile(c config, h *host, want *wanted) *podStatus {
 	} else {
 		doc.FC = fc
 	}
-	if rtc, err := thisBootDoc(c.rtcStatusFile); err != nil {
+	rtc, errs := clockDoc(c, time.Now())
+	for _, err := range errs {
 		fail("%v", err)
-	} else {
-		doc.RTC = rtc
 	}
+	doc.RTC = rtc
 	// After every document it reads, because it is one verdict over them. See
 	// podStatus.Ready.
 	doc.Ready = podReady(doc.Camera, doc.Accel, doc.RTC)

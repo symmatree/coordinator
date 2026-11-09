@@ -35,9 +35,9 @@ Environment=POD_LINK_BROKER=tcp://10.55.0.1:1883
 Environment=POD_LINK_FLAG_FILE=/tmp/campod_capture
 Environment=POD_LINK_CAMERA_STATUS_FILE=/tmp/campod_camera_status
 Environment=POD_LINK_ACCEL_STATUS_FILE=/tmp/campod_accel_status
-# coord-rtc watch's document: the 1 Hz arriving, and chrony on it. host/ansible/roles/chrony
-# writes it to this path (coord_rtc_campod_status_file).
-Environment=POD_LINK_RTC_STATUS_FILE=/tmp/campod_clock_status
+# The 1 Hz's last kernel timestamp, published as `rtc.edge`. chrony on it, `rtc.pps_selected`,
+# is asked of chronyd on 127.0.0.1:323, reachable because this is the host's network.
+Environment=POD_LINK_PPS_ASSERT_FILE=/sys/class/pps/pps0/assert
 Environment=POD_LINK_DATA_DIR=/captures
 # Seconds between reconciles, which is also how far behind the device a reader can be.
 # 60 was chosen to protect the camera's page residency, on a figure -- "136 ms against

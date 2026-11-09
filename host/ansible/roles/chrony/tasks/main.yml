@@ -86,11 +86,16 @@
     mode: "0644"
   when: device_role == 'coordinator'
 
-- name: Install the campod clock watch unit
-  ansible.builtin.template:
-    src: coord-rtc-watch.service.j2
-    dest: /etc/systemd/system/coord-rtc-watch.service
-    mode: "0644"
+# A campod runs no clock-watch service: pod-link reads the clock itself
+# (containers/pod-link/clock.go). These remove the unit wherever one is installed; one
+# still running stops at the converge's reboot and does not come back.
+- name: Remove the campod clock watch unit
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/multi-user.target.wants/coord-rtc-watch.service
+    - /etc/systemd/system/coord-rtc-watch.service
   when: device_role == 'campod'
 
 - name: Enable chronyd
@@ -105,10 +110,3 @@
     enabled: true
     daemon_reload: true
   when: device_role == 'coordinator'
-
-- name: Enable the campod clock watch
-  ansible.builtin.systemd:
-    name: coord-rtc-watch.service
-    enabled: true
-    daemon_reload: true
-  when: device_role == 'campod'
