@@ -12,15 +12,15 @@ import (
 )
 
 // fakeChronyd answers TRACKING requests the way chronyd does, with refID as the selected
-// source. Returns its address and a pointer to the length of the last request it saw.
-func fakeChronyd(t *testing.T, refID uint32, mangle func([]byte)) (string, *int) {
+// source. Returns its address and the lengths of the requests it saw.
+func fakeChronyd(t *testing.T, refID uint32, mangle func([]byte)) (string, <-chan int) {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { pc.Close() })
-	seen := new(int)
+	seen := make(chan int, 8)
 	go func() {
 		buf := make([]byte, 1024)
 		for {
@@ -28,7 +28,10 @@ func fakeChronyd(t *testing.T, refID uint32, mangle func([]byte)) (string, *int)
 			if err != nil {
 				return
 			}
-			*seen = n
+			select {
+			case seen <- n:
+			default:
+			}
 			req := buf[:n]
 			rpy := make([]byte, chronyTrackingLen)
 			rpy[0], rpy[1] = req[0], chronyPktReply
@@ -81,8 +84,8 @@ func TestChronyOnPPS(t *testing.T) {
 			// chronyd answers a version 6 request only when it is padded to its reply's
 			// length. 104 is what a real chronyd sent back to this request, written out
 			// rather than taken from the constant so the two cannot agree on a wrong size.
-			if *seen != 104 {
-				t.Errorf("request was %d bytes, want 104", *seen)
+			if n := <-seen; n != 104 {
+				t.Errorf("request was %d bytes, want 104", n)
 			}
 		})
 	}
