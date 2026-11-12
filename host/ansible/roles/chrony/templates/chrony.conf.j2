@@ -100,5 +100,16 @@ server {{ campod_gadget_coordinator_ip }} minpoll 0 maxpoll 2
 # it cancels. NTP alone cannot do that: its error is per-pod and adds.
 #
 # Harmless with no leg connected: no samples arrive and the second comes from NTP above.
-refclock PPS /dev/pps0 refid PPS precision 1e-7 poll 2
+#
+# `prefer`: once the PPS passes the falseticker check, selection is reduced to it alone
+# (chrony 4.6.1 sources.c, "reduce the list again only to the preferred sources"), so it
+# does not have to beat the server above on root distance. Measured on campod-ne without
+# it: a PPS at 1.5 us std dev carried a +/-8.7 ms bound and sat unselected (`-`) for 35
+# minutes behind the server's +/-250 us, while campod-sw on the same boot took its PPS at
+# 44 s.
+refclock PPS /dev/pps0 refid PPS precision 1e-7 poll 2 prefer
+
+# One line per filtered PPS sample into logdir's refclocks.log, with the sample's
+# dispersion.
+log refclocks
 {% endif %}
