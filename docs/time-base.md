@@ -120,7 +120,8 @@ for all of them is worth more than no answer, since what they need from it is wh
 it is and their phase comes off the wire.
 
 **The pods take the second from the coordinator and the phase off their own leg** --
-`server <coordinator> minpoll 0 maxpoll 2` plus an unlocked `refclock PPS /dev/pps0`.
+`server <coordinator> minpoll 0 maxpoll 2` plus an unlocked `refclock PPS /dev/pps0 ...
+prefer`.
 Unlocked because there is nothing to lock to: a pod has no SPI connection to the chip. A
 PPS refclock with no lock is used once chrony is synchronised with root distance under
 0.5 s, and root distance only falls when an NTP sample lands, so the poll is 1-4 s rather
@@ -133,6 +134,16 @@ startup burst their root distance grew between polls to 3.1-14.2 s. se and sw fe
 0.5 s at the 20:50:47 poll and selected PPS at 20:51:09 and 20:51:15. ne and nw stayed at
 0.69-2.2 s and had not selected PPS when capture ended at 20:54. On the 19:20 bench boot,
 with the coordinator already up, all four pods had PPS 7 s after their first NTP sample.
+
+**Measured, 2026-11-11 12:06 bench boot, at the 1-4 s poll and without `prefer`.** campod-sw
+selected PPS 16 s after its first NTP sample. campod-ne selected the server instead and
+kept it for 35 minutes: its PPS was reachable throughout (reach 377, 1.5 us std dev, the
+clock within 36 us of the edge in its ppstest record) and marked `-`, carrying a bound of
++/-8.7 ms at 12:26 that shrank about 15 us/s, against the server's +/-150-265 us. Nothing
+in chronyd's journal between the boot step and "Selected source PPS" at 2093 s. With
+`prefer`, a PPS that passes the falseticker check is selected regardless of that bound
+(chrony 4.6.1 `sources.c`); `log refclocks` records each sample's dispersion, which is
+what would say where the bound came from.
 
 **Reporting UTC there instead breaks it, and silently.** The reference would be a
 different clock from the pulse, and their difference -- the chip's arbitrary phase against
