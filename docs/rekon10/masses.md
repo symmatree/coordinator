@@ -15,3 +15,12 @@ on the scale; where an item includes others, the row says so.
 | Accelerometer | 4.5 | one ADXL345 with its pigtail |
 | Flight platform, most of it | 906 | arms, motors, bottom and middle plates, VTX, FC, ESC, both radios, all wiring and antennas, battery leads and the XT60s for the spark stopper and the PM02D. Not included: GPS (above), top plate, battery |
 | Battery, 6 Ah Li-ion | 600.5 | the smaller pack |
+
+### Derived
+
+| item | mass (g) | from |
+|---|---|---|
+| Cheese plate alone | 330.5 | 384.5 - 3 x (11.5 + 6.5), assuming the three camera kits are identical |
+
+Each reading is to the nearest 0.5 g, so the derived figure carries up to about +/-1.75 g from
+rounding alone (seven readings at +/-0.25 g each).
