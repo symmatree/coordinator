@@ -63,6 +63,7 @@ this directory: [`docs/time-base.md`](../time-base.md), [`docs/campod-software.m
 | Flight platform build log (chronicle, bench notes) | [flight-platform-build-log.md](flight-platform-build-log.md) |
 | Vibration and structural testing (chain validation, bump-test method) | [vibration-testing.md](vibration-testing.md) |
 | Propellers, by label (which sets exist and what they are) | [props.md](props.md) |
+| Masses, as weighed (parts and subassemblies) | [masses.md](masses.md) |
 | Sensor raft pod mounts (corner boss spacing, the wedge spec, Pi tie-down) | [sensor-raft.md](sensor-raft.md) |
 | ArduPilot configuration (params, serial, RC, tools) | [ardupilot.md](ardupilot.md) ; [`ardupilot/rekon10-methodi.param`](../../ardupilot/rekon10-methodi.param) |
 | EdgeTX REKON10 model | [`config/MODELS/model01.yml`](config/MODELS/model01.yml) |
