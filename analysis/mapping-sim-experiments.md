@@ -48,6 +48,7 @@ been repeated.
 | `map-test-flown-20261107d` | the same, rasterised, WGS84 priors | 1272 | 14 min, llvmpipe on lancer | -- | the render for the two runs below |
 | `map-test-flown-20261107d-rig` | ODM on that render with the rig model | 1272 | (reused) | 56 min to `reconstruction.json`; ODM then failed in `export_geocoords` | topic 4 |
 | `map-test-flown-20261107d-free` | ODM on that render without it | 1272 | (reused) | 88 min, ODM completed | topic 4 |
+| `map-test-flown-20261107d-dense` | ODM past OpenSfM on that render, seeded with `-free`'s OpenSfM | 1272 | (reused) | (reused) | topic 3; four attempts, none finished: the last two OOM-killed fusing |
 
 OpenSfM times are the sum of its stages in `opensfm/profile.log`. The renders before 2026-11-07
 were ray-traced; the rasteriser is now the only renderer. For the `20261107d` runs, stage times
@@ -138,6 +139,105 @@ The house carries a Siemens star (36 sector pairs) on each wall and the roof. Th
 reconstruction stops resolving the sectors reads off its resolution there. This needs
 densification, so the ODM step has to run past OpenSfM. Until then the stars also give the sparse
 stage sharp corners.
+
+Code citations below are ODM v3.6.2 and the OpenSfM it builds (c5328439). Where a statement rests
+only on what one run did, it says so.
+
+**What ODM does with the fisheye before densifying.** From the code:
+
+- *Undistortion keeps the centre of the fisheye.* For `fisheye` and `fisheye_opencv` cameras
+  OpenSfM's undistort replaces the camera with a perspective one of the same focal length, width
+  and height (`opensfm/undistort.py` L51-52, L338-345). For the sim's lens (2200 px, 4608 x 2592,
+  r = f theta) that frame spans 92.6 x 61.0 deg of the 120 x 67.5 deg and holds 63.8% of the
+  fisheye's pixels. OpenMVS and mvs-texturing both work from the undistorted images. No ODM option
+  changes this.
+- *The undistorted size comes from the target GSD.* `gsd.image_scale_factor` (`opendm/gsd.py`
+  L49-68) takes the reconstruction's GSD, adds 50% for error, and returns the largest power of two
+  not above GSD / target, capped at 1. By its method (`opensfm_reconstruction_average_gsd`, L102),
+  recomputed by hand from `-free`, the median height above the nearby sparse points is 29.8 m and
+  the GSD 1.26 cm, so 1.89 cm with the margin. At the default `--orthophoto-resolution 5` that gives
+  0.5, and `-free` undistorted to 2304 px (`undistorted_image_max_size` in its
+  `opensfm/config.yaml`). At 1.5 it gives 1, and the dense run logged 4608.
+- *The depth-map size comes from `--pc-quality`.* `get_depthmap_resolution` (`opendm/utils.py`
+  L20-44) takes the largest image side times 0.5 / 0.25 / 0.125 for ultra / high / medium. `high`
+  gives 1152 px, and OpenMVS runs at `--resolution-level` round(log2(4608 / 1152)) = 2
+  (`stages/openmvs.py` L57). Texture is drawn from the undistorted images, not the depth maps.
+- *Texturing.* The 3D model is textured without nadir mode; the orthophoto's 2.5D mesh is textured
+  with `--nadir_mode`, unless `--use-3dmesh`, which textures the orthophoto from the 3D mesh
+  (`stages/mvstex.py` L33-47, L91-92).
+
+**Flags.** The dense run used `--orthophoto-resolution 1.5 --pc-quality high --use-3dmesh
+--mesh-size 2000000 --mesh-octree-depth 12`, after the second house run in `fables`
+(`Datasets/odm-maps-bond_ave-2026-02-21-house-2/`). That run also used `--feature-quality ultra`
+and `min_num_features` 30000; those belong to the OpenSfM stage and are not tried here. The house
+runs once found `--auto-boundary` worse on every metric they scored
+(`Datasets/experiments-house-model.md`).
+
+**Reusing one run's OpenSfM in another.** From the code, and what one attempt each showed:
+
+- ODM compares the options with the run directory's `options.json` and reruns from the earliest
+  stage any changed option belongs to (`run.py` L37-41, `opendm/arghelpers.py` L63-76).
+  `--pc-quality` belongs to the opensfm stage (`opendm/config.py` L71), which does the undistortion.
+  So the first attempt, which changed it, reran features, matching and reconstruction from scratch
+  over the seeded `opensfm/`; it was stopped 70 min in. Giving any of `--rerun`, `--rerun-from`
+  or `--rerun-all` turns the comparison off (`arghelpers.py` L65).
+- `opensfm/image_list.txt` holds absolute paths and is kept when it exists (`opendm/osfm.py`
+  L139-140). The second attempt, with `--rerun-from openmvs`, failed in undistortion on the
+  seed's paths into `-free/images/`. The third ran with them rewritten.
+- With no `updated_config.txt` in the seed, ODM rewrites `undistorted_image_max_size` and
+  undistorts again (`stages/run_opensfm.py` L86-93). The third attempt kept the reconstruction and
+  undistorted at 4608.
+- ODM deletes `openmvs/depthmaps/` when the openmvs stage reruns (`stages/openmvs.py` L29-31,
+  L45-46), and after it succeeds only under `--optimize-disk-space` (L240-250).
+
+**Densification, third attempt (`mapping-sim-process-cztbj`).** Undistortion and OpenMVS setup took
+12 min. In `DensifyPointCloud`: depth-map estimation 48 min, then two geometric-consistency passes
+of 15.7 min each, then filtering of about 3.5 min. Fusion reached 424 of 1272 depth maps (33%) in
+44 s, and the container was OOM-killed at its 48 GiB limit. Its working set, sampled every 30 s,
+went 12.4, 15.2, 22.0 and 32.2 GiB over the last 2 min. The kill fell between samples, so the peak
+was not recorded. The run took 102 min and 20.5 core-hours, a mean of 12.1 cores
+(`resources/mapping-sim-process-cztbj.md` in the run directory).
+
+ODM retries a `DensifyPointCloud` that exits 137 with tiled fusion (`stages/openmvs.py` L115-118).
+That did not happen here. The log ends mid-fusion and the whole container was killed. My
+inference, not checked: the kernel killed every process in the container's memory group, not
+only `DensifyPointCloud`.
+
+ODM's tiled fusion is not the single pass split up. It cuts the scene with `--sub-scene-area
+660000` and fuses each piece with `Optimize = 0`, `Estimation Geometric Iters = 0`, `Min Views
+Filter = 1`, `--postprocess-dmaps 0` and `--geometric-iters 0`. Then it concatenates the pieces'
+point clouds (`stages/openmvs.py` L127-200). How that changes the cloud is not measured.
+
+**Fourth attempt (`mapping-sim-process-ft8v4`).** It had a 56 GiB limit, set in the workflow's
+`podSpecPatch`, and `--rerun-from odm_filterpoints`, so the openmvs stage kept `depthmaps/`.
+OpenMVS loaded the kept `.dmap` files and skipped estimation, then ran both geometric-consistency
+passes and filtering on them again. From the OpenMVS source (ODM's fork, tag 355, which ODM 3.6.2
+builds): an existing `.dmap` stands in for estimation only (`libs/MVS/SceneDensify.cpp` L1961).
+Each geometric pass is recomputed and renamed over the `.dmap` (L1899-1900). So the kept files
+were already the twice-refined and filtered maps, and this attempt refined and filtered them a
+second time. Fusion reached 883 of 1272 depth maps (69%) in 92 s, and the container was
+OOM-killed at its 56 GiB limit. The last sample before the kill was 54.3 GiB
+(`resources/mapping-sim-process-ft8v4.md`). The third attempt's 1272 depth maps, its `scene.mvs`
+and its `Densify.ini` were copied beforehand to `runs/map-test-flown-20261107d-dense-depthmaps/`.
+To fuse those maps without reprocessing them, run `DensifyPointCloud` with `--geometric-iters 0
+--postprocess-dmaps 0` (L1836, L1970-1978). ODM passes those flags only in its tiled path.
+
+**What fusion holds in memory, from the source.** In tag 355, `FuseDepthMaps` (L1372-1597) loads
+every depth map before it fuses any (L1395-1400). One map is depth, normal and confidence as
+floats: 20 bytes a pixel, 14.9 MB at 1152 x 648, the size of each `.dmap`. 1272 of them are
+19 GB. Each image also gets a 4-byte-per-pixel point index as fusion reaches it, up to 3.8 GB.
+Each fused point has a position, colour and normal and three small heap lists (views, weights,
+pixel coordinates), roughly 170 bytes by my count of the types. The code estimates the point count
+at 15% of all depth pixels (L1405), 142 M here, about 24 GB. The fusion loop is single-threaded
+(L1431-1559), so `--max-threads` does not change its memory. Estimation, which is threaded, ran
+near 10 GB at 16 threads in the third attempt. Two attempts were killed, at 33% fused within
+48 GiB and at 69% within 56 GiB. Neither gives the total a full fusion of these 1272 maps needs.
+
+Upstream OpenMVS (cdcseacave/openMVS `develop`, 2026-11-06, 157 commits past tag 355) fuses
+through a depth-map cache sized to free memory (`DMapCache`), not with every map resident. It
+also has `--sub-scene-memory`, which splits the scene into sub-scenes that each fit a memory
+budget. Whether its `.mvs` and `.dmap` formats read ODM's files is not checked. Neither is what
+it changes in per-point storage. ODM's latest release is 3.6.2, and ODM master still builds tag 355.
 
 ### 4. Rigid rig against free alignment
 
@@ -307,9 +407,14 @@ The sim's lens has no distortion, so it tests less than a real lens would.
 ## Open
 
 - Rig runs stop in ODM's `export_geocoords` (topic 4); not being worked on, by the decision there.
-- The `tiles` `mapping-sim` WorkflowTemplates on the cluster have no `imagePullPolicy`, though
-  tiles#953 sets `Always` and Argo CD reports the app Synced at that commit. The `20261107d` runs
-  set it per workflow with a `podSpecPatch`.
+- The `tiles` `mapping-sim` WorkflowTemplates on the cluster are from tiles 0550c12, though Argo
+  CD reports the app Synced at bc53d8a. They have no `imagePullPolicy` (tiles#953), so the
+  `20261107d` runs set it per workflow with a `podSpecPatch`. They also score
+  `opensfm/reconstruction.json`, ODM's UTM copy (tiles#959), so the dense run's `score.json`
+  is of that copy.
+- Fusion of the dense run's 1272 depth maps at 1152 px has not finished inside 48 or 56 GiB (topic 3).
+- No scorer yet for the dense cloud against the true surfaces, or for the stars' resolved radius
+  in the textured model (topic 3).
 - The render step requests no GPU, so on lancer the rasteriser runs on Mesa's llvmpipe: 1272
   full-resolution images in 818 s, 0.64 s each (`renders/map-test-flown-20261107d/manifest.json`,
   `render_s`). On the Radeon it was about 0.3 s per image.
