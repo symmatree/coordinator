@@ -200,6 +200,21 @@ derivation in [coordinator#117](https://github.com/symmatree/coordinator/issues/
 sets exist is in [props.md](props.md); which one flew is in that flight's notes. Rotation
 reference: [attachments/Multirotor_prop_direction_3DR.pdf](https://github.com/symmatree/fables/blob/main/Drones/rekon10/attachments/Multirotor_prop_direction_3DR.pdf).
 
+### Motor lead connectors
+
+The three motor leads on each arm go through XT30s, so a motor can be swapped without
+desoldering at the ESC: one XT30 pair carries two phases, and a second pair with its black
+contact removed carries the third, stacked on top of the first. The male side is toward the
+ESC, the power source.
+
+Lead lengths on the front arms, connector to cut (2026-11-14):
+
+| lead | length (mm) |
+|---|---|
+| single (third phase) | 65.7 |
+| red | 78.1 |
+| black | 83.6 |
+
 ### Thrust and power (expected)
 
 The table below is from the **Helion 3110 / 900KV** datasheet for **HQ 10 x 5 x 3** three-blade props at **~109 degC**.
