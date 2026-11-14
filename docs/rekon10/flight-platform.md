@@ -205,7 +205,9 @@ reference: [attachments/Multirotor_prop_direction_3DR.pdf](https://github.com/sy
 The three motor leads on each arm go through XT30s, so a motor can be swapped without
 desoldering at the ESC: one XT30 pair carries two phases, and a second pair with its black
 contact removed carries the third, stacked on top of the first. The male side is toward the
-ESC, the power source.
+ESC, the power source. The pigtails are 14 AWG, stripped 3 mm, rosined and tinned heavily,
+and soldered straight out from the ESC pads; the turn along the arm is taken up by the
+differing lead lengths.
 
 Lead lengths on the front arms, connector to cut (2026-11-14):
 
