@@ -26,3 +26,16 @@ the record later analysis depends on.
 
 If a procedure does not fit what is needed, say so and propose changing it; do not route
 around it.
+
+## Naming motors
+
+Name rekon10's motors by corner -- NE, NW, SE, SW, nose up -- and get every label from
+[`analysis/motors.py`](analysis/motors.py). The table, and how it was checked against flight
+data, is in [docs/rekon10/ardupilot.md, "Which motor is which"](docs/rekon10/ardupilot.md#which-motor-is-which).
+
+- **ESC index and FC output are not the ArduPilot motor number.** Outputs 1-4 are Motor1,
+  Motor3, Motor4, Motor2. Map ESC index to motor with `motors.esc_motors(parms)` before you
+  say which motor did anything.
+- **Front pair against rear pair is fore/aft.** NE + NW against SE + SW, which is ESC 0 + 1
+  against ESC 2 + 3, is the forward-CG split (coordinator#169). A diagonal is NE + SW against
+  NW + SE; don't call a front/rear difference diagonal.

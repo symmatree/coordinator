@@ -51,6 +51,75 @@ Hardware and target name: [flight-platform.md](flight-platform.md#esc). ArduPilo
 
 NOTE: Once you remap the servo/motor mappings using SERVO1_FUNCTION - SERVO4_FUNCTION, that changes the order IN THE AM32 CONFIGURATOR as well as in ardupilot. (We are connecting through the FC passthrough so the actual ESC we are talking to is changed as a result of that mapping.) If you try to treat the AM32 as using the physical numbering from the ESC you will be VERY confused.
 
+### Which motor is which
+
+Corners are named from above with the nose up. The front pair is NE + NW (outputs 1 + 2) and
+the rear pair is SE + SW (outputs 3 + 4), so a forward CG shows as front against rear
+([#169](https://github.com/symmatree/coordinator/issues/169)). The diagonals, the two
+same-spin pairs, are NE + SW (CCW) against NW + SE (CW).
+
+| Corner | FC output | ESC telemetry index | ArduPilot motor | Spin | AM32 configurator order | MP motor test letter |
+|---|---|---|---|---|---|---|
+| NE (front-right) | 1 | 0 | Motor1 | CCW | 1 | A |
+| NW (front-left) | 2 | 1 | Motor3 | CW | 2 | D |
+| SE (rear-right) | 3 | 2 | Motor4 | CW | 3 | B |
+| SW (rear-left) | 4 | 3 | Motor2 | CCW | 4 | C |
+
+Where each column comes from:
+
+- **FC output -> ArduPilot motor:** `SERVO1..4_FUNCTION` = 33 / 35 / 36 / 34 in
+  [`inputs/esc-motors-notch.param`](../../ardupilot/inputs/esc-motors-notch.param).
+- **ArduPilot motor -> corner, spin and test letter:** ArduCopter 4.7.2's quad-X table
+  (`AP_MotorsMatrix.cpp`, `MOTOR_FRAME_TYPE_X`):
+  - Motor1 at 45 deg, CCW, test order 1
+  - Motor2 at -135 deg, CCW, test order 3
+  - Motor3 at -45 deg, CW, test order 4
+  - Motor4 at 135 deg, CW, test order 2
+
+  The MP letter is that test order (A = 1).
+- **Checked against flight data, corner and spin.** Two things together confirm these columns:
+  - **What the mixer does with each output.** 2026-10-30-auto, Auto cruise 240-545 s. Each
+    output against the rate controller's outputs (`RATE.ROut`, `POut`, `YOut`), 2 s
+    high-pass:
+
+    | | out 1 | out 2 | out 3 | out 4 |
+    |---|---|---|---|---|
+    | pitch | +0.65 | +0.62 | -0.19 | -0.14 |
+    | roll | -0.07 | +0.09 | -0.53 | +0.52 |
+    | yaw | +0.47 | -0.47 | -0.77 | +0.74 |
+
+    Outputs 1 and 2 are front, 2 and 4 are left, and 1 and 4 are the CCW pair.
+  - **Whether the airframe answers with the right sign.** Correlation of each axis's
+    controller output with the measured angular acceleration (`RATE.R`, `P`, `Y`
+    differentiated):
+
+    | flight | roll | pitch | yaw |
+    |---|---|---|---|
+    | 2026-10-30-auto | +0.78 | +0.72 | +0.59 |
+    | 2026-11-07-crash climb | +0.77 | +0.78 | +0.57 |
+
+    A swapped pair of motors, or a reversed spin pattern, would flip the sign on at least
+    one axis.
+- **ESC telemetry index = FC output: checked against flight data.** 2026-10-30-auto: each
+  index's RPM follows its own output most closely (2 s high-pass correlation):
+  - index 0 with out 1: 0.66
+  - index 1 with out 2: 0.63
+  - index 2 with out 3: 0.47
+  - index 3 with out 4: 0.50
+
+  The 2026-11-07 climb was too short for this.
+- **AM32 configurator order: not checked against data.** Through FC passthrough the
+  configurator lists ESCs in FC output order (the NOTE above).
+
+[`analysis/tools/motor_mapping_check.py`](../../analysis/tools/motor_mapping_check.py)
+prints the three checks for any log and window (2026-10-30-auto: `240 545`).
+
+**In code and charts, use [`analysis/motors.py`](../../analysis/motors.py)**, the one lookup
+for this table. `motors.esc_motors(parms)` maps ESC index to motor through the log's own
+`SERVOn_FUNCTION`; `motors.label(motor)` gives "NW (front-left)"; `motors.COLOUR` gives one
+colour per corner. Never label an ESC index as "M{i+1}" or "motor i+1": ESC index 1 is
+Motor3, NW.
+
 
 ### Choices (flight impact, not just passthrough)
 
