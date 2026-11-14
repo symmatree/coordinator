@@ -7,6 +7,11 @@
 #   the source for pack voltage, current and consumed mAh, and so for every battery
 #   failsafe below.  provenance: 2026-11-07
 BATT_MONITOR,21
+# Full scale of the INA228 current reading: the driver sets the chip's current LSB from this
+#   (AP_BattMonitor_INA2xx.cpp, current_LSB = max_amps / 2^19), so currents above it do not
+#   fit. 164 A is the PM02D's stated maximum current sensing (PX4 PM02D page).
+#   provenance: 2026-11-14
+BATT_MAX_AMPS,164
 BATT_CAPACITY,8000
 #
 # Voltage thresholds (~3.20 / 3.10 / 3.00 V per cell on 6S). BATT_CRT_VOLT=18 is
