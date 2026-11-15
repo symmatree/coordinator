@@ -1,0 +1,49 @@
+# Anchored pass, layer 1 on the house-2 baseline geography: frames placed against the 270-shot
+# connected core of -prune-min40, then the points they add. Run with
+#   python3 analysis/mapping_sim/anchored_pass.py <this file> <baseline dir>/layers/01
+# Paths are as the datasets share is mounted on the JupyterHub pod.
+
+layer: 1
+# features, tracks.csv, exif and images.json: the run the core came out of
+run: /home/jovyan/datasets/mapping-sim/runs/bond-2026-02-21-house-2-odm362-prune-min40
+# the core seed: -prune-min40-core moved it here before its geo export
+anchors: /home/jovyan/datasets/mapping-sim/runs/bond-2026-02-21-house-2-odm362-prune-min40-core/opensfm/reconstruction.topocentric.json
+layers: []
+dtm: /home/jovyan/datasets/mapping-sim/runs/bond-2026-02-21-house-2-odm362-prune-min40-core/odm_dem/dtm.tif
+utm_zone: 17  # the DTM's CRS: WGS84 UTM 17N (odm_georeferencing/proj.txt)
+overrides: null
+
+constants:
+  # resection_min_inliers -prune-min40 was made with; in -prune0009-0020 every image over 7 m
+  # from its GPS had been placed with fewer
+  min_inliers: 40
+  # a frame is accepted when enough inliers agree to within a pixel or two; the same tolerance
+  # filters anchor observations and new points
+  max_reproj_px: 2.0
+  # the seed fit from wide-window matches only; the gates use max_reproj_px
+  wide_ransac_px: 4.0
+  # enough for a seed pose to centre the narrow window on; the inlier gate comes after
+  min_seed_inliers: 12
+  # window around the seed pose's projections, and how many times it is re-centred
+  narrow_window_px: 8.0
+  narrow_iterations: 2
+  # narrow-window matches must be as close in descriptor as this percentile of the seed inliers'
+  descriptor_bound_percentile: 95
+  # OpenSfM's default lowes_ratio
+  lowes_ratio: 0.8
+  # viewpoint change a SIFT-type descriptor is usually taken to survive; a rule of thumb, not
+  # measured here
+  max_view_angle_deg: 40
+  # anchor points: a third view checks a point that two only define
+  min_views: 3
+  # the plausible band from the anchored-localization design (fables experiments-house-model.md)
+  min_height_above_dtm_m: -0.5
+  max_height_above_dtm_m: 20.0
+  # the gates the design puts on anchor shots: 3 m from GPS, 15 deg from the attitude prior. The
+  # core's own maxima are 1.88 m and 14.5 deg. Height is taken about the core's median GPS-height
+  # offset, which all its shots share.
+  max_gps_horizontal_m: 3.0
+  max_gps_up_from_anchor_median_m: 3.0
+  max_attitude_from_prior_deg: 15.0
+  # OpenSfM's default triangulation_min_ray_angle
+  min_ray_angle_deg: 1.0
