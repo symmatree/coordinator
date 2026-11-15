@@ -509,18 +509,12 @@ def triangulate(posed: dict, accepted: set, cam: Brown, names, cols, skip_ids: s
     return points, observations, stats
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("config", type=pathlib.Path)
-    ap.add_argument("out", type=pathlib.Path)
-    ap.add_argument("--workers", type=int, default=4)
-    args = ap.parse_args()
-    started = dt.datetime.now(dt.timezone.utc)
-    cfg = yaml.safe_load(args.config.read_text())
+def prepare(cfg: dict) -> dict:
+    """Steps 1-2 and the tracks.csv correspondences: everything before frames are located. Fills
+    G for `locate` and returns what the rest of the pass needs."""
     p = cfg["constants"]
     run = pathlib.Path(cfg["run"])
     opensfm = run / "opensfm"
-    args.out.mkdir(parents=True, exist_ok=False)
     layer = int(cfg["layer"])
 
     anchors = json.loads(pathlib.Path(cfg["anchors"]).read_text())[0]
@@ -642,6 +636,21 @@ def main() -> None:
         track_corr[names[i]] = (feat[m].astype(int), np.array([pid[k] for k in trk[m]], int))
 
     G.update(params=p, cam=cam, derived=derived, X=X, X_id=X_id, X_layer=X_layer, obs_start=obs_start, obs_count=obs_count, obs_dir=obs_dir, obs_desc=obs_desc, gps=gps, yawpitch=yawpitch, C=Cfit, opensfm=opensfm, track_corr=track_corr)
+    return dict(p=p, run=run, opensfm=opensfm, layer=layer, anchors=anchors, cam=cam, dtm=dtm, posed=posed, layer_points=layer_points, ids0=ids0, names=names, cols=cols, unposed=unposed, derived=derived)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("config", type=pathlib.Path)
+    ap.add_argument("out", type=pathlib.Path)
+    ap.add_argument("--workers", type=int, default=4)
+    args = ap.parse_args()
+    started = dt.datetime.now(dt.timezone.utc)
+    cfg = yaml.safe_load(args.config.read_text())
+    args.out.mkdir(parents=True, exist_ok=False)
+    ctx = prepare(cfg)
+    p, run, opensfm, layer, anchors, cam, dtm = (ctx[k] for k in ("p", "run", "opensfm", "layer", "anchors", "cam", "dtm"))
+    posed, layer_points, ids0, names, cols, unposed, derived = (ctx[k] for k in ("posed", "layer_points", "ids0", "names", "cols", "unposed", "derived"))
     with multiprocessing.get_context("fork").Pool(args.workers) as pool:
         frames = []
         for r in pool.imap_unordered(locate, unposed):
