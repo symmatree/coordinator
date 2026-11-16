@@ -77,8 +77,21 @@ DShot on the four motors (coordinator#677).
 **The 2026-11-07 crash: the front-left (NW) motor failed on the climb.** Everything observed is in
 `datasets/flights/rekon10/2026-11-07-crash/README.md`. Motors are being replaced;
 the motor leads now go through XT30 pigtails at the ESC (`flight-platform.md`, *Motor lead
-connectors*). Motor numbering: the corner/output/ESC-index/Motor-number table is flight-analysis's
-to verify from logs and write up; it is not in a doc yet.
+connectors*). Name motors by corner and take every label from `analysis/motors.py`; the table
+and how it was checked is `docs/rekon10/ardupilot.md`, "Which motor is which". NW is Motor3,
+FC output 2, ESC telemetry index 1.
+
+**The NW channel of the ESC runs rough (Seth, 2026-11-16).** Motor test with four new motors:
+NW is jumpy and lumpy, the other three smooth. A spare motor on the NW XT30 does the same, so
+the fault is the leads from the XT30 to the ESC pads or that ESC channel. A spare ESC is on hand.
+What separates them, unpowered: continuity from each XT30 pin through to the MOSFET side of the
+pad while flexing the lead (catches a lifted pad or cracked via under a good-looking joint), and
+diode mode on each phase pad to both rails compared against the three good channels (near 0 =
+shorted MOSFET, OL where the others read a drop = open). A damaged gate driver reads normal in
+diode mode. Which came first in the crash, motor or ESC, is not established: the log has NW
+losing RPM per command from just after liftoff and its ESC heating fastest, which fits either,
+and per-channel ESC current is not usable (untrusted AM32 scale). The bearing hard spot and the
+motor-side burned pad are motor evidence. The fault started in the air; impact is not a cause.
 
 **Open from this role:**
 - coordinator#739 (thermistor motor temperature, an option) and #740 (runtime motor-failure
@@ -197,6 +210,15 @@ put a made-up ranking in front of him; its comments already held the explanation
 
 **Config comments say what a value does now.** No "was", no history, never a comment about another
 comment.
+
+**Reread the incident record before reasoning about a cause.** Asked whether the ESC could have
+started the NW fire, I offered crash impact as a third story and said the log ordering was not
+recorded; the crash README already had both the in-air onset and the ordering. Open the record
+first, then answer from it.
+
+**Answer the electrical question at the level he asks it.** He knows the hardware; he wants
+failure mechanisms and the measurement that separates them, not a probability you cannot back.
+"I can't give you a number" followed by the mechanisms and the multimeter check worked.
 
 **His statements about his own build are given, not claims to verify.** And record what he
 tells you -- do not fill in the parts he did not say. Writing a hole position as an as-built
