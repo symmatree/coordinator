@@ -49,69 +49,53 @@ times since the board was built; the two differ at hole level and **the board is
 authority**. Do not "correct" the doc toward the drawing, and do not infer hole-level detail
 about the built board -- ask.
 
-## Where things stand (2026-10-27)
+## Where things stand (2026-11-16)
 
-**The PPS chain works, and coordinator#11 is closed as completed.** Board built, powered from
-the Coordinator, chrony holding `Reference ID: PPS` at stratum 1, both campods synced over the
-gadget link. The FC leg is soldered to `S12`, and no FC log has a `CAM` row yet. All five
-pigtail legs pass the signal: the
-two that did not were a free-floating input jumper on U2's `T2_FRONT` net, since reconnected.
+**PPS reaches every consumer, the FC included.** The FC leg is on pad `S12` (`CAM1_FEEDBAK_PIN`
+61, coordinator#709); `ardupilot/scripts/pps-feedback-arm.lua` arms the handler at boot. Confirmed
+2026-11-07 from 17:10Z: one CAMERA_FEEDBACK per second over mLRS, 422 contiguous. The FC's clock
+counts about 999,696 us per RTC second (~304 ppm), on the FC side; whether it is the oscillator is not
+established. flight-analysis has it for the time-sync notebook. The RTC's state is on the
+coordinator's bus status as `rtc` (coordinator#680; `GET /pods`).
 
-**The FC reboot-looped on 2026-10-27 and a reflash cleared it.** Hard fault 1.7 s into every
-boot, program counter inside EKF3 code that cannot run that early, same firmware and parameters
-as the 10-25 flights, crash dump truncated. Reflashing the same 4.7.2 image fixed it and the
-parameters survived; cause not established. Logs and dump at
-`datasets/flights/rekon10/bench-20261027-crashing/`, the full read in
-`flight-platform-build-log.md` under that date, including how to catch the `WDG:` line and the
-DFU route for next time. The board runs `ArduCopter V4.7.2 (fb773567)`, loaded 2026-10-24 as
-the fix for a flash error reported at every startup (`ardupilot/ardupilot-4.7.2-sys/` is the
-export taken right after).
+**Corrections run over mLRS and are confirmed end to end** (2026-11-03/04, Boxer off: DGPS, mostly
+RTK float, RTK fixed twice; coordinator#690). RadioMaster Ranger in the attic on acebase's USB
+(CP2102, `/dev/mlrs`), mLRS 31 Hz, to an RP4TD on SERIAL7 (MAV4, `ardupilot/inputs/mlrs-link.param`).
+tiles `mavproxy-mlrs` carries NTRIP; the backpack mavproxy only logs; both run as sysid 254 so a
+connected Mission Planner is the FC's GCS (255). MAV4 is not private, so STATUSTEXT and PreArm reach
+the ground over mLRS (ELRS/MAV3 stays private). The full path is `docs/rtk-corrections-path.md`.
+coordinator#676 (constellation review) and #683 (ground visibility) are open.
 
-**Open PRs from this role:** the one carrying this handoff. Merged since the last handoff: #586 (props point at
-`props.md`; PC1's cause is not known), #587 (`docs/rekon10/flir-blackfly-s.md`, the Blackfly S
-on the rampod: GPIO pinout, power options, trigger features, the Radxa Zero 3W USB facts from
-its schematic), #589 and #591 (the Coordinator header's 1x5 SH1106 shell and 1x3 FC-UART shell,
-in `central-hub.md`).
+**Battery monitor is the Holybro PM02D** (`BATT_MONITOR` 21, INA228 on I2C2 via the repurposed RANGE
+pigtail). **coordinator#741 (`BATT_MAX_AMPS` 164) is open and has to be flashed before the next
+flight**; at the default 90 A, currents above 90 A do not fit the reading. Everything else merged
+is flashed per flight-platform's apply step.
 
-**The rampod exists as a role.** First one carries the FLIR Blackfly S (`BFS-U3-244S8M-C`, Kowa
-LM16XC) on a Radxa Zero 3W; later ones carry MIPI modules. Decisions recorded in
-`flir-blackfly-s.md`: one ADXL345 on CS0, vendor kernel 6.1, PPS on header 37, SPI3_M1 on
-19/21/23. Not recorded yet: the lens's mass, and how its focus and iris are held. The Radxa's
-USB-C SuperSpeed mux is driven from a GPIO nothing in the kernel sets, so only one plug
-orientation gets USB 3 -- os-and-driver owns that (dotfiles-symm#91).
+**Failsafes:** radio and battery RTL, EKF AltHold, `RTL_ALT_M` 40 (coordinator#710). Bidirectional
+DShot on the four motors (coordinator#677).
 
-Open on the hardware side:
+**The 2026-11-07 crash: the front-left (NW) motor failed on the climb.** Everything observed is in
+`datasets/flights/rekon10/2026-11-07-crash/README.md`. Motors are being replaced;
+the motor leads now go through XT30 pigtails at the ESC (`flight-platform.md`, *Motor lead
+connectors*). Motor numbering: the corner/output/ESC-index/Motor-number table is flight-analysis's
+to verify from logs and write up; it is not in a doc yet.
 
-- **The PPS board is not mounted.** Needs taping up and a location.
-- **The Coordinator connector is a 2x4 block on solid-core wire and has been knocked off
-  once.** Solid core puts harness load straight into the header instead of flexing. Kapton
-  over it for flight.
-- **The PC1 current sensor is unresolved.** Reads a fixed 9.92 V; `Cur2` (PA7) shows a stable
-  0.667 MOhm to GND while PC1 climbs. `BATT_MONITOR = 9` current numbers are junk and the
-  calibration constant is not an FC parameter -- see below.
-- **The ELRS antenna anchoring.** The horizontal antenna is mounted on the tail of the zip tie
-  that strain-relieves the rear power lead, so load applied at the rear bay reaches the
-  micro-U.FL at the receiver. Mounting the SE pod has disturbed it before. **This is his to
-  figure out and he has said so explicitly. Do not propose a fix.**
-
-**Corrections link: direction settled 2026-10-27, nothing built.** mLRS at 2.4 GHz on a
-RadioMaster Ranger in the attic, fed over serial from the attic host (acebase today; a PoE
-ESP32 doing UART-to-TCP for both the base F9P and the module is planned, with the caster in a
-regular cluster pod), to a second ELRS-hardware receiver flashed mLRS on **SERIAL7**, RTCM
-only. 915 MHz is open only if it measures better from the attic. Gated on an attic-to-field
-RSSI survey with the Boxer at 1000 mW. The full case and numbers are a comment on
-coordinator#209; the short form is in `docs/rtk-corrections-path.md` under *Direction*. It is
-aimed at the 260814 coverage failure and does not touch Float-not-Fixed (coordinator#195).
-Open checks before buying: which connector carries mLRS serial on the Ranger target, the
-module's current draw, and whether two 1 W FHSS systems on 2.4 GHz with one on the vehicle
-degrade each other.
-
-**Sensor raft: battery on top, raft hung on rubber isolators, discussed with flight-analysis.**
-Material stays aluminum cheese plate, moving 9 mm to 10 mm; a 3/16" steel bar was considered
-and rejected (same `sqrt(E/rho)` as aluminum, so at half the thickness it is half the first-mode
-frequency at twice the mass). Table and the isolator notes, including the Matrice 400 ball
-dampers held in reserve, are in `flight-platform-build-log.md` (2026-10-27). First pass is
-stacking the rubber isolators on hand.
+**Open from this role:**
+- coordinator#739 (thermistor motor temperature, an option) and #740 (runtime motor-failure
+  diagnostics, a design space; not a plan).
+- coordinator#674 (compass interference from flight current; test is a longer mast). The GPS mast tube
+  broke at both ends in the crash.
+- **Compass on USB power:** not detected on one boot, dropping reads on the next. Candidate (inference):
+  the SH1106 on I2C1 is unpowered on USB (it runs from 5 V through its LDO) and loads the bus. Test:
+  unplug the SH1106 on USB. The SH1106 itself appears lost in the crash.
+- **PC1 reads a fixed 9.9 V.** Discriminating checks: the flying ESC's current pin powered with no FC,
+  and the spare ESC's, against PC1 with the FC on USB and the ribbon off.
+- **ELRS from MAVLink to CRSF** is under consideration, not decided: faster RC at a light telemetry
+  ratio, one telemetry path, but the ELRS RC overrides stop feeding the GCS failsafe and the backpack
+  log ends. `ground-station.md`'s Firefly row says "Std, Hybrid" where the module export it quotes
+  reads `telemetry-ratio = 6`, `switch-mode = 1`.
+- **The ELRS antenna anchoring.** **This is his to figure out and he has said so explicitly. Do not
+  propose a fix.**
 
 ## What must not be dropped
 
@@ -157,15 +141,15 @@ gives `DEVID 0x00` on both. That was `CE1` landed on pin 25 -- a ground -- rathe
 to read something the retained documents already have.
 
 **There is no per-antenna RSSI and that is a consequence of a choice.** The link runs ELRS
-**Link Mode MAVLink**, which is what gives the FC its GCS link and the RTCM injection path, so
+**Link Mode MAVLink**, so
 `SERIAL6_PROTOCOL = 2` and the FC sees `RADIO_STATUS` rather than the CRSF LinkStatistics
 frame where the per-antenna numbers live. `RAD.RSSI`/`RemRSSI` are the two **ends** of the
 link, not two antennas. Not a deficiency to fix.
 
-**`BATT_MONITOR = 9` applies no multiplier.** `AP_BattMonitor_ESC.cpp` sums ESC currents
-directly; `BATT_AMP_PERVLT` and `AMP_OFFSET` are analog-only. The scaling constant is
-`MILLIVOLT_PER_AMP`, an **AM32 compile-time `#define`** in `Inc/targets.h`, coupled to
-`CURRENT_OFFSET`. It is not an ArduPilot parameter and cannot be set from Mission Planner.
+**AM32's telemetry current has no ArduPilot-side scale.** Its constant is `MILLIVOLT_PER_AMP`, an
+**AM32 compile-time `#define`** in `Inc/targets.h`, coupled to `CURRENT_OFFSET`; not an ArduPilot
+parameter. The battery monitor no longer uses it (PM02D), but the per-ESC current in telemetry
+still carries the generic scale.
 
 **TBS silkscreens `S5`-`S12` where ArduPilot says `M5`-`M12`**; there are no `M9`-`M13` pads.
 `S12` carries the PPS leg into the FC as `CAM1_FEEDBAK_PIN` (61). `SERIAL1` and `SERIAL9`
@@ -207,6 +191,12 @@ not a caution.
 
 **Thinking aloud is not a request.** He mentioned needing to work out how to mount the SE pod
 without disturbing the antenna; I produced a design proposal and was told to stop.
+
+**Read an issue before characterising it.** Calling coordinator#674 a top risk without reading it
+put a made-up ranking in front of him; its comments already held the explanation and the test.
+
+**Config comments say what a value does now.** No "was", no history, never a comment about another
+comment.
 
 **His statements about his own build are given, not claims to verify.** And record what he
 tells you -- do not fill in the parts he did not say. Writing a hole position as an as-built

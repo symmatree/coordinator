@@ -81,12 +81,18 @@ holds `Reference ID: PPS` at stratum 1, 2.9 us RMS offset, with both campods syn
 link. The chip, the SPI link, the first-tier buffer and the falling-edge capture are confirmed on
 hardware.
 
+The board is mounted on the coordinator stack. The Coordinator connector is a 2x4 block on flexible
+wire, with hot glue where each lead lands (rebuilt in November 2026, after intermittent VCC: solid
+core put harness load straight into the header and the block backed off as a unit).
+
 Open on the hardware side:
 
-- **The board is not mounted.** It needs taping up and a location.
-- **The Coordinator connector is a 2x4 block on solid-core wire, and it has been knocked off once.**
-  Solid core transmits any load on the harness straight into the header rather than flexing, so the
-  block backs off as a unit. Kapton tape over it for flight; the connector itself is sound.
+- **The RTC loses its time over a VCC dropout**, coming back at 2000-01-01 with OSF set and control at
+  its power-on 0x1C (seen 2026-11-04 and 2026-11-07). A working backup cell should carry it through;
+  the cell's voltage in its holder has not been measured.
+- **Expansion:** two four-output boards fed from U1's spare tier-1 outputs (3.3 V, ground and the
+  buffered signal per board; one '125 with inputs tied and OE grounded, 0.1 uF at the package, 1k per
+  output) are the planned way to add legs, the main board having no room for another column.
 
 Resolved: all five pigtail legs now pass the signal. Two did not at first (U2 channels 3 and 4,
 pins 8-13, the NE and NW legs in the design). The adapters were excluded by swapping them between
