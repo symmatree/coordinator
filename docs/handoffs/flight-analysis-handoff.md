@@ -66,68 +66,74 @@ where are that island's edges" terminates.
    deliberately free of interpretation; the arguments live in the theory ledger.
 6. **`analysis/README.md`** -- index of what each module and notebook does.
 
-## Where things stand (2026-10-27)
+## Where things stand (2026-11-16)
 
-**Open PRs from this role:** coordinator#626 (spectrogram transfer function never
-interpolates across a hole) and #627 (`tlog_read.py` and the three-observer section for
-#229). Merged this session: #605 (row sharpness, band RMS), #607 (ledger topic 7), #613
-(ledger measured baseline), #619 (notebook move + per-flight set), #620
-(`time-sync.ipynb`), #625 (layout doc: provenance per log), tiles#871 (runner runs the
-per-flight set, extracts bundles), tiles#874 (runner: DataFlash check, per-log provenance,
-timeouts, job deadline). coordinator#211 closed as completed.
+**Nothing of this role's is open except draft coordinator#644** (`feature-matching.ipynb`,
+SIFT + RANSAC between consecutive campod stills against the FC's motion). It answered the
+operator's "do the stills match at all" on 2026-10-27-ffocus (about 9k inliers per consecutive
+pair, rotation within about 1 deg of the FC). It is not in the runner. Closing it unmerged was
+recommended; the operator has not decided. The mapping pipeline is ODM (`analysis/mapping_sim/`,
+tiles `mapping-sim`), not this notebook.
 
-**The one flight with everything on it is `2026-10-25-soft-mount-check-flight`:** three
-FC boots (`fc-log-20/21/22`), three coordinator sessions, two campods with arm and
-camera-mount ADXLs, 5 ms exposure at `infinity`, three-blade set B, motor soft mounts.
-Its measured state is `analysis/image-quality-experiments.md`, *Measured baseline,
-2026-10-25*; everything below is from it unless said otherwise.
+**The nightly runner** (tiles `tanka/environments/flight-analysis/runner.py`):
+- **What it reads:** only `/mnt/flights/<platform>/<flight>/`. `rekon10/archive/` holds every
+  flight before 2026-10-30 and does not run (tiles#944).
+- **Per-pod notebooks** run only when the session has usable data: an accel file with a
+  `"t": "b"` batch row after its header, or a non-empty still (tiles#970).
+- **Logs that end armed** (power lost) have no disarm row; the per-pod notebooks use the log's
+  end (coordinator#733).
+- **State:** green from 2026-11-12 on. Two failed Job objects kept `KubeJobFailed` firing after
+  the fixes and were deleted by hand, with the operator's approval.
+- **Known gap:** 2026-11-07-crash's campod-sw is skipped ("time-sync.json names no .bin for
+  it"). The operator accepted running sw by hand if needed.
 
-**Stills are not usable (operator):** about a tenth of each frame is sharp and which rows
-those are changes frame to frame. Bands are present on the campod (215/230 SE frames fit
-one) and the SE band frequency tracks Motor2's rev frame by frame (r 0.80); Motor2 is the
-slowest motor (82.7 Hz) and the amplitude peaks when it runs 76-79 Hz. The camera-mount
-ADXL reads 0.5-0.8 m/s^2 at the rev lines and up to 4 m/s^2 at blade-pass against a bench
-floor of 0.02-0.03. Rev lines sit at 83-115 Hz; `docs/campod.md` was written against
-~330 Hz, and its own VCM-resonance paragraph (80-200 Hz) now has forcing inside it.
+**Motors:** one table, `docs/rekon10/ardupilot.md`, "Which motor is which", checked against
+flight data; one lookup, `analysis/motors.py`; `AGENTS.md`, "Naming motors" (coordinator#738).
+Name motors by corner. Front against rear is the forward-CG split (coordinator#169), not a
+diagonal.
 
-**Motors:** throttle output 0.18 in hover; front/rear thrust split 1.55 (CG ~35 mm
-forward), left/right 0.97, and the two spin directions 0.82 with YOut -0.037 -- the last
-is new against 260730/260814 (coordinator#169 has the table).
+**2026-10-30-auto** crashed after the last waypoint: the pack ran out, and the ESC-reported
+voltage hid it. coordinator#675 is closed with the operator's conclusion; the flight README has
+the timeline. Its `scripts/` (`descent.py`, `takeoff.py`, `magresid.py`) are on the NAS, not in
+the repo.
 
-**The campods now carry Arducam B0310 modules** (IMX708 behind a fixed M12 lens, 120 deg H,
-no VCM, no `LensPosition`), from 2026-10-26; factory focus unknown; campod-se's camera did
-not probe on its first boot (os-and-driver's finding). Pixel amplitudes are not comparable
-across that change. An ADXL is taped to the module housing on these (operator). The
-operator's direction, not a plan of this role's: envelope-first -- find one configuration
-that gives sharp or sharp-jello frames, then expand from it; fixed lens, 1 ms exposure
-(a `campod-exposure-1ms` branch exists, not mine), battery back on top to centre the CG,
-cameras on a raft, the Blackfly for global shutter; VIO is off the table.
+**2026-11-07-crash, the first four-camera flight to capture:** a front-left (NW) motor failure on
+the climb, a fall from about 14 m. The README has it, corrected. From the dataflash
+(`fc-log-13.bin`, pulled from the SD card):
+- **The NW motor:** RPM per command fell 36% against 16-19% for the others, its ESC temperature
+  rose fastest, and the controller drove it up.
+- **The 13 stills per pod are sharp in the air.** Gain was 16 at dusk. `analysis/tools/campod_mosaic_video.py`
+  made `derived/campod-mosaic.mp4`.
+- **The accel files are 0 bytes:** nothing reached disk before power was lost.
+- **The PM02D's current read failed in the air** (79 A, then 36.6, then about 0.5 A with the
+  motors turning), and its voltage froze for about 1 s.
+- **The FC logged PPS edges (`CAM`) in flight for the first time:** 304, FC -192 ppm against the
+  pulse and -176 against GPS. The edges sit -60 ms from the GPS second with 33 ms spread. That
+  spread has not been looked at.
+- **Pod PPS lock was slow:** ne and nw never locked. coordinator#728/#730/#734 (not this role's)
+  change chrony since then; the next time-sync report shows whether lock is faster.
 
-**Time sync, measured end to end (`time-sync.ipynb`):** every UTC label on the vehicle
-(stills by two routes, coordinator, FC RTC) sits +25 to +32 ms ahead of GPS, within a few
-ms of each other. FC `TimeUS` against GPS: its second is long by 253-298 ppm (three boots,
-ten minutes apart) -- earlier text called the same number "fast"; state the convention.
-Against the coordinator's PPS-disciplined clock the FC reads 272-295 ppm by two routes, so
-"pulse vs GPS" by difference comes out -19 to +42 ppm across the three logs: not a
-measurement of the DS3234 yet. The coordinator locks to the pulse 20-22 s after boot
-(chrony slewing at 83 ms/s), then 3-20 us sd; pods stepped 195 days at boot, campod-sw sat
-95 ms off for 74 s before locking; during the flight all three are within 5 us sd. Pod vs
-pod same-second exposures: median 388 us, sd 287 us (design figure 52 us; coordinator#538
-has the method). Zero `CAM` rows in all three logs: the FC recorded no PPS edges that day.
-The ground tlog was a 0-byte `.tlog.part`. `vehicle.tlog` holds 11343 FC frames against
-11317 the FC counted sending on that channel, zero sequence loss.
-
-**The per-flight set runs nightly:** `flight-analysis` per `.bin`, then per flight the
-bundles extracted into `captures/`, `time-sync`, and `vibration-spectrogram` and
-`image-sharpness-vs-motion` per pod on the `.bin` `time-sync.json` names for it, with
-`derived/polisher.json` provenance. The first nightly after tiles#871 processes every
-flight dir on the NAS; whether it completed has not been checked (needs `kubectl`, ask).
-
-**Still open from earlier:** the 152.9 Hz hand-held strike-test mode and the six-pose
-calibration stand as written in the 2026-10-15 version of this file (git history); the
-twelve-pose set is unflown.
+**Compass, coordinator#674 (open):**
+- **Theory:** the flight current through the pack and leads, after the battery moved on top.
+- **Test:** a longer mast.
+- **11-07 with the longer mast:**
+  - The in-flight field change is about half the 10-30 level per throttle (100-180 mG at
+    58-62 A, up to 360 mG at 79 A, about 4.5 mG/A).
+  - It now points mostly down, against mostly up on 10-30.
+  - The ground reading is 556 mG at 72 deg against about 490 mG at 66 deg before, so the
+    calibration likely no longer fits the new mast.
+  - Late in the climb its horizontal part passed the Earth's 170-200 mG. The EKF heading held
+    near 322 deg while the airframe turned 77 deg (from the 400 Hz rates), and the yaw
+    controller kept turning it. That is the spin the operator saw in AltHold.
+- **On #674:** these 11-07 numbers, and ArduPilot 4.7.2's reset logic and compensation modes.
 
 ## What must not be dropped
+
+**Don't name a failed motor from the tlog.** On 2026-11-07 a single glitched ESC sample in the
+ground tlog (rear-right "1028 rpm") was reported as the failed motor, and two peers and the
+flight README picked it up. The dataflash, read at full rate, pointed to the opposite corner,
+front-left, which is where the burn marks were. `docs/flight-data-interpretation.md`, the `ESC`
+row, has the pattern.
 
 **`gap_ns` is not a loss detector on its own.** It finds concentrated holes -- the 500 ms
 events that corrupt a decay fit -- and is **structurally blind** to loss spread one sample at
