@@ -6,9 +6,8 @@
 # matching H and V; the nominal 2.87 mm (2050 px) would give 129 H as equidistant.
 #
 # Mounts: one camera at each corner of the 7.9 x 3.8 in cheese plate, long side fore-aft, looking
-# outward at 45 deg off track, landscape. Each is pitched so the middle of its lower edge sees nadir:
-# depression = 90 - half the vertical FOV (33.74) = 56.26. The 3 cm drop below the body origin is a
-# placeholder.
+# outward at 45 deg off track, landscape. The module plane is 20.5 deg from horizontal, so the
+# optical axis is 69.5 deg below horizontal. The 3 cm drop below the body origin is a placeholder.
 
 rig:
   pixel_um: 1.4
@@ -19,10 +18,10 @@ rig:
       focal_px: 2200.0
       k: [0.0, 0.0, 0.0, 0.0]
   cameras:
-    - {name: ne, lens: b0310, azimuth_deg: 45, depression_deg: 56.26, roll_deg: 0, position_m: [0.100, -0.048, -0.03]}
-    - {name: se, lens: b0310, azimuth_deg: 135, depression_deg: 56.26, roll_deg: 0, position_m: [-0.100, -0.048, -0.03]}
-    - {name: sw, lens: b0310, azimuth_deg: 225, depression_deg: 56.26, roll_deg: 0, position_m: [-0.100, 0.048, -0.03]}
-    - {name: nw, lens: b0310, azimuth_deg: 315, depression_deg: 56.26, roll_deg: 0, position_m: [0.100, 0.048, -0.03]}
+    - {name: ne, lens: b0310, azimuth_deg: 45, depression_deg: 69.5, roll_deg: 0, position_m: [0.100, -0.048, -0.03]}
+    - {name: se, lens: b0310, azimuth_deg: 135, depression_deg: 69.5, roll_deg: 0, position_m: [-0.100, -0.048, -0.03]}
+    - {name: sw, lens: b0310, azimuth_deg: 225, depression_deg: 69.5, roll_deg: 0, position_m: [-0.100, 0.048, -0.03]}
+    - {name: nw, lens: b0310, azimuth_deg: 315, depression_deg: 69.5, roll_deg: 0, position_m: [0.100, 0.048, -0.03]}
 
 # One 45 m pass north and one back south, 15 m apart, at 40 m: 16 captures per pass, 3 m apart.
 trajectory:
