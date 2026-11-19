@@ -41,7 +41,8 @@ One part per pod, bolted down into a corner pair. From the spec:
   the frame. The down angle follows from the module's vertical field of view: the Camera
   Module 3 standard lens is 66 x 41 degrees ([campod.md](../campod.md)), so with the module
   landscape the optical axis is 69.5 degrees below horizontal (`90 - 41/2`). campod.md
-  works with -70.
+  works with -70. What the B0310s see from this facing, and how overlap and GSD change with
+  the tilt, is in [campod.md](../campod.md), "4-camera, B0310".
 - **Position:** the camera support plane is centred over the outer hole of the pair, so
   the bolt is behind the camera.
 - **Bolt seat:** a flattened circular area, 10 mm diameter, for the bolt head, with the
