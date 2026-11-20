@@ -82,13 +82,22 @@ These are all unproven claims about load and thermals.
 - **Solution:** Full-length aluminum heatsinks on the Zeros, with the pod design leaving the center channel open for prop-wash cooling.
 - **Hardware sources:** Pi Zero 2 W, Camera Module 3 (standard), ribbon cables, and heatsinks from PiShop.
 
-### Proposed: Signal wiring (PPS timing from DS3234 SQW)
+### PPS leg (the pod end)
 
-Run a **twisted pair** from the hub PPS buffer (driven by [**SparkFun DeadOn RTC DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW**, typically 1 Hz): signal wire plus its own signal ground. This keeps the loop area near zero and prevents ESC EMI from corrupting the pulse.
+This section is the **pod end** of a PPS leg: the cable, the header pins, and what an
+unconnected pin reads. The signal itself -- the DS3234 SQW, the buffer tree, which output
+drives which pod, the leg's 1k series resistor, and which edge is the second -- is in
+[central-hub.md, *PPS*](rekon10/central-hub.md#pps). What chrony does with it is in
+[time-base.md](time-base.md).
 
-It lands on a **1x2 at header pins 37 and 39** -- pin 37 is `GPIO26` and takes the signal, pin 39 is the ground. Both are in the odd row at the far end, clear of the accelerometer's 2x5 at pins 17-26 and of the serial console at pins 6/8/10, so the three connectors do not foul each other. The boot overlay that follows from this choice is `dtoverlay=pps-gpio,gpiopin=26,assert_falling_edge=1`, which belongs to the campod image rather than to this repo and is now in `config.append.txt` (dotfiles-symm#84).
+Each leg is a **twisted pair** from a hub-board buffer output: signal wire plus its own signal ground. This keeps the loop area near zero and prevents ESC EMI from corrupting the pulse.
 
-The leg's 1k series resistor is on the hub board, not in the pigtail ([central-hub.md](rekon10/central-hub.md)); the pod end of the cable is bare wire to the header.
+It lands on a **1x2 at header pins 37 and 39** -- pin 37 is `GPIO26` and takes the signal, pin 39 is the ground. Both are in the odd row at the far end, clear of the accelerometer's 2x5 at pins 17-26 ([campod-electrical.md](campod-electrical.md)) and of the serial console at pins 6/8/10, so the three connectors do not foul each other and each cable disconnects on its own. The boot overlay that follows from this choice is `dtoverlay=pps-gpio,gpiopin=26,assert_falling_edge=1`, which belongs to the campod image rather than to this repo and is in `config.append.txt` (dotfiles-symm#84).
+
+BCM 9-27 come up pulled down, so an absent or unpowered distribution board reads as "no
+pulses" rather than a floating line inventing edges.
+
+The leg's 1k series resistor is on the hub board, not in the pigtail; the pod end of the cable is bare wire to the header.
 
 The signal ground goes straight through, with nothing in series. An earlier revision put a
 100-ohm resistor here against a "high-current shortcut during a motor failure"; there is no
