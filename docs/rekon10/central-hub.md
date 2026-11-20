@@ -74,7 +74,9 @@ Timing signal to coordinate campod and coordinator clocks precisely.
 This section owns the **signal**: the fan-out, which output drives which consumer, the
 pull-up arithmetic, and which edge is the second. What software does with it -- chrony's
 reference, when the chip is written, what a correction looks like where it arrives -- is in
-[time-base.md](../time-base.md).
+[time-base.md](../time-base.md). Where a leg lands on a campod is in
+[campod.md, *PPS leg*](../campod.md#pps-leg-the-pod-end); on the FC, in
+[flight-platform.md](flight-platform.md).
 
 **As built, 2026-10-18.** The board is soldered, powered from the Coordinator and running: chrony
 holds `Reference ID: PPS` at stratum 1, 2.9 us RMS offset, with both campods synced over the gadget
@@ -588,6 +590,5 @@ The rest of the Coordinator header is two more shells, which replaced single fem
 `coordinator-pi-20261011.img`. Both are device tree, so they come from the image rather than
 from a converge.
 
-On the campod end, PPS lands on **header 13/14 (GPIO27 + GND)** as its own 2x1 rather than in the
-accelerometer shell, so the two cables can be disconnected independently. BCM 9-27 come up pulled down, so an absent or unpowered distribution
-board reads as "no pulses" rather than a floating line inventing edges.
+The campod end of each leg -- the cable, the header pins it lands on, and what an unconnected
+pin reads -- is in [campod.md, *PPS leg*](../campod.md#pps-leg-the-pod-end).
