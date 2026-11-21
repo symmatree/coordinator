@@ -41,6 +41,37 @@ No camera points straight down. The array captures sides of vertical structures 
 
 The oblique projection at the top edge widens the effective azimuthal footprint: the 66-degree horizontal FOV sweeps approximately 86 degrees of azimuth at the -49.5-degree top edge. With 8 cameras at 45-degree spacing, adjacent cameras overlap by ~41 degrees in the far field -- nearly complete double coverage everywhere. Cameras mirrored through a plane perpendicular to the axis of travel (e.g. ENE and WSW) see opposite sides of the same objects (at different points in time).
 
+#### 4-camera, B0310
+
+Four Arducam B0310s, one per raft corner, facing out at 45 degrees from the nose, landscape, on
+wedges that hold the module plane 20.5 degrees from horizontal: the optical axis is 69.5 degrees
+below horizontal ([sensor-raft.md](rekon10/sensor-raft.md)). The lens is a fisheye, so a frustum
+is a poor stand-in for its view: the image edges bow outward and the corners reach about 75 degrees
+off axis, against 62 for a frustum matched at the edge midpoints.
+
+From ODM's self-calibration on the 2026-11-07 stills (three runs, each pod fitted separately),
+focal about 2080 px, and from the optical axis to the middle of each image edge about 65 / 59
+degrees left / right and 36 / 34 degrees up / down; the principal point sits about 110 px right of
+centre. [`analysis/campod-coverage.ipynb`](../analysis/campod-coverage.ipynb) takes those lenses and
+sweeps the tilt, and draws the maps behind these numbers. From 20 m, everything scaling with
+height:
+
+- **Overlap.** At 69.5 degrees every ground point within 31 m is in at least two cameras, and 64%
+  of the ground within 20 m in three. Tilting the axis up to 60 degrees keeps two cameras on
+  everything within 37 m. At 55 degrees a thin X of single-camera ground opens under the vehicle,
+  along the diagonals; at 50 it is about 15 m across. No tilt in that range leaves ground within
+  40 m unseen, or puts more than 1% of the image above the horizon.
+- **Ground GSD does not depend on the tilt.** At a ground point it is `range^2 / height` times the
+  pixel angle, about 1 cm straight down; the tilt only decides whether the point is in frame. 2 cm
+  or better ends about 1x the height out, 3 cm about 1.5x, so ground further out than that is in
+  frame but coarse.
+- **Sides of things.** The side of a trunk at ground level is resolved at 2 cm or better from
+  about 13 m to 30 m out, at any of these tilts. Partway up it is the tilt that matters: for a
+  trunk 10 m up, the share of the ground within 40 m where two cameras resolve it at 2 cm goes
+  from 25% at 69.5 degrees to 52% at 60 and 61% at 55.
+
+The notebook models no occlusion, blur or rolling shutter.
+
 ### Pod camera assignment
 
 For the 4 camera design, the initial assumption is "outward" facing from each NE / SE / SW / NW pointing direction. The "cross-eyed" alternatives could be considered to either give better nadir coverage, or
@@ -82,13 +113,22 @@ These are all unproven claims about load and thermals.
 - **Solution:** Full-length aluminum heatsinks on the Zeros, with the pod design leaving the center channel open for prop-wash cooling.
 - **Hardware sources:** Pi Zero 2 W, Camera Module 3 (standard), ribbon cables, and heatsinks from PiShop.
 
-### Proposed: Signal wiring (PPS timing from DS3234 SQW)
+### PPS leg (the pod end)
 
-Run a **twisted pair** from the hub PPS buffer (driven by [**SparkFun DeadOn RTC DS3234**](https://www.sparkfun.com/sparkfun-deadon-rtc-breakout-ds3234.html) **SQW**, typically 1 Hz): signal wire plus its own signal ground. This keeps the loop area near zero and prevents ESC EMI from corrupting the pulse.
+This section is the **pod end** of a PPS leg: the cable, the header pins, and what an
+unconnected pin reads. The signal itself -- the DS3234 SQW, the buffer tree, which output
+drives which pod, the leg's 1k series resistor, and which edge is the second -- is in
+[central-hub.md, *PPS*](rekon10/central-hub.md#pps). What chrony does with it is in
+[time-base.md](time-base.md).
 
-It lands on a **1x2 at header pins 37 and 39** -- pin 37 is `GPIO26` and takes the signal, pin 39 is the ground. Both are in the odd row at the far end, clear of the accelerometer's 2x5 at pins 17-26 and of the serial console at pins 6/8/10, so the three connectors do not foul each other. The boot overlay that follows from this choice is `dtoverlay=pps-gpio,gpiopin=26,assert_falling_edge=1`, which belongs to the campod image rather than to this repo and is now in `config.append.txt` (dotfiles-symm#84).
+Each leg is a **twisted pair** from a hub-board buffer output: signal wire plus its own signal ground. This keeps the loop area near zero and prevents ESC EMI from corrupting the pulse.
 
-The leg's 1k series resistor is on the hub board, not in the pigtail ([central-hub.md](rekon10/central-hub.md)); the pod end of the cable is bare wire to the header.
+It lands on a **1x2 at header pins 37 and 39** -- pin 37 is `GPIO26` and takes the signal, pin 39 is the ground. Both are in the odd row at the far end, clear of the accelerometer's 2x5 at pins 17-26 ([campod-electrical.md](campod-electrical.md)) and of the serial console at pins 6/8/10, so the three connectors do not foul each other and each cable disconnects on its own. The boot overlay that follows from this choice is `dtoverlay=pps-gpio,gpiopin=26,assert_falling_edge=1`, which belongs to the campod image rather than to this repo and is in `config.append.txt` (dotfiles-symm#84).
+
+BCM 9-27 come up pulled down, so an absent or unpowered distribution board reads as "no
+pulses" rather than a floating line inventing edges.
+
+The leg's 1k series resistor is on the hub board, not in the pigtail; the pod end of the cable is bare wire to the header.
 
 The signal ground goes straight through, with nothing in series. An earlier revision put a
 100-ohm resistor here against a "high-current shortcut during a motor failure"; there is no
