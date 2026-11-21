@@ -10,6 +10,9 @@ on the scale; where an item includes others, the row says so.
 | ESC | 50.0 | the replacement TBS Lucid 4-in-1, with its motor-lead XT30 pigtails and battery pigtail; no mounting hardware |
 | Power stack | 105 | the ESC row above, plus the payload UBEC, the spark stopper, the PM02D and the wires between them; no mounting hardware |
 | FC | 18.0 | the Lucid H7 with all its pigtails; no mounting hardware |
+| Frame, without top plate or GPS | 775.5 | the frame with its four motors and their pigtails; the raft's rubber mounts; the VTX, its camera, antennas and wiring; both radios and their antennas; the TPU mounts for the VTX and antennas; the GPS protoboard and pigtails. Not included: the FC, the top plate, the GPS mast, the GPS |
+| Frame, with top plate and mast | 828 | the row above, plus the top plate, two battery straps, the mast base mount and the mast |
+| Top plate, battery straps and mast | 52.5 | the top plate, two battery straps and the mast |
 
 ### Derived
 
