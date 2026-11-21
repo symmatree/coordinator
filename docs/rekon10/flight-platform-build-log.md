@@ -484,3 +484,19 @@ had changed. Cause not established. Two earlier flash-shaped events on this chip
   ```
   dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D arducopter_with_bl-4.7.2-TBS_LUCID_H7.bin
   ```
+
+### Replacement ESC, and MR30 connectors on the motor leads (2026-11-21)
+
+**Why the ESC came out.** After the 2026-11-07 crash, a motor test with four new motors had NW
+running jumpy and lumpy while the other three ran smoothly. A spare motor on the NW connector
+did the same, so the fault was between that connector and the ESC: the leads and pads, or that
+ESC channel (2026-11-16; the crash record is
+`datasets/flights/rekon10/2026-11-07-crash/README.md`). The ESC was replaced with the spare.
+
+**Motor leads now use MR30s**, the three-pin connector, in place of the stacked XT30 pairs
+(two phases on one XT30, the third on a second XT30 with its black contact removed). The MR30s
+are soldered to the new ESC's motor pads.
+
+**Bench check, motor test in Mission Planner:** all four channels ran a trial motor on an MR30
+pigtail correctly. The test letters came out as `ardupilot.md`, "Which motor is which", has
+them: A = NE, B = SE, C = SW, D = NW.
