@@ -136,10 +136,8 @@ which board is at fault, the FC input or the ESC's current-sense output feeding 
 known. `Cur2` (PA7) measures a stable 0.667 MOhm to GND while PC1 climbs.
 
 **ESC serial telemetry** (SERIAL8) still reports per-motor voltage, current, RPM and
-temperature, from a **custom-calibrated AM32 build** (see [ESC / Firmware](#firmware) and
-[`firmware/esc/` (coordinator)](../../firmware/esc/README.md)). Its voltage tracked a meter
-within ~1 % on the bench, disarmed, but does not follow the pack in flight (coordinator#675),
-and its current scale is the AM32 generic value.
+temperature, from **stock AM32 v2.22** ([ESC / Firmware](#firmware)), so its voltage and
+current are on AM32's generic constants for this target.
 
 ## Serial ports (as wired)
 
@@ -169,9 +167,13 @@ and its current scale is the AM32 generic value.
 * [AM32 Online Configurator](https://am32.ca/)
 * [AM32 Firmware](https://github.com/am32-firmware/AM32)
 
-initial: self report as F421, EEPROM v2, TBS_6S_4IN1_F421, version 2.16.
+**Flashed with stock AM32 v2.22** (2026-11-21), on the replacement ESC fitted after the
+2026-11-07 crash, identical to the first. Stock leaves the per-ESC voltage and current
+telemetry on the generic constants described below; nothing on the FC reads them, since the
+battery monitor is the PM02D.
 
-Flashed v2.20 using web configurator, pushed default config: EEPROM v3.
+The first ESC: self-reported as F421, EEPROM v2, TBS_6S_4IN1_F421, version 2.16. Flashed v2.20
+using the web configurator, pushed default config: EEPROM v3.
 
 Settings (non-default):
 
@@ -179,7 +181,7 @@ Settings (non-default):
 * Beeper volume 3
 * Running brake level 9 for all that propeller inertia
 
-**Calibrated current/voltage telemetry (custom build).** Stock `TBS_6S_4IN1_F421` leaves the
+**Calibrated current/voltage telemetry (custom build, first ESC only).** Stock `TBS_6S_4IN1_F421` leaves the
 current/voltage constants on generic fallbacks that read badly here (voltage ~1.44x low; a
 ~80 A/ESC zero-throttle current phantom). Fixed with a 3-constant patch to `Inc/targets.h` built
 from the v2.20 tag -- `TARGET_VOLTAGE_DIVIDER 158`, `CURRENT_OFFSET 1600`, `MILLIVOLT_PER_AMP 20`
@@ -202,20 +204,9 @@ reference: [attachments/Multirotor_prop_direction_3DR.pdf](https://github.com/sy
 
 ### Motor lead connectors
 
-The three motor leads on each arm go through XT30s, so a motor can be swapped without
-desoldering at the ESC: one XT30 pair carries two phases, and a second pair with its black
-contact removed carries the third, stacked on top of the first. The male side is toward the
-ESC, the power source. The pigtails are 14 AWG, stripped 3 mm, rosined and tinned heavily,
-and soldered straight out from the ESC pads; the turn along the arm is taken up by the
-differing lead lengths.
-
-Lead lengths on the front arms, connector to cut (2026-11-14):
-
-| lead | length (mm) |
-|---|---|
-| single (third phase) | 65.7 |
-| red | 78.1 |
-| black | 83.6 |
+The three motor leads on each arm go through an MR30, the three-pin connector, so a motor
+can be swapped without desoldering at the ESC. The male side is toward the ESC, the power
+source. The MR30s are soldered to the ESC's motor pads.
 
 ### Thrust and power (expected)
 

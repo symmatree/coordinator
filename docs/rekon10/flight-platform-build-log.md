@@ -491,11 +491,14 @@ had changed. Cause not established. Two earlier flash-shaped events on this chip
 running jumpy and lumpy while the other three ran smoothly. A spare motor on the NW connector
 did the same, so the fault was between that connector and the ESC: the leads and pads, or that
 ESC channel (2026-11-16; the crash record is
-`datasets/flights/rekon10/2026-11-07-crash/README.md`). The ESC was replaced with the spare.
+`datasets/flights/rekon10/2026-11-07-crash/README.md`). The ESC was replaced with the spare,
+an identical TBS Lucid 60A 4-in-1, flashed with **stock AM32 v2.22** rather than the
+calibrated v2.20 build in `firmware/esc/`, whose only change was the voltage and current
+telemetry constants.
 
 **Motor leads now use MR30s**, the three-pin connector, in place of the stacked XT30 pairs
 (two phases on one XT30, the third on a second XT30 with its black contact removed). The MR30s
-are soldered to the new ESC's motor pads.
+are soldered to the new ESC's motor pads, male on the ESC side.
 
 **Bench check, motor test in Mission Planner:** all four channels ran a trial motor on an MR30
 pigtail correctly. The test letters came out as `ardupilot.md`, "Which motor is which", has
