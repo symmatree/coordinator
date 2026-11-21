@@ -3,6 +3,20 @@
 Ground truth for the mass budget, weighed on a scale that reads to 0.5 g. Each row is what was
 on the scale; where an item includes others, the row says so.
 
+## 2026-11-21, rebuilding the flight platform with the replacement ESC
+
+| item | mass (g) | what is included |
+|---|---|---|
+| ESC | 50.0 | the replacement TBS Lucid 4-in-1, with its motor-lead XT30 pigtails and battery pigtail; no mounting hardware |
+| Power stack | 105 | the ESC row above, plus the payload UBEC, the spark stopper, the PM02D and the wires between them; no mounting hardware |
+| FC | 18.0 | the Lucid H7 with all its pigtails; no mounting hardware |
+
+### Derived
+
+| item | mass (g) | from |
+|---|---|---|
+| UBEC, spark stopper, PM02D and their wires | 55 | 105 - 50.0 |
+
 ## 2026-11-13, with the airframe in parts after the 2026-11-07 crash
 
 | item | mass (g) | what is included |
