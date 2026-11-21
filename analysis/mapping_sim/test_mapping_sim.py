@@ -18,6 +18,7 @@ import numpy as np
 import yaml
 from scipy.ndimage import gaussian_filter
 
+import anchored_pass as ap
 import manifest
 import opensfm_data as od
 from lens import KannalaBrandt
@@ -269,6 +270,54 @@ def test_score_sees_a_bad_shot_and_a_missing_one() -> None:
     assert rep["images"]["missing"] == [names[0]]
     assert rep["images"]["reconstructed"] == 11
     assert 0.3 < rep["position_error_m"]["max"] < 0.6  # the similarity fit spreads a little of it
+
+
+BROWN = {"width": 4032, "height": 3024, "focal_x": 0.696, "focal_y": 0.696, "c_x": -0.0016, "c_y": -0.0016, "k1": 0.12, "k2": -0.22, "p1": -0.0001, "p2": -0.0009, "k3": 0.16}
+
+
+def test_anchored_brown_round_trip() -> None:
+    cam = ap.Brown(BROWN)
+    rng = np.random.default_rng(0)
+    xy = rng.uniform(-0.6, 0.6, (500, 2)) * [1, 0.75]
+    assert np.abs(cam.undistort(cam.distort(xy)) - xy).max() * cam.fx * cam.size < 1e-3  # pixels
+
+
+def test_anchored_topocentric_round_trip() -> None:
+    ref = {"latitude": 40.5324, "longitude": -80.0419, "altitude": 300.0}
+    P = np.array([[0.0, 0, 0], [100, -50, 20], [-30, 80, -5]])
+    lat, lon, alt = ap.lla(P, ref)
+    assert np.abs(ap.topocentric(lat, lon, alt, ref) - P).max() < 1e-6
+
+
+def test_anchored_pose_from_exact_points() -> None:
+    """Known pose, exact 2D-3D correspondences plus 30% wrong ones: RANSAC recovers the pose and
+    rejects the wrong ones."""
+    cam = ap.Brown(BROWN)
+    rng = np.random.default_rng(1)
+    R = ap.rot([0.3, -2.0, 0.5])
+    c = np.array([5.0, -3.0, 25.0])
+    t = -R @ c
+    X = c + (rng.uniform(-20, 20, (300, 3)) - [0, 0, 40]) @ np.eye(3)
+    Xc = X @ R.T + t
+    keep = Xc[:, 2] > 1
+    X, Xc = X[keep], Xc[keep]
+    xy = Xc[:, :2] / Xc[:, 2:]
+    wrong = rng.random(len(xy)) < 0.3
+    xy[wrong] += rng.uniform(-0.2, 0.2, (wrong.sum(), 2))
+    R1, t1, inl = ap.fit_pose(X, xy, 2 * cam.ideal_per_px(), c + [1, 1, 1])
+    assert ap.angle_deg(R1, R) < 1e-3 and np.linalg.norm(ap.centre(R1, t1) - c) < 1e-3
+    assert not (inl & wrong).any() and (inl | wrong).all()
+
+
+def test_anchored_guided_match_respects_the_window() -> None:
+    """The right descriptor outside the window is not taken; inside it, it is."""
+    rng = np.random.default_rng(2)
+    fdesc = rng.integers(0, 255, (50, 128)).astype(np.float32)
+    fuv = rng.uniform(-0.4, 0.4, (50, 2))
+    adesc = fdesc[[7, 9]].astype(np.uint8)
+    pred = fuv[[7, 9]] + [[0.001, 0], [0.3, 0]]
+    a, f, _ = ap.guided_match(pred, np.array([0.01, 0.01]), adesc, fuv, fdesc, 0.8, 1.0)
+    assert a.tolist() == [0] and f.tolist() == [7]
 
 
 def main() -> None:
