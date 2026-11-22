@@ -71,6 +71,9 @@ feed, while the UBEC is already rated for the whole payload.
 
 Timing signal to coordinate campod and coordinator clocks precisely.
 
+A replacement board that sits on the Coordinator's header is being designed:
+[coordinator-hat.md](coordinator-hat.md).
+
 This section owns the **signal**: the fan-out, which output drives which consumer, the
 pull-up arithmetic, and which edge is the second. What software does with it -- chrony's
 reference, when the chip is written, what a correction looks like where it arrives -- is in
