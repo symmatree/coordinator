@@ -60,6 +60,17 @@ breakout has one GND pad anyway, so the second line had nowhere of its own to la
 ground that is shared at both ends is not a return for one signal in any case. Pin 25 is
 not connected.
 
+### Header board (planned, 2026-11-22)
+
+A small board over the Zero's 40-pin, connecting header pins to ports: serial console, the two
+accelerometers (CE0 and CE1 each to its own socket) and PPS, with room for anything else. It
+covers the 40-pin and a little area beside it, not the whole Zero, and its ports face sideways,
+over the body of the Zero.
+
+Through-hole on the 2.54 mm grid with solderable pads on both sides, soldered directly onto the
+male headers already on the Zeros. The [Coordinator HAT](rekon10/coordinator-hat.md) is the
+Coordinator's counterpart.
+
 #### Pi connection refinements
 
 Interesting question (if we do the PCB for the breakout, below) is if it changes how we want to connect back to the pi. I could have a block

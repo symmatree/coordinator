@@ -13,7 +13,9 @@ mean -- is in [central-hub.md, *PPS*](central-hub.md#pps) and is not repeated he
 
 ## Mechanical
 
-- Sits on the Pi 4B's 40-pin header through a **female header** on the HAT.
+- Sits on the Pi 4B's 40-pin header through a **female header** on the HAT, soldered through
+  from the underside. The campods get a simpler board soldered straight onto their headers
+  ([campod-electrical.md, *Header board*](../campod-electrical.md#header-board-planned-2026-11-22)).
 - Holes line up with the Pi's four M2.5 mounting holes (58 x 49 mm centres), so the HAT
   stands off on the same posts.
 - **The SH1106 module mounts directly on the HAT**, on its own 4-pin header, display facing
