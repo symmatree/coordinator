@@ -64,7 +64,8 @@ part whose internal distribution is built to USB's 500 mA per port, and one whos
 takes out power *and* data for everything on it. A pigtail failure costs one device.
 
 **The hubs, dehoused, sit below the Coordinator** (the [Coordinator HAT](coordinator-hat.md)
-with its display is the top of that stack). There are two, possibly a third for the waist
+with its display is the top of that stack), apart from the one with screw holes, which the
+HAT carries mechanically. There are two, possibly a third for the waist
 ring. The second supplies 5 V for devices that take data and power on one port -- the
 blackfly pod, whose other port goes down to the camera, so it cannot give either one to
 power alone ([blackfly.md](../blackfly.md)).
