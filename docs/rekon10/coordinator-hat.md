@@ -17,9 +17,11 @@ mean -- is in [central-hub.md, *PPS*](central-hub.md#pps) and is not repeated he
 - Holes line up with the Pi's four M2.5 mounting holes (58 x 49 mm centres), so the HAT
   stands off on the same posts.
 - **The SH1106 module mounts directly on the HAT**, on its own 4-pin header, display facing
-  up. The HAT is therefore the top of the Coordinator stack, and everything else in that
-  stack goes below the Coordinator: the dehoused USB hubs ([central-hub.md, *USB 2.0
+  up. The HAT is therefore the top of the Coordinator stack, and the rest of that stack goes
+  below the Coordinator: the dehoused USB hubs ([central-hub.md, *USB 2.0
   hub*](central-hub.md#usb-20-hub)).
+- **The HAT carries one hub mechanically**, as a daughter board on that hub's own screw
+  holes, placed clear of the SH1106. No electrical connection between the two.
 
 ## PPS consumers
 
