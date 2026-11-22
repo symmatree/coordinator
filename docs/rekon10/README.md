@@ -17,6 +17,7 @@ on this pin" and "what can I move", not "tell me about timing".
 | What is on an **FC pad or port** -- what is free, what is wired, what voltage it tolerates | [flight-platform.md](flight-platform.md), *Flight controller* |
 | What **ArduPilot parameter** makes a pin behave that way | [ardupilot.md](ardupilot.md) |
 | What is on the **hub board** -- the buffer tree, the 5 V rails, the pod harness, the PPS signal | [central-hub.md](central-hub.md) |
+| What goes on the **Coordinator HAT** that will replace the hub board's PPS distribution | [coordinator-hat.md](coordinator-hat.md) |
 | What is on a **campod** -- the Zero, the camera, the accelerometers, their wiring | [campod.md](../campod.md), [campod-electrical.md](../campod-electrical.md) |
 | What the **ESC, motors, battery, radio or VTX** are and how they are wired | [flight-platform.md](flight-platform.md) |
 | What the **FLIR Blackfly S** is -- its GPIO pins, power inputs, trigger, mounting holes | [flir-blackfly-s.md](flir-blackfly-s.md) |
@@ -57,6 +58,7 @@ this directory: [`docs/time-base.md`](../time-base.md), [`docs/campod-software.m
 | Arm pods (Pi Zero + cameras; multicamera sync, DS3234 PPS, chrony, upward gap-detect pair) | [campod.md](../campod.md) |
 | Mapping pipeline (PPK interpolation, ODM, rolling-shutter correction) | [mapping.md](mapping.md) |
 | Central hub, power, pod harness | [central-hub.md](central-hub.md) |
+| Coordinator HAT (design in progress: on-board DS3234, PPS fan-out, header breakouts) | [coordinator-hat.md](coordinator-hat.md) |
 | FLIR Blackfly S BFS-U3-244S8M-C: sensor, lens, GPIO, power, trigger | [flir-blackfly-s.md](flir-blackfly-s.md) |
 | blackfly pod (the FLIR on a Radxa Zero 3W): wiring, power, image, network, stack | [blackfly.md](../blackfly.md) |
 | Flight platform (as-built hardware, wiring, stack recipe) | [flight-platform.md](flight-platform.md) |
