@@ -63,6 +63,12 @@ that the hub would be a **second** shared element in series behind the UBEC, a c
 part whose internal distribution is built to USB's 500 mA per port, and one whose failure
 takes out power *and* data for everything on it. A pigtail failure costs one device.
 
+**The hubs, dehoused, sit below the Coordinator** (the [Coordinator HAT](coordinator-hat.md)
+with its display is the top of that stack). There are two, possibly a third for the waist
+ring. The second supplies 5 V for devices that take data and power on one port -- the
+blackfly pod, whose other port goes down to the camera, so it cannot give either one to
+power alone ([blackfly.md](../blackfly.md)).
+
 With the full build -- the horizontal ring of eight plus the upward pair, **ten Zeros**
 ([campod.md](../campod.md)) -- there would be three such hubs and three more supplies to
 feed, while the UBEC is already rated for the whole payload.

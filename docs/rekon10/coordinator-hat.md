@@ -16,6 +16,10 @@ mean -- is in [central-hub.md, *PPS*](central-hub.md#pps) and is not repeated he
 - Sits on the Pi 4B's 40-pin header through a **female header** on the HAT.
 - Holes line up with the Pi's four M2.5 mounting holes (58 x 49 mm centres), so the HAT
   stands off on the same posts.
+- **The SH1106 module mounts directly on the HAT**, on its own 4-pin header, display facing
+  up. The HAT is therefore the top of the Coordinator stack, and everything else in that
+  stack goes below the Coordinator: the dehoused USB hubs ([central-hub.md, *USB 2.0
+  hub*](central-hub.md#usb-20-hub)).
 
 ## PPS consumers
 
@@ -67,7 +71,7 @@ Taken from the current wiring ([central-hub.md](central-hub.md#coordinator-spi-b
 | header pins | function | on the HAT |
 |---|---|---|
 | 17-24 | 3V3, PPS in (GPIO24, 18), SPI0 MOSI/MISO/SCLK, CE0 (24), GND | DS3234 on SPI0 CE0; a buffer output to header 18 |
-| 1, 3, 5, 7, 9 | 3V3, SDA1, SCL1, GPIO4, GND | SH1106 front-panel display connector |
+| 1, 3, 5, 7, 9 | 3V3, SDA1, SCL1, GPIO4, GND | SH1106 front-panel display, mounted on the HAT |
 | 6, 8, 10 | GND, TXD (GPIO14), RXD (GPIO15) | FC serial connector |
 | 26 | SPI0 CE1 | accelerometer connector (just in case one is ever fed to the Coordinator) |
 
