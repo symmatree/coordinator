@@ -31,11 +31,11 @@ https://ardupilot.org/rover/docs/common-blitzh743wing.html
 
 * Drives in Manual from the flight radio (EdgeTX model in [`config/MODELS/model06.yml`](config/MODELS/model06.yml)); every `MODEn` in [`config/johnny-ardurover.param`](config/johnny-ardurover.param) is 0 (Manual).
 * The GM3 gimbal is not mounted, and the VTX may not be either.
-* A coordinator and OAK-D were on the deck for a while; neither is on it now.
+* A Jetson Nano is mounted on the deck. A coordinator (Pi) and OAK-D were on it for a while; neither is on it now.
 
 ## Companion compute and campods
 
-* Coordinator: a Raspberry Pi 5 (RAM size to check) or a Radxa board.
+* Coordinator: the Jetson Nano already on the deck; a Raspberry Pi 5 (RAM size to check) or a Radxa board are the alternatives.
 * Campods: Radxa, with mounts close to the rekon10 campod mounts ([campod.md](../campod.md)) and the holes moved to the pegboard pitch.
 * Cameras: the autofocus Camera Module 3 units are candidates here. Vibration on the rover comes as shocks rather than prop buzz, and the vehicle can stop without crashing, so capture can be scoot-and-shoot or continuous at a slow pace.
 
