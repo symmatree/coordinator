@@ -23,7 +23,11 @@ Wheelbase **455 mm**, 30.5 mm FC pattern, 19 mm motor pattern. TPU in the kit fi
 
 **TBS Lucid H7 Flight Controller - ICM42688** -- [TBS product page](https://www.team-blacksheep.com/products/prod:lucid_h7?srsltid=AfmBOoqm1P3rKUduaVLpS7PoSnZ1OvNZD1bLFvPFrDRYj9yclz82P66P), [ArduPilot hardware doc](https://ardupilot.org/copter/docs/common-tbs-lucidh7.html). Manual: [attachments/tbs-lucid-manual.pdf](https://github.com/symmatree/fables/blob/main/Drones/rekon10/attachments/tbs-lucid-manual.pdf). Gorilla pattern PDF: [attachments/tbs-gorilla-mounting-pattern.pdf](https://github.com/symmatree/fables/blob/main/Drones/rekon10/attachments/tbs-gorilla-mounting-pattern.pdf).
 
-**Firmware flashed:** Copter 4.7.2 (`fb773567`), `https://firmware.ardupilot.org/Copter/stable-4.7.2/TBS_LUCID_H7/arducopter_with_bl.hex`. Loaded 2026-10-24 as the fix for the FC reporting a flash error at every startup; [`ardupilot/ardupilot-4.7.2-sys/`](../../ardupilot/ardupilot-4.7.2-sys/README.md) is the `@SYS` export taken right after. Reflashed with the same image on 2026-10-27 after the reboot loop ([build log](flight-platform-build-log.md#fc-reboot-loop-on-every-power-up-cleared-by-a-reflash-2026-10-27)). History: 4.6.3 to 4.7.0 on 2026-07-27, 4.7.0 to 4.7.2 on 2026-10-24.
+**The spare FC is fitted from 2026-11-23**, wired through breakout daughterboards beside it
+([fc-breakout.md](fc-breakout.md)): short whips from the FC pads to the boards, and the pigtails below
+leave from there. The firmware line and the measurements in this section are from the first unit.
+
+**Firmware flashed (first unit):** Copter 4.7.2 (`fb773567`), `https://firmware.ardupilot.org/Copter/stable-4.7.2/TBS_LUCID_H7/arducopter_with_bl.hex`. Loaded 2026-10-24 as the fix for the FC reporting a flash error at every startup; [`ardupilot/ardupilot-4.7.2-sys/`](../../ardupilot/ardupilot-4.7.2-sys/README.md) is the `@SYS` export taken right after. Reflashed with the same image on 2026-10-27 after the reboot loop ([build log](flight-platform-build-log.md#fc-reboot-loop-on-every-power-up-cleared-by-a-reflash-2026-10-27)). History: 4.6.3 to 4.7.0 on 2026-07-27, 4.7.0 to 4.7.2 on 2026-10-24.
 
 Default UART to SERIAL mapping is in the Lucid manual (ArduPilot column). **This aircraft's wiring** is summarized in the serial table below and in [ardupilot.md](ardupilot.md).
 
@@ -62,7 +66,7 @@ pin 6 the users here are `PA6` (SPI1_MISO), `PB6` (I2C1_SCL), `PC6` (USART6_TX) 
 `PE6` (and `PE5`) gets a real hardware-timestamped interrupt. Visible on first use: ISR timestamps are
 microsecond-grained where the polling fallback lands on 1 ms boundaries.
 
-FC Connections:
+FC Connections (first unit; on the spare these leave from the breakout daughterboards):
 
 * RADIO pigtail
   * green - T6

@@ -15,6 +15,7 @@ on this pin" and "what can I move", not "tell me about timing".
 | If you are asking | Look in |
 |---|---|
 | What is on an **FC pad or port** -- what is free, what is wired, what voltage it tolerates | [flight-platform.md](flight-platform.md), *Flight controller* |
+| What the **FC breakout board** beside the FC carries -- rail buses, whips, the I2C split, LDOs | [fc-breakout.md](fc-breakout.md) |
 | What **ArduPilot parameter** makes a pin behave that way | [ardupilot.md](ardupilot.md) |
 | What is on the **hub board** -- the buffer tree, the 5 V rails, the pod harness, the PPS signal | [central-hub.md](central-hub.md) |
 | What goes on the **Coordinator HAT** that will replace the hub board's PPS distribution | [coordinator-hat.md](coordinator-hat.md) |
@@ -62,6 +63,7 @@ this directory: [`docs/time-base.md`](../time-base.md), [`docs/campod-software.m
 | FLIR Blackfly S BFS-U3-244S8M-C: sensor, lens, GPIO, power, trigger | [flir-blackfly-s.md](flir-blackfly-s.md) |
 | blackfly pod (the FLIR on a Radxa Zero 3W): wiring, power, image, network, stack | [blackfly.md](../blackfly.md) |
 | Flight platform (as-built hardware, wiring, stack recipe) | [flight-platform.md](flight-platform.md) |
+| FC breakout board (daughterboards now, PCB planned) | [fc-breakout.md](fc-breakout.md) |
 | Flight platform build log (chronicle, bench notes) | [flight-platform-build-log.md](flight-platform-build-log.md) |
 | Vibration and structural testing (chain validation, bump-test method) | [vibration-testing.md](vibration-testing.md) |
 | Propellers, by label (which sets exist and what they are) | [props.md](props.md) |
