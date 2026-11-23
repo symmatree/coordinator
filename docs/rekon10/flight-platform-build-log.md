@@ -503,3 +503,20 @@ are soldered to the new ESC's motor pads, male on the ESC side.
 **Bench check, motor test in Mission Planner:** all four channels ran a trial motor on an MR30
 pigtail correctly. The test letters came out as `ardupilot.md`, "Which motor is which", has
 them: A = NE, B = SE, C = SW, D = NW.
+
+### FC breakout daughterboards, and the spare FC (2026-11-23)
+
+**The spare FC goes in**, not because anything was suspected on the first one, but to do the
+wiring fresh through daughterboards.
+
+**Two protoboard daughterboards beside the FC.** Power and ground daisy-chain along them and
+the signals pass through, so the pigtails to the rest of the vehicle originate there. The FC
+connects to them by short whips of very flexible wire. Every time the stack came apart before,
+signal wires that had worked back and forth snapped and needed small patch jobs; more silicone
+gave some relief. The PCB this becomes, and what it is for: [fc-breakout.md](fc-breakout.md).
+
+**Whether it cuts breakage** depends on what caused it before. Breakage from moving things on
+the far side, such as relocated radios, the daughterboards make harmless. Breakage from moving
+the FC itself, or from hitting unrelated wires while doing something else, the whips are no
+better protected against than the old pigtails were, though they are better, softer and more
+flexible wire.
