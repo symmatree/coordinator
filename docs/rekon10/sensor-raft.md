@@ -1,4 +1,44 @@
-# Sensor raft -- the pod mounts
+# Sensor raft
+
+## Background
+
+The compute parts are stock raspberry pi parts or clones, and the cameras are commercial
+modules. I've either painted conformal
+silicone or put a layer of kapton tape over the most at risk bare conductors, but no
+full housings or anything.
+
+Current cooling expectation is that they simply don't get hot enough to matter.
+Conceptually it's "propwash will handle in-flight, and we'll figure it out for
+the bench", but in practice the units on the bench haven't had any observed heat
+problems during testing, so I haven't looked at it further. collectd has
+monitoring here.
+
+## Base: Cheeseplate
+
+The sensor raft base is a cheeseplate. Current unit is a Artcise CP200 ([B&H](https://www.bhphotovideo.com/c/product/1907895-REG/innorel_cp200_precision_machined_large_size_cheese.html).
+
+* Aluminum
+* Dimensions: 7.9 x 3.9 x 0.4" / 20 x 10 x 1 cm
+* Weight: 0.7 lb / 300 g
+
+It has 1/4-20 and 3/8-16 threaded holes and a few slots. Modeled as `artcise-cp-200`
+in Fusion in the "Admin" project.
+
+## Basic Design: 1/4-20 Forest
+
+The cheese plate is suspended from the frame with 4 rubber
+isolators. The camera mounts attach directly (corner mounts for the campod
+modules, and the centerline truncated-wedge mount for the blackfly when it
+is in use). Several 6" 1/4-20 bolts screw into the cheeseplate with a nut
+jammed down against the surface to lock them; I'm still iterating on the
+layout and whether to use any 3/8" bolts. Current thinking is to accept that
+1/4" bends in a crash, but be happy that consumes energy which would otherwise
+be damaging the payload.
+
+Compute nodes are hung on the landing gear bolts, since they don't need
+the positional stability of the raft base itself, and maybe it helps stop
+the legs from ringing too much on their own. Also it's better than loose or
+zip-tied.
 
 What goes on the raft and how each camera pod attaches to it. The raft itself (the 10 mm
 aluminum cheese plate, the rubber isolators it hangs on, the gimbal dampers held in
@@ -7,33 +47,43 @@ material (2026-10-27)". The camera geometry the mounts have to produce (aim angl
 assignment, field of view) is in [campod.md](../campod.md). This file is the mechanical
 spec for the parts that sit between the two, as stated by Seth on 2026-10-28.
 
-## What is being built first
+## Campod compute mounts
 
-The NE and NW pods, mounted on the raft. Each needs:
+Essentially a Y with a bolthole in the center and each arm reaching to the the two end holes
+in the pi zero footprint. `zero-quarter-mount` in Fusion.
 
-- an angled camera support with M2 heat-set inserts for the module;
-- two 1/4-20 attachments down into the raft's corner bosses;
-- the Pi tied to the cheese plate with zip ties, with Kapton between the Pi and the plate.
+* Original version in service on campods. Didn't fit the radxa zero due to lack of clearance
+  for parts around the mounting holes - the "real" zeros have lower neighbors.
+* v2 adds a little step to give more clearance; untested as of 2026-11-25.
 
-The Blackfly S ([flir-blackfly-s.md](flir-blackfly-s.md)) still flies, but its mount is a
-separate, harder job and is not covered here.
+## Coordinator compute mounts
 
-## The corner bosses, as measured
+`coord-mount` in Fusion.
 
-Four corner mounts on the raft, each with two 1/4-20 holes in line with the direction of
-travel. Measured across the pair, inner edge to inner edge and outer edge to outer edge:
+* v1 was just a hole for the bolt and a tab with a mounting hole on it. Worked okay
+  for purpose, broke in the crash (not a problem).
+* v2 tried to add a mount for the stack of power buses, didn't work in a few ways.
+* v3: closer on power fit. Problems:
+  * 1/4-20 is wrong position relative to the mounting hole we're targeting. Should
+    be approx 1.5mm further away in both dimensions, but keep the upright and the tab
+    shape which are correct.
+  * Cut off the corners of the tab with teh M4 on it, there's a fillet on the mating
+    surface that's making us stand off (only on the coner, not on the flats).
+  * Move coordinator 1mm further away from the bolt to give a little more clearance
+    where its bottom almost hits parts on the power thing.
+  * Maybe: add a second tab for the other side of the two power things, so it's held
+    in a U rather than just by a single tab on one side. But it's not really THAT
+    heavy.
+* v4: Fits the power unit nicely, but coord spacing isn't the same as power holes.
+* v5: Changed to a slot for the coordinator instead of a single hole, see if that makes
+  it adjustable enough. Trying to avoid needing explicit top and bottom mounts to
+  offset in opposite directions.
 
-| corner | inner edges | outer edges | centre to centre | implied bore |
-|---|---|---|---|---|
-| front | 9.9 mm | 20.1 mm | 15.0 mm | 5.1 mm |
-| rear | 12.8 mm | 23.1 mm | 17.95 mm | 5.15 mm |
+## Camera module corner mounts
 
-Centre spacing is the mean of the two measurements; the bore is half their difference.
-A 5.1 mm bore is the 1/4-20 tap-drill size, which is what a tapped boss measures at.
-
-## The wedge
-
-One part per pod, bolted down into a corner pair. From the spec:
+Modeled in fusion as `cp200-picam`. The same basic model can be used with different
+mounting hole layouts if needed. `cp200-arducam-b0310` is an assembly showing the
+camera module mounted.
 
 - **Body:** a truncated wedge. The angled face is the camera support, rotated and tilted
   to the pod's facing.
@@ -45,19 +95,3 @@ One part per pod, bolted down into a corner pair. From the spec:
   the tilt, is in [campod.md](../campod.md), "4-camera, B0310".
 - **Position:** the camera support plane is centred over the outer hole of the pair, so
   the bolt is behind the camera.
-- **Bolt seat:** a flattened circular area, 10 mm diameter, for the bolt head, with the
-  1/4-20 clearance hole below it down to the boss.
-- **Camera holes:** M2, for heat-set inserts, on a 21 mm horizontal by 13 mm vertical
-  pattern (measured on the module).
-- **Extent of the plane:** it stops 1.5 mm past the upper holes. From that edge the body
-  drops away normal to the plane for 6 mm, then straight down.
-- **Inboard tab:** 4 mm thick, reaching inboard to cover the second 1/4-20 hole. That bolt
-  locates and clamps the part.
-
-Not stated yet: the wedge's footprint and overall height, the clearance-hole diameter, and
-which of the front/rear boss spacings each of NE and NW lands on. Those come out in the
-model.
-
-## The Pis
-
-Zip-tied to the cheese plate, Kapton between board and plate.
