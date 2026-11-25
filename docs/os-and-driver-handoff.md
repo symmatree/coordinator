@@ -92,8 +92,8 @@ than all the later text saying it was reflashed and is fine.
 Read these before forming opinions, and expect to disagree with some of it -- the point is
 that you can check every claim rather than inherit it.
 
-1. **`CLAUDE.md`** (this repo and `dotfiles-symm`, same content). "Troubleshooting is the
-   danger zone" is the load-bearing line. The rules about not manufacturing resistance and
+1. **`agents/conduct.md`** in dotfiles-symm (`~/.claude/CLAUDE.md`). "Troubleshooting is
+   where this fails most" is the load-bearing line. The rules about not manufacturing resistance and
    not stating inference as fact are the ones most likely to catch you.
 2. **`dotfiles-symm/pi-image/PIPELINE.md`**, then **`build-image.sh`** and
    **`assemble-btrfs.sh`** end to end. Slow, worth it.
