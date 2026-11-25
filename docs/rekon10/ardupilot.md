@@ -61,9 +61,9 @@ same-spin pairs, are NE + SW (CCW) against NW + SE (CW).
 | Corner | FC output | ESC telemetry index | ArduPilot motor | Spin | AM32 configurator order | MP motor test letter |
 |---|---|---|---|---|---|---|
 | NE (front-right) | 1 | 0 | Motor1 | CCW | 1 | A |
-| NW (front-left) | 2 | 1 | Motor3 | CW | 2 | D |
-| SE (rear-right) | 3 | 2 | Motor4 | CW | 3 | B |
-| SW (rear-left) | 4 | 3 | Motor2 | CCW | 4 | C |
+| NW (front-left) | 2 | 1 | Motor3 | CW | 3 | D |
+| SE (rear-right) | 3 | 2 | Motor4 | CW | 4 | B |
+| SW (rear-left) | 4 | 3 | Motor2 | CCW | 2 | C |
 
 Where each column comes from:
 
@@ -108,8 +108,10 @@ Where each column comes from:
   - index 3 with out 4: 0.50
 
   The 2026-11-07 climb was too short for this.
-- **AM32 configurator order: not checked against data.** Through FC passthrough the
-  configurator lists ESCs in FC output order (the NOTE above).
+- **AM32 configurator order = ArduPilot motor number: checked on the bench.** Through FC
+  passthrough the configurator lists ESCs by motor function, so position *n* is Motor*n*
+  (the NOTE above). 2026-11-25: reversing configurator positions 2 and 3 reversed SW and NW
+  (MP motor test C and D), which are Motor2 and Motor3.
 
 [`analysis/tools/motor_mapping_check.py`](../../analysis/tools/motor_mapping_check.py)
 prints the three checks for any log and window (2026-10-30-auto: `240 545`).
