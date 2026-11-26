@@ -321,14 +321,17 @@ Two matched runs designed as a **control experiment for camera vibration**. The 
 ### Sensor raft material (2026-10-27)
 
 The layout under discussion with flight-analysis: battery on top, a sensor raft (camera modules,
-the Blackfly, accelerometers) hung below it on rubber isolators. The raft today is 9 mm aluminum
-cheese plate; the question was whether a solid aluminum sheet with a few drilled holes, or a 3/16"
-x 3" steel bar from the hardware store, would be a better raft.
+the Blackfly, accelerometers) hung below it on rubber isolators. The raft exists because the whole
+stack did not fit on top of the vehicle without separate pods on the arms, which were awkward and
+marginal; the cheese plate is a large area to mount things on, and the rubber isolators are the
+isolation. The raft today is 9 mm aluminum cheese plate; the question was how well a solid
+aluminum sheet with a few drilled holes, or a 3/16" x 3" steel bar from the hardware store,
+would resist bending by comparison.
 
-**Decision: stay with the cheese plate**, moving to the 10 mm plates B&H sells. The raft's own
-first bending mode is what has to stay above the excitation band (the 153 Hz arm mode and the
-262 Hz blade-pass line in [vibration-testing.md](vibration-testing.md)), and that is set by
-`E * t^3`, so thickness wins:
+**Decision: stay with the cheese plate**, moving to the 10 mm plates B&H sells. Bending
+stiffness goes as `E * t^3`, so thickness wins. A raft bending mode inside the excitation band
+(the 153 Hz arm mode and the 262 Hz blade-pass line in [vibration-testing.md](vibration-testing.md))
+would amplify what the isolators let through:
 
 | raft | E * t^3 (N m) | areal mass (kg/m^2) |
 |---|---|---|
