@@ -225,9 +225,9 @@ tells you -- do not fill in the parts he did not say. Writing a hole position as
 fact when he had only told me which chip output he used was a correction in that session.
 
 **Every PR off fresh `origin/main`, targeting `main`. Never stack.** Ordering goes in the
-title or body, never the base branch. Work in the clone at `/home/jovyan/coordinator`, on a
-branch -- not in a worktree he cannot see. Verify the branch before committing: a commit
-pushed onto an already-merged branch is lost, which happened once here.
+title or body, never the base branch. Work in this workspace's `coordinator` checkout, on
+a branch. Verify the branch before committing: a commit pushed onto an already-merged
+branch is lost, which happened once here.
 
 **Cross-session messages are unreliable.** Four messages to another session's socket expired
 undelivered with no prompt shown to him, and he was attached at the time. A finding that needs
