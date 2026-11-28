@@ -49,46 +49,10 @@ COMPASS_USE3,0
 COMPASS_ORIENT,6
 COMPASS_ORIENT2,6
 #
-# --- Compass calibration (the measured numbers) ---
-#
-# What a successful cal actually writes, read off AP_Compass_Calibration.cpp
-# _accept_calibration(): offsets, diagonals, off-diagonals, scale factor, and
-# conditionally orientation (above). Nothing else -- COMPASS_USE and COMPASS_EXTERNAL
-# are configuration, not cal output, and COMPASS_MOT_* come from compassmot, a
-# different procedure.
-#
-# COMPASS_DEV_ID is deliberately NOT pinned even though the cal writes it.
-# set_and_save_offsets() -> save_offsets() does
-#     _state[id].dev_id.set_and_save(_state[id].detected_dev_id)
-# so it is the id of the physical part as detected on that boot, not a property of the
-# airframe. It reads 0 whenever the compass is off the bus, so pinning any value makes
-# verify.py permanently wrong in one direction or the other. Restoring these numbers
-# therefore does NOT make the compass "configured": Compass::configured() compares the
-# stored dev_id against the detected one, so the binding still needs a boot with the
-# compass attached, or a fresh cal.
-#
-# Instance 2 carries offsets and a scale but default diagonals and off-diagonals --
-# that is what was in the export, not an omission here.
-#
-# provenance: instance 1 from the on-vehicle cal exported in 943837b 2026-10-27,
-# superseding the 3856c84 2026-09-23 values. Instance 2 is unchanged by that cal.
-COMPASS_OFS_X,-78.60564
-COMPASS_OFS_Y,40.36612
-COMPASS_OFS_Z,-17.63679
-COMPASS_DIA_X,0.994186
-COMPASS_DIA_Y,1.009791
-COMPASS_DIA_Z,1.045338
-COMPASS_ODI_X,6.181582E-05
-COMPASS_ODI_Y,0.03565602
-COMPASS_ODI_Z,0.02892364
-COMPASS_SCALE,1.043067
-COMPASS_OFS2_X,173.6031
-COMPASS_OFS2_Y,-115.2469
-COMPASS_OFS2_Z,-1.972043
-COMPASS_DIA2_X,1
-COMPASS_DIA2_Y,1
-COMPASS_DIA2_Z,1
-COMPASS_ODI2_X,0
-COMPASS_ODI2_Y,0
-COMPASS_ODI2_Z,0
-COMPASS_SCALE2,0.8551114
+# --- Compass calibration ---
+# Not pinned. A calibration writes offsets, diagonals, off-diagonals, scale and
+# (conditionally) orientation, and with them COMPASS_DEV_ID, the detected part
+# (AP_Compass.cpp set_and_save_offsets). Nothing else writes DEV_ID except a priority
+# reorder, and Compass::configured() requires the stored DEV_ID to equal the detected
+# one, so calibration values loaded without that calibration leave the compass
+# unconfigured. The values come from the calibration on the vehicle.

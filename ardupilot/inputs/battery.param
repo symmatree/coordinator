@@ -7,6 +7,10 @@
 #   the source for pack voltage, current and consumed mAh, and so for every battery
 #   failsafe below.  provenance: 2026-11-07
 BATT_MONITOR,21
+# ArduPilot I2C bus 1 = the FC's I2C1 pads (DA1/CL1): the hwdef's I2C_ORDER is I2C2 I2C1, so
+#   bus 0 is I2C2, which carries the internal baro. The PM02D is on I2C1 with the other
+#   battery-powered devices (docs/rekon10/fc-breakout.md, "I2C split").  provenance: 2026-11-28
+BATT_I2C_BUS,1
 # Full scale of the INA228 current reading: the driver sets the chip's current LSB from this
 #   (AP_BattMonitor_INA2xx.cpp, current_LSB = max_amps / 2^19), so currents above it do not
 #   fit. 164 A is the PM02D's stated maximum current sensing (PX4 PM02D page).
