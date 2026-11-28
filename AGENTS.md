@@ -1,7 +1,8 @@
 # AGENTS.md -- operating this repo's systems
 
 Repo-specific operating rules for coordinator. General agent conduct is in
-[CLAUDE.md](CLAUDE.md); this file is the part that only applies here.
+`agents/conduct.md` in dotfiles-symm (see [CLAUDE.md](CLAUDE.md)); this file is the
+part that only applies here.
 
 ## Read the procedure before proposing a device action
 
