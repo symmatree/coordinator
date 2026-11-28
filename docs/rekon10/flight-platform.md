@@ -136,8 +136,7 @@ current and consumed mAh, and so for the battery failsafes (`BATT_LOW_VOLT=18.6`
 
 **The FC's own analog inputs are a second battery monitor** (`BATT2_MONITOR=4`, VBAT on PC0
 and the ESC's current shunt on PC1), logged as `BAT` instance 1 beside the PM02D so the two
-read the same flight. Its scales are the hwdef defaults (`VOLT_MULT` 11, `AMP_PERVLT` 40),
-uncalibrated for this ESC. It drives no failsafe and has no voltage threshold, so it cannot
+read the same flight. It drives no failsafe and has no voltage threshold, so it cannot
 block arming.
 
 **ESC serial telemetry** (SERIAL8) still reports per-motor voltage, current, RPM and

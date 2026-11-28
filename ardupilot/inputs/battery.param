@@ -22,7 +22,7 @@ BATT_CAPACITY,8000
 #   pin 11 in the TBS_LUCID_H7 hwdef), fed by the ESC's voltage divider and current shunt.
 #   Logged as BAT instance 1 beside the PM02D's instance 0, so the two read the same flight.
 #   BATT2_FS_LOW_ACT and BATT2_FS_CRT_ACT default to 0 (no action), and MOT_BAT_IDX stays 0.
-#   The multiplier and A/V are the hwdef defaults, uncalibrated for this ESC.
+#   The multiplier and A/V are the TBS_LUCID_H7 hwdef's stock values.
 #   provenance: 2026-11-28
 BATT2_MONITOR,4
 BATT2_VOLT_PIN,10
@@ -30,8 +30,8 @@ BATT2_CURR_PIN,11
 BATT2_VOLT_MULT,11
 BATT2_AMP_PERVLT,40
 # 0 = no low-voltage threshold. The Copter default is 10.5 V, and every monitor's
-#   low-voltage state is a pre-arm check whatever its action, so an uncalibrated reading
-#   under 10.5 V would block arming.  provenance: 2026-11-28
+#   low-voltage state is a pre-arm check whatever its action, so a reading under
+#   10.5 V would block arming.  provenance: 2026-11-28
 BATT2_LOW_VOLT,0
 #
 # Voltage thresholds (~3.20 / 3.10 / 3.00 V per cell on 6S). BATT_CRT_VOLT=18 is
