@@ -71,10 +71,10 @@ pigtail). coordinator#741 (`BATT_MAX_AMPS` 164) merged 2026-11-15.
 
 **The spare FC is fitted (2026-11-23)**, wired through two protoboard breakout daughterboards with
 short whips from the pads; the PCB they become is `docs/rekon10/fc-breakout.md`. Its parameter store
-is whatever flight-platform's apply step has put on it. Planned with that board, when he rewires:
-the I2C split -- baro bus (I2C2) on the 4V5 side with the compass and SH1106, I2C1 on battery 5V
-with the PM02D. That makes `BATT_I2C_BUS` 1 (a `battery.param` PR, offered) and needs a fresh
-compass calibration, since the compass detects with a new device id.
+is whatever flight-platform's apply step has put on it. The I2C buses are split (wired by
+2026-11-28): baro bus (I2C2) on the 4V5 side with the compass and SH1106, I2C1 on battery 5V with
+the PM02D. That makes `BATT_I2C_BUS` 1 (coordinator#764) and needs a fresh compass calibration,
+since the compass detects with a new device id.
 
 **Failsafes:** radio and battery RTL, EKF AltHold, `RTL_ALT_M` 40 (coordinator#710). Bidirectional
 DShot on the four motors (coordinator#677).
