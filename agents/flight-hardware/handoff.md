@@ -49,7 +49,7 @@ times since the board was built; the two differ at hole level and **the board is
 authority**. Do not "correct" the doc toward the drawing, and do not infer hole-level detail
 about the built board -- ask.
 
-## Where things stand (2026-11-16)
+## Where things stand (2026-11-28)
 
 **PPS reaches every consumer, the FC included.** The FC leg is on pad `S12` (`CAM1_FEEDBAK_PIN`
 61, coordinator#709); `ardupilot/scripts/pps-feedback-arm.lua` arms the handler at boot. Confirmed
@@ -67,42 +67,53 @@ the ground over mLRS (ELRS/MAV3 stays private). The full path is `docs/rtk-corre
 coordinator#676 (constellation review) and #683 (ground visibility) are open.
 
 **Battery monitor is the Holybro PM02D** (`BATT_MONITOR` 21, INA228 on I2C2 via the repurposed RANGE
-pigtail). **coordinator#741 (`BATT_MAX_AMPS` 164) is open and has to be flashed before the next
-flight**; at the default 90 A, currents above 90 A do not fit the reading. Everything else merged
-is flashed per flight-platform's apply step.
+pigtail). coordinator#741 (`BATT_MAX_AMPS` 164) merged 2026-11-15.
+
+**The spare FC is fitted (2026-11-23)**, wired through two protoboard breakout daughterboards with
+short whips from the pads; the PCB they become is `docs/rekon10/fc-breakout.md`. Its parameter store
+is whatever flight-platform's apply step has put on it. The I2C buses are split (wired by
+2026-11-28): baro bus (I2C2) on the 4V5 side with the compass and SH1106, I2C1 on battery 5V with
+the PM02D. That makes `BATT_I2C_BUS` 1 (coordinator#764) and needs a fresh compass calibration,
+since the compass detects with a new device id.
 
 **Failsafes:** radio and battery RTL, EKF AltHold, `RTL_ALT_M` 40 (coordinator#710). Bidirectional
 DShot on the four motors (coordinator#677).
 
 **The 2026-11-07 crash: the front-left (NW) motor failed on the climb.** Everything observed is in
-`datasets/flights/rekon10/2026-11-07-crash/README.md`. Motors are being replaced;
-the motor leads now go through XT30 pigtails at the ESC (`flight-platform.md`, *Motor lead
+`datasets/flights/rekon10/2026-11-07-crash/README.md`. All four motors are new;
+the motor leads go through MR30s at the ESC (`flight-platform.md`, *Motor lead
 connectors*). Name motors by corner and take every label from `analysis/motors.py`; the table
 and how it was checked is `docs/rekon10/ardupilot.md`, "Which motor is which". NW is Motor3,
 FC output 2, ESC telemetry index 1.
 
-**The NW channel of the ESC runs rough (Seth, 2026-11-16).** Motor test with four new motors:
-NW is jumpy and lumpy, the other three smooth. A spare motor on the NW XT30 does the same, so
-the fault is the leads from the XT30 to the ESC pads or that ESC channel. A spare ESC is on hand.
-What separates them, unpowered: continuity from each XT30 pin through to the MOSFET side of the
-pad while flexing the lead (catches a lifted pad or cracked via under a good-looking joint), and
-diode mode on each phase pad to both rails compared against the three good channels (near 0 =
-shorted MOSFET, OL where the others read a drop = open). A damaged gate driver reads normal in
-diode mode. Which came first in the crash, motor or ESC, is not established: the log has NW
-losing RPM per command from just after liftoff and its ESC heating fastest, which fits either,
-and per-channel ESC current is not usable (untrusted AM32 scale). The bearing hard spot and the
-motor-side burned pad are motor evidence. The fault started in the air; impact is not a cause.
+**The ESC is replaced (2026-11-21)** after its NW channel ran rough with new motors: an identical
+Lucid 60A on **stock AM32 v2.22** (the calibrated v2.20 build was the first ESC's; per-ESC voltage
+and current are back on generic constants, and nothing on the FC reads them). All four channels
+ran a trial motor fine. Which came first in the crash, motor or ESC, is not established; the
+crash README has the evidence.
+
+**Motor direction is set in the AM32 configurator, whose positions are ArduPilot motor numbers,
+not FC outputs** (checked on the bench 2026-11-25; `ardupilot.md`, "Which motor is which"). NW
+and SE are the CW pair. Last report: positions 2 and 3 had been reversed (SW, NW), so 2 needed undoing
+and 4 (SE) reversing.
 
 **Open from this role:**
 - coordinator#739 (thermistor motor temperature, an option) and #740 (runtime motor-failure
   diagnostics, a design space; not a plan).
 - coordinator#674 (compass interference from flight current; test is a longer mast). The GPS mast tube
   broke at both ends in the crash.
-- **Compass on USB power:** not detected on one boot, dropping reads on the next. Candidate (inference):
-  the SH1106 on I2C1 is unpowered on USB (it runs from 5 V through its LDO) and loads the bus. Test:
-  unplug the SH1106 on USB. The SH1106 itself appears lost in the crash.
-- **PC1 reads a fixed 9.9 V.** Discriminating checks: the flying ESC's current pin powered with no FC,
-  and the spare ESC's, against PC1 with the FC on USB and the ribbon off.
+- **Compass on USB power** (first FC): not detected on one boot, dropping reads on the next. Candidate
+  (inference): the SH1106 on I2C1, unpowered on USB, loading the bus. The planned I2C split puts the
+  compass and SH1106 on the 4V5 side.
+- **PC1 read a fixed 9.9 V** on the first FC with the first ESC. Both are now out of the vehicle.
+- **Boards being designed:** `docs/rekon10/coordinator-hat.md` (DS3234 + 74LVC1G17 + 3x '541,
+  24 PPS outputs for 14 consumers; SH1106 and one hub carried on it), the campod header board
+  (`campod-electrical.md`), and `docs/rekon10/fc-breakout.md`. Where the HAT's PPS headers go is
+  open. Digi-Key stock/price lookup was offered via its API; credentials would be in
+  `~/.config/digikey/credentials`, not yet set up.
+- **Raft:** plywood (1/4" Baltic birch or skinned 3/16") is under consideration. There is no raft
+  vibration data from any flight: on 2026-11-07 only SW had accelerometers and both flight-boot
+  files are empty.
 - **ELRS from MAVLink to CRSF** is under consideration, not decided: faster RC at a light telemetry
   ratio, one telemetry path, but the ELRS RC overrides stop feeding the GCS failsafe and the backpack
   log ends. `ground-station.md`'s Firefly row says "Std, Hybrid" where the module export it quotes
@@ -228,6 +239,17 @@ fact when he had only told me which chip output he used was a correction in that
 title or body, never the base branch. Work in this workspace's `coordinator` checkout, on
 a branch. Verify the branch before committing: a commit pushed onto an already-merged
 branch is lost, which happened once here.
+
+**When he states a change, fix every doc it makes false, now, with what he said.** Delete what it
+obsoletes. His level of detail is the record; asking for more before updating held his update
+ransom.
+
+**One PR per conversation topic; a description of a line or two.** Weights and a build-log entry
+for the same rebuild are one PR. A description restating a doc diff is read twice for nothing.
+
+**Do not hand him a reason for his own choices.** The build log gave one reason for the cheese plate
+and I argued from it; he bought it for a different one. Telling him why he did something, or that
+he contradicts himself, is the tell.
 
 **Cross-session messages are unreliable.** Four messages to another session's socket expired
 undelivered with no prompt shown to him, and he was attached at the time. A finding that needs
