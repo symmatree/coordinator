@@ -121,7 +121,7 @@ FC Connections (first unit; on the spare these leave from the breakout daughterb
 | 4V5 | 4.76 V | GPS, RADIO (RX) |
 | 3V3 | 3.268 V | logic breakout -- do not use for external device power |
 | 9V (VTX) | ~9 V on / 0.4 V off | RELAY4-switched |
-| PC1 (current sense) | 9.92 V, fixed | unresolved -- see below |
+| PC1 (current sense) | 9.92 V, fixed | first FC with first ESC; both since replaced |
 
 **Battery monitor: Holybro PM02D (`BATT_MONITOR=21`).**
 [Product page](https://holybro.com/collections/power-modules-pdbs/products/pm02d-power-module),
@@ -134,10 +134,10 @@ continuous, 60 A for under a minute (retailer listing). It is the source for pac
 current and consumed mAh, and so for the battery failsafes (`BATT_LOW_VOLT=18.6`,
 `BATT_CRT_VOLT=18`, `BATT_CAPACITY=8000`).
 
-**The FC's own analog inputs are not used.** Its current input (PC1 / `BATT_CURR_PIN=11`)
-reads a fixed ~9.9 V, above the ADC's ~3.6 V range, so it reports a constant false current;
-which board is at fault, the FC input or the ESC's current-sense output feeding it, is not
-known. `Cur2` (PA7) measures a stable 0.667 MOhm to GND while PC1 climbs.
+**The FC's own analog inputs are a second battery monitor** (`BATT2_MONITOR=4`, VBAT on PC0
+and the ESC's current shunt on PC1), logged as `BAT` instance 1 beside the PM02D so the two
+read the same flight. It drives no failsafe and has no voltage threshold, so it cannot
+block arming.
 
 **ESC serial telemetry** (SERIAL8) still reports per-motor voltage, current, RPM and
 temperature, from **stock AM32 v2.22** ([ESC / Firmware](#firmware)), so its voltage and
